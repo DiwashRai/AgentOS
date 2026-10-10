@@ -1,0 +1,62 @@
+{
+  "protocol": 1,
+  "run_id": 42,
+  "ticket": { "key": "AOS-42", "slug": "fix-login-bug", "title": "Fix login bug: session expires early" },
+  "workspace": {
+    "mode": "repo",
+    "repo_url": "https://github.com/example/app.git",
+    "base_branch": "main",
+    "branch": "agent/AOS-42"
+  },
+  "files": [
+    {
+      "path": ".claude/skills/review-checklist/SKILL.md",
+      "content": "---\nname: review-checklist\ndescription: \"Team review checklist.\"\n---\n# Review checklist\n- Tests cover the change\n",
+      "mode": "replace",
+      "sync": false
+    },
+    {
+      "path": ".claude/skills/context-aos-42-fix-login-bug/SKILL.md",
+      "content": "---\nname: context-aos-42-fix-login-bug\ndescription: \"Objective and working context for AOS-42 (Fix login bug: session expires early). Use when working on AOS-42.\"\n---\n# AOS-42: Fix login bug: session expires early\n\n## Objective\nSessions expire after 5 minutes instead of 14 days.\n",
+      "mode": "replace",
+      "sync": true
+    },
+    {
+      "path": ".claude/skills/context-aos-42-fix-login-bug/TASKS.md",
+      "content": "# Tasks\n\n- [x] Reproduce\n- [ ] Fix expiry calculation\n- [ ] Add regression test\n",
+      "mode": "replace",
+      "sync": true
+    },
+    { "path": ".claude/skills/context-aos-42-fix-login-bug/learnings.log", "content": "", "mode": "replace", "sync": true },
+    { "path": ".claude/skills/context-aos-42-fix-login-bug/swarm.log", "content": "", "mode": "replace", "sync": true },
+    {
+      "path": "AGENTS.md",
+      "content": "Working on AOS-42. Read .claude/skills/context-aos-42-fix-login-bug/SKILL.md first; the plan is .claude/skills/context-aos-42-fix-login-bug/TASKS.md. Do not run git commit or push; AgentOS commits and pushes after each stage.",
+      "mode": "block",
+      "sync": true
+    },
+    { "path": "CLAUDE.md", "content": "@AGENTS.md", "mode": "block", "sync": true }
+  ],
+  "sync_dirs": [".claude/skills/context-aos-42-fix-login-bug"],
+  "stages": [
+    {
+      "id": "implement",
+      "name": "Implement",
+      "kind": "agent",
+      "timeout_s": 3600,
+      "argv": ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", "--model", "sonnet"],
+      "stdin": "Implement AOS-42. Objective: .claude/skills/context-aos-42-fix-login-bug/SKILL.md. Plan: .claude/skills/context-aos-42-fix-login-bug/TASKS.md.",
+      "command": null
+    },
+    {
+      "id": "lint",
+      "name": "Lint",
+      "kind": "shell",
+      "timeout_s": 600,
+      "argv": null,
+      "stdin": null,
+      "command": "ruff format . && ruff check --fix ."
+    }
+  ],
+  "limits": { "max_file_bytes": 1048576, "max_line_bytes": 8192 }
+}

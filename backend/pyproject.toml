@@ -1,0 +1,86 @@
+[project]
+name = "agentos"
+version = "0.1.0"
+description = "AgentOS server: tickets, context bundles and agent runs"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "pydantic>=2.14.0",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server/agentos"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+# The worker must run on Python 3.11 runners, so the whole backend stays 3.11-compatible.
+target-version = "py311"
+src = ["server", "worker"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "RUF", "PT", "ASYNC", "C4", "RET", "PTH", "ERA"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "S603", "S607"]
+# Running subprocesses described by the manifest is the worker's job.
+"worker/worker.py" = ["S603", "S607"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agentos", "worker"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = ["server", "worker"]
+explicit_package_bases = true
+files = ["server/agentos", "server/tests", "worker/worker.py", "worker/tests"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["server/tests", "worker/tests"]
+pythonpath = ["worker"]
+# Default (prepend) import mode: importlib mode would shadow worker.py with a `worker` namespace
+# package derived from the worker/tests path. Keep test file basenames unique across suites.
+addopts = "-q"
+
+# ---------------------------------------------------------------- import-linter
+[tool.importlinter]
+root_package = "agentos"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Pure core has no web, db or http dependencies"
+type = "forbidden"
+source_modules = ["agentos.models", "agentos.validate", "agentos.pipeline"]
+forbidden_modules = ["fastapi", "starlette", "httpx", "uvicorn", "agentos.db"]
+
+[[tool.importlinter.contracts]]
+name = "Plugins do not depend on the web layer"
+type = "forbidden"
+source_modules = ["agentos.launchers", "agentos.sources"]
+forbidden_modules = ["fastapi", "starlette"]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
+    "ruff>=0.17.0",
+]

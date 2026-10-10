@@ -1,0 +1,42 @@
+# Local-only planning docs and agent context (never committed)
+/SPEC.md
+/TASKS.md
+/WEEKEND.md
+/CONTRACT_REQUESTS.md
+/design/
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node / web
+node_modules/
+web/dist/
+*.tsbuildinfo
+
+# Runtime data and local config
+/data/
+*.db
+*.db-wal
+*.db-shm
+agentos.toml
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Fast gates on the half of the repo being committed. Full gates: `just check`.
+set -e
+staged=$(git diff --cached --name-only)
+if echo "$staged" | grep -q '^backend/'; then just pre-commit-backend; fi
+if echo "$staged" | grep -q '^web/'; then just pre-commit-web; fi

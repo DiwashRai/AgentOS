@@ -1,0 +1,18 @@
+# Agent runtimes: argv templates resolved by the server (SPEC §7). Copy to agentos.toml.
+# Placeholders replace whole argv elements; no shell is involved.
+default_runtime = "claude"
+
+[runtimes.claude]
+# Pinned on this machine: claude 2.1.296. Re-verify headless behaviour when upgrading.
+argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"]
+model_args = ["--model", "{model}"]
+agent_args = ["--agent", "{agent}"]
+prompt_via = "stdin"
+
+[runtimes.copilot]
+# M2: validate stdin prompts and prompt-mode skill loading, then switch to stdin.
+argv = ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json"]
+model_args = ["--model", "{model}"]
+agent_args = ["--agent", "{agent}"]
+prompt_via = "arg"
+prompt_args = ["-p", "{prompt}"]

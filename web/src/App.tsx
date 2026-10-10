@@ -1,0 +1,97 @@
+// Section 0 probe: proves the generated types, CSRF client and stub API work end to end.
+// The frontend session replaces this with the real shell, board and ticket view.
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+
+import { api, type Schemas } from "./api/client";
+
+const LANES: Schemas["TicketSummary"]["lane"][] = [
+  "inbox",
+  "running",
+  "review",
+  "attention",
+  "done",
+];
+
+function Login() {
+  const queryClient = useQueryClient();
+  const [username, setUsername] = useState("dev");
+  const login = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST("/api/auth/login", { body: { username } });
+      if (error) throw new Error(error.error.message);
+    },
+    onSuccess: () => queryClient.invalidateQueries(),
+  });
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        login.mutate();
+      }}
+    >
+      <label>
+        Username{" "}
+        <input
+          value={username}
+          onChange={(e) => {
+            setUsername(e.target.value);
+          }}
+        />
+      </label>
+      <button type="submit">Sign in (dev)</button>
+      {login.error && <p role="alert">{login.error.message}</p>}
+    </form>
+  );
+}
+
+function Board() {
+  const tickets = useQuery({
+    queryKey: ["tickets"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/tickets");
+      if (error) throw new Error(error.error.message);
+      return data;
+    },
+  });
+  if (tickets.isPending) return <p>Loading…</p>;
+  if (tickets.isError) return <p role="alert">{tickets.error.message}</p>;
+  return (
+    <div style={{ display: "flex", gap: 16 }}>
+      {LANES.map((lane) => (
+        <section key={lane}>
+          <h2>{lane}</h2>
+          <ul>
+            {tickets.data
+              .filter((t) => t.lane === lane)
+              .map((t) => (
+                <li key={t.key}>
+                  {t.key}: {t.title} [{t.rail.map((s) => s.state).join(" ")}]
+                </li>
+              ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+export function App() {
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const { data, response } = await api.GET("/api/me");
+      if (response.status === 401) return null;
+      if (!data) throw new Error(`GET /api/me failed: ${String(response.status)}`);
+      return data;
+    },
+  });
+  if (me.isPending) return <p>Loading…</p>;
+  if (me.isError) return <p role="alert">{me.error.message}</p>;
+  return (
+    <main>
+      <h1>AgentOS</h1>
+      {me.data ? <Board /> : <Login />}
+    </main>
+  );
+}
