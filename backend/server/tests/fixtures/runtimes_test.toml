@@ -1,0 +1,13 @@
+# Test runtimes (not named agentos.toml, which .gitignore ignores).
+default_runtime = "fake"
+
+[runtimes.fake]
+argv = ["python", "fake_agent.py"]
+model_args = ["--model", "{model}"]
+prompt_via = "stdin"
+
+[runtimes.claude]
+argv = ["claude", "-p", "--output-format", "stream-json", "--verbose"]
+model_args = ["--model", "{model}"]
+agent_args = ["--agent", "{agent}"]
+prompt_via = "stdin"

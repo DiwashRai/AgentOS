@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from agentos.errors import ERROR_RESPONSES
+from agentos.http_deps import Ctx
 from agentos.models import AppConfig, Health
 
 router = APIRouter(prefix="/api", tags=["meta"], responses=ERROR_RESPONSES)
@@ -16,14 +17,14 @@ def health() -> Health:
 
 
 @router.get("/config")
-def app_config() -> AppConfig:
-    # STUB: real values come from settings + agentos.toml.
+def app_config(ctx: Ctx) -> AppConfig:
+    settings, runtimes = ctx.settings, ctx.runtimes
     return AppConfig(
-        auth_mode="dev",
-        jira_deployment=None,
-        key_prefix="AOS",
-        default_repo_url="https://github.com/DiwashRai/AgentOS.git",
-        default_base_branch="main",
-        runtimes=["claude", "copilot"],
-        default_runtime="claude",
+        auth_mode="dev" if settings.dev_auth else "jira",
+        jira_deployment=None if settings.dev_auth else settings.jira_deployment,
+        key_prefix=settings.key_prefix,
+        default_repo_url=settings.default_repo_url,
+        default_base_branch=settings.default_base_branch,
+        runtimes=sorted(runtimes.runtimes),
+        default_runtime=runtimes.default_runtime,
     )
