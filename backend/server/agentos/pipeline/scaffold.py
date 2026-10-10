@@ -6,8 +6,16 @@ Pure: no web, db or http imports (enforced by import-linter).
 from __future__ import annotations
 
 import re
+import unicodedata
+from dataclasses import dataclass
 
-from agentos.models import FileEntry, Pipeline, Stage
+from agentos.models import FileEntry, Pipeline, Stage, WorkspaceMode
+
+MAX_SKILL_NAME = 64  # Agent Skills limit on `name` (must also match the directory name)
+SKILL_PREFIX = "context-"
+FALLBACK_SLUG = "ticket"
+# Slug budget when no key is given (only the stubs call slugify without one).
+_NO_KEY_SLUG_CHARS = 40
 
 PROMPTS = {
     "plan": (
@@ -79,14 +87,17 @@ def default_pipeline(*, lint: bool = False) -> Pipeline:
     )
 
 
+# `tojson` is agentos' YAML-safe variant (see render.py), so any title keeps the frontmatter
+# valid. A title is ≤ 200 chars, so the description stays under the 1024-char skill limit.
 DEFAULT_SCAFFOLD = [
     FileEntry(
         path="{{paths.skill_md}}",
         content=(
             "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
             "ticket.key ~ ' (' ~ ticket.title ~ '). Use when working on ' ~ ticket.key ~ '.') "
-            "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n## Objective\n"
-            "{{ticket.description}}\n"
+            "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n"
+            "{% if ticket.source_url %}Source: {{ticket.source_url}}\n\n{% endif %}"
+            "## Objective\n{{ticket.description}}\n"
         ),
     ),
     FileEntry(path="{{paths.tasks_md}}", content="# Tasks\n"),
@@ -98,24 +109,67 @@ DEFAULT_SCAFFOLD = [
         content=(
             "Working on {{ticket.key}}. Read {{paths.skill_md}} first; the plan is "
             "{{paths.tasks_md}}. Do not run git commit or push; AgentOS commits and pushes "
-            "after each stage."
+            "after each stage.{% if not ticket.branch %} Put deliverables in "
+            "{{paths.out}}/.{% endif %}"
         ),
     ),
     FileEntry(path="CLAUDE.md", mode="block", content="@AGENTS.md"),
 ]
 
 
-def slugify(title: str) -> str:
-    # STUB-grade: the real rule (NFKD → ASCII, ≤64-char skill name) lands with validate.py.
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return slug[:40].strip("-") or "ticket"
+def slugify(title: str, key: str | None = None) -> str:
+    """SPEC §4: NFKD → ASCII, lowercase, runs of non-[a-z0-9] → '-', trim, truncate so
+    `skill_name(key, slug)` ≤ 64, trim again, empty → 'ticket'.
+
+    `key=None` (stubs only) caps the slug at 40 chars. Real callers pass the key.
+    """
+    ascii_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
+    if key is None:
+        budget = _NO_KEY_SLUG_CHARS
+    else:
+        budget = MAX_SKILL_NAME - len(f"{SKILL_PREFIX}{key.lower()}-")
+    return slug[: max(budget, 0)].strip("-") or FALLBACK_SLUG
+
+
+def skill_name(key: str, slug: str) -> str:
+    return f"{SKILL_PREFIX}{key.lower()}-{slug}"
 
 
 def skill_dir(key: str, slug: str) -> str:
-    return f".claude/skills/context-{key.lower()}-{slug}"
+    return f".claude/skills/{skill_name(key, slug)}"
+
+
+@dataclass(frozen=True, slots=True)
+class TicketNames:
+    """Derived names (SPEC §4). `branch` is None in no-repo mode."""
+
+    skill_name: str
+    skill_dir: str
+    skill_md: str
+    tasks_md: str
+    learnings: str
+    swarm: str
+    out: str
+    branch: str | None
+
+
+def names(key: str, slug: str, workspace_mode: WorkspaceMode) -> TicketNames:
+    d = skill_dir(key, slug)
+    return TicketNames(
+        skill_name=skill_name(key, slug),
+        skill_dir=d,
+        skill_md=f"{d}/SKILL.md",
+        tasks_md=f"{d}/TASKS.md",
+        learnings=f"{d}/learnings.log",
+        swarm=f"{d}/swarm.log",
+        out=f"{d}/out",
+        branch=f"agent/{key}" if workspace_mode == "repo" else None,
+    )
 
 
 def repo_name(url: str | None) -> str | None:
     if not url:
         return None
-    return url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git") or None
+    tail = url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    return tail.removesuffix(".git") or None
