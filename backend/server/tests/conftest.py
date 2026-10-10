@@ -30,6 +30,12 @@ BASE_URL = "http://127.0.0.1:8000"
 LoginFn = Callable[..., Me]
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "e2e: real server + launcher + worker + git (deselect with -m 'not e2e')"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests see only the settings they pass: drop AGENTOS_* from the developer's shell."""
