@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -88,6 +89,15 @@ class FakeServer:
 
 def error(status: int, code: str) -> tuple[int, Any]:
     return status, {"error": {"code": code, "message": code}}
+
+
+def eventually(condition: Callable[[], bool], what: str, timeout_s: float = 10.0) -> None:
+    """Poll until `condition()` holds; fail after `timeout_s`. For waits on background threads."""
+    deadline = time.monotonic() + timeout_s
+    while not condition():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"timed out after {timeout_s}s waiting for {what}")
+        time.sleep(0.01)
 
 
 def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:

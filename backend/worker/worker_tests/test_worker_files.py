@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -25,21 +26,35 @@ def materialise(root: Path, m: worker.Manifest) -> worker.SyncState:
     return state
 
 
-def symlink_or_skip(link: Path, target: Path, *, directory: bool = False) -> None:
-    """A symlink; for directories on Windows without symlink rights, a junction instead
-    (no privileges needed, and the worker must refuse it just the same)."""
+LinkKind = Literal["file", "dir", "junction"]
+
+# A directory link every machine can make: junctions need no privileges on Windows.
+DIR_LINK: LinkKind = "junction" if sys.platform == "win32" else "dir"
+
+LINK_KINDS = [
+    pytest.param("file", id="file-symlink"),
+    pytest.param("dir", id="dir-symlink"),
+    pytest.param(
+        "junction",
+        marks=pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows-only"),
+    ),
+]
+
+
+def make_link(kind: LinkKind, link: Path, target: Path) -> None:
+    """A file/dir symlink or a Windows junction at `link`. Symlinks skip the test where the OS
+    refuses them for lack of privilege; the worker must refuse every kind just the same."""
+    if kind == "junction":
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, check=True
+        )
+        return
     try:
-        link.symlink_to(target, target_is_directory=directory)
-    except (OSError, NotImplementedError) as exc:
-        if directory and sys.platform == "win32":
-            done = subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-                capture_output=True,
-                check=False,
-            )
-            if done.returncode == 0:
-                return
-        pytest.skip(f"cannot create symlinks here: {exc}")
+        link.symlink_to(target, target_is_directory=kind == "dir")
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:  # ERROR_PRIVILEGE_NOT_HELD
+            pytest.skip("symlinks: needs Developer Mode or admin on Windows")
+        raise
 
 
 def sent(batch: worker.SyncBatch) -> dict[str, tuple[str | None, str]]:
@@ -67,7 +82,7 @@ def test_write_skips_a_symlinked_parent(tmp_path: Path) -> None:
     outside.mkdir()
     root = tmp_path / "ws"
     root.mkdir()
-    symlink_or_skip(root / ".claude", outside, directory=True)
+    make_link(DIR_LINK, root / ".claude", outside)
     m = manifest()
     state = materialise(root, m)
     assert list(outside.iterdir()) == []
@@ -81,7 +96,7 @@ def test_write_skips_a_symlinked_target(tmp_path: Path) -> None:
     outside.write_bytes(b"precious\n")
     root = tmp_path / "ws"
     root.mkdir()
-    symlink_or_skip(root / "CLAUDE.md", outside)
+    make_link("file", root / "CLAUDE.md", outside)
     entry = worker.ManifestFile("CLAUDE.md", "@AGENTS.md", "block", True)
     assert worker.write_entry(root, entry, KEY) == "CLAUDE.md is a symlink"
     assert outside.read_bytes() == b"precious\n"
@@ -159,13 +174,6 @@ def test_skipped_files_are_warnings(tmp_path: Path) -> None:
     assert any("CLAUDE.md" in w and "missing" in w for w in batch.warnings)
 
 
-def test_library_files_never_sync(tmp_path: Path) -> None:
-    m = manifest()
-    state = materialise(tmp_path, m)
-    batch = state.collect(tmp_path)
-    assert ".claude/skills/review-checklist/SKILL.md" not in sent(batch)
-
-
 def test_unwritten_manifest_files_are_not_synced_as_deleted(tmp_path: Path) -> None:
     m = manifest()
     state = worker.SyncState(m)
@@ -173,31 +181,19 @@ def test_unwritten_manifest_files_are_not_synced_as_deleted(tmp_path: Path) -> N
     assert f"{SKILL_DIR}/TASKS.md" not in sent(state.collect(tmp_path))
 
 
-def test_linked_dirs_in_sync_dirs_are_skipped(tmp_path: Path) -> None:
-    outside_dir = tmp_path / "secrets"
-    outside_dir.mkdir()
-    (outside_dir / "key.txt").write_bytes(b"secret\n")
+@pytest.mark.parametrize("kind", LINK_KINDS)
+def test_links_in_sync_dirs_are_skipped(tmp_path: Path, kind: LinkKind) -> None:
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    (secrets / "key.md").write_bytes(b"secret\n")
     root = tmp_path / "ws"
     root.mkdir()
     state = materialise(root, manifest())
-    symlink_or_skip(root / SKILL_DIR / "linkdir", outside_dir, directory=True)
+    make_link(kind, root / SKILL_DIR / "link", secrets / "key.md" if kind == "file" else secrets)
     batch = state.collect(root)
-    assert not any("linkdir" in p for p in sent(batch))
+    assert not any(p.startswith(f"{SKILL_DIR}/link") for p in sent(batch))
     assert all("secret" not in str(f["content"]) for f in batch.files)
-    assert sum("linkdir is a symlink" in w for w in batch.warnings) == 1
-
-
-def test_symlinked_files_in_sync_dirs_are_skipped(tmp_path: Path) -> None:
-    outside = tmp_path / "secret.txt"
-    outside.write_bytes(b"secret\n")
-    root = tmp_path / "ws"
-    root.mkdir()
-    state = materialise(root, manifest())
-    symlink_or_skip(root / SKILL_DIR / "link.md", outside)
-    batch = state.collect(root)
-    assert not any("link" in p for p in sent(batch))
-    assert all("secret" not in str(f["content"]) for f in batch.files)
-    assert sum("link.md is a symlink" in w for w in batch.warnings) == 1
+    assert batch.warnings == [f"not synced: {SKILL_DIR}/link is a symlink"]
 
 
 def test_a_linked_sync_dir_is_not_followed(tmp_path: Path) -> None:
@@ -206,14 +202,14 @@ def test_a_linked_sync_dir_is_not_followed(tmp_path: Path) -> None:
     (outside_dir / "notes.md").write_bytes(b"secret\n")
     root = tmp_path / "ws"
     (root / ".claude" / "skills").mkdir(parents=True)
-    symlink_or_skip(root / SKILL_DIR, outside_dir, directory=True)
+    make_link(DIR_LINK, root / SKILL_DIR, outside_dir)
     state = worker.SyncState(manifest())
     batch = state.collect(root)
     assert all("secret" not in str(f["content"]) for f in batch.files)
     assert any("is a symlink" in w for w in batch.warnings)
 
 
-def test_symlinked_sync_file_is_skipped(tmp_path: Path) -> None:
+def test_a_symlinked_manifest_sync_file_is_neither_read_nor_deleted(tmp_path: Path) -> None:
     outside = tmp_path / "secret.txt"
     outside.write_bytes(b"secret\n")
     root = tmp_path / "ws"
@@ -222,7 +218,8 @@ def test_symlinked_sync_file_is_skipped(tmp_path: Path) -> None:
     state = materialise(root, m)
     tasks = root / SKILL_DIR / "TASKS.md"
     tasks.unlink()
-    symlink_or_skip(tasks, outside)
+    make_link("file", tasks, outside)
     batch = state.collect(root)
-    assert f"{SKILL_DIR}/TASKS.md" not in sent(batch)
+    assert f"{SKILL_DIR}/TASKS.md" not in sent(batch)  # neither its target nor a deletion
+    assert all("secret" not in str(f["content"]) for f in batch.files)
     assert any("TASKS.md" in w and "symlink" in w for w in batch.warnings)

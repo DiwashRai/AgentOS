@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 import worker
-from worker_tests.worker_support import FakeServer, error
+from worker_tests.worker_support import FakeServer, error, eventually
 
 
 def _sink(server: FakeServer) -> worker.EventSink:
@@ -98,10 +98,13 @@ def test_a_rejected_post_is_retried_with_the_same_seqs(server: FakeServer) -> No
 def test_empty_heartbeat_posts(server: FakeServer) -> None:
     sink = _sink(server)
     sink.start()
-    time.sleep(0.7)  # HEARTBEAT_S is 0.2 in tests
-    sink.close()
-    bodies = server.bodies("/api/worker/events")
-    assert len([b for b in bodies if b["events"] == []]) >= 2
+    try:
+        eventually(
+            lambda: sum(b["events"] == [] for b in server.bodies("/api/worker/events")) >= 2,
+            "two empty heartbeat posts",
+        )
+    finally:
+        sink.close()
 
 
 def test_cancel_flag_from_the_server(server: FakeServer) -> None:
@@ -124,23 +127,23 @@ def test_run_gone_stops_the_flusher(server: FakeServer) -> None:
 
 
 def test_other_4xx_drops_the_batch_and_warns_once(server: FakeServer) -> None:
-    answers = [error(422, "validation_error")]
+    poison = {"bad", "also dropped"}
     rejected: list[Any] = []
 
     def hook(path: str, body: Any) -> tuple[int, Any] | None:
-        if answers and body["events"]:
+        if any(e["data"].get("text") in poison for e in body["events"]):
             rejected.append(body)
-            return answers.pop(0)
+            return error(422, "validation_error")
         return None
 
     server.hook = hook
     sink = _sink(server)
     sink.start()
+    # Each wait lets the previous post finish, so every log line goes out in its own batch.
     sink.log(None, "system", "bad")
-    time.sleep(0.3)  # rejected, then the warning goes out in the next post
-    answers.append(error(422, "validation_error"))
+    eventually(lambda: server.warnings() != [], "the warning about the first rejected batch")
     sink.log(None, "system", "also dropped")
-    time.sleep(0.3)
+    eventually(lambda: len(rejected) == 2, "the second rejected batch")
     sink.log(None, "system", "fine")
     sink.close()
     assert len(rejected) == 2

@@ -102,21 +102,14 @@ def test_interrupt_kills_the_tree(tmp_path: Path, reason: str) -> None:
     assert time.monotonic() - started < 10
 
 
-def test_long_lines_are_cut_and_flagged(tmp_path: Path) -> None:
-    result, lines = run(tmp_path, "long=100", "print=next", caps=(10, 10))
+@pytest.mark.parametrize(("length", "truncated"), [(10, False), (11, True), (100, True)])
+def test_long_lines_are_cut_and_flagged(tmp_path: Path, length: int, truncated: bool) -> None:
+    result, lines = run(tmp_path, f"long={length}", caps=(10, 10))
     assert result.exit_code == 0
-    assert lines == [
-        ("stdout", "x" * 10, True),
+    assert lines == [  # the cut-off rest is dropped, not emitted as further lines
+        ("stdout", "x" * min(length, 10), truncated),
         ("stdout", "after", False),
-        ("stdout", "next", False),
     ]
-
-
-@pytest.mark.parametrize(("length", "truncated"), [(10, False), (11, True)])
-def test_line_cap_boundary(tmp_path: Path, length: int, truncated: bool) -> None:
-    _, lines = run(tmp_path, f"long={length}", caps=(10, 10))
-    assert lines[0] == ("stdout", "x" * min(length, 10), truncated)
-    assert lines[1] == ("stdout", "after", False)
 
 
 def test_missing_program_is_an_error(tmp_path: Path) -> None:
@@ -134,7 +127,8 @@ def test_missing_program_is_an_error(tmp_path: Path) -> None:
     assert result.exit_code is None
 
 
-@pytest.mark.parametrize("char", sorted(worker.CMD_UNSAFE))
+# Characters cmd.exe interprets in a .cmd/.bat argument instead of passing them through literally.
+@pytest.mark.parametrize("char", ["&", "|", "<", ">", "^", "%", "!", '"', "\r", "\n"])
 def test_cmd_guard_rejects_unsafe_characters(char: str) -> None:
     error = worker.cmd_guard_error(r"C:\tools\claude.CMD", ["claude", "-p", f"a{char}b"])
     assert error == "use prompt_via=stdin or a native binary"
@@ -142,7 +136,8 @@ def test_cmd_guard_rejects_unsafe_characters(char: str) -> None:
 
 def test_cmd_guard_allows_native_binaries_and_safe_args() -> None:
     assert worker.cmd_guard_error(r"C:\tools\claude.exe", ["claude", "a&b\n"]) is None
-    assert worker.cmd_guard_error(r"C:\tools\claude.bat", ["claude", "-p", "--model", "x"]) is None
+    safe = ["claude", "-p", "--model=claude-haiku-5-5", r"C:\work dir\a.md", "it's (fine) 100$"]
+    assert worker.cmd_guard_error(r"C:\tools\claude.bat", safe) is None
 
 
 def test_shell_prefix_defaults_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
