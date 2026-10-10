@@ -1,0 +1,252 @@
+[
+  {
+    "path": "AGENTS.md",
+    "ok": true
+  },
+  {
+    "path": ".claude/skills/context-aos-1-x/SKILL.md",
+    "ok": true
+  },
+  {
+    "path": "out/report v2.md",
+    "ok": true
+  },
+  {
+    "path": "a/b c/d@e+f-g_h.txt",
+    "ok": true
+  },
+  {
+    "path": ".gitignore",
+    "ok": true
+  },
+  {
+    "path": ".github/workflows/ci.yml",
+    "ok": true
+  },
+  {
+    "path": ".hidden",
+    "ok": true
+  },
+  {
+    "path": "a.git/x",
+    "ok": true
+  },
+  {
+    "path": "CONSOLE.md",
+    "ok": true
+  },
+  {
+    "path": "COM10",
+    "ok": true
+  },
+  {
+    "path": "LPT",
+    "ok": true
+  },
+  {
+    "path": "nul-device",
+    "ok": true
+  },
+  {
+    "path": "CONx.txt",
+    "ok": true
+  },
+  {
+    "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "ok": true
+  },
+  {
+    "path": "a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/b",
+    "ok": true
+  },
+  {
+    "path": "",
+    "ok": false,
+    "why": "empty"
+  },
+  {
+    "path": "/etc/passwd",
+    "ok": false,
+    "why": "absolute"
+  },
+  {
+    "path": "C:/x.md",
+    "ok": false,
+    "why": "drive"
+  },
+  {
+    "path": "C:\\x.md",
+    "ok": false,
+    "why": "drive with a backslash"
+  },
+  {
+    "path": "a:b.md",
+    "ok": false,
+    "why": "colon (NTFS stream)"
+  },
+  {
+    "path": "\\\\server\\share\\x.md",
+    "ok": false,
+    "why": "UNC"
+  },
+  {
+    "path": "a\\b.md",
+    "ok": false,
+    "why": "backslash"
+  },
+  {
+    "path": "a//b",
+    "ok": false,
+    "why": "empty segment"
+  },
+  {
+    "path": "a/",
+    "ok": false,
+    "why": "trailing slash"
+  },
+  {
+    "path": "..",
+    "ok": false,
+    "why": "traversal"
+  },
+  {
+    "path": "../x",
+    "ok": false,
+    "why": "traversal"
+  },
+  {
+    "path": "a/../b",
+    "ok": false,
+    "why": "traversal"
+  },
+  {
+    "path": ".",
+    "ok": false,
+    "why": "dot segment"
+  },
+  {
+    "path": "a/./b",
+    "ok": false,
+    "why": "dot segment"
+  },
+  {
+    "path": ".git",
+    "ok": false,
+    "why": ".git"
+  },
+  {
+    "path": ".git/config",
+    "ok": false,
+    "why": ".git"
+  },
+  {
+    "path": ".GIT/config",
+    "ok": false,
+    "why": ".git, case variant"
+  },
+  {
+    "path": "sub/.Git/hooks/pre-commit",
+    "ok": false,
+    "why": ".git, nested"
+  },
+  {
+    "path": "CON",
+    "ok": false,
+    "why": "reserved"
+  },
+  {
+    "path": "con.txt",
+    "ok": false,
+    "why": "reserved, case variant with an extension"
+  },
+  {
+    "path": "dir/Nul.tar.gz",
+    "ok": false,
+    "why": "reserved, nested, double extension"
+  },
+  {
+    "path": "COM1",
+    "ok": false,
+    "why": "reserved"
+  },
+  {
+    "path": "lpt9.md",
+    "ok": false,
+    "why": "reserved"
+  },
+  {
+    "path": "aux",
+    "ok": false,
+    "why": "reserved"
+  },
+  {
+    "path": "name.",
+    "ok": false,
+    "why": "trailing dot"
+  },
+  {
+    "path": "name ",
+    "ok": false,
+    "why": "trailing space"
+  },
+  {
+    "path": "dir./x",
+    "ok": false,
+    "why": "trailing dot in a directory"
+  },
+  {
+    "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "ok": false,
+    "why": "too long"
+  },
+  {
+    "path": "a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/bc",
+    "ok": false,
+    "why": "too long, nested"
+  },
+  {
+    "path": "caf\u00e9.md",
+    "ok": false,
+    "why": "non-ASCII"
+  },
+  {
+    "path": "cafe\u0301.md",
+    "ok": false,
+    "why": "non-NFC"
+  },
+  {
+    "path": "COM\u00b9",
+    "ok": false,
+    "why": "non-ASCII (Windows 11 reserves superscript digits)"
+  },
+  {
+    "path": "tab\tname",
+    "ok": false,
+    "why": "control character"
+  },
+  {
+    "path": "new\nline",
+    "ok": false,
+    "why": "newline"
+  },
+  {
+    "path": "trailing-newline.md\n",
+    "ok": false,
+    "why": "trailing newline"
+  },
+  {
+    "path": "star*.md",
+    "ok": false,
+    "why": "wildcard"
+  },
+  {
+    "path": "CON .txt",
+    "ok": false,
+    "why": "reserved: Windows ignores spaces before the extension"
+  },
+  {
+    "path": "\u212a.md",
+    "ok": false,
+    "why": "KELVIN SIGN: rejected, never NFC-normalised to 'K.md'"
+  }
+]

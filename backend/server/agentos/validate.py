@@ -8,7 +8,6 @@ the value to store.
 from __future__ import annotations
 
 import re
-import unicodedata
 from collections.abc import Iterable
 from urllib.parse import urlsplit
 
@@ -52,13 +51,13 @@ _RESERVED = frozenset(
 
 
 def validate_path(path: str, field: str = "path") -> str:
-    """Return the path, NFC-normalised, or raise 422.
+    """Return the path unchanged, or raise 422.
 
-    Normalise-then-validate: the input is NFC-normalised first. Segments are ASCII-only, so in
-    practice any non-ASCII (NFC or not) is rejected; normalising only means the error is about
-    the character, not about the normal form.
+    Segments are ASCII-only, so no Unicode normalisation is needed. Normalising first would
+    silently rename the few characters NFC maps to ASCII (U+212A KELVIN SIGN → 'K'), which the
+    worker rejects; fixtures/path_cases.json keeps the two validators in step.
     """
-    p = unicodedata.normalize("NFC", path)
+    p = path
     if not p:
         raise _invalid(field, "must not be empty")
     if len(p) > MAX_PATH_CHARS:
@@ -76,7 +75,8 @@ def validate_path(path: str, field: str = "path") -> str:
             raise _invalid(field, f"segment {seg!r} must not end in '.' or a space")
         if seg.lower() == ".git":
             raise _invalid(field, "'.git' is not allowed")
-        if seg.split(".", 1)[0].upper() in _RESERVED:
+        # Windows ignores spaces before the extension: "CON .txt" is CON.
+        if seg.split(".", 1)[0].rstrip(" ").upper() in _RESERVED:
             raise _invalid(field, f"segment {seg!r} is a reserved Windows name")
     return p
 

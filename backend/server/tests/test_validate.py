@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from agentos.errors import ApiError
@@ -19,6 +23,8 @@ from agentos.validate import (
     validate_repo_url,
 )
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
 
 def _rejects(fn: object, value: str, code: str = "validation_error", status: int = 422) -> str:
     assert callable(fn)
@@ -31,64 +37,19 @@ def _rejects(fn: object, value: str, code: str = "validation_error", status: int
 # ------------------------------------------------------------------ paths
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "AGENTS.md",
-        ".claude/skills/context-aos-1-x/SKILL.md",
-        "a/b c/d@e+f-g_h.txt",
-        ".gitignore",
-        ".github/workflows/ci.yml",
-        "CONSOLE.md",  # only exact reserved stems are reserved
-        "x" * 255,
-    ],
-)
-def test_valid_paths(path: str) -> None:
-    assert validate_path(path) == path
+def _path_cases() -> list[Any]:
+    """fixtures/path_cases.json, shared with the worker suite (worker_tests/test_worker_paths.py),
+    so the two validators can't drift apart."""
+    cases = json.loads((FIXTURES / "path_cases.json").read_text(encoding="utf-8"))
+    return [pytest.param(c["path"], c["ok"], id=repr(c["path"])[:40]) for c in cases]
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "",
-        "/etc/passwd",
-        "a//b",
-        "a/",
-        "../x",
-        "a/../b",
-        ".",
-        "a/./b",
-        "a\\b",
-        "C:/x",
-        "a:b",
-        ".git/config",
-        ".GIT/config",
-        "sub/.Git",
-        "CON",
-        "con.txt",
-        "a/Nul.tar.gz",
-        "COM1",
-        "lpt9.md",
-        "aux",
-        "name.",
-        "name ",
-        "x" * 256,
-        "caf\u00e9.md",  # NFC but non-ASCII
-        "cafe\u0301.md",  # non-NFC
-        "tab\tname",
-        "new\nline",
-        "trailing-newline.md\n",
-        "star*.md",
-    ],
-)
-def test_invalid_paths(path: str) -> None:
-    _rejects(validate_path, path)
-
-
-def test_path_is_nfc_normalised_before_checks() -> None:
-    # NFC changes nothing for ASCII, and non-ASCII is rejected either way: the message names the
-    # normalised segment.
-    assert "caf\u00e9" in _rejects(validate_path, "cafe\u0301.md")
+@pytest.mark.parametrize(("path", "ok"), _path_cases())
+def test_path_rules(path: str, ok: bool) -> None:
+    if ok:
+        assert validate_path(path) == path
+    else:
+        _rejects(validate_path, path)
 
 
 def test_unique_paths_case_insensitive() -> None:
