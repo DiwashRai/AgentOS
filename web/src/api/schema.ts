@@ -160,6 +160,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Exactly what was sent to the worker (prompts + files). Can be large; fetch on demand.
+         */
+        get: operations["get_manifest_api_runs__run_id__manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stream": {
         parameters: {
             query?: never;
@@ -439,7 +459,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/worker.py": {
+    "/api/worker/worker.py": {
         parameters: {
             query?: never;
             header?: never;
@@ -447,7 +467,7 @@ export interface paths {
             cookie?: never;
         };
         /** Worker Source */
-        get: operations["worker_source_worker_py_get"];
+        get: operations["worker_source_api_worker_worker_py_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -557,8 +577,9 @@ export interface components {
         };
         /** FileContent */
         FileContent: {
-            /** Author */
-            author: string | null;
+            author: components["schemas"]["Person"] | null;
+            /** Author Run Id */
+            author_run_id: number | null;
             /** Content */
             content: string;
             /**
@@ -593,8 +614,9 @@ export interface components {
         };
         /** FileInfo */
         FileInfo: {
-            /** Author */
-            author: string | null;
+            author: components["schemas"]["Person"] | null;
+            /** Author Run Id */
+            author_run_id: number | null;
             /**
              * Mode
              * @enum {string}
@@ -614,8 +636,9 @@ export interface components {
         };
         /** FileVersionInfo */
         FileVersionInfo: {
-            /** Author */
-            author: string | null;
+            author: components["schemas"]["Person"] | null;
+            /** Author Run Id */
+            author_run_id: number | null;
             /**
              * Created At
              * Format: date-time
@@ -666,6 +689,11 @@ export interface components {
             stream: "stdout" | "stderr" | "system";
             /** Text */
             text: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** LogEvent */
         LogEvent: {
@@ -801,13 +829,16 @@ export interface components {
          * NowInfo
          * @description Server-written "Now / Next" line. The UI renders it; it never derives it.
          *
-         *     e.g. actor="Implement", text="Run API test suite", run_id=42  → "Implement · run #42 · …"
-         *          actor=None, text="approve the plan"                       → "Waiting on you · …"
-         *          actor="Sam Lee", text="approve the plan"                   → "Waiting on Sam Lee · …"
+         *     `actor` is a non-human label only (the running stage, later "CI" or "Queue"). `person` is who
+         *     the ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.
+         *     e.g. actor="Implement", run_id=42, text="Run API test suite" → "Implement · run #42 · …"
+         *          person=None (needs_you), text="review plan and continue" → "Waiting on you · …"
+         *          person=Sam (waiting), text="review plan and continue"   → "Waiting on Sam Lee · …"
          */
         NowInfo: {
             /** Actor */
             actor: string | null;
+            person: components["schemas"]["Person"] | null;
             progress: components["schemas"]["TaskProgress"] | null;
             /** Run Id */
             run_id: number | null;
@@ -881,8 +912,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Created By */
-            created_by: string | null;
+            created_by: components["schemas"]["Person"] | null;
             /** Error */
             error: string | null;
             /** Finished At */
@@ -893,7 +923,6 @@ export interface components {
             id: number;
             /** Launch Ref */
             launch_ref: string | null;
-            manifest: components["schemas"]["Manifest"] | null;
             /** Stage Ids */
             stage_ids: string[];
             /** Stage Runs */
@@ -917,8 +946,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Created By */
-            created_by: string | null;
+            created_by: components["schemas"]["Person"] | null;
             /** Error */
             error: string | null;
             /** Finished At */
@@ -1748,6 +1776,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"])[];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_manifest_api_runs__run_id__manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Manifest"];
                 };
             };
             /** @description Client error */
@@ -2711,7 +2779,7 @@ export interface operations {
             };
         };
     };
-    worker_source_worker_py_get: {
+    worker_source_api_worker_worker_py_get: {
         parameters: {
             query?: never;
             header?: never;

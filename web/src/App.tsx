@@ -1,9 +1,9 @@
 // Section 0 probe: proves the generated types, CSRF client and stub API work end to end.
 // The frontend session replaces this with the real shell, board and ticket view.
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { api, ApiError, unwrap, type Schemas } from "./api/client";
+import type { Schemas } from "./api/client";
+import { useLogin, useMe, useTickets } from "./api/queries";
 
 const GROUPS: Schemas["TicketSummary"]["attention"][] = [
   "needs_you",
@@ -15,17 +15,13 @@ const GROUPS: Schemas["TicketSummary"]["attention"][] = [
 ];
 
 function Login() {
-  const queryClient = useQueryClient();
   const [username, setUsername] = useState("dev");
-  const login = useMutation({
-    mutationFn: () => unwrap(api.POST("/api/auth/login", { body: { username } })),
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
+  const login = useLogin();
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        login.mutate();
+        login.mutate(username);
       }}
     >
       <label>
@@ -44,10 +40,7 @@ function Login() {
 }
 
 function Board() {
-  const tickets = useQuery({
-    queryKey: ["tickets"],
-    queryFn: () => unwrap(api.GET("/api/tickets")),
-  });
+  const tickets = useTickets();
   if (tickets.isPending) return <p>Loading…</p>;
   if (tickets.isError) return <p role="alert">{tickets.error.message}</p>;
   return (
@@ -71,17 +64,7 @@ function Board() {
 }
 
 export function App() {
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: async () => {
-      try {
-        return await unwrap(api.GET("/api/me"));
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 401) return null;
-        throw e;
-      }
-    },
-  });
+  const me = useMe();
   if (me.isPending) return <p>Loading…</p>;
   if (me.isError) return <p role="alert">{me.error.message}</p>;
   return (

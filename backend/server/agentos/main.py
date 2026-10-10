@@ -9,8 +9,8 @@ from fastapi.openapi.utils import get_openapi
 
 from agentos.auth.routes import router as auth_router
 from agentos.csrf import install_csrf_check
-from agentos.errors import install_error_handlers
 from agentos.files.routes import router as files_router
+from agentos.http_errors import install_error_handlers
 from agentos.meta import router as meta_router
 from agentos.models import StreamEvent
 from agentos.runs.routes import router as runs_router

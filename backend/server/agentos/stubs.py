@@ -18,7 +18,6 @@ from agentos.models import (
     ChatMessage,
     EmptyData,
     FileContent,
-    FileEntry,
     FileInfo,
     FileVersionInfo,
     LogData,
@@ -44,7 +43,6 @@ from agentos.models import (
     RunStatus,
     RunSummary,
     SourceLink,
-    Stage,
     StageFinishedData,
     StageFinishedEvent,
     StageRunInfo,
@@ -58,6 +56,13 @@ from agentos.models import (
     TicketSummary,
     User,
 )
+from agentos.pipeline.scaffold import (
+    DEFAULT_SCAFFOLD,
+    default_pipeline,
+    repo_name,
+    skill_dir,
+    slugify,
+)
 
 NOW = datetime.now(UTC)
 PHASES: tuple[Phase, ...] = get_args(Phase)
@@ -67,103 +72,6 @@ ACTIVE: tuple[RunStatus, ...] = ("queued", "dispatched", "running")
 def ago(**delta: float) -> datetime:
     return NOW - timedelta(**delta)
 
-
-# ------------------------------------------------------------------ template
-
-PROMPTS = {
-    "plan": (
-        "You are planning {{ticket.key}}: {{ticket.title}}. Read {{paths.skill_md}} and the "
-        "repository. Do not change code. Write a step-by-step plan to {{paths.tasks_md}} as a "
-        "markdown checklist (`- [ ] ...`). Append non-obvious findings to {{paths.learnings}}."
-    ),
-    "implement": (
-        "Implement {{ticket.key}}. Objective: {{paths.skill_md}}. Plan: {{paths.tasks_md}}. Work "
-        "through unchecked items in order and tick each (`- [x]`) as soon as it is done. Run the "
-        "relevant tests. Append learnings to {{paths.learnings}}."
-    ),
-    "review": (
-        "Review the work for {{ticket.key}}{% if ticket.branch %} on this branch against "
-        "origin/{{ticket.base_branch}}{% endif %}, checking it against {{paths.skill_md}} and "
-        "{{paths.tasks_md}}. Fix clear defects directly. Write remaining findings to "
-        "{{paths.skill_dir}}/REVIEW.md."
-    ),
-    "open-pr": (
-        "Open a pull request from {{ticket.branch}} into {{ticket.base_branch}}, or update the "
-        "existing one, using the gh CLI. Title: `{{ticket.key}}: {{ticket.title}}`. Body: a "
-        "summary of the change plus the completed items from {{paths.tasks_md}}."
-    ),
-}
-
-
-def default_pipeline(*, lint: bool = False) -> Pipeline:
-    return Pipeline(
-        stages=[
-            Stage(
-                id="plan",
-                name="Plan",
-                kind="agent",
-                phase="plan",
-                gate_after=True,
-                prompt=PROMPTS["plan"],
-            ),
-            Stage(
-                id="implement",
-                name="Implement",
-                kind="agent",
-                phase="build",
-                prompt=PROMPTS["implement"],
-            ),
-            Stage(
-                id="lint",
-                name="Lint",
-                kind="shell",
-                phase="verify",
-                enabled=lint,
-                command="npm run lint" if lint else "",
-            ),
-            Stage(
-                id="review",
-                name="Review",
-                kind="agent",
-                phase="review",
-                prompt=PROMPTS["review"],
-            ),
-            Stage(
-                id="open-pr",
-                name="Open PR",
-                kind="agent",
-                phase="review",
-                requires_repo=True,
-                prompt=PROMPTS["open-pr"],
-            ),
-        ]
-    )
-
-
-DEFAULT_SCAFFOLD = [
-    FileEntry(
-        path="{{paths.skill_md}}",
-        content=(
-            "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
-            "ticket.key ~ ' (' ~ ticket.title ~ '). Use when working on ' ~ ticket.key ~ '.') "
-            "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n## Objective\n"
-            "{{ticket.description}}\n"
-        ),
-    ),
-    FileEntry(path="{{paths.tasks_md}}", content="# Tasks\n"),
-    FileEntry(path="{{paths.learnings}}", content=""),
-    FileEntry(path="{{paths.swarm}}", content=""),
-    FileEntry(
-        path="AGENTS.md",
-        mode="block",
-        content=(
-            "Working on {{ticket.key}}. Read {{paths.skill_md}} first; the plan is "
-            "{{paths.tasks_md}}. Do not run git commit or push; AgentOS commits and pushes "
-            "after each stage."
-        ),
-    ),
-    FileEntry(path="CLAUDE.md", mode="block", content="@AGENTS.md"),
-]
 
 # ------------------------------------------------------------------ people
 
@@ -204,27 +112,12 @@ ME_P = person(1)
 SAM_P = person(2)
 
 
-def slugify(title: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return slug[:40].strip("-") or "ticket"
-
-
-def skill_dir(key: str, slug: str) -> str:
-    return f".claude/skills/context-{key.lower()}-{slug}"
-
-
-def repo_name(url: str | None) -> str | None:
-    if not url:
-        return None
-    return url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git") or None
-
-
 # ------------------------------------------------------------------ store
 
 
 class _Version:
     def __init__(
-        self, content: str | None, mode: Mode, author: str | None, created_at: datetime
+        self, content: str | None, mode: Mode, author: Person | None, created_at: datetime
     ) -> None:
         self.content = content
         self.mode = mode
@@ -240,6 +133,7 @@ class StubStore:
         self.chat: dict[str, list[ChatMessage]] = {}
         self.runs: dict[int, RunDetail] = {}
         self.events: dict[int, list[RunEvent]] = {}
+        self.manifests: dict[int, Manifest] = {}
         self.template = Template(pipeline=default_pipeline(), scaffold=DEFAULT_SCAFFOLD, version=1)
         self.next_ticket = 8
         self.next_run = 1
@@ -331,37 +225,44 @@ class StubStore:
     def _now(self, t: TicketDetail, run: RunDetail | None) -> NowInfo:
         run_id = run.id if run else None
         names = {s.id: s.name for s in t.pipeline.stages}
+
+        def info(
+            text: str,
+            *,
+            actor: str | None = None,
+            person: Person | None = None,
+            rid: int | None = run_id,
+            progress: TaskProgress | None = None,
+        ) -> NowInfo:
+            return NowInfo(actor=actor, person=person, text=text, run_id=rid, progress=progress)
+
         if t.attention == "done":
-            return NowInfo(actor=None, text="done", run_id=run_id, progress=t.tasks)
+            return info("done", progress=t.tasks)
         if t.attention == "up_next":
-            return NowInfo(
-                actor=None, text="add context, then dispatch", run_id=None, progress=None
-            )
+            return info("add context, then dispatch", rid=None)
         if run is None:  # unreachable: every other attention group has a run
-            return NowInfo(actor=None, text="", run_id=None, progress=None)
+            return info("", rid=None)
         if t.attention == "moving":
             if run.status != "running":
-                return NowInfo(actor=None, text="queued for a runner", run_id=run_id, progress=None)
+                return info("queued for a runner")
             stage = next((sr for sr in run.stage_runs if sr.status == "running"), None)
-            actor = stage.name if stage else None
-            return NowInfo(
-                actor=actor, text=self._next_task(t) or "working", run_id=run_id, progress=t.tasks
+            return info(
+                self._next_task(t) or "working",
+                actor=stage.name if stage else None,
+                progress=t.tasks,
             )
         if t.attention == "stuck":
             failed = next(
                 (sr for sr in run.stage_runs if sr.status in ("failed", "cancelled")), None
             )
             what = f"{failed.name} {failed.status}" if failed else f"run {run.status}"
-            return NowInfo(
-                actor=None, text=f"{what}: retry or adjust", run_id=run_id, progress=None
-            )
+            return info(f"{what}: retry or adjust")
         text = (
             f"review {names[run.stage_ids[-1]].lower()} and continue"
             if run.status == "gated"
             else "review the result and mark done"
         )
-        actor = t.owner.display_name if t.attention == "waiting" and t.owner else None
-        return NowInfo(actor=actor, text=text, run_id=run_id, progress=t.tasks)
+        return info(text, person=t.owner if t.attention == "waiting" else None, progress=t.tasks)
 
     def _next_task(self, t: TicketDetail) -> str | None:
         path = f"{skill_dir(t.key, t.slug)}/TASKS.md"
@@ -415,7 +316,7 @@ class StubStore:
                     RailStep(stage_id=s.id, name=s.name, phase=s.phase, state=st)
                     for s, st in zip(enabled, states, strict=True)
                 ],
-                "now": NowInfo(actor=None, text="", run_id=None, progress=None),
+                "now": NowInfo(actor=None, person=None, text="", run_id=None, progress=None),
                 "tasks": None,
                 "chat_count": 0,
                 "latest_run": None,
@@ -481,7 +382,7 @@ class StubStore:
             status=status,
             from_stage=stages[0][0],
             stage_ids=[s for s, _ in stages],
-            created_by=ME.display_name,
+            created_by=ME_P,
             created_at=started,
             started_at=started,
             finished_at=finished,
@@ -505,9 +406,9 @@ class StubStore:
                 )
                 for i, (sid, st) in enumerate(stages)
             ],
-            manifest=self._manifest(run_id, ticket, [s for s, _ in stages]),
         )
         self.runs[run_id] = run
+        self.manifests[run_id] = self._manifest(run_id, ticket, [s for s, _ in stages])
         self.events[run_id] = self._events(run)
         self._sync_latest(run)
         ticket.active_run_id = run_id if status in ACTIVE else None
@@ -800,6 +701,7 @@ class StubStore:
             version=len(versions),
             size=len((v.content or "").encode()),
             author=v.author,
+            author_run_id=None,
             updated_at=v.created_at,
         )
 
@@ -823,7 +725,7 @@ class StubStore:
             current = len(versions) if versions and versions[-1].content is not None else 0
             if base != current:
                 raise ApiError(409, "stale_version", f"{path} was changed by someone else")
-            versions.append(_Version(content, mode, ME.display_name, datetime.now(UTC)))
+            versions.append(_Version(content, mode, ME_P, datetime.now(UTC)))
             if path.endswith("/TASKS.md") and content is not None:
                 done = len(re.findall(r"^\s*- \[x\]", content, re.M | re.I))
                 todo = len(re.findall(r"^\s*- \[ \]", content, re.M))
@@ -841,6 +743,7 @@ class StubStore:
                 mode=v.mode,
                 size=len((v.content or "").encode()),
                 author=v.author,
+                author_run_id=None,
                 created_at=v.created_at,
             )
             for i, v in enumerate(versions)
@@ -899,12 +802,12 @@ class StubStore:
             run.started_at = None
             self._sync_latest(run)
             t.updated_at = datetime.now(UTC)
-            return RunSummary.model_validate(run.model_dump(exclude={"stage_runs", "manifest"}))
+            return RunSummary.model_validate(run.model_dump(exclude={"stage_runs"}))
 
     def list_runs(self, key: str) -> list[RunSummary]:
         self.get(key)
         return [
-            RunSummary.model_validate(r.model_dump(exclude={"stage_runs", "manifest"}))
+            RunSummary.model_validate(r.model_dump(exclude={"stage_runs"}))
             for r in sorted(self.runs.values(), key=lambda r: -r.id)
             if r.ticket_key == key
         ]
@@ -916,6 +819,10 @@ class StubStore:
             raise ApiError(404, "run_not_found", f"No run {run_id}")
         return run
 
+    def get_manifest(self, run_id: int) -> Manifest:
+        self.get_run(run_id)
+        return self.manifests[run_id]
+
     def cancel(self, run_id: int) -> RunSummary:
         """SPEC §8: queued/dispatched cancel at once; running waits for the worker to ack."""
         with self.lock:
@@ -925,7 +832,7 @@ class StubStore:
             elif run.status == "running" and run.cancel_requested_at is None:
                 run.cancel_requested_at = datetime.now(UTC)
                 self._sync_latest(run)
-            return RunSummary.model_validate(run.model_dump(exclude={"stage_runs", "manifest"}))
+            return RunSummary.model_validate(run.model_dump(exclude={"stage_runs"}))
 
     def settle(self) -> None:
         """STUB: pretend workers acknowledge cancels ~3 s after they are requested."""
@@ -954,7 +861,7 @@ class StubStore:
 
     def _sync_latest(self, run: RunDetail) -> None:
         self.tickets[run.ticket_key].latest_run = RunSummary.model_validate(
-            run.model_dump(exclude={"stage_runs", "manifest"})
+            run.model_dump(exclude={"stage_runs"})
         )
 
     def run_events(

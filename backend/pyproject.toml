@@ -66,16 +66,75 @@ root_package = "agentos"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Pure core has no web, db or http dependencies"
+name = "Pure core: no web, db, http or config"
 type = "forbidden"
-source_modules = ["agentos.models", "agentos.validate", "agentos.pipeline"]
-forbidden_modules = ["fastapi", "starlette", "httpx", "uvicorn", "agentos.db"]
+source_modules = ["agentos.models", "agentos.validate", "agentos.pipeline", "agentos.*.board"]
+forbidden_modules = ["fastapi", "starlette", "uvicorn", "httpx", "sqlite3", "agentos.db", "agentos.config"]
+broken_contract_guidance = "Pure modules take plain values as arguments. Load data in a service and pass it in."
 
 [[tool.importlinter.contracts]]
-name = "Plugins do not depend on the web layer"
+name = "Inside a feature: routes -> deps -> loops -> service -> board"
+type = "layers"
+containers = [
+    "agentos.auth", "agentos.tickets", "agentos.files", "agentos.runs",
+    "agentos.social", "agentos.templates", "agentos.worker_api",
+]
+layers = [
+    "(routes)",
+    "(deps)",
+    "(dispatcher) | (reaper) | (comment_sync)",
+    "(service)",
+    "(board)",
+]
+
+[[tool.importlinter.contracts]]
+name = "The HTTP layer reaches the database only through services"
+type = "forbidden"
+source_modules = ["agentos.*.routes", "agentos.*.deps", "agentos.meta", "agentos.stream"]
+forbidden_modules = ["agentos.db", "sqlite3"]
+allow_indirect_imports = true
+broken_contract_guidance = "Routes parse input, call one service function and return its result. Services own transactions (db.tx())."
+
+[[tool.importlinter.contracts]]
+name = "Only agentos.db imports sqlite3"
+type = "protected"
+protected_modules = ["sqlite3"]
+allowed_importers = ["agentos.db"]
+broken_contract_guidance = "Use agentos.db's re-exports (Conn, IntegrityError, tx). Keeps a Postgres swap to one module."
+
+[[tool.importlinter.contracts]]
+name = "Only the HTTP layer imports FastAPI/Starlette"
+type = "forbidden"
+source_modules = [
+    "agentos.*.service", "agentos.*.board", "agentos.*.dispatcher", "agentos.*.reaper",
+    "agentos.*.comment_sync", "agentos.db", "agentos.config", "agentos.broker", "agentos.errors",
+    "agentos.launchers", "agentos.sources",
+]
+forbidden_modules = ["fastapi", "starlette", "uvicorn"]
+broken_contract_guidance = "Raise agentos.errors.ApiError (pure). Translation to HTTP responses lives in agentos.http_errors."
+
+[[tool.importlinter.contracts]]
+name = "Plugins are adapters: no db, services or HTTP layer"
 type = "forbidden"
 source_modules = ["agentos.launchers", "agentos.sources"]
-forbidden_modules = ["fastapi", "starlette"]
+forbidden_modules = [
+    "fastapi", "starlette", "sqlite3", "agentos.db", "agentos.*.service", "agentos.*.routes",
+    "agentos.stubs",
+]
+broken_contract_guidance = "Plugins receive what they need as arguments (the dispatcher counts active runs). A fork adds plugins without touching the schema."
+
+[[tool.importlinter.contracts]]
+name = "Only the HTTP layer reads stub data"
+type = "protected"
+protected_modules = ["agentos.stubs"]
+allowed_importers = ["agentos.*.routes", "agentos.auth.deps", "agentos.meta", "agentos.stream"]
+broken_contract_guidance = "The template seed and the slug/skill-path helpers live in agentos.pipeline.scaffold, not stubs.py. Delete this contract with stubs.py."
+
+[[tool.importlinter.contracts]]
+name = "No import cycles between agentos subpackages"
+type = "acyclic_siblings"
+ancestors = ["agentos"]
+broken_contract_guidance = "Direction: worker_api -> runs -> social -> tickets -> templates | files -> auth. To read another feature's tables, query them in your own service instead of importing upwards."
 
 [dependency-groups]
 dev = [

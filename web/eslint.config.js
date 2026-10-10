@@ -21,5 +21,26 @@ export default tseslint.config(
       "react-hooks/exhaustive-deps": "error",
     },
   },
+  {
+    // Server calls go through hooks in src/api/queries.ts, so query keys and SSE invalidation
+    // live in one place. ApiError and types may be imported anywhere.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/api/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/api/client"],
+              importNames: ["api", "unwrap"],
+              message:
+                "Call the server through hooks in src/api/queries.ts so query keys and SSE invalidation live in one place.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   { files: ["**/*.js"], ...tseslint.configs.disableTypeChecked },
 );

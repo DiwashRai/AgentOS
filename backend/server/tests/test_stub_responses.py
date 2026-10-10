@@ -15,6 +15,7 @@ from agentos.models import (
     FileContent,
     FileInfo,
     FileVersionInfo,
+    Manifest,
     Me,
     Person,
     RunDetail,
@@ -58,6 +59,7 @@ def test_every_stub_get_matches_its_model(client: TestClient) -> None:
         check(client, f"/api/tickets/{key}/chat", list[ChatMessage])
         for run in check(client, f"/api/tickets/{key}/runs", list[RunSummary]):
             check(client, f"/api/runs/{run.id}", RunDetail)
+            check(client, f"/api/runs/{run.id}/manifest", Manifest)
             check(client, f"/api/runs/{run.id}/events", list[RunEvent])
 
 
@@ -78,7 +80,7 @@ def test_attention_depends_on_owner(client: TestClient) -> None:
     by_key = {t["key"]: t for t in client.get("/api/tickets").json()}
     assert by_key["AOS-4"]["attention"] == "needs_you"  # gated, owned by the viewer
     assert by_key["AOS-6"]["attention"] == "waiting"  # gated, owned by someone else
-    assert by_key["AOS-6"]["now"]["actor"] == "Sam Lee"
+    assert by_key["AOS-6"]["now"]["person"]["display_name"] == "Sam Lee"
     response = client.patch("/api/tickets/AOS-6", json={"owner_id": None}, headers=CSRF)
     assert response.json()["attention"] == "needs_you"  # unowned → anyone can act
 

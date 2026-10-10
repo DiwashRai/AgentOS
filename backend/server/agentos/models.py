@@ -235,12 +235,15 @@ class TaskProgress(ApiModel):
 class NowInfo(ApiModel):
     """Server-written "Now / Next" line. The UI renders it; it never derives it.
 
-    e.g. actor="Implement", text="Run API test suite", run_id=42  → "Implement · run #42 · …"
-         actor=None, text="approve the plan"                       → "Waiting on you · …"
-         actor="Sam Lee", text="approve the plan"                   → "Waiting on Sam Lee · …"
+    `actor` is a non-human label only (the running stage, later "CI" or "Queue"). `person` is who
+    the ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.
+    e.g. actor="Implement", run_id=42, text="Run API test suite" → "Implement · run #42 · …"
+         person=None (needs_you), text="review plan and continue" → "Waiting on you · …"
+         person=Sam (waiting), text="review plan and continue"   → "Waiting on Sam Lee · …"
     """
 
     actor: str | None
+    person: Person | None
     text: str
     run_id: int | None
     progress: TaskProgress | None
@@ -252,7 +255,7 @@ class RunSummary(ApiModel):
     status: RunStatus
     from_stage: str
     stage_ids: list[str]
-    created_by: str | None
+    created_by: Person | None
     created_at: AwareDatetime
     started_at: AwareDatetime | None
     finished_at: AwareDatetime | None
@@ -341,7 +344,8 @@ class FileInfo(ApiModel):
     mode: Mode
     version: int
     size: int
-    author: str | None
+    author: Person | None  # a human edit
+    author_run_id: int | None  # an agent edit (synced by a run)
     updated_at: AwareDatetime
 
 
@@ -354,7 +358,8 @@ class FileVersionInfo(ApiModel):
     deleted: bool
     mode: Mode
     size: int
-    author: str | None
+    author: Person | None
+    author_run_id: int | None
     created_at: AwareDatetime
 
 
@@ -447,8 +452,8 @@ class StageRunInfo(ApiModel):
 
 
 class RunDetail(RunSummary):
+    # The manifest (can be MiBs) is served separately: GET /api/runs/{id}/manifest.
     stage_runs: list[StageRunInfo]
-    manifest: Manifest | None
 
 
 class EmptyData(ApiModel):
@@ -458,6 +463,8 @@ class EmptyData(ApiModel):
 class LogData(ApiModel):
     stream: Literal["stdout", "stderr", "system"]
     text: str
+    # True when the line exceeded max_line_bytes and was cut (it can no longer be parsed as JSON).
+    truncated: bool = False
 
 
 class StageFinishedData(ApiModel):

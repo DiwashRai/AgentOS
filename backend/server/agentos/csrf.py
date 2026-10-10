@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
 
-from agentos.errors import error_response
+from agentos.http_errors import error_response
 
 CSRF_HEADER = "x-agentos"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

@@ -11,7 +11,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     strictPort: true,
-    proxy: { "/api": backend, "/worker.py": backend },
+    proxy: { "/api": backend },
   },
   // jsdom is slow to boot; component tests opt in with `// @vitest-environment jsdom`.
   test: { environment: "node" },

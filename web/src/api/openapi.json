@@ -338,13 +338,23 @@
           "author": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Author"
+            "title": "Author Run Id"
           },
           "content": {
             "title": "Content",
@@ -382,6 +392,7 @@
           "version",
           "size",
           "author",
+          "author_run_id",
           "updated_at",
           "content"
         ],
@@ -422,13 +433,23 @@
           "author": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Author"
+            "title": "Author Run Id"
           },
           "mode": {
             "enum": [
@@ -462,6 +483,7 @@
           "version",
           "size",
           "author",
+          "author_run_id",
           "updated_at"
         ],
         "title": "FileInfo",
@@ -473,13 +495,23 @@
           "author": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Author"
+            "title": "Author Run Id"
           },
           "created_at": {
             "format": "date-time",
@@ -513,6 +545,7 @@
           "mode",
           "size",
           "author",
+          "author_run_id",
           "created_at"
         ],
         "title": "FileVersionInfo",
@@ -578,6 +611,11 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -981,7 +1019,7 @@
       },
       "NowInfo": {
         "additionalProperties": false,
-        "description": "Server-written \"Now / Next\" line. The UI renders it; it never derives it.\n\ne.g. actor=\"Implement\", text=\"Run API test suite\", run_id=42  \u2192 \"Implement \u00b7 run #42 \u00b7 \u2026\"\n     actor=None, text=\"approve the plan\"                       \u2192 \"Waiting on you \u00b7 \u2026\"\n     actor=\"Sam Lee\", text=\"approve the plan\"                   \u2192 \"Waiting on Sam Lee \u00b7 \u2026\"",
+        "description": "Server-written \"Now / Next\" line. The UI renders it; it never derives it.\n\n`actor` is a non-human label only (the running stage, later \"CI\" or \"Queue\"). `person` is who\nthe ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.\ne.g. actor=\"Implement\", run_id=42, text=\"Run API test suite\" \u2192 \"Implement \u00b7 run #42 \u00b7 \u2026\"\n     person=None (needs_you), text=\"review plan and continue\" \u2192 \"Waiting on you \u00b7 \u2026\"\n     person=Sam (waiting), text=\"review plan and continue\"   \u2192 \"Waiting on Sam Lee \u00b7 \u2026\"",
         "properties": {
           "actor": {
             "anyOf": [
@@ -993,6 +1031,16 @@
               }
             ],
             "title": "Actor"
+          },
+          "person": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "progress": {
             "anyOf": [
@@ -1022,6 +1070,7 @@
         },
         "required": [
           "actor",
+          "person",
           "text",
           "run_id",
           "progress"
@@ -1206,13 +1255,12 @@
           "created_by": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/Person"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Created By"
+            ]
           },
           "error": {
             "anyOf": [
@@ -1255,16 +1303,6 @@
               }
             ],
             "title": "Launch Ref"
-          },
-          "manifest": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Manifest"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "stage_ids": {
             "items": {
@@ -1323,8 +1361,7 @@
           "cancel_requested_at",
           "error",
           "launch_ref",
-          "stage_runs",
-          "manifest"
+          "stage_runs"
         ],
         "title": "RunDetail",
         "type": "object"
@@ -1352,13 +1389,12 @@
           "created_by": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/Person"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Created By"
+            ]
           },
           "error": {
             "anyOf": [
@@ -3278,6 +3314,59 @@
         ]
       }
     },
+    "/api/runs/{run_id}/manifest": {
+      "get": {
+        "description": "Exactly what was sent to the worker (prompts + files). Can be large; fetch on demand.",
+        "operationId": "get_manifest_api_runs__run_id__manifest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Manifest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Manifest",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
     "/api/stream": {
       "get": {
         "operationId": "stream_api_stream_get",
@@ -4632,9 +4721,9 @@
         ]
       }
     },
-    "/worker.py": {
+    "/api/worker/worker.py": {
       "get": {
-        "operationId": "worker_source_worker_py_get",
+        "operationId": "worker_source_api_worker_worker_py_get",
         "responses": {
           "200": {
             "content": {

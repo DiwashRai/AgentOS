@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from agentos import stubs
 from agentos.auth.deps import CurrentUser
 from agentos.errors import ERROR_RESPONSES
-from agentos.models import DispatchRequest, RunDetail, RunEvent, RunSummary
+from agentos.models import DispatchRequest, Manifest, RunDetail, RunEvent, RunSummary
 
 router = APIRouter(prefix="/api", tags=["runs"], responses=ERROR_RESPONSES)
 
@@ -27,6 +27,12 @@ def list_runs(key: str, _: CurrentUser) -> list[RunSummary]:
 @router.get("/runs/{run_id}")
 def get_run(run_id: int, _: CurrentUser) -> RunDetail:
     return stubs.STORE.get_run(run_id)
+
+
+@router.get("/runs/{run_id}/manifest")
+def get_manifest(run_id: int, _: CurrentUser) -> Manifest:
+    """Exactly what was sent to the worker (prompts + files). Can be large; fetch on demand."""
+    return stubs.STORE.get_manifest(run_id)
 
 
 @router.post("/runs/{run_id}/cancel")

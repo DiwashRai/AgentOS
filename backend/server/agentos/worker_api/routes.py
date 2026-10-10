@@ -27,7 +27,7 @@ def _not_yet() -> ApiError:
     return ApiError(501, "not_implemented", "Worker API is not implemented yet")
 
 
-@router.get("/worker.py", response_class=PlainTextResponse)
+@router.get("/api/worker/worker.py", response_class=PlainTextResponse)
 def worker_source() -> str:
     return WORKER_SOURCE.read_text(encoding="utf-8")
 

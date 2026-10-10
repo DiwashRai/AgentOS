@@ -72,6 +72,6 @@ def test_stub_board_covers_every_attention_group_and_state(authed: TestClient) -
 
 
 def test_worker_source_is_served(client: TestClient) -> None:
-    response = client.get("/worker.py")
+    response = client.get("/api/worker/worker.py")
     assert response.status_code == 200
     assert "PROTOCOL = 1" in response.text
