@@ -67,6 +67,21 @@ MAX_PATH_CHARS = 255
 MAX_ERROR_CHARS = 2000
 CANCELLED = "cancelled"  # stage_finished reason for a plain cancel
 
+# Tool caches nobody commits on purpose, added to .git/info/exclude so `git add -A` skips them
+# even when the target repo has no .gitignore. Exclude rules never touch tracked files, and the
+# repo's own .gitignore (including `!` negations) takes precedence.
+JUNK_PATTERNS = (
+    "__pycache__/",
+    "*.py[cod]",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    ".venv/",
+    "node_modules/",
+    ".DS_Store",
+    "Thumbs.db",
+)
+
 # Characters cmd.exe interprets; a .cmd/.bat program must not receive them in argv (SPEC §9.3).
 CMD_UNSAFE = frozenset('\r\n"&|<>^%!')
 
@@ -1303,11 +1318,14 @@ class Run:
             if r.code:
                 self.events.warn(None, f"git update-index --skip-worktree failed: {r.tail()}")
         lines = "".join(f"/{p}\n" for p in [*exclude, *self.m.sync_dirs])
+        junk = "".join(f"{p}\n" for p in JUNK_PATTERNS)
         try:
             info = self.workdir / ".git" / "info"
             info.mkdir(parents=True, exist_ok=True)
             with (info / "exclude").open("ab") as fh:
-                fh.write(f"\n# agentos context files\n{lines}".encode())
+                fh.write(
+                    f"\n# agentos context files\n{lines}# agentos build caches\n{junk}".encode()
+                )
         except OSError as exc:
             self.events.warn(None, f"cannot write .git/info/exclude: {exc}")
 

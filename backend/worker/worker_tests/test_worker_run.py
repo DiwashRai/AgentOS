@@ -146,6 +146,19 @@ def test_a_second_run_continues_the_branch(
     assert {"src/app.py", "src/review.md"} <= set(origin.tree(BRANCH))
 
 
+def test_build_caches_are_not_committed(server: FakeServer, origin: Origin, tmp_path: Path) -> None:
+    # origin's .gitignore says nothing about caches: the worker's defaults keep them out.
+    caches = ["src/__pycache__/app.cpython-311.pyc", "node_modules/x/index.js", ".DS_Store"]
+    writes = [f"write={p}:junk" for p in caches]
+    server.manifest = make_manifest(
+        [agent_stage("implement", "write=src/app.py:code", *writes)], repo_url=origin.url
+    )
+    assert run_worker(server, tmp_path / "ws") == 0
+    tree = set(origin.tree(BRANCH))
+    assert "src/app.py" in tree
+    assert not tree & set(caches)
+
+
 def test_nothing_to_commit_pushes_nothing(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
