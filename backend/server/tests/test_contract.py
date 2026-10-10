@@ -1,29 +1,15 @@
-"""Section 0 contract checks: shapes, error envelope, CSRF, stub data coverage."""
+"""Section 0 contract checks: shapes, error envelope, CSRF."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import get_args
 
-import pytest
 from fastapi.testclient import TestClient
 
-from agentos.main import create_app
-from agentos.models import Attention, Manifest, Phase, PhaseState, RailState, TicketSummary
+from agentos.models import Manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CSRF = {"X-AgentOS": "1"}
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(create_app())
-
-
-@pytest.fixture
-def authed(client: TestClient) -> TestClient:
-    assert client.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).status_code == 200
-    return client
 
 
 def test_manifest_fixture_matches_model() -> None:
@@ -63,12 +49,8 @@ def test_validation_uses_error_envelope(authed: TestClient) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def test_stub_board_covers_every_attention_group_and_state(authed: TestClient) -> None:
-    tickets = [TicketSummary.model_validate(t) for t in authed.get("/api/tickets").json()]
-    assert {t.attention for t in tickets} == set(get_args(Attention))
-    assert {s.state for t in tickets for s in t.phase_track} == set(get_args(PhaseState))
-    assert {s.state for t in tickets for s in t.rail} == set(get_args(RailState))
-    assert all([p.phase for p in t.phase_track] == list(get_args(Phase)) for t in tickets)
+# The board-coverage check (every attention group, phase and rail state) moved to
+# test_ticket_board.py::test_board_covers_every_attention_group_and_state (real tickets).
 
 
 def test_worker_source_is_served(client: TestClient) -> None:

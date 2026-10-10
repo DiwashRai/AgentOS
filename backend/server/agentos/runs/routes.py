@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from agentos import stubs
-from agentos.auth.deps import CurrentUser
+from agentos.auth.deps import CurrentUser, Writer
 from agentos.errors import ERROR_RESPONSES
 from agentos.models import DispatchRequest, Manifest, RunDetail, RunEvent, RunSummary
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api", tags=["runs"], responses=ERROR_RESPONSES)
 
 
 @router.post("/tickets/{key}/runs", status_code=201)
-def dispatch(key: str, body: DispatchRequest, _: CurrentUser) -> RunSummary:
+def dispatch(key: str, body: DispatchRequest, _: Writer) -> RunSummary:
     return stubs.STORE.dispatch(key, body.from_stage)
 
 
@@ -36,7 +36,7 @@ def get_manifest(run_id: int, _: CurrentUser) -> Manifest:
 
 
 @router.post("/runs/{run_id}/cancel")
-def cancel_run(run_id: int, _: CurrentUser) -> RunSummary:
+def cancel_run(run_id: int, _: Writer) -> RunSummary:
     return stubs.STORE.cancel(run_id)
 
 
