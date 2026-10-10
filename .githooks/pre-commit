@@ -1,6 +1,8 @@
 #!/bin/sh
 # Fast gates on the half of the repo being committed. Full gates: `just check`.
+# Generated API files (web/src/api/*) are committed by the backend and are lint/format-ignored,
+# so they never trigger the web gates.
 set -e
 staged=$(git diff --cached --name-only)
 if echo "$staged" | grep -q '^backend/'; then just pre-commit-backend; fi
-if echo "$staged" | grep -q '^web/'; then just pre-commit-web; fi
+if echo "$staged" | grep '^web/' | grep -qv '^web/src/api/'; then just pre-commit-web; fi

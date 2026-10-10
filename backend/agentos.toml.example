@@ -1,4 +1,4 @@
-# Agent runtimes: argv templates resolved by the server (SPEC §7). Copy to agentos.toml.
+# Agent runtimes: argv templates resolved by the server (SPEC §7). Copy to backend/agentos.toml.
 # Placeholders replace whole argv elements; no shell is involved.
 default_runtime = "claude"
 

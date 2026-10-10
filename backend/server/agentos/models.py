@@ -1,14 +1,16 @@
 """API and domain models. This module is the contract between server, worker and web.
 
 Pure: no web, db or http imports (enforced by import-linter).
+Rules: datetimes are timezone-aware (AwareDatetime); error codes come from ErrorCode;
+PATCH bodies reject explicit nulls except for fields that can be cleared.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 Role = Literal["viewer", "writer", "admin"]
 TicketType = Literal["feature", "bug", "improvement", "task"]
@@ -18,28 +20,101 @@ WorkspaceMode = Literal["repo", "none"]
 Lane = Literal["inbox", "running", "review", "attention", "done"]
 RunStatus = Literal["queued", "dispatched", "running", "succeeded", "gated", "failed", "cancelled"]
 StageRunStatus = Literal["pending", "running", "succeeded", "failed", "cancelled"]
+StageOutcome = Literal["succeeded", "failed", "cancelled"]
 RailState = Literal["pending", "done", "current", "failed", "stale"]
 Mode = Literal["replace", "block"]
 StageKind = Literal["agent", "shell"]
 SourceName = Literal["jira", "github", "todoist"]
-RunEventType = Literal["stage_started", "stage_finished", "log", "warning"]
 WorkerFinalStatus = Literal["completed", "failed", "cancelled"]
+
+# Every error code the API can return. The UI branches on these (e.g. 409 stale_version vs
+# run_active vs bundle_locked). Add new codes here; never invent them at the raise site.
+ErrorCode = Literal[
+    # generic
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "method_not_allowed",
+    "http_error",
+    "validation_error",
+    "internal_error",
+    "not_implemented",
+    "csrf_header_missing",
+    "rate_limited",
+    "upstream_error",
+    "too_large",
+    # auth
+    "missing_credentials",
+    "invalid_credentials",
+    "no_board_access",
+    "user_disabled",
+    # lookups
+    "ticket_not_found",
+    "file_not_found",
+    "version_not_found",
+    "run_not_found",
+    "user_not_found",
+    # conflicts
+    "stale_version",
+    "run_active",
+    "bundle_locked",
+    "already_claimed",
+    # runs & pipeline
+    "invalid_stage",
+    "invalid_pipeline",
+    "render_error",
+    "run_gone",
+]
 
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PatchModel(ApiModel):
+    """PATCH body: omitted = unchanged. Explicit null is rejected unless the field is clearable."""
+
+    clearable: ClassVar[frozenset[str]] = frozenset()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_nulls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            bad = sorted(k for k, v in data.items() if v is None and k not in cls.clearable)
+            if bad:
+                raise ValueError(f"cannot be null: {', '.join(bad)}")
+        return data
+
+
 # ------------------------------------------------------------------ errors
 
 
 class ErrorDetail(ApiModel):
-    code: str
+    code: ErrorCode
     message: str
 
 
 class ErrorBody(ApiModel):
     error: ErrorDetail
+
+
+# ------------------------------------------------------------------ app config & health
+
+
+class AppConfig(ApiModel):
+    """Public, unauthenticated: what the UI needs before login and for forms."""
+
+    auth_mode: Literal["dev", "jira"]
+    jira_deployment: Literal["cloud", "datacenter"] | None
+    key_prefix: str
+    default_repo_url: str | None
+    default_base_branch: str
+    runtimes: list[str]
+    default_runtime: str
+
+
+class Health(ApiModel):
+    status: Literal["ok"]
 
 
 # ------------------------------------------------------------------ users & auth
@@ -55,13 +130,13 @@ class Me(ApiModel):
 
 class User(Me):
     disabled: bool
-    created_at: datetime
-    last_login_at: datetime | None
+    created_at: AwareDatetime
+    last_login_at: AwareDatetime | None
 
 
-class UserPatch(ApiModel):
-    role: Role | None = None
-    disabled: bool | None = None
+class UserPatch(PatchModel):
+    role: Role | SkipJsonSchema[None] = None
+    disabled: bool | SkipJsonSchema[None] = None
 
 
 class LoginRequest(ApiModel):
@@ -140,9 +215,11 @@ class RunSummary(ApiModel):
     from_stage: str
     stage_ids: list[str]
     created_by: str | None
-    created_at: datetime
-    started_at: datetime | None
-    finished_at: datetime | None
+    created_at: AwareDatetime
+    started_at: AwareDatetime | None
+    finished_at: AwareDatetime | None
+    # Set while a running run waits for its worker to acknowledge a cancel (UI: "Cancelling…").
+    cancel_requested_at: AwareDatetime | None
     error: str | None
     launch_ref: str | None
 
@@ -160,7 +237,7 @@ class TicketSummary(ApiModel):
     chat_count: int
     latest_run: RunSummary | None
     source: SourceLink | None
-    updated_at: datetime
+    updated_at: AwareDatetime
 
 
 class TicketDetail(TicketSummary):
@@ -175,7 +252,7 @@ class TicketDetail(TicketSummary):
     pipeline_version: int
     next_stage: str | None
     active_run_id: int | None
-    created_at: datetime
+    created_at: AwareDatetime
 
 
 class TicketCreate(ApiModel):
@@ -189,13 +266,17 @@ class TicketCreate(ApiModel):
     base_branch: str | None = None
 
 
-class TicketPatch(ApiModel):
-    title: str | None = Field(default=None, min_length=1, max_length=200)
-    description: str | None = None
-    type: TicketType | None = None
-    priority: Priority | None = None
-    labels: list[str] | None = None
-    state: TicketState | None = None
+class TicketPatch(PatchModel):
+    """`repo_url` / `base_branch` may be null (clears them); other fields may only be omitted."""
+
+    clearable: ClassVar[frozenset[str]] = frozenset({"repo_url", "base_branch"})
+
+    title: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=200)
+    description: str | SkipJsonSchema[None] = None
+    type: TicketType | SkipJsonSchema[None] = None
+    priority: Priority | SkipJsonSchema[None] = None
+    labels: list[str] | SkipJsonSchema[None] = None
+    state: TicketState | SkipJsonSchema[None] = None
     repo_url: str | None = None
     base_branch: str | None = None
 
@@ -214,7 +295,7 @@ class FileInfo(ApiModel):
     version: int
     size: int
     author: str | None
-    updated_at: datetime
+    updated_at: AwareDatetime
 
 
 class FileContent(FileInfo):
@@ -227,7 +308,7 @@ class FileVersionInfo(ApiModel):
     mode: Mode
     size: int
     author: str | None
-    created_at: datetime
+    created_at: AwareDatetime
 
 
 class FileWrite(ApiModel):
@@ -250,7 +331,7 @@ class ChatMessage(ApiModel):
     ticket_key: str
     author: ChatAuthor
     body: str
-    created_at: datetime
+    created_at: AwareDatetime
 
 
 class ChatPost(ApiModel):
@@ -306,7 +387,7 @@ class Manifest(ApiModel):
     limits: ManifestLimits
 
 
-# ------------------------------------------------------------------ runs
+# ------------------------------------------------------------------ runs & run events
 
 
 class DispatchRequest(ApiModel):
@@ -320,8 +401,8 @@ class StageRunInfo(ApiModel):
     status: StageRunStatus
     exit_code: int | None
     reason: str | None
-    started_at: datetime | None
-    finished_at: datetime | None
+    started_at: AwareDatetime | None
+    finished_at: AwareDatetime | None
 
 
 class RunDetail(RunSummary):
@@ -329,12 +410,56 @@ class RunDetail(RunSummary):
     manifest: Manifest | None
 
 
-class RunEvent(ApiModel):
-    seq: int
-    ts: datetime
+class EmptyData(ApiModel):
+    pass
+
+
+class LogData(ApiModel):
+    stream: Literal["stdout", "stderr", "system"]
+    text: str
+
+
+class StageFinishedData(ApiModel):
+    status: StageOutcome
+    exit_code: int | None
+    reason: str | None
+
+
+class WarningData(ApiModel):
+    message: str
+
+
+class _RunEventBase(ApiModel):
+    seq: int = Field(ge=1)
+    ts: AwareDatetime
     stage_id: str | None
-    type: RunEventType
-    data: dict[str, Any]
+
+
+class StageStartedEvent(_RunEventBase):
+    type: Literal["stage_started"]
+    data: EmptyData
+
+
+class StageFinishedEvent(_RunEventBase):
+    type: Literal["stage_finished"]
+    data: StageFinishedData
+
+
+class LogEvent(_RunEventBase):
+    type: Literal["log"]
+    data: LogData
+
+
+class WarningEvent(_RunEventBase):
+    type: Literal["warning"]
+    data: WarningData
+
+
+# Discriminated on `type`; the same shape is sent by the worker and served to the UI.
+RunEvent = Annotated[
+    StageStartedEvent | StageFinishedEvent | LogEvent | WarningEvent,
+    Field(discriminator="type"),
+]
 
 
 # ------------------------------------------------------------------ worker API
@@ -386,7 +511,3 @@ class StreamEvent(ApiModel):
     type: Literal["ticket", "chat", "run"]
     key: str
     id: int | None = None
-
-
-class Health(ApiModel):
-    status: Literal["ok"]

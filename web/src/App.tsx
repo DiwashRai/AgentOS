@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { api, type Schemas } from "./api/client";
+import { api, ApiError, unwrap, type Schemas } from "./api/client";
 
 const LANES: Schemas["TicketSummary"]["lane"][] = [
   "inbox",
@@ -17,10 +17,7 @@ function Login() {
   const queryClient = useQueryClient();
   const [username, setUsername] = useState("dev");
   const login = useMutation({
-    mutationFn: async () => {
-      const { error } = await api.POST("/api/auth/login", { body: { username } });
-      if (error) throw new Error(error.error.message);
-    },
+    mutationFn: () => unwrap(api.POST("/api/auth/login", { body: { username } })),
     onSuccess: () => queryClient.invalidateQueries(),
   });
   return (
@@ -48,11 +45,7 @@ function Login() {
 function Board() {
   const tickets = useQuery({
     queryKey: ["tickets"],
-    queryFn: async () => {
-      const { data, error } = await api.GET("/api/tickets");
-      if (error) throw new Error(error.error.message);
-      return data;
-    },
+    queryFn: () => unwrap(api.GET("/api/tickets")),
   });
   if (tickets.isPending) return <p>Loading…</p>;
   if (tickets.isError) return <p role="alert">{tickets.error.message}</p>;
@@ -80,10 +73,12 @@ export function App() {
   const me = useQuery({
     queryKey: ["me"],
     queryFn: async () => {
-      const { data, response } = await api.GET("/api/me");
-      if (response.status === 401) return null;
-      if (!data) throw new Error(`GET /api/me failed: ${String(response.status)}`);
-      return data;
+      try {
+        return await unwrap(api.GET("/api/me"));
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) return null;
+        throw e;
+      }
     },
   });
   if (me.isPending) return <p>Loading…</p>;

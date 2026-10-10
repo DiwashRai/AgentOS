@@ -27,10 +27,11 @@ target-version = "py311"
 src = ["server", "worker"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "RUF", "PT", "ASYNC", "C4", "RET", "PTH", "ERA"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "RUF", "PT", "ASYNC", "C4", "RET", "PTH", "ERA", "DTZ"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101", "S603", "S607"]
+"**/worker_tests/**" = ["S101", "S603", "S607"]
 # Running subprocesses described by the manifest is the worker's job.
 "worker/worker.py" = ["S603", "S607"]
 
@@ -43,7 +44,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = ["server", "worker"]
 explicit_package_bases = true
-files = ["server/agentos", "server/tests", "worker/worker.py", "worker/tests"]
+files = ["server/agentos", "server/tests", "worker/worker.py", "worker/worker_tests"]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
@@ -52,10 +53,11 @@ warn_required_dynamic_aliases = true
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
-testpaths = ["server/tests", "worker/tests"]
+testpaths = ["server/tests", "worker/worker_tests"]
 pythonpath = ["worker"]
 # Default (prepend) import mode: importlib mode would shadow worker.py with a `worker` namespace
-# package derived from the worker/tests path. Keep test file basenames unique across suites.
+# package. Worker tests live in worker/worker_tests so both suites can have a conftest.py without
+# mypy seeing two packages named `tests`. Keep test file basenames unique across suites.
 addopts = "-q"
 
 # ---------------------------------------------------------------- import-linter

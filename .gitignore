@@ -26,7 +26,7 @@ web/dist/
 *.tsbuildinfo
 
 # Runtime data and local config
-/data/
+data/
 *.db
 *.db-wal
 *.db-shm

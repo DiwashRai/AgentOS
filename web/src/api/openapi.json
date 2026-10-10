@@ -1,6 +1,76 @@
 {
   "components": {
     "schemas": {
+      "AppConfig": {
+        "additionalProperties": false,
+        "description": "Public, unauthenticated: what the UI needs before login and for forms.",
+        "properties": {
+          "auth_mode": {
+            "enum": [
+              "dev",
+              "jira"
+            ],
+            "title": "Auth Mode",
+            "type": "string"
+          },
+          "default_base_branch": {
+            "title": "Default Base Branch",
+            "type": "string"
+          },
+          "default_repo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Repo Url"
+          },
+          "default_runtime": {
+            "title": "Default Runtime",
+            "type": "string"
+          },
+          "jira_deployment": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cloud",
+                  "datacenter"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Deployment"
+          },
+          "key_prefix": {
+            "title": "Key Prefix",
+            "type": "string"
+          },
+          "runtimes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Runtimes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "auth_mode",
+          "jira_deployment",
+          "key_prefix",
+          "default_repo_url",
+          "default_base_branch",
+          "runtimes",
+          "default_runtime"
+        ],
+        "title": "AppConfig",
+        "type": "object"
+      },
       "ChatAuthor": {
         "additionalProperties": false,
         "properties": {
@@ -170,6 +240,12 @@
         "title": "DispatchRequest",
         "type": "object"
       },
+      "EmptyData": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "EmptyData",
+        "type": "object"
+      },
       "ErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -187,6 +263,37 @@
         "additionalProperties": false,
         "properties": {
           "code": {
+            "enum": [
+              "unauthorized",
+              "forbidden",
+              "not_found",
+              "method_not_allowed",
+              "http_error",
+              "validation_error",
+              "internal_error",
+              "not_implemented",
+              "csrf_header_missing",
+              "rate_limited",
+              "upstream_error",
+              "too_large",
+              "missing_credentials",
+              "invalid_credentials",
+              "no_board_access",
+              "user_disabled",
+              "ticket_not_found",
+              "file_not_found",
+              "version_not_found",
+              "run_not_found",
+              "user_not_found",
+              "stale_version",
+              "run_active",
+              "bundle_locked",
+              "already_claimed",
+              "invalid_stage",
+              "invalid_pipeline",
+              "render_error",
+              "run_gone"
+            ],
             "title": "Code",
             "type": "string"
           },
@@ -207,7 +314,29 @@
         "properties": {
           "events": {
             "items": {
-              "$ref": "#/components/schemas/RunEvent"
+              "discriminator": {
+                "mapping": {
+                  "log": "#/components/schemas/LogEvent",
+                  "stage_finished": "#/components/schemas/StageFinishedEvent",
+                  "stage_started": "#/components/schemas/StageStartedEvent",
+                  "warning": "#/components/schemas/WarningEvent"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/StageStartedEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/StageFinishedEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/LogEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/WarningEvent"
+                }
+              ]
             },
             "maxItems": 500,
             "title": "Events",
@@ -463,6 +592,73 @@
           "status"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "LogData": {
+        "additionalProperties": false,
+        "properties": {
+          "stream": {
+            "enum": [
+              "stdout",
+              "stderr",
+              "system"
+            ],
+            "title": "Stream",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream",
+          "text"
+        ],
+        "title": "LogData",
+        "type": "object"
+      },
+      "LogEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LogData"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "const": "log",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "stage_id",
+          "type",
+          "data"
+        ],
+        "title": "LogEvent",
         "type": "object"
       },
       "LoginRequest": {
@@ -892,6 +1088,18 @@
       "RunDetail": {
         "additionalProperties": false,
         "properties": {
+          "cancel_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Requested At"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1014,6 +1222,7 @@
           "created_at",
           "started_at",
           "finished_at",
+          "cancel_requested_at",
           "error",
           "launch_ref",
           "stage_runs",
@@ -1022,58 +1231,21 @@
         "title": "RunDetail",
         "type": "object"
       },
-      "RunEvent": {
+      "RunSummary": {
         "additionalProperties": false,
         "properties": {
-          "data": {
-            "additionalProperties": true,
-            "title": "Data",
-            "type": "object"
-          },
-          "seq": {
-            "title": "Seq",
-            "type": "integer"
-          },
-          "stage_id": {
+          "cancel_requested_at": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Stage Id"
+            "title": "Cancel Requested At"
           },
-          "ts": {
-            "format": "date-time",
-            "title": "Ts",
-            "type": "string"
-          },
-          "type": {
-            "enum": [
-              "stage_started",
-              "stage_finished",
-              "log",
-              "warning"
-            ],
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "seq",
-          "ts",
-          "stage_id",
-          "type",
-          "data"
-        ],
-        "title": "RunEvent",
-        "type": "object"
-      },
-      "RunSummary": {
-        "additionalProperties": false,
-        "properties": {
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1179,6 +1351,7 @@
           "created_at",
           "started_at",
           "finished_at",
+          "cancel_requested_at",
           "error",
           "launch_ref"
         ],
@@ -1313,6 +1486,92 @@
         "title": "Stage",
         "type": "object"
       },
+      "StageFinishedData": {
+        "additionalProperties": false,
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "exit_code",
+          "reason"
+        ],
+        "title": "StageFinishedData",
+        "type": "object"
+      },
+      "StageFinishedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StageFinishedData"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "const": "stage_finished",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "stage_id",
+          "type",
+          "data"
+        ],
+        "title": "StageFinishedEvent",
+        "type": "object"
+      },
       "StageRunInfo": {
         "additionalProperties": false,
         "properties": {
@@ -1397,6 +1656,49 @@
           "finished_at"
         ],
         "title": "StageRunInfo",
+        "type": "object"
+      },
+      "StageStartedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EmptyData"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "const": "stage_started",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "stage_id",
+          "type",
+          "data"
+        ],
+        "title": "StageStartedEvent",
         "type": "object"
       },
       "StreamEvent": {
@@ -1884,6 +2186,7 @@
       },
       "TicketPatch": {
         "additionalProperties": false,
+        "description": "`repo_url` / `base_branch` may be null (clears them); other fields may only be omitted.",
         "properties": {
           "base_branch": {
             "anyOf": [
@@ -1897,45 +2200,24 @@
             "title": "Base Branch"
           },
           "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
+            "title": "Description",
+            "type": "string"
           },
           "labels": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Labels"
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
           },
           "priority": {
-            "anyOf": [
-              {
-                "enum": [
-                  "high",
-                  "normal",
-                  "low"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "enum": [
+              "high",
+              "normal",
+              "low"
             ],
-            "title": "Priority"
+            "title": "Priority",
+            "type": "string"
           },
           "repo_url": {
             "anyOf": [
@@ -1949,50 +2231,29 @@
             "title": "Repo Url"
           },
           "state": {
-            "anyOf": [
-              {
-                "enum": [
-                  "open",
-                  "done",
-                  "closed"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "enum": [
+              "open",
+              "done",
+              "closed"
             ],
-            "title": "State"
+            "title": "State",
+            "type": "string"
           },
           "title": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
           },
           "type": {
-            "anyOf": [
-              {
-                "enum": [
-                  "feature",
-                  "bug",
-                  "improvement",
-                  "task"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "enum": [
+              "feature",
+              "bug",
+              "improvement",
+              "task"
             ],
-            "title": "Type"
+            "title": "Type",
+            "type": "string"
           }
         },
         "title": "TicketPatch",
@@ -2201,34 +2462,77 @@
         "additionalProperties": false,
         "properties": {
           "disabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Disabled"
+            "title": "Disabled",
+            "type": "boolean"
           },
           "role": {
+            "enum": [
+              "viewer",
+              "writer",
+              "admin"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "title": "UserPatch",
+        "type": "object"
+      },
+      "WarningData": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "WarningData",
+        "type": "object"
+      },
+      "WarningEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WarningData"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
             "anyOf": [
               {
-                "enum": [
-                  "viewer",
-                  "writer",
-                  "admin"
-                ],
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Role"
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "const": "warning",
+            "title": "Type",
+            "type": "string"
           }
         },
-        "title": "UserPatch",
+        "required": [
+          "seq",
+          "ts",
+          "stage_id",
+          "type",
+          "data"
+        ],
+        "title": "WarningEvent",
         "type": "object"
       }
     }
@@ -2324,6 +2628,47 @@
         ]
       }
     },
+    "/api/config": {
+      "get": {
+        "operationId": "app_config_api_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "App Config",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "health_api_health_get",
@@ -2337,11 +2682,31 @@
               }
             },
             "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
           }
         },
         "summary": "Health",
         "tags": [
-          "health"
+          "meta"
         ]
       }
     },
@@ -2554,7 +2919,29 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/RunEvent"
+                    "discriminator": {
+                      "mapping": {
+                        "log": "#/components/schemas/LogEvent",
+                        "stage_finished": "#/components/schemas/StageFinishedEvent",
+                        "stage_started": "#/components/schemas/StageStartedEvent",
+                        "warning": "#/components/schemas/WarningEvent"
+                      },
+                      "propertyName": "type"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/StageStartedEvent"
+                      },
+                      {
+                        "$ref": "#/components/schemas/StageFinishedEvent"
+                      },
+                      {
+                        "$ref": "#/components/schemas/LogEvent"
+                      },
+                      {
+                        "$ref": "#/components/schemas/WarningEvent"
+                      }
+                    ]
                   },
                   "title": "Response Run Events Api Runs  Run Id  Events Get",
                   "type": "array"

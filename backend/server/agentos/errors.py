@@ -3,34 +3,44 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from agentos.models import ErrorBody, ErrorDetail
+from agentos.models import ErrorBody, ErrorCode, ErrorDetail
 
 log = logging.getLogger(__name__)
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str) -> None:
+    def __init__(self, status: int, code: ErrorCode, message: str) -> None:
         super().__init__(message)
         self.status = status
-        self.code = code
+        self.code: ErrorCode = code
         self.message = message
 
 
-def error_response(status: int, code: str, message: str) -> JSONResponse:
+def error_response(
+    status: int, code: ErrorCode, message: str, headers: Mapping[str, str] | None = None
+) -> JSONResponse:
     body = ErrorBody(error=ErrorDetail(code=code, message=message))
-    return JSONResponse(status_code=status, content=body.model_dump())
+    return JSONResponse(status_code=status, content=body.model_dump(), headers=headers)
 
 
 # Declared on every route so generated clients know the error shape.
 ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
     "4XX": {"model": ErrorBody, "description": "Client error"},
     "5XX": {"model": ErrorBody, "description": "Server error"},
+}
+
+_HTTP_CODES: dict[int, ErrorCode] = {
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
 }
 
 
@@ -41,10 +51,8 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-        code = {401: "unauthorized", 403: "forbidden", 404: "not_found", 405: "method_not_allowed"}
-        return error_response(
-            exc.status_code, code.get(exc.status_code, "http_error"), str(exc.detail)
-        )
+        code = _HTTP_CODES.get(exc.status_code, "http_error")
+        return error_response(exc.status_code, code, str(exc.detail), exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:

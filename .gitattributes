@@ -2,4 +2,4 @@
 *.png binary
 *.ico binary
 # Worker fixtures include deliberate CRLF content; never normalise them.
-backend/worker/tests/fixtures/** -text
+backend/worker/worker_tests/fixtures/** -text

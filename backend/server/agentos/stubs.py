@@ -14,11 +14,14 @@ from agentos.errors import ApiError
 from agentos.models import (
     ChatAuthor,
     ChatMessage,
+    EmptyData,
     FileContent,
     FileEntry,
     FileInfo,
     FileVersionInfo,
     Lane,
+    LogData,
+    LogEvent,
     Manifest,
     ManifestFile,
     ManifestLimits,
@@ -36,8 +39,11 @@ from agentos.models import (
     RunSummary,
     SourceLink,
     Stage,
+    StageFinishedData,
+    StageFinishedEvent,
     StageRunInfo,
     StageRunStatus,
+    StageStartedEvent,
     TaskProgress,
     Template,
     TicketCreate,
@@ -178,7 +184,7 @@ class _Version:
 
 class StubStore:
     def __init__(self) -> None:
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.tickets: dict[str, TicketDetail] = {}
         self.files: dict[str, dict[str, list[_Version]]] = {}
         self.chat: dict[str, list[ChatMessage]] = {}
@@ -297,6 +303,7 @@ class StubStore:
             finished_at=finished,
             error=error,
             launch_ref=None,
+            cancel_requested_at=None,
             stage_runs=[
                 StageRunInfo(
                     stage_id=sid,
@@ -365,7 +372,9 @@ class StubStore:
                 continue
             seq += 1
             events.append(
-                RunEvent(seq=seq, ts=base, stage_id=sr.stage_id, type="stage_started", data={})
+                StageStartedEvent(
+                    seq=seq, ts=base, stage_id=sr.stage_id, type="stage_started", data=EmptyData()
+                )
             )
             for i, text in enumerate(
                 [
@@ -377,23 +386,25 @@ class StubStore:
             ):
                 seq += 1
                 events.append(
-                    RunEvent(
+                    LogEvent(
                         seq=seq,
                         ts=base + timedelta(seconds=20 * (i + 1)),
                         stage_id=sr.stage_id,
                         type="log",
-                        data={"stream": "stdout", "text": text},
+                        data=LogData(stream="stdout", text=text),
                     )
                 )
-            if sr.status != "running":
+            if sr.status in ("succeeded", "failed", "cancelled"):
                 seq += 1
                 events.append(
-                    RunEvent(
+                    StageFinishedEvent(
                         seq=seq,
                         ts=sr.finished_at or base,
                         stage_id=sr.stage_id,
                         type="stage_finished",
-                        data={"status": sr.status, "exit_code": sr.exit_code, "reason": sr.reason},
+                        data=StageFinishedData(
+                            status=sr.status, exit_code=sr.exit_code, reason=sr.reason
+                        ),
                     )
                 )
         return events
@@ -503,12 +514,14 @@ class StubStore:
     # ---------------------------------------------------------- tickets
 
     def get(self, key: str) -> TicketDetail:
+        self.settle()
         ticket = self.tickets.get(key)
         if ticket is None:
             raise ApiError(404, "ticket_not_found", f"No ticket {key}")
         return ticket
 
     def list_tickets(self, q: str | None, include_closed: bool) -> list[TicketSummary]:
+        self.settle()
         out = []
         for t in self.tickets.values():
             if t.state == "closed" and not include_closed:
@@ -661,6 +674,8 @@ class StubStore:
                 raise ApiError(422, "invalid_stage", f"Cannot start from {start}")
             segment: list[str] = []
             for s in enabled[ids.index(start) :]:
+                if s.requires_repo and t.workspace_mode == "none":
+                    raise ApiError(422, "invalid_stage", f"{s.id} requires a repo")
                 segment.append(s.id)
                 if s.gate_after:
                     break
@@ -681,24 +696,50 @@ class StubStore:
         ]
 
     def get_run(self, run_id: int) -> RunDetail:
+        self.settle()
         run = self.runs.get(run_id)
         if run is None:
             raise ApiError(404, "run_not_found", f"No run {run_id}")
         return run
 
     def cancel(self, run_id: int) -> RunSummary:
+        """SPEC §8: queued/dispatched cancel at once; running waits for the worker to ack."""
         with self.lock:
             run = self.get_run(run_id)
-            if run.status in ("queued", "dispatched", "running"):
-                run.status = "cancelled"
-                run.finished_at = datetime.now(UTC)
-                t = self.get(run.ticket_key)
-                t.active_run_id = None
-                t.lane = "attention"
-                t.latest_run = RunSummary.model_validate(
-                    run.model_dump(exclude={"stage_runs", "manifest"})
-                )
+            if run.status in ("queued", "dispatched"):
+                self._finish_cancel(run)
+            elif run.status == "running" and run.cancel_requested_at is None:
+                run.cancel_requested_at = datetime.now(UTC)
+                self._sync_latest(run)
             return RunSummary.model_validate(run.model_dump(exclude={"stage_runs", "manifest"}))
+
+    def settle(self) -> None:
+        """STUB: pretend workers acknowledge cancels ~3 s after they are requested."""
+        with self.lock:
+            cutoff = datetime.now(UTC) - timedelta(seconds=3)
+            for run in self.runs.values():
+                if (
+                    run.status == "running"
+                    and run.cancel_requested_at
+                    and run.cancel_requested_at < cutoff
+                ):
+                    self._finish_cancel(run)
+
+    def _finish_cancel(self, run: RunDetail) -> None:
+        run.status = "cancelled"
+        run.finished_at = datetime.now(UTC)
+        for sr in run.stage_runs:
+            if sr.status in ("pending", "running"):
+                sr.status = "cancelled"
+        t = self.get(run.ticket_key)
+        t.active_run_id = None
+        t.lane = "attention"
+        self._sync_latest(run)
+
+    def _sync_latest(self, run: RunDetail) -> None:
+        self.get(run.ticket_key).latest_run = RunSummary.model_validate(
+            run.model_dump(exclude={"stage_runs", "manifest"})
+        )
 
     def run_events(
         self, run_id: int, after_seq: int | None, before_seq: int | None, limit: int

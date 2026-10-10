@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App Config */
+        get: operations["app_config_api_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -423,6 +440,29 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AppConfig
+         * @description Public, unauthenticated: what the UI needs before login and for forms.
+         */
+        AppConfig: {
+            /**
+             * Auth Mode
+             * @enum {string}
+             */
+            auth_mode: "dev" | "jira";
+            /** Default Base Branch */
+            default_base_branch: string;
+            /** Default Repo Url */
+            default_repo_url: string | null;
+            /** Default Runtime */
+            default_runtime: string;
+            /** Jira Deployment */
+            jira_deployment: ("cloud" | "datacenter") | null;
+            /** Key Prefix */
+            key_prefix: string;
+            /** Runtimes */
+            runtimes: string[];
+        };
         /** ChatAuthor */
         ChatAuthor: {
             /** Avatar Url */
@@ -478,21 +518,26 @@ export interface components {
             /** From Stage */
             from_stage?: string | null;
         };
+        /** EmptyData */
+        EmptyData: Record<string, never>;
         /** ErrorBody */
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
         };
         /** ErrorDetail */
         ErrorDetail: {
-            /** Code */
-            code: string;
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_board_access" | "user_disabled" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
             /** Message */
             message: string;
         };
         /** EventsRequest */
         EventsRequest: {
             /** Events */
-            events: components["schemas"]["RunEvent"][];
+            events: (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"])[];
         };
         /** EventsResponse */
         EventsResponse: {
@@ -600,6 +645,34 @@ export interface components {
              * @constant
              */
             status: "ok";
+        };
+        /** LogData */
+        LogData: {
+            /**
+             * Stream
+             * @enum {string}
+             */
+            stream: "stdout" | "stderr" | "system";
+            /** Text */
+            text: string;
+        };
+        /** LogEvent */
+        LogEvent: {
+            data: components["schemas"]["LogData"];
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "log";
         };
         /**
          * LoginRequest
@@ -740,6 +813,8 @@ export interface components {
         };
         /** RunDetail */
         RunDetail: {
+            /** Cancel Requested At */
+            cancel_requested_at: string | null;
             /**
              * Created At
              * Format: date-time
@@ -772,29 +847,10 @@ export interface components {
             /** Ticket Key */
             ticket_key: string;
         };
-        /** RunEvent */
-        RunEvent: {
-            /** Data */
-            data: {
-                [key: string]: unknown;
-            };
-            /** Seq */
-            seq: number;
-            /** Stage Id */
-            stage_id: string | null;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "stage_started" | "stage_finished" | "log" | "warning";
-        };
         /** RunSummary */
         RunSummary: {
+            /** Cancel Requested At */
+            cancel_requested_at: string | null;
             /**
              * Created At
              * Format: date-time
@@ -884,6 +940,36 @@ export interface components {
              */
             timeout_s: number;
         };
+        /** StageFinishedData */
+        StageFinishedData: {
+            /** Exit Code */
+            exit_code: number | null;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "cancelled";
+        };
+        /** StageFinishedEvent */
+        StageFinishedEvent: {
+            data: components["schemas"]["StageFinishedData"];
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage_finished";
+        };
         /** StageRunInfo */
         StageRunInfo: {
             /** Exit Code */
@@ -905,6 +991,24 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+        };
+        /** StageStartedEvent */
+        StageStartedEvent: {
+            data: components["schemas"]["EmptyData"];
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage_started";
         };
         /**
          * StreamEvent
@@ -1077,24 +1181,36 @@ export interface components {
              */
             workspace_mode: "repo" | "none";
         };
-        /** TicketPatch */
+        /**
+         * TicketPatch
+         * @description `repo_url` / `base_branch` may be null (clears them); other fields may only be omitted.
+         */
         TicketPatch: {
             /** Base Branch */
             base_branch?: string | null;
             /** Description */
-            description?: string | null;
+            description?: string;
             /** Labels */
-            labels?: string[] | null;
-            /** Priority */
-            priority?: ("high" | "normal" | "low") | null;
+            labels?: string[];
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority?: "high" | "normal" | "low";
             /** Repo Url */
             repo_url?: string | null;
-            /** State */
-            state?: ("open" | "done" | "closed") | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state?: "open" | "done" | "closed";
             /** Title */
-            title?: string | null;
-            /** Type */
-            type?: ("feature" | "bug" | "improvement" | "task") | null;
+            title?: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type?: "feature" | "bug" | "improvement" | "task";
         };
         /** TicketSummary */
         TicketSummary: {
@@ -1165,9 +1281,35 @@ export interface components {
         /** UserPatch */
         UserPatch: {
             /** Disabled */
-            disabled?: boolean | null;
-            /** Role */
-            role?: ("viewer" | "writer" | "admin") | null;
+            disabled?: boolean;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role?: "viewer" | "writer" | "admin";
+        };
+        /** WarningData */
+        WarningData: {
+            /** Message */
+            message: string;
+        };
+        /** WarningEvent */
+        WarningEvent: {
+            data: components["schemas"]["WarningData"];
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "warning";
         };
     };
     responses: never;
@@ -1256,6 +1398,44 @@ export interface operations {
             };
         };
     };
+    app_config_api_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConfig"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -1272,6 +1452,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };
@@ -1415,7 +1613,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunEvent"][];
+                    "application/json": (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"])[];
                 };
             };
             /** @description Client error */
