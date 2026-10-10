@@ -16,6 +16,7 @@ from agentos.models import (
     FileInfo,
     FileVersionInfo,
     Me,
+    Person,
     RunDetail,
     RunEvent,
     RunSummary,
@@ -45,6 +46,7 @@ def test_every_stub_get_matches_its_model(client: TestClient) -> None:
     check(client, "/api/config", AppConfig)
     check(client, "/api/me", Me)
     check(client, "/api/users", list[User])
+    check(client, "/api/people", list[Person])
     check(client, "/api/template", Template)
     for summary in check(client, "/api/tickets?include_closed=true", list[TicketSummary]):
         key = summary.key
@@ -70,6 +72,15 @@ def test_patch_allows_clearing_repo_url(client: TestClient) -> None:
     response = client.patch("/api/tickets/AOS-1", json={"repo_url": None}, headers=CSRF)
     assert response.status_code == 200
     assert TicketDetail.model_validate(response.json()).repo_url is None
+
+
+def test_attention_depends_on_owner(client: TestClient) -> None:
+    by_key = {t["key"]: t for t in client.get("/api/tickets").json()}
+    assert by_key["AOS-4"]["attention"] == "needs_you"  # gated, owned by the viewer
+    assert by_key["AOS-6"]["attention"] == "waiting"  # gated, owned by someone else
+    assert by_key["AOS-6"]["now"]["actor"] == "Sam Lee"
+    response = client.patch("/api/tickets/AOS-6", json={"owner_id": None}, headers=CSRF)
+    assert response.json()["attention"] == "needs_you"  # unowned → anyone can act
 
 
 def test_cancel_running_run_waits_for_worker(client: TestClient) -> None:

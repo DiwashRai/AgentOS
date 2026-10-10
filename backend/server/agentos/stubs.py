@@ -1,7 +1,9 @@
 """In-memory stub data so the web app can be built against the real contract.
 
 STUB: routes call into this module until the backend replaces them with real services.
-Shapes must always match `agentos.models`. Delete this module once nothing imports it.
+Shapes must always match `agentos.models`. Derived fields (attention, phase, phase_track, now,
+next_stage) are computed by `_derive` using the SPEC §13 rules, so the real backend should
+produce the same values. Delete this module once nothing imports it.
 """
 
 from __future__ import annotations
@@ -9,17 +11,16 @@ from __future__ import annotations
 import re
 import threading
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
 from agentos.errors import ApiError
 from agentos.models import (
-    ChatAuthor,
     ChatMessage,
     EmptyData,
     FileContent,
     FileEntry,
     FileInfo,
     FileVersionInfo,
-    Lane,
     LogData,
     LogEvent,
     Manifest,
@@ -30,6 +31,11 @@ from agentos.models import (
     ManifestWorkspace,
     Me,
     Mode,
+    NowInfo,
+    Person,
+    Phase,
+    PhaseState,
+    PhaseStep,
     Pipeline,
     RailState,
     RailStep,
@@ -54,6 +60,8 @@ from agentos.models import (
 )
 
 NOW = datetime.now(UTC)
+PHASES: tuple[Phase, ...] = get_args(Phase)
+ACTIVE: tuple[RunStatus, ...] = ("queued", "dispatched", "running")
 
 
 def ago(**delta: float) -> datetime:
@@ -87,17 +95,44 @@ PROMPTS = {
 }
 
 
-def default_pipeline() -> Pipeline:
+def default_pipeline(*, lint: bool = False) -> Pipeline:
     return Pipeline(
         stages=[
-            Stage(id="plan", name="Plan", kind="agent", gate_after=True, prompt=PROMPTS["plan"]),
-            Stage(id="implement", name="Implement", kind="agent", prompt=PROMPTS["implement"]),
-            Stage(id="lint", name="Lint", kind="shell", enabled=False),
-            Stage(id="review", name="Review", kind="agent", prompt=PROMPTS["review"]),
+            Stage(
+                id="plan",
+                name="Plan",
+                kind="agent",
+                phase="plan",
+                gate_after=True,
+                prompt=PROMPTS["plan"],
+            ),
+            Stage(
+                id="implement",
+                name="Implement",
+                kind="agent",
+                phase="build",
+                prompt=PROMPTS["implement"],
+            ),
+            Stage(
+                id="lint",
+                name="Lint",
+                kind="shell",
+                phase="verify",
+                enabled=lint,
+                command="npm run lint" if lint else "",
+            ),
+            Stage(
+                id="review",
+                name="Review",
+                kind="agent",
+                phase="review",
+                prompt=PROMPTS["review"],
+            ),
             Stage(
                 id="open-pr",
                 name="Open PR",
                 kind="agent",
+                phase="review",
                 requires_repo=True,
                 prompt=PROMPTS["open-pr"],
             ),
@@ -133,7 +168,6 @@ DEFAULT_SCAFFOLD = [
 # ------------------------------------------------------------------ people
 
 ME = Me(id=1, display_name="Dev", email="dev@localhost", avatar_url=None, role="admin")
-SAM = ChatAuthor(id=2, display_name="Sam Lee", avatar_url=None)
 USERS = [
     User(**ME.model_dump(), disabled=False, created_at=ago(days=3), last_login_at=ago(minutes=5)),
     User(
@@ -157,7 +191,17 @@ USERS = [
         last_login_at=ago(hours=20),
     ),
 ]
-ME_AUTHOR = ChatAuthor(id=ME.id, display_name=ME.display_name, avatar_url=None)
+
+
+def person(user_id: int) -> Person:
+    for u in USERS:
+        if u.id == user_id:
+            return Person(id=u.id, display_name=u.display_name, avatar_url=u.avatar_url)
+    raise ApiError(422, "user_not_found", f"No user {user_id}")
+
+
+ME_P = person(1)
+SAM_P = person(2)
 
 
 def slugify(title: str) -> str:
@@ -167,6 +211,12 @@ def slugify(title: str) -> str:
 
 def skill_dir(key: str, slug: str) -> str:
     return f".claude/skills/context-{key.lower()}-{slug}"
+
+
+def repo_name(url: str | None) -> str | None:
+    if not url:
+        return None
+    return url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git") or None
 
 
 # ------------------------------------------------------------------ store
@@ -196,14 +246,136 @@ class StubStore:
         self.next_chat = 1
         self._seed()
 
-    # ---------------------------------------------------------- seeding helpers
+    # ---------------------------------------------------------- derivation (SPEC §13 rules)
 
-    def _rail(self, states: list[RailState]) -> list[RailStep]:
-        enabled = [s for s in default_pipeline().stages if s.enabled]
-        return [
-            RailStep(stage_id=s.id, name=s.name, state=st)
-            for s, st in zip(enabled, states, strict=True)
-        ]
+    def _derive(self, t: TicketDetail, viewer_id: int) -> TicketDetail:
+        run = self.runs.get(t.latest_run.id) if t.latest_run else None
+        status = run.status if run else None
+        if t.state in ("done", "closed"):
+            t.attention = "done"
+        elif status in ACTIVE:
+            t.attention = "moving"
+        elif status in ("failed", "cancelled"):
+            t.attention = "stuck"
+        elif status in ("gated", "succeeded"):
+            mine = t.owner is None or t.owner.id == viewer_id
+            t.attention = "needs_you" if mine else "waiting"
+        else:
+            t.attention = "up_next"
+
+        focus = next((r for r in t.rail if r.state in ("current", "failed")), None)
+        done_steps = [r for r in t.rail if r.state == "done"]
+        if t.state == "done":
+            t.phase = "done"
+        elif run is None:
+            t.phase = "inbox"
+        elif focus is not None:
+            t.phase = focus.phase
+        else:
+            t.phase = done_steps[-1].phase if done_steps else "inbox"
+
+        if t.state == "done":
+            t.phase_since = t.updated_at
+        elif run is None:
+            t.phase_since = t.created_at
+        elif status in ACTIVE:
+            t.phase_since = run.started_at or run.created_at
+        else:
+            t.phase_since = run.finished_at or run.created_at
+
+        t.phase_track = [PhaseStep(phase=p, state=self._phase_state(t, p, run)) for p in PHASES]
+        t.next_stage = self._next_stage(t, run)
+        t.now = self._now(t, run)
+        t.repo_name = repo_name(t.repo_url)
+        return t
+
+    def _phase_state(self, t: TicketDetail, phase: Phase, run: RunDetail | None) -> PhaseState:
+        if phase == "inbox":
+            return "current" if run is None and t.state == "open" else "done"
+        if phase == "done":
+            return "done" if t.state == "done" else "pending"
+        states = [r.state for r in t.rail if r.phase == phase]
+        if not states:
+            return "skipped"
+        if t.state == "done":
+            return "done"
+        if "failed" in states:
+            return "failed"
+        if all(s == "done" for s in states):
+            return "done"
+        if "current" in states or t.phase == phase:
+            return "current"
+        if "stale" in states:
+            return "stale"
+        return "pending"
+
+    def _next_stage(self, t: TicketDetail, run: RunDetail | None) -> str | None:
+        enabled = [s.id for s in t.pipeline.stages if s.enabled]
+        if not enabled:
+            return None
+        if run is None:
+            return enabled[0]
+        if run.status in ("failed", "cancelled"):
+            anchor = next(
+                (sr.stage_id for sr in run.stage_runs if sr.status in ("failed", "cancelled")),
+                run.stage_ids[-1],
+            )
+            return anchor if anchor in enabled else enabled[0]
+        if run.status == "gated":
+            last = run.stage_ids[-1]
+            if last in enabled and enabled.index(last) + 1 < len(enabled):
+                return enabled[enabled.index(last) + 1]
+            return enabled[0]
+        return None
+
+    def _now(self, t: TicketDetail, run: RunDetail | None) -> NowInfo:
+        run_id = run.id if run else None
+        names = {s.id: s.name for s in t.pipeline.stages}
+        if t.attention == "done":
+            return NowInfo(actor=None, text="done", run_id=run_id, progress=t.tasks)
+        if t.attention == "up_next":
+            return NowInfo(
+                actor=None, text="add context, then dispatch", run_id=None, progress=None
+            )
+        if run is None:  # unreachable: every other attention group has a run
+            return NowInfo(actor=None, text="", run_id=None, progress=None)
+        if t.attention == "moving":
+            if run.status != "running":
+                return NowInfo(actor=None, text="queued for a runner", run_id=run_id, progress=None)
+            stage = next((sr for sr in run.stage_runs if sr.status == "running"), None)
+            actor = stage.name if stage else None
+            return NowInfo(
+                actor=actor, text=self._next_task(t) or "working", run_id=run_id, progress=t.tasks
+            )
+        if t.attention == "stuck":
+            failed = next(
+                (sr for sr in run.stage_runs if sr.status in ("failed", "cancelled")), None
+            )
+            what = f"{failed.name} {failed.status}" if failed else f"run {run.status}"
+            return NowInfo(
+                actor=None, text=f"{what}: retry or adjust", run_id=run_id, progress=None
+            )
+        text = (
+            f"review {names[run.stage_ids[-1]].lower()} and continue"
+            if run.status == "gated"
+            else "review the result and mark done"
+        )
+        actor = t.owner.display_name if t.attention == "waiting" and t.owner else None
+        return NowInfo(actor=actor, text=text, run_id=run_id, progress=t.tasks)
+
+    def _next_task(self, t: TicketDetail) -> str | None:
+        path = f"{skill_dir(t.key, t.slug)}/TASKS.md"
+        content = self.files.get(t.key, {}).get(path, [None])[-1]
+        if content is None or content.content is None:
+            return None
+        match = re.search(r"^\s*- \[ \] (.+)$", content.content, re.M)
+        return match.group(1).strip() if match else None
+
+    def summary(self, t: TicketDetail) -> TicketSummary:
+        self._derive(t, ME.id)
+        return TicketSummary.model_validate(t.model_dump(include=set(TicketSummary.model_fields)))
+
+    # ---------------------------------------------------------- seeding helpers
 
     def _add_ticket(
         self,
@@ -213,15 +385,19 @@ class StubStore:
         ticket_type: str = "feature",
         priority: str = "normal",
         labels: list[str] | None = None,
-        lane: Lane = "inbox",
-        rail: list[RailState] | None = None,
-        tasks: tuple[int, int] | None = None,
+        stage_states: list[RailState] | None = None,
+        tasks: list[tuple[bool, str]] | None = None,
         updated: datetime | None = None,
         source: SourceLink | None = None,
         state: str = "open",
-        next_stage: str | None = "plan",
+        owner: Person | None = None,
+        pipeline: Pipeline | None = None,
     ) -> TicketDetail:
+        pipeline = pipeline or default_pipeline()
+        enabled = [s for s in pipeline.stages if s.enabled]
+        states = stage_states or ["pending"] * len(enabled)
         slug = slugify(title)
+        repo_url = "https://github.com/DiwashRai/AgentOS.git"
         ticket = TicketDetail.model_validate(
             {
                 "key": key,
@@ -230,37 +406,43 @@ class StubStore:
                 "priority": priority,
                 "labels": labels or [],
                 "state": state,
-                "lane": lane,
-                "rail": self._rail(rail or ["pending"] * 4),
-                "tasks": TaskProgress(done=tasks[0], total=tasks[1]) if tasks else None,
+                "owner": owner,
+                "attention": "up_next",
+                "phase": "inbox",
+                "phase_since": None,
+                "phase_track": [],
+                "rail": [
+                    RailStep(stage_id=s.id, name=s.name, phase=s.phase, state=st)
+                    for s, st in zip(enabled, states, strict=True)
+                ],
+                "now": NowInfo(actor=None, text="", run_id=None, progress=None),
+                "tasks": None,
                 "chat_count": 0,
                 "latest_run": None,
                 "source": source,
+                "repo_name": repo_name(repo_url),
                 "updated_at": updated or ago(hours=1),
                 "description": f"{title}.\n\nMake this a dependable part of the everyday flow.",
                 "slug": slug,
                 "skill_name": f"context-{key.lower()}-{slug}",
                 "workspace_mode": "repo",
-                "repo_url": "https://github.com/DiwashRai/AgentOS.git",
+                "repo_url": repo_url,
                 "base_branch": "main",
                 "branch": f"agent/{key}",
-                "pipeline": default_pipeline(),
+                "pipeline": pipeline,
                 "pipeline_version": 1,
-                "next_stage": next_stage,
+                "next_stage": None,
                 "active_run_id": None,
                 "created_at": ago(days=1),
             }
         )
         self.tickets[key] = ticket
-        self._scaffold_files(ticket, tasks)
+        self._scaffold_files(ticket, tasks or [])
         return ticket
 
-    def _scaffold_files(self, t: TicketDetail, tasks: tuple[int, int] | None) -> None:
+    def _scaffold_files(self, t: TicketDetail, tasks: list[tuple[bool, str]]) -> None:
         d = skill_dir(t.key, t.slug)
-        lines = ["# Tasks", ""]
-        if tasks:
-            done, total = tasks
-            lines += [f"- [{'x' if i < done else ' '}] Step {i + 1}" for i in range(total)]
+        lines = ["# Tasks", ""] + [f"- [{'x' if done else ' '}] {text}" for done, text in tasks]
         files = {
             f"{d}/SKILL.md": (
                 f'---\nname: {t.skill_name}\ndescription: "Objective and working context for '
@@ -277,6 +459,8 @@ class StubStore:
             path: [_Version(content, mode, None, t.created_at)]  # type: ignore[arg-type]
             for path, (content, mode) in files.items()
         }
+        if tasks:
+            t.tasks = TaskProgress(done=sum(1 for d, _ in tasks if d), total=len(tasks))
 
     def _add_run(
         self,
@@ -301,9 +485,9 @@ class StubStore:
             created_at=started,
             started_at=started,
             finished_at=finished,
+            cancel_requested_at=None,
             error=error,
             launch_ref=None,
-            cancel_requested_at=None,
             stage_runs=[
                 StageRunInfo(
                     stage_id=sid,
@@ -325,11 +509,8 @@ class StubStore:
         )
         self.runs[run_id] = run
         self.events[run_id] = self._events(run)
-        ticket.latest_run = RunSummary.model_validate(
-            run.model_dump(exclude={"stage_runs", "manifest"})
-        )
-        if status in ("queued", "dispatched", "running"):
-            ticket.active_run_id = run_id
+        self._sync_latest(run)
+        ticket.active_run_id = run_id if status in ACTIVE else None
         return run
 
     def _manifest(self, run_id: int, t: TicketDetail, stage_ids: list[str]) -> Manifest:
@@ -409,7 +590,7 @@ class StubStore:
                 )
         return events
 
-    def _chat(self, key: str, author: ChatAuthor, body: str, at: datetime) -> None:
+    def _chat(self, key: str, author: Person, body: str, at: datetime) -> None:
         msg = ChatMessage(
             id=self.next_chat, ticket_key=key, author=author, body=body, created_at=at
         )
@@ -418,8 +599,19 @@ class StubStore:
         self.tickets[key].chat_count += 1
 
     def _seed(self) -> None:
+        plan_tasks = [
+            (False, "Add a diff view to the context tab"),
+            (False, "Show the previous version side by side"),
+            (False, "Highlight agent-authored versions"),
+            (False, "Keyboard shortcut to step through versions"),
+        ]
         self._add_ticket(
-            "AOS-1", "Show run progress on the board", priority="high", labels=["board"]
+            "AOS-1",
+            "Show run progress on the board",
+            priority="high",
+            labels=["board"],
+            owner=ME_P,
+            updated=ago(hours=3),
         )
         self._add_ticket(
             "WORK-11234",
@@ -431,6 +623,7 @@ class StubStore:
                 external_id="WORK-11234",
                 url="https://example.atlassian.net/browse/WORK-11234",
             ),
+            updated=ago(hours=1),
         )
         t3 = self._add_ticket(
             "AOS-3",
@@ -438,22 +631,27 @@ class StubStore:
             ticket_type="bug",
             priority="high",
             labels=["runs"],
-            lane="running",
-            rail=["done", "current", "pending", "pending"],
-            tasks=(2, 5),
+            owner=ME_P,
+            pipeline=default_pipeline(lint=True),
+            stage_states=["done", "current", "pending", "pending", "pending"],
+            tasks=[
+                (True, "Reproduce a worker losing its heartbeat"),
+                (True, "Mark runs failed after 90s of silence"),
+                (False, "Run API test suite"),
+                (False, "Resume-safe claim retries"),
+                (False, "Document the reaper rules"),
+            ],
             updated=ago(minutes=2),
-            next_stage=None,
         )
         self._add_run(t3, "running", [("implement", "running")], started=ago(minutes=6))
         t4 = self._add_ticket(
             "AOS-4",
             "Make context changes easy to compare",
             labels=["context"],
-            lane="review",
-            rail=["current", "pending", "pending", "pending"],
-            tasks=(0, 4),
+            owner=ME_P,
+            stage_states=["current", "pending", "pending", "pending"],
+            tasks=plan_tasks,
             updated=ago(minutes=40),
-            next_stage="implement",
         )
         self._add_run(
             t4, "gated", [("plan", "succeeded")], started=ago(minutes=55), finished=ago(minutes=40)
@@ -463,11 +661,9 @@ class StubStore:
             "Keyboard navigation for the board",
             ticket_type="improvement",
             labels=["a11y"],
-            lane="attention",
-            rail=["done", "done", "failed", "pending"],
-            tasks=(6, 6),
+            stage_states=["done", "done", "failed", "pending"],
+            tasks=[(True, f"Step {i + 1}") for i in range(6)],
             updated=ago(hours=2),
-            next_stage="review",
         )
         self._add_run(
             t5,
@@ -481,11 +677,10 @@ class StubStore:
             "AOS-6",
             "Retry from an earlier stage",
             labels=["runs"],
-            lane="review",
-            rail=["current", "stale", "stale", "pending"],
-            tasks=(1, 3),
+            owner=SAM_P,
+            stage_states=["current", "stale", "stale", "pending"],
+            tasks=[(True, "Re-scope retry states"), (False, "Wire retry button"), (False, "Tests")],
             updated=ago(hours=5),
-            next_stage="implement",
         )
         self._add_run(
             t6,
@@ -494,22 +689,29 @@ class StubStore:
             started=ago(hours=5, minutes=10),
             finished=ago(hours=5),
         )
-        self._add_ticket(
+        t7 = self._add_ticket(
             "AOS-7",
             "Pin the claude CLI version",
             ticket_type="task",
             priority="low",
-            lane="done",
-            rail=["done", "done", "done", "done"],
-            tasks=(3, 3),
+            owner=ME_P,
+            stage_states=["done", "done", "done", "done"],
+            tasks=[(True, "Record version"), (True, "Add to agentos.toml"), (True, "Smoke test")],
             state="done",
             updated=ago(days=1),
-            next_stage=None,
         )
-        self._chat("AOS-3", SAM, "Is this the one that stalled overnight?", ago(minutes=30))
-        self._chat("AOS-3", ME_AUTHOR, "Yes, the worker lost its heartbeat.", ago(minutes=29))
-        self._chat("AOS-3", ME_AUTHOR, "Re-running implement now.", ago(minutes=28))
-        self._chat("AOS-4", SAM, "Plan looks good, but step 3 can go.", ago(minutes=35))
+        self._add_run(
+            t7,
+            "succeeded",
+            [("implement", "succeeded"), ("review", "succeeded"), ("open-pr", "succeeded")],
+            started=ago(days=1, hours=1),
+            finished=ago(days=1),
+        )
+        self._chat("AOS-3", SAM_P, "Is this the one that stalled overnight?", ago(minutes=30))
+        self._chat("AOS-3", ME_P, "Yes, the worker lost its heartbeat.", ago(minutes=29))
+        self._chat("AOS-3", ME_P, "Re-running implement now.", ago(minutes=28))
+        self._chat("AOS-4", SAM_P, "Plan looks good, but step 3 can go.", ago(minutes=35))
+        self._chat("AOS-6", ME_P, "@Sam Lee can you sign off the re-scoped plan?", ago(hours=4))
 
     # ---------------------------------------------------------- tickets
 
@@ -518,7 +720,7 @@ class StubStore:
         ticket = self.tickets.get(key)
         if ticket is None:
             raise ApiError(404, "ticket_not_found", f"No ticket {key}")
-        return ticket
+        return self._derive(ticket, ME.id)
 
     def list_tickets(self, q: str | None, include_closed: bool) -> list[TicketSummary]:
         self.settle()
@@ -528,38 +730,37 @@ class StubStore:
                 continue
             if q and q.lower() not in f"{t.key} {t.title} {' '.join(t.labels)}".lower():
                 continue
-            out.append(
-                TicketSummary.model_validate(t.model_dump(include=set(TicketSummary.model_fields)))
-            )
+            out.append(self.summary(t))
         return out
 
     def create(self, body: TicketCreate) -> TicketDetail:
         with self.lock:
             key = f"AOS-{self.next_ticket}"
             self.next_ticket += 1
-            t = self._add_ticket(key, body.title, ticket_type=body.type, priority=body.priority)
+            owner = person(body.owner_id) if body.owner_id is not None else None
+            t = self._add_ticket(
+                key, body.title, ticket_type=body.type, priority=body.priority, owner=owner
+            )
             t.description = body.description
             t.labels = body.labels
             t.workspace_mode = body.workspace_mode
             t.repo_url = body.repo_url if body.workspace_mode == "repo" else None
             t.base_branch = body.base_branch or ("main" if body.workspace_mode == "repo" else None)
             t.branch = f"agent/{key}" if body.workspace_mode == "repo" else None
-            t.updated_at = datetime.now(UTC)
-            return t
+            t.created_at = t.updated_at = datetime.now(UTC)
+            return self._derive(t, ME.id)
 
     def patch(self, key: str, body: TicketPatch) -> TicketDetail:
         with self.lock:
             t = self.get(key)
-            for field, value in body.model_dump(exclude_unset=True).items():
+            changes = body.model_dump(exclude_unset=True)
+            if "owner_id" in changes:
+                owner_id = changes.pop("owner_id")
+                t.owner = person(owner_id) if owner_id is not None else None
+            for field, value in changes.items():
                 setattr(t, field, value)
-            if body.state is not None:
-                t.lane = (
-                    "done"
-                    if body.state == "done"
-                    else ("inbox" if t.latest_run is None else t.lane)
-                )
             t.updated_at = datetime.now(UTC)
-            return t
+            return self._derive(t, ME.id)
 
     def put_pipeline(self, key: str, pipeline: Pipeline, base_version: int) -> TicketDetail:
         with self.lock:
@@ -568,11 +769,15 @@ class StubStore:
                 raise ApiError(409, "run_active", "Pipeline is locked while a run is active")
             if base_version != t.pipeline_version:
                 raise ApiError(409, "stale_version", "Pipeline was changed by someone else")
+            old = {r.stage_id: r.state for r in t.rail}
             t.pipeline = pipeline
             t.pipeline_version += 1
-            enabled = [s for s in pipeline.stages if s.enabled]
-            t.rail = [RailStep(stage_id=s.id, name=s.name, state="pending") for s in enabled]
-            return t
+            t.rail = [
+                RailStep(stage_id=s.id, name=s.name, phase=s.phase, state=old.get(s.id, "pending"))
+                for s in pipeline.stages
+                if s.enabled
+            ]
+            return self._derive(t, ME.id)
 
     # ---------------------------------------------------------- files
 
@@ -657,7 +862,7 @@ class StubStore:
     def post_chat(self, key: str, body: str) -> ChatMessage:
         with self.lock:
             self.get(key)
-            self._chat(key, ME_AUTHOR, body, datetime.now(UTC))
+            self._chat(key, ME_P, body, datetime.now(UTC))
             return self.chat[key][-1]
 
     # ---------------------------------------------------------- runs
@@ -665,6 +870,8 @@ class StubStore:
     def dispatch(self, key: str, from_stage: str | None) -> RunSummary:
         with self.lock:
             t = self.get(key)
+            if t.state != "open":
+                raise ApiError(409, "invalid_stage", f"{key} is {t.state}; reopen it first")
             if t.active_run_id is not None:
                 raise ApiError(409, "run_active", f"{key} already has an active run")
             start = from_stage or t.next_stage
@@ -679,11 +886,18 @@ class StubStore:
                 segment.append(s.id)
                 if s.gate_after:
                     break
+            for step in t.rail:
+                if step.stage_id == segment[0]:
+                    step.state = "current"
+                elif step.stage_id in segment:
+                    step.state = "pending"
+                elif ids.index(step.stage_id) > ids.index(segment[-1]) and step.state == "done":
+                    step.state = "stale"
             run = self._add_run(
                 t, "queued", [(s, "pending") for s in segment], started=datetime.now(UTC)
             )
             run.started_at = None
-            t.lane = "running"
+            self._sync_latest(run)
             t.updated_at = datetime.now(UTC)
             return RunSummary.model_validate(run.model_dump(exclude={"stage_runs", "manifest"}))
 
@@ -731,13 +945,15 @@ class StubStore:
         for sr in run.stage_runs:
             if sr.status in ("pending", "running"):
                 sr.status = "cancelled"
-        t = self.get(run.ticket_key)
+        t = self.tickets[run.ticket_key]
         t.active_run_id = None
-        t.lane = "attention"
+        for step in t.rail:
+            if step.state == "current":
+                step.state = "failed"
         self._sync_latest(run)
 
     def _sync_latest(self, run: RunDetail) -> None:
-        self.get(run.ticket_key).latest_run = RunSummary.model_validate(
+        self.tickets[run.ticket_key].latest_run = RunSummary.model_validate(
             run.model_dump(exclude={"stage_runs", "manifest"})
         )
 

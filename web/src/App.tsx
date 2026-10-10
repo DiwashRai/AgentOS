@@ -5,11 +5,12 @@ import { useState } from "react";
 
 import { api, ApiError, unwrap, type Schemas } from "./api/client";
 
-const LANES: Schemas["TicketSummary"]["lane"][] = [
-  "inbox",
-  "running",
-  "review",
-  "attention",
+const GROUPS: Schemas["TicketSummary"]["attention"][] = [
+  "needs_you",
+  "stuck",
+  "moving",
+  "waiting",
+  "up_next",
   "done",
 ];
 
@@ -51,15 +52,15 @@ function Board() {
   if (tickets.isError) return <p role="alert">{tickets.error.message}</p>;
   return (
     <div style={{ display: "flex", gap: 16 }}>
-      {LANES.map((lane) => (
-        <section key={lane}>
-          <h2>{lane}</h2>
+      {GROUPS.map((group) => (
+        <section key={group}>
+          <h2>{group}</h2>
           <ul>
             {tickets.data
-              .filter((t) => t.lane === lane)
+              .filter((t) => t.attention === group)
               .map((t) => (
                 <li key={t.key}>
-                  {t.key}: {t.title} [{t.rail.map((s) => s.state).join(" ")}]
+                  {t.key}: {t.title} [{t.phase_track.map((s) => s.state).join(" ")}] {t.now.text}
                 </li>
               ))}
           </ul>

@@ -89,6 +89,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List People
+         * @description Everyone who can be a ticket owner or be mentioned (any signed-in user may list).
+         */
+        get: operations["list_people_api_people_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -463,18 +483,9 @@ export interface components {
             /** Runtimes */
             runtimes: string[];
         };
-        /** ChatAuthor */
-        ChatAuthor: {
-            /** Avatar Url */
-            avatar_url: string | null;
-            /** Display Name */
-            display_name: string;
-            /** Id */
-            id: number;
-        };
         /** ChatMessage */
         ChatMessage: {
-            author: components["schemas"]["ChatAuthor"];
+            author: components["schemas"]["Person"];
             /** Body */
             body: string;
             /**
@@ -786,6 +797,48 @@ export interface components {
              */
             role: "viewer" | "writer" | "admin";
         };
+        /**
+         * NowInfo
+         * @description Server-written "Now / Next" line. The UI renders it; it never derives it.
+         *
+         *     e.g. actor="Implement", text="Run API test suite", run_id=42  → "Implement · run #42 · …"
+         *          actor=None, text="approve the plan"                       → "Waiting on you · …"
+         *          actor="Sam Lee", text="approve the plan"                   → "Waiting on Sam Lee · …"
+         */
+        NowInfo: {
+            /** Actor */
+            actor: string | null;
+            progress: components["schemas"]["TaskProgress"] | null;
+            /** Run Id */
+            run_id: number | null;
+            /** Text */
+            text: string;
+        };
+        /** Person */
+        Person: {
+            /** Avatar Url */
+            avatar_url: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Id */
+            id: number;
+        };
+        /**
+         * PhaseStep
+         * @description Board-level progress: one entry per Phase, always all six, in order.
+         */
+        PhaseStep: {
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "inbox" | "plan" | "build" | "verify" | "review" | "done";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "done" | "current" | "failed" | "stale" | "skipped";
+        };
         /** Pipeline */
         Pipeline: {
             /** Library Sets */
@@ -799,10 +852,18 @@ export interface components {
             base_version: number;
             pipeline: components["schemas"]["Pipeline"];
         };
-        /** RailStep */
+        /**
+         * RailStep
+         * @description Stage-level progress (ticket detail views).
+         */
         RailStep: {
             /** Name */
             name: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "plan" | "build" | "verify" | "review";
             /** Stage Id */
             stage_id: string;
             /**
@@ -922,6 +983,11 @@ export interface components {
             model?: string | null;
             /** Name */
             name: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "plan" | "build" | "verify" | "review";
             /**
              * Prompt
              * @default
@@ -1088,6 +1154,8 @@ export interface components {
             description: string;
             /** Labels */
             labels?: string[];
+            /** Owner Id */
+            owner_id?: number | null;
             /**
              * Priority
              * @default normal
@@ -1115,6 +1183,11 @@ export interface components {
         TicketDetail: {
             /** Active Run Id */
             active_run_id: number | null;
+            /**
+             * Attention
+             * @enum {string}
+             */
+            attention: "needs_you" | "stuck" | "moving" | "waiting" | "up_next" | "done";
             /** Base Branch */
             base_branch: string | null;
             /** Branch */
@@ -1132,14 +1205,20 @@ export interface components {
             key: string;
             /** Labels */
             labels: string[];
-            /**
-             * Lane
-             * @enum {string}
-             */
-            lane: "inbox" | "running" | "review" | "attention" | "done";
             latest_run: components["schemas"]["RunSummary"] | null;
             /** Next Stage */
             next_stage: string | null;
+            now: components["schemas"]["NowInfo"];
+            owner: components["schemas"]["Person"] | null;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "inbox" | "plan" | "build" | "verify" | "review" | "done";
+            /** Phase Since */
+            phase_since: string | null;
+            /** Phase Track */
+            phase_track: components["schemas"]["PhaseStep"][];
             pipeline: components["schemas"]["Pipeline"];
             /** Pipeline Version */
             pipeline_version: number;
@@ -1150,6 +1229,8 @@ export interface components {
             priority: "high" | "normal" | "low";
             /** Rail */
             rail: components["schemas"]["RailStep"][];
+            /** Repo Name */
+            repo_name: string | null;
             /** Repo Url */
             repo_url: string | null;
             /** Skill Name */
@@ -1183,7 +1264,7 @@ export interface components {
         };
         /**
          * TicketPatch
-         * @description `repo_url` / `base_branch` may be null (clears them); other fields may only be omitted.
+         * @description `repo_url`, `base_branch`, `owner_id` may be null (clears them); others: omit or set.
          */
         TicketPatch: {
             /** Base Branch */
@@ -1192,6 +1273,8 @@ export interface components {
             description?: string;
             /** Labels */
             labels?: string[];
+            /** Owner Id */
+            owner_id?: number | null;
             /**
              * Priority
              * @enum {string}
@@ -1214,18 +1297,29 @@ export interface components {
         };
         /** TicketSummary */
         TicketSummary: {
+            /**
+             * Attention
+             * @enum {string}
+             */
+            attention: "needs_you" | "stuck" | "moving" | "waiting" | "up_next" | "done";
             /** Chat Count */
             chat_count: number;
             /** Key */
             key: string;
             /** Labels */
             labels: string[];
+            latest_run: components["schemas"]["RunSummary"] | null;
+            now: components["schemas"]["NowInfo"];
+            owner: components["schemas"]["Person"] | null;
             /**
-             * Lane
+             * Phase
              * @enum {string}
              */
-            lane: "inbox" | "running" | "review" | "attention" | "done";
-            latest_run: components["schemas"]["RunSummary"] | null;
+            phase: "inbox" | "plan" | "build" | "verify" | "review" | "done";
+            /** Phase Since */
+            phase_since: string | null;
+            /** Phase Track */
+            phase_track: components["schemas"]["PhaseStep"][];
             /**
              * Priority
              * @enum {string}
@@ -1233,6 +1327,8 @@ export interface components {
             priority: "high" | "normal" | "low";
             /** Rail */
             rail: components["schemas"]["RailStep"][];
+            /** Repo Name */
+            repo_name: string | null;
             source: components["schemas"]["SourceLink"] | null;
             /**
              * State
@@ -1490,6 +1586,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_people_api_people_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"][];
                 };
             };
             /** @description Client error */

@@ -17,11 +17,16 @@ TicketType = Literal["feature", "bug", "improvement", "task"]
 Priority = Literal["high", "normal", "low"]
 TicketState = Literal["open", "done", "closed"]
 WorkspaceMode = Literal["repo", "none"]
-Lane = Literal["inbox", "running", "review", "attention", "done"]
+# Board columns. Stages map to the four work phases; inbox/done are ticket-level.
+Phase = Literal["inbox", "plan", "build", "verify", "review", "done"]
+StagePhase = Literal["plan", "build", "verify", "review"]
+# Board row groups, derived per viewer (SPEC §13).
+Attention = Literal["needs_you", "stuck", "moving", "waiting", "up_next", "done"]
 RunStatus = Literal["queued", "dispatched", "running", "succeeded", "gated", "failed", "cancelled"]
 StageRunStatus = Literal["pending", "running", "succeeded", "failed", "cancelled"]
 StageOutcome = Literal["succeeded", "failed", "cancelled"]
 RailState = Literal["pending", "done", "current", "failed", "stale"]
+PhaseState = Literal["pending", "done", "current", "failed", "stale", "skipped"]
 Mode = Literal["replace", "block"]
 StageKind = Literal["agent", "shell"]
 SourceName = Literal["jira", "github", "todoist"]
@@ -160,6 +165,9 @@ class Stage(ApiModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,31}$")
     name: str = Field(min_length=1, max_length=60)
     kind: StageKind
+    # Board column this stage counts towards. Different pipelines (per ticket type) can have
+    # different stages but still land on the same shared board phases.
+    phase: StagePhase
     enabled: bool = True
     gate_after: bool = False
     requires_repo: bool = False
@@ -197,15 +205,45 @@ class SourceLink(ApiModel):
     url: str
 
 
+class Person(ApiModel):
+    id: int
+    display_name: str
+    avatar_url: str | None
+
+
 class RailStep(ApiModel):
+    """Stage-level progress (ticket detail views)."""
+
     stage_id: str
     name: str
+    phase: StagePhase
     state: RailState
+
+
+class PhaseStep(ApiModel):
+    """Board-level progress: one entry per Phase, always all six, in order."""
+
+    phase: Phase
+    state: PhaseState
 
 
 class TaskProgress(ApiModel):
     done: int
     total: int
+
+
+class NowInfo(ApiModel):
+    """Server-written "Now / Next" line. The UI renders it; it never derives it.
+
+    e.g. actor="Implement", text="Run API test suite", run_id=42  → "Implement · run #42 · …"
+         actor=None, text="approve the plan"                       → "Waiting on you · …"
+         actor="Sam Lee", text="approve the plan"                   → "Waiting on Sam Lee · …"
+    """
+
+    actor: str | None
+    text: str
+    run_id: int | None
+    progress: TaskProgress | None
 
 
 class RunSummary(ApiModel):
@@ -231,12 +269,19 @@ class TicketSummary(ApiModel):
     priority: Priority
     labels: list[str]
     state: TicketState
-    lane: Lane
+    owner: Person | None
+    # Derived by the server (SPEC §13). `attention` depends on the viewer (owner vs not).
+    attention: Attention
+    phase: Phase
+    phase_since: AwareDatetime | None
+    phase_track: list[PhaseStep]
     rail: list[RailStep]
+    now: NowInfo
     tasks: TaskProgress | None
     chat_count: int
     latest_run: RunSummary | None
     source: SourceLink | None
+    repo_name: str | None
     updated_at: AwareDatetime
 
 
@@ -264,12 +309,13 @@ class TicketCreate(ApiModel):
     workspace_mode: WorkspaceMode = "repo"
     repo_url: str | None = None
     base_branch: str | None = None
+    owner_id: int | None = None
 
 
 class TicketPatch(PatchModel):
-    """`repo_url` / `base_branch` may be null (clears them); other fields may only be omitted."""
+    """`repo_url`, `base_branch`, `owner_id` may be null (clears them); others: omit or set."""
 
-    clearable: ClassVar[frozenset[str]] = frozenset({"repo_url", "base_branch"})
+    clearable: ClassVar[frozenset[str]] = frozenset({"repo_url", "base_branch", "owner_id"})
 
     title: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=200)
     description: str | SkipJsonSchema[None] = None
@@ -279,6 +325,7 @@ class TicketPatch(PatchModel):
     state: TicketState | SkipJsonSchema[None] = None
     repo_url: str | None = None
     base_branch: str | None = None
+    owner_id: int | None = None
 
 
 class PipelineUpdate(ApiModel):
@@ -320,16 +367,10 @@ class FileWrite(ApiModel):
 # ------------------------------------------------------------------ chat
 
 
-class ChatAuthor(ApiModel):
-    id: int
-    display_name: str
-    avatar_url: str | None
-
-
 class ChatMessage(ApiModel):
     id: int
     ticket_key: str
-    author: ChatAuthor
+    author: Person
     body: str
     created_at: AwareDatetime
 

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agentos.main import create_app
-from agentos.models import Manifest, TicketSummary
+from agentos.models import Attention, Manifest, Phase, PhaseState, RailState, TicketSummary
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CSRF = {"X-AgentOS": "1"}
@@ -62,16 +63,12 @@ def test_validation_uses_error_envelope(authed: TestClient) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def test_stub_board_covers_every_lane(authed: TestClient) -> None:
+def test_stub_board_covers_every_attention_group_and_state(authed: TestClient) -> None:
     tickets = [TicketSummary.model_validate(t) for t in authed.get("/api/tickets").json()]
-    assert {t.lane for t in tickets} == {"inbox", "running", "review", "attention", "done"}
-    assert {s.state for t in tickets for s in t.rail} == {
-        "pending",
-        "done",
-        "current",
-        "failed",
-        "stale",
-    }
+    assert {t.attention for t in tickets} == set(get_args(Attention))
+    assert {s.state for t in tickets for s in t.phase_track} == set(get_args(PhaseState))
+    assert {s.state for t in tickets for s in t.rail} == set(get_args(RailState))
+    assert all([p.phase for p in t.phase_track] == list(get_args(Phase)) for t in tickets)
 
 
 def test_worker_source_is_served(client: TestClient) -> None:

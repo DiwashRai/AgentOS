@@ -7,7 +7,7 @@ from fastapi import APIRouter, Response
 from agentos import stubs
 from agentos.auth.deps import SESSION_COOKIE, CurrentUser
 from agentos.errors import ERROR_RESPONSES, ApiError
-from agentos.models import LoginRequest, Me, User, UserPatch
+from agentos.models import LoginRequest, Me, Person, User, UserPatch
 
 router = APIRouter(prefix="/api", tags=["auth"], responses=ERROR_RESPONSES)
 
@@ -29,6 +29,12 @@ def logout(response: Response) -> None:
 @router.get("/me")
 def me(user: CurrentUser) -> Me:
     return user
+
+
+@router.get("/people")
+def list_people(_: CurrentUser) -> list[Person]:
+    """Everyone who can be a ticket owner or be mentioned (any signed-in user may list)."""
+    return [stubs.person(u.id) for u in stubs.USERS if not u.disabled]
 
 
 @router.get("/users")
