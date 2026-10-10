@@ -110,10 +110,13 @@ def test_manifest_is_the_bundle_at_claim_time(
     put("while-queued.md", "q")
     runs.tick()
     put("while-dispatched.md", "d")
+    r = authed.delete(f"/api/tickets/{ticket.key}/files/CLAUDE.md?base_version=1", headers=CSRF)
+    assert r.status_code == 204, r.text
     m = Manifest.model_validate(runs.claim(run.id).json()["manifest"])
     files = {f.path: f.content for f in m.files}
     assert files["while-queued.md"] == "q"
     assert files["while-dispatched.md"] == "d"
+    assert "CLAUDE.md" not in files  # deleted files are not in the bundle
 
 
 def test_a_manifest_that_cannot_be_built_fails_the_run(
@@ -289,6 +292,30 @@ def test_sync_path_rules(
     assert len(versions(authed, ticket.key, f"{d}/TASKS.md")) == 1  # nothing written
 
 
+def test_a_human_edit_based_on_a_version_before_an_agent_sync_is_stale(
+    authed: TestClient, ticket: TicketDetail, runs: RunDriver
+) -> None:
+    tasks = f"{skill_dir(ticket)}/TASKS.md"
+    url = f"/api/tickets/{ticket.key}/files/{tasks}"
+    seen = authed.get(url).json()["version"]
+    worker = runs.start(ticket.key)
+    r = worker.sync("plan", [{"path": tasks, "content": "# Tasks\n- [ ] a\n", "mode": "replace"}])
+    synced = r.json()["versions"][tasks]
+    assert synced == seen + 1
+    worker.run_stage("plan")
+    assert worker.complete().status_code == 204  # the gate: the bundle is unlocked again
+
+    def put(base: int) -> Any:
+        body = {"content": "# Tasks\n- [ ] mine\n", "mode": "replace", "base_version": base}
+        return authed.put(url, json=body, headers=CSRF)
+
+    assert error(put(seen)) == (409, "stale_version")
+    assert authed.get(url).json()["content"] == "# Tasks\n- [ ] a\n"
+    r = put(synced)
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] == synced + 1
+
+
 def test_sync_rejects_a_stage_outside_the_run(ticket: TicketDetail, runs: RunDriver) -> None:
     worker = runs.start(ticket.key)
     assert error(worker.sync("review", [])) == (422, "validation_error")
@@ -387,3 +414,9 @@ def test_unknown_worker_token_is_401(ticket: TicketDetail, runs: RunDriver) -> N
     stranger = Worker(runs.client, worker.run_id, "z" * 43, worker.manifest)
     for r in gone_routes(stranger):
         assert error(r) == (401, "unauthorized")
+
+
+def test_worker_source_is_served(client: TestClient) -> None:
+    response = client.get("/api/worker/worker.py")
+    assert response.status_code == 200
+    assert "PROTOCOL = 1" in response.text

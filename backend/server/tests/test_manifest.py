@@ -211,6 +211,9 @@ def test_build_manifest_no_repo_nulls_workspace() -> None:
 def test_fixture_shape_matches_builder() -> None:
     """The builder emits every field the shared fixture has (same keys at every level)."""
     fixture = Manifest.model_validate_json((FIXTURES / "manifest_v1.json").read_text("utf-8"))
+    # The fixture exercises both file modes and both stage kinds in the worker suite too.
+    assert {f.mode for f in fixture.files} == {"replace", "block"}
+    assert {s.kind for s in fixture.stages} == {"agent", "shell"}
     built = build_manifest(
         42, TICKET, segment(default_pipeline(), "implement"), _bundle(), RUNTIMES
     )

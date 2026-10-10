@@ -81,7 +81,6 @@ def run(
     status: RunStatus,
     stages: list[tuple[str, StageRunStatus]],
     *,
-    rid: int = 7,
     start: float = 0,
     unstarted: Collection[str] = (),
 ) -> RunFact:
@@ -92,7 +91,7 @@ def run(
         return st != "pending" and sid not in unstarted
 
     return RunFact(
-        id=rid,
+        id=7,
         status=status,
         from_stage=stages[0][0],
         stage_ids=tuple(s for s, _ in stages),
@@ -171,6 +170,7 @@ NEVER_CONNECTED = run("failed", REST, unstarted={"implement", "review", "open-pr
     ("state", "status", "owner", "attention", "person"),
     [
         pytest.param("open", None, None, "up_next", None, id="open-no-runs"),
+        pytest.param("open", None, SAM, "up_next", None, id="open-no-runs-owned"),
         pytest.param("done", None, ME, "done", None, id="done-no-runs"),
         pytest.param("done", "running", None, "done", None, id="done-beats-active-run"),
         pytest.param("closed", "failed", None, "done", None, id="closed"),
@@ -319,6 +319,18 @@ PLAN_OK = {"plan"}
             facts(FAILED_REVIEW, state="done", ever=PLAN_OK),
             "done done pending pending",
             id="done-ticket-with-failed-run",
+        ),
+        pytest.param(
+            facts(
+                run(
+                    "succeeded",
+                    [("implement", "succeeded"), ("review", "succeeded"), ("open-pr", "succeeded")],
+                ),
+                state="done",
+                ever=PLAN_OK,
+            ),
+            "done done done done",
+            id="done-ticket-every-stage-run",
         ),
         pytest.param(
             facts(GATED_PLAN, state="closed"),
@@ -780,101 +792,3 @@ TASKS = TaskProgress(done=2, total=5)
 )
 def test_now(f: TicketFacts, expected: NowInfo) -> None:
     assert for_viewer(derive(f), ME.id).now == expected
-
-
-# ------------------------------------------------------------------ the stub's seeded tickets
-
-PLAN_TASKS = TaskProgress(done=0, total=4)
-
-
-def test_seeded_aos_3_running_implement() -> None:
-    f = facts(
-        run("running", [("implement", "running")], rid=1, start=-6),
-        owner=ME,
-        pipeline=WITH_LINT,
-        ever=PLAN_OK,
-        tasks=TaskProgress(done=2, total=5),
-        next_task="Run API test suite",
-    )
-    board = derive(f)
-    view = for_viewer(board, ME.id)
-    assert view.attention == "moving"
-    assert board.phase == "build"
-    assert board.phase_since == at(-6)
-    assert track_states(f) == "done done current pending pending pending"
-    assert rail_states(f) == "done current pending pending pending"
-    assert board.next_stage is None
-    assert view.now == now(
-        "Run API test suite", actor="Implement", run_id=1, progress=TaskProgress(done=2, total=5)
-    )
-
-
-def test_seeded_aos_4_gated_plan() -> None:
-    f = facts(GATED_PLAN, owner=ME, ever=PLAN_OK, tasks=PLAN_TASKS)
-    board = derive(f)
-    view = for_viewer(board, ME.id)
-    assert view.attention == "needs_you"
-    assert board.phase == "plan"
-    assert board.phase_since == GATED_PLAN.finished_at
-    assert track_states(f) == "done current pending skipped pending pending"
-    assert rail_states(f) == "current pending pending pending"
-    assert board.next_stage == "implement"
-    assert view.now == now("review plan and continue", progress=PLAN_TASKS)
-
-
-def test_seeded_aos_5_failed_review() -> None:
-    f = facts(FAILED_REVIEW, ever={"plan", "implement"}, tasks=TaskProgress(done=6, total=6))
-    board = derive(f)
-    view = for_viewer(board, ME.id)
-    assert view.attention == "stuck"
-    assert board.phase == "review"
-    assert board.phase_since == FAILED_REVIEW.finished_at
-    assert track_states(f) == "done done done skipped failed pending"
-    assert rail_states(f) == "done done failed pending"
-    assert board.next_stage == "review"
-    assert view.now == now("Review failed: retry or adjust")
-
-
-def test_seeded_aos_6_waiting_on_sam_with_stale_stages() -> None:
-    tasks = TaskProgress(done=1, total=3)
-    f = facts(GATED_PLAN, owner=SAM, ever={"plan", "implement", "review"}, tasks=tasks)
-    board = derive(f)
-    view = for_viewer(board, ME.id)
-    assert view.attention == "waiting"
-    assert board.phase == "plan"
-    assert track_states(f) == "done current stale skipped stale pending"
-    assert rail_states(f) == "current stale stale pending"
-    assert board.next_stage == "implement"
-    assert view.now == now("review plan and continue", person=SAM, progress=tasks)
-
-
-def test_seeded_aos_7_done() -> None:
-    tasks = TaskProgress(done=3, total=3)
-    latest = run(
-        "succeeded",
-        [("implement", "succeeded"), ("review", "succeeded"), ("open-pr", "succeeded")],
-    )
-    f = facts(latest, state="done", owner=ME, ever=PLAN_OK, tasks=tasks)
-    board = derive(f)
-    view = for_viewer(board, ME.id)
-    assert view.attention == "done"
-    assert board.phase == "done"
-    assert board.phase_since == UPDATED
-    assert track_states(f) == "done done done skipped done done"
-    assert rail_states(f) == "done done done done"
-    assert board.next_stage is None
-    assert view.now == now("done", progress=tasks)
-
-
-@pytest.mark.parametrize("owner", [ME, None], ids=["aos-1-owned", "work-11234-unowned"])
-def test_seeded_up_next_without_runs(owner: Person | None) -> None:
-    f = facts(owner=owner)
-    board = derive(f)
-    view = for_viewer(board, ME.id)
-    assert view.attention == "up_next"
-    assert board.phase == "inbox"
-    assert board.phase_since == CREATED
-    assert track_states(f) == "current pending pending skipped pending pending"
-    assert rail_states(f) == "pending pending pending pending"
-    assert board.next_stage == "plan"
-    assert view.now == now("add context, then dispatch", run_id=None)

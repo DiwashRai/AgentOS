@@ -1,4 +1,7 @@
-"""Versioned bundle files (SPEC §6): human routes and the run-service primitives."""
+"""Versioned bundle files (SPEC §6) through the human routes.
+
+Agent writes (worker sync) are tested in test_worker_api.py; the bundle lock in test_runs.py.
+"""
 
 from __future__ import annotations
 
@@ -8,15 +11,12 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.context import AppContext
-from agentos.errors import ApiError
 from agentos.files import service
-from agentos.models import FileContent, FileEntry, FileInfo, FileVersionInfo, TicketDetail
+from agentos.models import FileContent, FileInfo, FileVersionInfo, TicketDetail
 from agentos.validate import MAX_FILE_BYTES
 
 CSRF = {"X-AgentOS": "1"}
 CreateTicket = Callable[..., TicketDetail]
-AddRun = Callable[..., int]
 
 
 def code(response: Any) -> str:
@@ -55,12 +55,6 @@ def paths(client: TestClient, key: str) -> list[str]:
 
 def detail(client: TestClient, key: str) -> TicketDetail:
     return TicketDetail.model_validate(client.get(f"/api/tickets/{key}").json())
-
-
-def ticket_id(ctx: AppContext, key: str) -> int:
-    with ctx.db.read() as conn:
-        value: int = conn.execute("SELECT id FROM tickets WHERE key = ?", (key,)).fetchone()["id"]
-    return value
 
 
 @pytest.fixture
@@ -185,25 +179,6 @@ def test_delete(authed: TestClient, ticket: TicketDetail) -> None:
     assert put(authed, ticket.key, "gone.md", "back", 0).json()["version"] == 3
 
 
-def test_bundle_locks_only_while_a_run_is_running(
-    authed: TestClient, ticket: TicketDetail, add_run: AddRun, ctx: AppContext
-) -> None:
-    run_id = add_run(ticket.key, "queued", [("plan", "pending")])
-    assert put(authed, ticket.key, "q.md", "queued is fine", 0).status_code == 200
-    with ctx.db.tx() as conn:
-        conn.execute("UPDATE runs SET status = 'running' WHERE id = ?", (run_id,))
-    for response in (
-        put(authed, ticket.key, "q.md", "locked", 1),
-        put(authed, ticket.key, "new.md", "locked", 0),
-        delete(authed, ticket.key, "q.md", 1),
-    ):
-        assert response.status_code == 409
-        assert code(response) == "bundle_locked"
-    with ctx.db.tx() as conn:
-        conn.execute("UPDATE runs SET status = 'gated' WHERE id = ?", (run_id,))
-    assert put(authed, ticket.key, "q.md", "unlocked", 1).status_code == 200
-
-
 def test_tasks_md_counts_tasks(authed: TestClient, ticket: TicketDetail) -> None:
     path = tasks_path(ticket)
     plan = "# Tasks\n- [x] one\n- [X] two\n- [ ] three\n  * [ ] four\n- [] not a task\n"
@@ -274,56 +249,3 @@ def test_bundle_size_limit(
     assert code(response) == "too_large"
     # Replacing a file counts its new size, not old + new.
     assert put(authed, ticket.key, "a.md", "y" * 10, 1).status_code == 200
-
-
-# ------------------------------------------------------------------ primitives for the run service
-
-
-def test_write_version_and_current_bundle(
-    authed: TestClient, ticket: TicketDetail, ctx: AppContext, add_run: AddRun
-) -> None:
-    tid = ticket_id(ctx, ticket.key)
-    run_id = add_run(ticket.key, "running", [("implement", "running")])
-    with ctx.db.tx() as conn:
-        assert (
-            service.write_version(
-                conn,
-                tid,
-                "out/report.md",
-                "r1",
-                "replace",
-                author_run_id=run_id,
-                author_stage="implement",
-            )
-            == 1
-        )
-        # Idempotent, no lock check (the run is running), deletes of absent files append nothing.
-        assert service.write_version(conn, tid, "out/report.md", "r1", "replace") == 1
-        assert service.write_version(conn, tid, "never.md", None, "replace") is None
-        assert service.write_version(conn, tid, "CLAUDE.md", None, "block") == 2
-        assert service.write_version(conn, tid, "CLAUDE.md", None, "replace") == 2
-        bundle = service.current_bundle(conn, tid)
-    assert [e.path for e in bundle] == sorted(e.path for e in bundle)
-    by_path = {e.path: e for e in bundle}
-    assert "CLAUDE.md" not in by_path
-    assert by_path["out/report.md"] == FileEntry(path="out/report.md", content="r1")
-    assert by_path["AGENTS.md"].mode == "block"
-    info = FileContent.model_validate(get(authed, ticket.key, "out/report.md").json())
-    assert (info.author, info.author_run_id) == (None, run_id)
-    with ctx.db.read() as conn:
-        stage = conn.execute(
-            "SELECT author_stage FROM file_versions WHERE path = 'out/report.md'"
-        ).fetchone()
-    assert stage["author_stage"] == "implement"
-
-
-def test_write_version_validates(authed: TestClient, ticket: TicketDetail, ctx: AppContext) -> None:
-    tid = ticket_id(ctx, ticket.key)
-    with ctx.db.tx() as conn:
-        for path, content in (
-            ("../x", "x"),
-            ("agents.md", "x"),
-            ("x.md", "y" * (MAX_FILE_BYTES + 1)),
-        ):
-            with pytest.raises(ApiError):
-                service.write_version(conn, tid, path, content, "replace")

@@ -7,7 +7,6 @@ import re
 import pytest
 
 from agentos.pipeline.scaffold import (
-    DEFAULT_SCAFFOLD,
     default_pipeline,
     names,
     repo_name,
@@ -99,14 +98,3 @@ def test_default_pipeline_seed() -> None:
     assert by_id["lint"].command == ""
     assert by_id["open-pr"].requires_repo
     assert all(s.prompt for s in p.stages if s.kind == "agent")
-
-
-def test_default_scaffold_shape() -> None:
-    assert [(e.path, e.mode) for e in DEFAULT_SCAFFOLD] == [
-        ("{{paths.skill_md}}", "replace"),
-        ("{{paths.tasks_md}}", "replace"),
-        ("{{paths.learnings}}", "replace"),
-        ("{{paths.swarm}}", "replace"),
-        ("AGENTS.md", "block"),
-        ("CLAUDE.md", "block"),
-    ]

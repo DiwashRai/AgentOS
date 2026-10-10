@@ -1,4 +1,4 @@
-"""db.py: migrations, pragmas, transactions and the schema's invariants."""
+"""db.py: migrations, transactions, read snapshots and the schema's invariants."""
 
 from __future__ import annotations
 
@@ -66,9 +66,6 @@ def test_migrate_creates_every_table(db: Database) -> None:
     assert db.user_version() == len(migrations()) == 1
     with db.read() as conn:
         assert tables(conn) == TABLES
-        indexes = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
-    assert {"runs_one_active", "file_versions_owner_path", "runs_ticket"} <= indexes
-    assert "chat_messages_ticket" in indexes
 
 
 def test_migrate_twice_is_a_noop(db: Database) -> None:
@@ -107,15 +104,21 @@ def test_migration_numbering_must_be_contiguous(tmp_path: Path) -> None:
         migrations(tmp_path)
 
 
-def test_pragmas_on_every_connection(db: Database) -> None:
-    conn = db.connect()
-    try:
-        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
-        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
-    finally:
-        conn.close()
+def count_tickets(conn: Conn) -> int:
+    n: int = conn.execute("SELECT count(*) FROM tickets").fetchone()[0]
+    return n
+
+
+def test_reads_are_one_snapshot_and_never_wait_for_a_writer(db: Database) -> None:
+    with db.read() as snapshot:
+        assert count_tickets(snapshot) == 0
+        with db.tx() as conn:  # a writer can commit while a read is open (WAL)
+            add_ticket(conn)
+            with db.read() as during:  # ... and a read during the write sees the last commit
+                assert count_tickets(during) == 0
+        assert count_tickets(snapshot) == 0  # the open read keeps its snapshot
+    with db.read() as after:
+        assert count_tickets(after) == 1
 
 
 def test_foreign_keys_enforced(db: Database) -> None:

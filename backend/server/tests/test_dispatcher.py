@@ -1,19 +1,25 @@
 """Dispatcher (SPEC §8 "Dispatcher loop"): oldest first, concurrency, tokens, launch failures,
-and the background loop wiring in the lifespan."""
+and the background loops (dispatcher and reaper) wired into the lifespan."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
+from agentos import main
+from agentos.clock import to_db, utcnow
 from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.main import _every, create_app
-from agentos.models import TicketDetail
+from agentos.models import RunDetail, TicketDetail
+from agentos.runs import dispatcher
 from tests.run_support import CSRF, FakeLauncher, RunDriver
 
 CreateTicket = Callable[..., TicketDetail]
@@ -136,17 +142,58 @@ def test_a_failing_tick_does_not_stop_the_loop() -> None:
     assert len(calls) == 3
 
 
-def test_the_lifespan_runs_the_dispatcher(settings: Settings) -> None:
-    launcher = FakeLauncher()
+@contextmanager
+def with_loops(
+    settings: Settings, launcher: FakeLauncher, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[TestClient, AppContext]]:
+    """The app with its background loops on, ticking every 50 ms, signed in as dev."""
+    monkeypatch.setattr(dispatcher, "INTERVAL_S", 0.05)
+    monkeypatch.setattr(main, "REAPER_INTERVAL_S", 0.05)
     app = create_app(settings, launcher=launcher)  # loops on
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
-        client.post("/api/auth/login", json={"username": "dev"}, headers=CSRF)
-        r = client.post("/api/tickets", json={"title": "x", "workspace_mode": "none"}, headers=CSRF)
-        key = r.json()["key"]
-        run_id = client.post(f"/api/tickets/{key}/runs", json={}, headers=CSRF).json()["id"]
-        deadline = time.monotonic() + 10
-        while not launcher.launched and time.monotonic() < deadline:
-            time.sleep(0.05)
+        assert client.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
+        yield client, app.state.ctx
+    # Leaving the block stopped the loops (the lifespan awaited them).
+
+
+def dispatch(client: TestClient) -> int:
+    r = client.post("/api/tickets", json={"title": "x", "workspace_mode": "none"}, headers=CSRF)
+    run = client.post(f"/api/tickets/{r.json()['key']}/runs", json={}, headers=CSRF)
+    run_id: int = run.json()["id"]
+    return run_id
+
+
+def wait_for(what: str, probe: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 10
+    while not probe():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(0.02)
+
+
+def test_the_lifespan_runs_the_dispatcher(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = FakeLauncher()
+    with with_loops(settings, launcher, monkeypatch) as (client, _):
+        run_id = dispatch(client)
+        wait_for("the launch", lambda: bool(launcher.launched))
         assert [r for r, _, _ in launcher.launched] == [run_id]
         assert client.get(f"/api/runs/{run_id}").json()["status"] == "dispatched"
-    # Leaving the block stopped the loops (the lifespan awaited them).
+
+
+def test_the_lifespan_runs_the_reaper(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A launched worker that never claims is failed by the reaper (rule 2), seen via the API."""
+    launcher = FakeLauncher()
+    with with_loops(settings, launcher, monkeypatch) as (client, ctx):
+        run_id = dispatch(client)
+        wait_for("the launch", lambda: bool(launcher.launched))
+        long_ago = to_db(utcnow() - timedelta(seconds=ctx.settings.claim_timeout_s + 60))
+        with ctx.db.tx() as conn:
+            conn.execute("UPDATE runs SET dispatched_at = ? WHERE id = ?", (long_ago, run_id))
+        wait_for(
+            "the reaper",
+            lambda: client.get(f"/api/runs/{run_id}").json()["status"] != "dispatched",
+        )
+        run = RunDetail.model_validate(client.get(f"/api/runs/{run_id}").json())
+        assert (run.status, run.error) == ("failed", "worker never connected")
+        assert [s.status for s in run.stage_runs] == ["cancelled"]

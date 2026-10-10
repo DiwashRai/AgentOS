@@ -83,6 +83,16 @@ def test_create_returns_a_fresh_ticket(authed: TestClient) -> None:
         "plan",
         None,
     )
+    assert [s.state for s in t.phase_track] == [
+        "current",
+        "pending",
+        "pending",
+        "skipped",
+        "pending",
+        "pending",
+    ]
+    assert [r.state for r in t.rail] == ["pending"] * 4
+    assert (t.now.actor, t.now.person, t.now.run_id) == (None, None, None)
     assert t.tasks is None
     assert t.latest_run is None
     assert t.chat_count == 0
@@ -182,20 +192,11 @@ def test_owner(authed: TestClient, login: LoginFn, ctx: AppContext) -> None:
     assert code(response) == "user_not_found"
 
 
-@pytest.mark.parametrize(
-    ("title", "slug"),
-    [
-        ('Fix: "quoted" #title & <tags>', "fix-quoted-title-tags"),
-        ("Ünïcödé — façade ☃ 😀", "unicode-facade"),
-        ("!!!", "ticket"),
-        ("x" * 200, "x" * 50),
-        ("Line\nbreak\ttab", "line-break-tab"),
-    ],
-)
-def test_scaffold_is_bundle_v1(authed: TestClient, title: str, slug: str) -> None:
+def test_scaffold_is_bundle_v1(authed: TestClient) -> None:
+    title = 'Fix: "quoted" #title & <tags>'  # awkward titles are covered in test_render
     t = TicketDetail.model_validate(post(authed, title=title, description="Desc.").json())
     me = Me.model_validate(authed.get("/api/me").json())
-    assert t.slug == slug
+    assert t.slug == "fix-quoted-title-tags"
     assert len(t.skill_name) <= 64
     d = f".claude/skills/{t.skill_name}"
     files = authed.get(f"/api/tickets/{t.key}/files").json()

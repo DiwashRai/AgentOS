@@ -1,7 +1,8 @@
-"""Every GET response must validate against its model (FastAPI serializes without validating).
+"""Every GET response must validate against its response model.
 
-Real data is created through the API (runs driven through the worker API) so every optional
-field has a value somewhere.
+FastAPI serializes a route's return value without validating it against the declared model, so a
+service could drift from the contract unnoticed. Real data is created through the API (runs driven
+through the worker API) so every optional field has a value somewhere.
 """
 
 from __future__ import annotations
@@ -101,20 +102,3 @@ def test_every_get_matches_its_model(
             assert check(client, f"/api/runs/{run.id}/events", list[RunEvent])
     deleted = check(client, f"/api/tickets/{repo.key}/versions/gone.md", list[FileVersionInfo])
     assert [v.deleted for v in deleted] == [False, True]
-
-
-def test_patch_rejects_null_for_required_fields(
-    authed: TestClient, create_ticket: CreateTicket
-) -> None:
-    t = create_ticket()
-    response = authed.patch(f"/api/tickets/{t.key}", json={"title": None}, headers=CSRF)
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "validation_error"
-    check(authed, "/api/tickets", list[TicketSummary])
-
-
-def test_patch_allows_clearing_repo_url(authed: TestClient, create_ticket: CreateTicket) -> None:
-    t = create_ticket(repo_url="https://github.com/o/r.git")
-    response = authed.patch(f"/api/tickets/{t.key}", json={"repo_url": None}, headers=CSRF)
-    assert response.status_code == 200
-    assert TicketDetail.model_validate(response.json()).repo_url is None

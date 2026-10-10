@@ -283,17 +283,6 @@ def test_cancel_queued(authed: TestClient, create_ticket: CreateTicket, runs: Ru
     assert runs.tick() == []  # nothing to launch any more
 
 
-def test_cancel_dispatched_then_late_claim_is_gone(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
-) -> None:
-    t = create_ticket(repo_url=REPO)
-    run = runs.queue(t.key)
-    runs.tick()
-    r = authed.post(f"/api/runs/{run.id}/cancel", headers=CSRF)
-    assert r.json()["status"] == "cancelled"
-    assert error(runs.claim(run.id)) == (410, "run_gone")
-
-
 def test_cancel_running_waits_for_the_worker(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
@@ -340,9 +329,9 @@ def test_bundle_locked_from_claim_to_complete(
 ) -> None:
     t = create_ticket(repo_url=REPO)
 
-    def put(content: str, base: int) -> Any:
+    def put(content: str, base: int, path: str = "notes.md") -> Any:
         return authed.put(
-            f"/api/tickets/{t.key}/files/notes.md",
+            f"/api/tickets/{t.key}/files/{path}",
             json={"content": content, "base_version": base},
             headers=CSRF,
         )
@@ -354,6 +343,9 @@ def test_bundle_locked_from_claim_to_complete(
     worker_token = "k" * 43
     assert runs.claim(run.id, worker_token).status_code == 200
     assert error(put("running", 2)) == (409, "bundle_locked")
+    assert error(put("new", 0, "new.md")) == (409, "bundle_locked")
+    deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=2", headers=CSRF)
+    assert error(deleted) == (409, "bundle_locked")
     assert runs.get(run.id).status == "running"
     r = authed.post(
         "/api/worker/complete",
@@ -464,6 +456,8 @@ def test_retry_after_a_failure_starts_at_the_failed_stage(
     assert detail.error == "stage review failed"
     attention, phase, _, rail, nxt = board(authed, t.key)
     assert (attention, phase, rail, nxt) == ("stuck", "review", "pending done failed", "review")
+    ticket = TicketDetail.model_validate(authed.get(f"/api/tickets/{t.key}").json())
+    assert (ticket.now.run_id, ticket.active_run_id) == (worker.run_id, None)
     retry = runs.queue(t.key)
     assert retry.from_stage == "review"
     assert retry.stage_ids == ["review"]

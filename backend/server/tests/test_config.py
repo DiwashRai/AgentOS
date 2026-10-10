@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from agentos.config import (
     ConfigError,
     Settings,
-    is_loopback_host,
     load_runtimes,
     load_settings,
     startup_checks,
@@ -164,24 +163,6 @@ def test_valid_settings_pass_and_create_dirs(tmp_path: Path, runtimes: RuntimesC
     assert settings.workspaces_dir.is_dir()
 
 
-@pytest.mark.parametrize(
-    ("host", "loopback"),
-    [
-        ("127.0.0.1", True),
-        ("127.1.2.3", True),
-        ("::1", True),
-        ("[::1]", True),
-        ("localhost", True),
-        ("0.0.0.0", False),  # noqa: S104 - testing that the wildcard bind is rejected
-        ("192.168.1.5", False),
-        ("example.com", False),
-        (None, False),
-    ],
-)
-def test_is_loopback_host(host: str | None, loopback: bool) -> None:
-    assert is_loopback_host(host) is loopback
-
-
 def test_dev_auth_requires_loopback_host_and_public_url(tmp_path: Path) -> None:
     found = problems(make(tmp_path, host="0.0.0.0", public_url="https://agentos.example.com"))  # noqa: S104 - must be rejected
     assert any("AGENTOS_HOST" in p for p in found)
@@ -263,7 +244,12 @@ def test_lifespan_fails_fast_on_bad_config(tmp_path: Path) -> None:
         pass
 
 
-# ------------------------------------------------------------------ GET /api/config
+# ------------------------------------------------------------------ GET /api/health, /api/config
+
+
+def test_health(tmp_path: Path) -> None:
+    with TestClient(create_app(make(tmp_path))) as client:
+        assert client.get("/api/health").json() == {"status": "ok"}
 
 
 def test_api_config_reflects_dev_settings(tmp_path: Path) -> None:

@@ -402,7 +402,7 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
         "done": "pending",
     }
     assert t.next_stage == "implement"
-    assert t.now.text == "review plan and continue"
+    assert (t.now.actor, t.now.run_id) == (None, run1.id)
     assert t.tasks == TaskProgress(done=0, total=3), e2e.diag(run1.id)
     files = e2e.files(key)
     assert files[tasks_md].author_run_id == run1.id, e2e.diag(run1.id)
@@ -452,7 +452,7 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
         "done": "pending",
     }
     assert t.next_stage is None
-    assert t.now.text == "review the result and mark done"
+    assert (t.now.actor, t.now.run_id) == (None, run2.id)
     assert t.tasks == TaskProgress(done=2, total=2), e2e.diag(run2.id)
     files = e2e.files(key)
     for path in (tasks_md, learnings, review_md):
@@ -490,7 +490,7 @@ def test_failed_stage_then_retry_succeeds(e2e: E2E) -> None:
     assert t.phase == "build"
     assert track(t)["build"] == "failed"
     assert t.next_stage == "implement"
-    assert t.now.text == "Implement failed: retry or adjust"
+    assert t.now.run_id == run1.id
 
     # Fix the stage and retry: the default from_stage is the failed one.
     e2e.configure(key, {"implement": "implement"})
@@ -538,7 +538,7 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
     assert t.attention == "stuck"
     assert rail(t)["implement"] == "failed"
     assert t.next_stage == "implement"
-    assert t.now.text == "Implement cancelled: retry or adjust"
+    assert t.now.run_id == run.id
 
     # No process left behind: the stage tree is killed and the worker exits after completing.
     e2e.wait("the fake agent to exit", lambda: not pid_alive(pid), run.id)

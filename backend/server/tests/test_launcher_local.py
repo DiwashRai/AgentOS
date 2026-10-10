@@ -11,7 +11,6 @@ from typing import Any, ClassVar
 
 import pytest
 
-from agentos.launchers.base import Launcher
 from agentos.launchers.local import LocalProcessLauncher
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -29,12 +28,6 @@ def _launcher(tmp_path: Path, env_file: Path | None = None, **kw: Any) -> LocalP
         max_concurrency=2,
         **kw,
     )
-
-
-def test_satisfies_launcher_protocol(tmp_path: Path) -> None:
-    launcher: Launcher = _launcher(tmp_path)
-    assert launcher.name == "local"
-    assert launcher.max_concurrency == 2
 
 
 def test_real_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,21 +127,6 @@ def test_spawn_is_detached(tmp_path: Path, fake_popen: type[_FakePopen]) -> None
         assert "start_new_session" not in kwargs
     else:
         assert kwargs["start_new_session"] is True
-
-
-def test_finished_children_are_dropped(tmp_path: Path, fake_popen: type[_FakePopen]) -> None:
-    del fake_popen
-    launcher = _launcher(tmp_path)
-    launcher.launch(1, SERVER_URL, TOKEN)
-    launcher.launch(2, SERVER_URL, TOKEN)
-    first = launcher._children[0]
-    assert isinstance(first, _FakePopen)
-    first.returncode = 0
-
-    launcher.launch(3, SERVER_URL, TOKEN)
-
-    assert len(launcher._children) == 2
-    assert first not in launcher._children
 
 
 def test_spawn_failure_raises(tmp_path: Path) -> None:

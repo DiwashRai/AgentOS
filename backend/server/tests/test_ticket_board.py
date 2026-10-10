@@ -59,22 +59,6 @@ def put_tasks(client: TestClient, t: TicketDetail, content: str) -> None:
     assert response.status_code == 200, response.text
 
 
-def test_a_fresh_ticket(authed: TestClient, create_ticket: CreateTicket) -> None:
-    t = create_ticket()
-    s = board(authed)[t.key]
-    assert (s.attention, s.phase, s.phase_since) == ("up_next", "inbox", t.created_at)
-    assert track(s) == "current pending pending skipped pending pending"
-    assert rail(s) == "pending pending pending pending"
-    assert (s.now.text, s.now.actor, s.now.person, s.now.run_id) == (
-        "add context, then dispatch",
-        None,
-        None,
-        None,
-    )
-    assert (s.latest_run, s.tasks, s.chat_count) == (None, None, 0)
-    assert t.next_stage == "plan"
-
-
 def test_a_running_ticket(authed: TestClient, create_ticket: CreateTicket, add_run: AddRun) -> None:
     me = Me.model_validate(authed.get("/api/me").json())
     t = create_ticket()
@@ -121,7 +105,6 @@ def test_gated_attention_depends_on_the_viewer(
         nobody.key: "needs_you",
     }
     assert as_dev[sams.key].now.person == Person(id=sam.id, display_name="sam", avatar_url=None)
-    assert as_dev[sams.key].now.text == "review plan and continue"
     assert as_dev[mine.key].now.person is None
     login("sam")
     as_sam = board(client)
@@ -149,23 +132,10 @@ def test_ever_succeeded_spans_runs(
     assert detail(authed, t.key).next_stage == "implement"
 
 
-def test_a_failed_run(authed: TestClient, create_ticket: CreateTicket, add_run: AddRun) -> None:
-    t = create_ticket()
-    add_run(t.key, "gated", [("plan", "succeeded")])
-    run_id = add_run(t.key, "failed", [("implement", "succeeded"), ("review", "failed")])
-    s = board(authed)[t.key]
-    assert (s.attention, s.phase) == ("stuck", "review")
-    assert rail(s) == "done done failed pending"
-    assert (s.now.text, s.now.run_id) == ("Review failed: retry or adjust", run_id)
-    d = detail(authed, t.key)
-    assert (d.next_stage, d.active_run_id) == ("review", None)
-
-
 def test_board_covers_every_attention_group_and_state(
     login: LoginFn, client: TestClient, create_ticket: CreateTicket, add_run: AddRun
 ) -> None:
-    """Moved from test_contract's stub-board check: real tickets reach every value the UI
-    renders."""
+    """Real tickets reach every attention group, phase and rail state the UI renders."""
     sam = login("sam")
     login("dev")
     create_ticket("Up next")

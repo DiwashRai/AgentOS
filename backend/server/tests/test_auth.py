@@ -123,14 +123,27 @@ def test_dev_login_accepts_64_chars(client: TestClient) -> None:
     assert post_login(client, "x" * 64).status_code == 200
 
 
-def test_login_requires_csrf_header(client: TestClient) -> None:
+def test_mutations_require_the_csrf_header(client: TestClient, ctx: AppContext) -> None:
     response = client.post("/api/auth/login", json={"username": "alice"})
     assert response.status_code == 403
+    assert set(response.json()) == {"error"}
+    assert set(response.json()["error"]) == {"code", "message"}
     assert error_code(response) == "csrf_header_missing"
+    assert rows(ctx, "SELECT * FROM users") == []
 
 
 @pytest.mark.parametrize(
-    "host", ["evil.example.com", "evil.example.com:8000", "10.0.0.5:8000", "0.0.0.0:8000", ""]
+    "host",
+    [
+        "evil.example.com",
+        "evil.example.com:8000",
+        "192.168.1.5",
+        "10.0.0.5:8000",
+        "0.0.0.0:8000",
+        "localhost.evil.example.com",
+        "127.0.0.1.evil.example.com",
+        "",
+    ],
 )
 def test_dev_login_refuses_non_loopback_host(
     client: TestClient, ctx: AppContext, host: str
@@ -141,7 +154,9 @@ def test_dev_login_refuses_non_loopback_host(
     assert rows(ctx, "SELECT * FROM users") == []
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "localhost:8000", "[::1]:8000", "127.0.0.2"])
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1", "127.1.2.3:8000", "localhost", "localhost:8000", "[::1]", "[::1]:8000"]
+)
 def test_dev_login_accepts_loopback_hosts(client: TestClient, host: str) -> None:
     assert post_login(client, "alice", host=host).status_code == 200
 
