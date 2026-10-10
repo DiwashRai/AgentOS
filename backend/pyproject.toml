@@ -120,16 +120,8 @@ type = "forbidden"
 source_modules = ["agentos.launchers", "agentos.sources"]
 forbidden_modules = [
     "fastapi", "starlette", "sqlite3", "agentos.db", "agentos.*.service", "agentos.*.routes",
-    "agentos.stubs",
 ]
 broken_contract_guidance = "Plugins receive what they need as arguments (the dispatcher counts active runs). A fork adds plugins without touching the schema."
-
-[[tool.importlinter.contracts]]
-name = "Only the HTTP layer reads stub data"
-type = "protected"
-protected_modules = ["agentos.stubs"]
-allowed_importers = ["agentos.*.routes", "agentos.auth.deps", "agentos.meta", "agentos.stream"]
-broken_contract_guidance = "The template seed and the slug/skill-path helpers live in agentos.pipeline.scaffold, not stubs.py. Delete this contract with stubs.py."
 
 [[tool.importlinter.contracts]]
 name = "No import cycles between agentos subpackages"

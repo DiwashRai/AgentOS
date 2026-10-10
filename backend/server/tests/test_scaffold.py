@@ -55,11 +55,6 @@ def test_truncation_trims_trailing_dash() -> None:
     assert slugify(title, "AOS-1") == "a" * 49
 
 
-def test_slugify_without_key_stays_callable() -> None:
-    assert slugify("Fix login bug") == "fix-login-bug"
-    assert len(slugify("x" * 100)) == 40
-
-
 def test_names_repo_mode() -> None:
     n = names("AOS-42", "fix-login-bug", "repo")
     d = ".claude/skills/context-aos-42-fix-login-bug"

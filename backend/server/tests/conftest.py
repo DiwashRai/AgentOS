@@ -18,6 +18,7 @@ from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.main import create_app
 from agentos.models import Me, Role, RunStatus, StageRunStatus, TicketDetail
+from tests.run_support import FakeLauncher, RunDriver
 
 FIXTURES = Path(__file__).parent / "fixtures"
 RUNTIMES_TOML = FIXTURES / "runtimes_test.toml"
@@ -50,8 +51,14 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def app(settings: Settings) -> FastAPI:
-    return create_app(settings)
+def launcher() -> FakeLauncher:
+    return FakeLauncher()
+
+
+@pytest.fixture
+def app(settings: Settings, launcher: FakeLauncher) -> FastAPI:
+    # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
+    return create_app(settings, launcher=launcher, run_loops=False)
 
 
 @pytest.fixture
@@ -127,7 +134,7 @@ FINISHED: frozenset[RunStatus] = frozenset({"succeeded", "gated", "failed", "can
 
 @pytest.fixture
 def add_run(ctx: AppContext) -> AddRun:
-    """Insert a run + its stage_runs straight into the db (until the run service exists).
+    """Insert a run + its stage_runs straight into the db (the `runs` fixture drives real runs).
 
     Stage i starts at start+4i minutes and ends 3 minutes later; `pending` stages never started.
     The run starts at `start` unless queued/dispatched, and finishes unless active.
@@ -181,3 +188,9 @@ def add_run(ctx: AppContext) -> AddRun:
         return run_id
 
     return _add
+
+
+@pytest.fixture
+def runs(client: TestClient, ctx: AppContext, launcher: FakeLauncher) -> RunDriver:
+    """Dispatch through the API, tick the dispatcher, claim and act as the worker."""
+    return RunDriver(client, ctx, launcher)

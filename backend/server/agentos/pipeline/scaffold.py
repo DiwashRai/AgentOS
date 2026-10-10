@@ -14,8 +14,6 @@ from agentos.models import FileEntry, Pipeline, Stage, WorkspaceMode
 MAX_SKILL_NAME = 64  # Agent Skills limit on `name` (must also match the directory name)
 SKILL_PREFIX = "context-"
 FALLBACK_SLUG = "ticket"
-# Slug budget when no key is given (only the stubs call slugify without one).
-_NO_KEY_SLUG_CHARS = 40
 
 PROMPTS = {
     "plan": (
@@ -117,18 +115,12 @@ DEFAULT_SCAFFOLD = [
 ]
 
 
-def slugify(title: str, key: str | None = None) -> str:
+def slugify(title: str, key: str) -> str:
     """SPEC §4: NFKD → ASCII, lowercase, runs of non-[a-z0-9] → '-', trim, truncate so
-    `skill_name(key, slug)` ≤ 64, trim again, empty → 'ticket'.
-
-    `key=None` (stubs only) caps the slug at 40 chars. Real callers pass the key.
-    """
+    `skill_name(key, slug)` ≤ 64, trim again, empty → 'ticket'."""
     ascii_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
-    if key is None:
-        budget = _NO_KEY_SLUG_CHARS
-    else:
-        budget = MAX_SKILL_NAME - len(f"{SKILL_PREFIX}{key.lower()}-")
+    budget = MAX_SKILL_NAME - len(f"{SKILL_PREFIX}{key.lower()}-")
     return slug[: max(budget, 0)].strip("-") or FALLBACK_SLUG
 
 

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-from agentos.errors import ERROR_RESPONSES, ApiError
+from agentos.errors import ERROR_RESPONSES
+from agentos.http_deps import Ctx
+from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
     ClaimRequest,
     ClaimResponse,
@@ -17,36 +17,33 @@ from agentos.models import (
     SyncRequest,
     SyncResponse,
 )
+from agentos.worker_api import service
+from agentos.worker_api.deps import RunToken
 
 router = APIRouter(tags=["worker"], responses=ERROR_RESPONSES)
-
-WORKER_SOURCE = Path(__file__).resolve().parents[3] / "worker" / "worker.py"
-
-
-def _not_yet() -> ApiError:
-    return ApiError(501, "not_implemented", "Worker API is not implemented yet")
 
 
 @router.get("/api/worker/worker.py", response_class=PlainTextResponse)
 def worker_source() -> str:
-    return WORKER_SOURCE.read_text(encoding="utf-8")
+    return WORKER_PATH.read_text(encoding="utf-8")
 
 
+# Bearer: the dispatch token. Every other worker route: the worker token bound at claim.
 @router.post("/api/worker/claim")
-def claim(body: ClaimRequest) -> ClaimResponse:
-    raise _not_yet()
+def claim(body: ClaimRequest, token: RunToken, ctx: Ctx) -> ClaimResponse:
+    return ClaimResponse(manifest=service.claim(ctx.db, ctx.runtimes, token, body.worker_token))
 
 
 @router.post("/api/worker/events")
-def events(body: EventsRequest) -> EventsResponse:
-    raise _not_yet()
+def events(body: EventsRequest, token: RunToken, ctx: Ctx) -> EventsResponse:
+    return EventsResponse(cancel=service.post_events(ctx.db, token, body.events))
 
 
 @router.post("/api/worker/sync")
-def sync(body: SyncRequest) -> SyncResponse:
-    raise _not_yet()
+def sync(body: SyncRequest, token: RunToken, ctx: Ctx) -> SyncResponse:
+    return SyncResponse(versions=service.sync(ctx.db, token, body.stage_id, body.files))
 
 
 @router.post("/api/worker/complete", status_code=204)
-def complete(body: CompleteRequest) -> None:
-    raise _not_yet()
+def complete(body: CompleteRequest, token: RunToken, ctx: Ctx) -> None:
+    service.complete(ctx.db, token, body)

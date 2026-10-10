@@ -8,12 +8,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from agentos import stubs
 from agentos.models import (
     NowInfo,
     Person,
     Pipeline,
-    RunDetail,
     RunStatus,
     Stage,
     StagePhase,
@@ -868,53 +866,15 @@ def test_seeded_aos_7_done() -> None:
     assert view.now == now("done", progress=tasks)
 
 
-# Delete with stubs.py: parity with the reference implementation the frontend was designed on.
-
-
-def _run_fact(r: RunDetail) -> RunFact:
-    return RunFact(
-        id=r.id,
-        status=r.status,
-        from_stage=r.from_stage,
-        stage_ids=tuple(r.stage_ids),
-        stage_runs=tuple(
-            StageRunFact(
-                idx=sr.idx,
-                stage_id=sr.stage_id,
-                status=sr.status,
-                started_at=sr.started_at,
-                finished_at=sr.finished_at,
-            )
-            for sr in r.stage_runs
-        ),
-        created_at=r.created_at,
-        started_at=r.started_at,
-        finished_at=r.finished_at,
-    )
-
-
-def test_matches_the_stub_on_its_seeded_tickets() -> None:
-    store = stubs.StubStore()
-    for key in list(store.tickets):
-        t = store.get(key)  # derived for the stub's viewer
-        latest = _run_fact(store.runs[t.latest_run.id]) if t.latest_run else None
-        f = TicketFacts(
-            state=t.state,
-            owner=t.owner,
-            pipeline=t.pipeline,
-            created_at=t.created_at,
-            updated_at=t.updated_at,
-            latest_run=latest,
-            ever_succeeded=frozenset(r.stage_id for r in t.rail if r.state in ("done", "stale")),
-            tasks=t.tasks,
-            next_task=store._next_task(t),
-        )
-        board = derive(f)
-        view = for_viewer(board, stubs.ME.id)
-        assert view.attention == t.attention, key
-        assert board.phase == t.phase, key
-        assert board.phase_since == t.phase_since, key
-        assert board.phase_track == t.phase_track, key
-        assert board.rail == t.rail, key
-        assert board.next_stage == t.next_stage, key
-        assert view.now == t.now, key
+@pytest.mark.parametrize("owner", [ME, None], ids=["aos-1-owned", "work-11234-unowned"])
+def test_seeded_up_next_without_runs(owner: Person | None) -> None:
+    f = facts(owner=owner)
+    board = derive(f)
+    view = for_viewer(board, ME.id)
+    assert view.attention == "up_next"
+    assert board.phase == "inbox"
+    assert board.phase_since == CREATED
+    assert track_states(f) == "current pending pending skipped pending pending"
+    assert rail_states(f) == "pending pending pending pending"
+    assert board.next_stage == "plan"
+    assert view.now == now("add context, then dispatch", run_id=None)

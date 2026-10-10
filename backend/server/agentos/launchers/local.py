@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 _WINDOWS = sys.platform == "win32"
 _ENV_PREFIX = "AGENTOS_"
 
+# backend/worker/worker.py (this file is backend/server/agentos/launchers/local.py). Also served
+# at GET /api/worker/worker.py, so remote runners get the same version.
+WORKER_PATH = Path(__file__).resolve().parents[3] / "worker" / "worker.py"
+
 
 class LocalProcessLauncher:
     name = "local"
