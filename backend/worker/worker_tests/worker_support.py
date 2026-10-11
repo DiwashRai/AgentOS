@@ -140,6 +140,12 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENTOS_TOKEN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def no_pr_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Worker tests never call a real `gh`; PR lookup tests delenv this and fake PR_LOOKUP."""
+    monkeypatch.setenv("AGENTOS_PR_LOOKUP", "0")
+
+
 @pytest.fixture
 def server() -> Iterator[FakeServer]:
     fake = FakeServer()

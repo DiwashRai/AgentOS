@@ -32,7 +32,7 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status
 from agentos.runs.service import TERMINAL, finish, token_hash
 from agentos.tickets.service import ticket_pipeline, ticket_ref
-from agentos.validate import path_key, validate_path
+from agentos.validate import path_key, validate_path, validate_pr_url
 
 log = logging.getLogger(__name__)
 
@@ -294,4 +294,18 @@ def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:
                 )
         else:
             status = "cancelled"
-        finish(conn, run["id"], status, ("running",), now=now, error=error)
+        if finish(conn, run["id"], status, ("running",), now=now, error=error):
+            _store_pr_url(conn, run, body.pr_url)
+
+
+def _store_pr_url(conn: Conn, run: Row, pr_url: str | None) -> None:
+    """Remember the PR the worker found for the ticket's branch. No URL leaves the stored one;
+    an invalid one is logged and ignored (it never fails the completion)."""
+    if pr_url is None:
+        return
+    try:
+        url = validate_pr_url(pr_url)
+    except ApiError as exc:
+        log.warning("run %s: ignoring the reported PR URL (%s)", run["id"], exc.message)
+        return
+    conn.execute("UPDATE tickets SET pr_url = ? WHERE id = ?", (url, run["ticket_id"]))

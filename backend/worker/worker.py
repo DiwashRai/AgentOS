@@ -5,7 +5,7 @@ GET /api/worker/worker.py so runners always get the matching version. See SPEC ย
 
 Flow: claim -> workspace (clone, or `git init` in no-repo mode) -> write the manifest files ->
 for each stage: run it, sync context files back, then (repo mode) commit, pre-push guard, push ->
-flush events -> complete.
+(repo mode) look up the branch's PR with `gh` -> flush events -> complete (with `pr_url` if found).
 
 Failure paths after the claim:
 - cancel (`{"cancel": true}` on an events post): kill the stage tree, still sync/commit/push,
@@ -82,6 +82,13 @@ JUNK_PATTERNS = (
     "Thumbs.db",
 )
 
+# End-of-run PR lookup (repo mode): ask the CLI that opened the PR for the branch's PR, so the link
+# never depends on what an agent printed. `{branch}` is replaced; the program is resolved on the
+# stage PATH. AGENTOS_PR_LOOKUP=0 in the worker's own environment skips the lookup.
+PR_LOOKUP = ("gh", "pr", "view", "{branch}", "--json", "url", "--jq", ".url")
+PR_LOOKUP_TIMEOUT_S = 30.0
+MAX_PR_URL_CHARS = 500  # the server's CompleteRequest.pr_url max_length
+
 # Characters cmd.exe interprets; a .cmd/.bat program must not receive them in argv (SPEC ยง9.3).
 CMD_UNSAFE = frozenset('\r\n"&|<>^%!')
 
@@ -153,6 +160,23 @@ def branch_error(name: str) -> str | None:
         return "contains '..' or '//'"
     if name.endswith(("/", ".", ".lock")):
         return "ends in '/', '.' or '.lock'"
+    return None
+
+
+def pr_url_error(url: str) -> str | None:
+    """Why `url` is not a PR link the server would store, or None. Mirrors validate_pr_url."""
+    if len(url) > MAX_PR_URL_CHARS:
+        return f"longer than {MAX_PR_URL_CHARS} characters"
+    if any(c.isspace() or not c.isprintable() for c in url):
+        return "contains whitespace or control characters"
+    if not url.startswith("https://"):
+        return "not an https:// URL"
+    try:
+        netloc = urllib.parse.urlsplit(url).netloc
+    except ValueError:
+        return "not a URL"
+    if not netloc or "@" in netloc:
+        return "no host, or credentials in the URL"
     return None
 
 
@@ -1217,12 +1241,15 @@ class Run:
         return self._finish("completed", None, None)
 
     def _finish(self, status: str, failed_stage: str | None, error: str | None) -> int:
+        pr_url = self._find_pr()
         self.events.close()
-        body = {
+        body: dict[str, Any] = {
             "status": status,
             "failed_stage": failed_stage,
             "error": None if error is None else _clip(error),
         }
+        if pr_url is not None:
+            body["pr_url"] = pr_url
         try:
             self.api.call("/api/worker/complete", body)
         except HttpError as exc:
@@ -1490,6 +1517,63 @@ class Run:
         stage_id = self.current_stage or "setup"
         problem = self._commit(stage_id) or self._guard() or self._push(None)
         say(f"could not save the work: {problem}" if problem else "work committed and pushed")
+
+    # ------------------------------------------------------------ PR lookup (end of a repo run)
+
+    def _find_pr(self) -> str | None:
+        """The PR URL for the branch, or None. Repo mode with a workspace only, never once the
+        server is gone, and never fatal: a miss is one `system` log line saying why."""
+        if not (self.repo and self.ready) or self.events.failure is not None:
+            return None
+        if os.environ.get("AGENTOS_PR_LOOKUP", "").strip() == "0":
+            return None
+        url, why = self._lookup_pr()
+        message = f"PR: {url}" if url else f"no PR URL: {why}"
+        say(message)
+        self.events.log(None, "system", message)
+        return url
+
+    def _lookup_pr(self) -> tuple[str | None, str]:
+        branch = str(self.m.branch)
+        argv = [arg.replace("{branch}", branch) for arg in PR_LOOKUP]
+        program = shutil.which(argv[0], path=self.stage_env.get("PATH"))
+        if program is None:
+            return None, f"{argv[0]} not found"
+        if os.name == "nt" and cmd_guard_error(program, argv):
+            return None, f"{argv[0]} is a .cmd/.bat shim and the arguments are unsafe for it"
+        out: list[str] = []
+        err: list[str] = []
+
+        def on_line(stream: str, text: str, _truncated: bool) -> None:
+            if text.strip():
+                (out if stream == "stdout" else err).append(text.strip())
+
+        cap = min(SHELL_LINE_BYTES, self.m.max_line_bytes)
+        result = run_process(
+            [program, *argv[1:]],
+            cwd=self.workdir,
+            env=self.stage_env,
+            stdin=None,
+            timeout_s=PR_LOOKUP_TIMEOUT_S,
+            caps=(cap, cap),
+            on_line=on_line,
+            interrupt=lambda: "abort" if self.events.failure is not None else None,
+        )
+        if result.error:
+            return None, result.error
+        if result.stopped == "timeout":
+            return None, f"{argv[0]} timed out after {PR_LOOKUP_TIMEOUT_S:g}s"
+        if result.stopped is not None:
+            return None, "the server went away"
+        if result.exit_code != 0:
+            detail = f": {_clip(err[-1], 200)}" if err else ""
+            return None, f"{argv[0]} exited with code {result.exit_code}{detail}"
+        if len(out) != 1:
+            return None, f"expected one URL line from {argv[0]}, got {len(out)} lines"
+        problem = pr_url_error(out[0])
+        if problem:
+            return None, f"{argv[0]} printed {_clip(out[0], 200)!r}: {problem}"
+        return out[0], ""
 
     # ------------------------------------------------------------ git
 

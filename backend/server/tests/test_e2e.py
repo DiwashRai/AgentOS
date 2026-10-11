@@ -274,6 +274,7 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
                 "GIT_CONFIG_COUNT=1\n"
                 f"GIT_CONFIG_KEY_0='url.{remote.as_uri()}.insteadOf'\n"
                 f"GIT_CONFIG_VALUE_0='{REPO_URL}'\n"
+                "AGENTOS_PR_LOOKUP=0\n"  # never ask a real `gh` about the fake remote
             ).encode()
         )
 

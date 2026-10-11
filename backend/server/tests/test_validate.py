@@ -20,6 +20,7 @@ from agentos.validate import (
     validate_block_content,
     validate_key,
     validate_path,
+    validate_pr_url,
     validate_repo_url,
 )
 
@@ -143,6 +144,43 @@ def test_invalid_repo_urls(url: str) -> None:
 
 def test_repo_url_message_names_field() -> None:
     assert _rejects(validate_repo_url, "file:///x").startswith("repo_url: ")
+
+
+# ------------------------------------------------------------------ PR URLs
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r/pull/7",
+        "https://ghe.example.com:8443/o/r/pull/12",
+        "https://dev.azure.com/org/p/_git/r/pullrequest/3?x=1",
+    ],
+)
+def test_valid_pr_urls(url: str) -> None:
+    assert validate_pr_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "http://github.com/o/r/pull/7",
+        "javascript:alert(1)",
+        "HTTPS://github.com/o/r/pull/7",
+        "https://user:pw@github.com/o/r/pull/7",
+        "https://token@github.com/o/r/pull/7",
+        "https:///o/r/pull/7",
+        "https://github.com/o/r/pull/7 x",
+        "https://github.com/o/r/pull/7\n",
+        "https://github.com/o/r/pull/\x007",
+        "https://github.com:x/o/r",
+        "https://[::1/o",
+        "https://github.com/" + "a" * 500,
+    ],
+)
+def test_invalid_pr_urls(url: str) -> None:
+    assert _rejects(validate_pr_url, url).startswith("pr_url: ")
 
 
 # ------------------------------------------------------------------ branches

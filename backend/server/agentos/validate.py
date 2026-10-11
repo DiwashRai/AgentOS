@@ -21,6 +21,7 @@ MAX_AGENT_LINE_BYTES = 256 * 1024  # manifest limits.max_line_bytes (Claude stre
 MAX_PATH_CHARS = 255
 MAX_KEY_CHARS = 40  # keeps skill.name (context-{key}-{slug}) within 64 chars (see scaffold.py)
 MAX_REPO_URL_CHARS = 2048
+MAX_PR_URL_CHARS = 500  # CompleteRequest.pr_url max_length
 
 # ------------------------------------------------------------------ block markers (SPEC §6)
 # The worker mirrors these (it is stdlib-only and can't import them).
@@ -155,6 +156,31 @@ def validate_repo_url(url: str) -> str:
         raise _invalid("repo_url", f"invalid port {port!r}")
     if parts.path.strip("/") == "":
         raise _invalid("repo_url", "must include a repository path")
+    return url
+
+
+def validate_pr_url(url: str) -> str:
+    """A pull request link the UI renders: `https://host[:port]/...`, at most MAX_PR_URL_CHARS.
+
+    No userinfo (credentials), no whitespace or control characters.
+    """
+    if len(url) > MAX_PR_URL_CHARS:
+        raise _invalid("pr_url", f"longer than {MAX_PR_URL_CHARS} characters")
+    if any(c.isspace() or not c.isprintable() for c in url):
+        raise _invalid("pr_url", "must not contain whitespace or control characters")
+    if not url.startswith("https://"):
+        raise _invalid("pr_url", "must be an https:// URL")
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:  # e.g. an unbalanced IPv6 bracket
+        raise _invalid("pr_url", f"not a URL: {exc}") from exc
+    if "@" in parts.netloc:
+        raise _invalid("pr_url", "must not contain credentials")
+    host, sep, port = parts.netloc.partition(":")
+    if not _HOST_RE.fullmatch(host):
+        raise _invalid("pr_url", f"invalid host {host!r}")
+    if sep and not _PORT_RE.fullmatch(port):
+        raise _invalid("pr_url", f"invalid port {port!r}")
     return url
 
 

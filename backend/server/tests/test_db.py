@@ -8,6 +8,7 @@ import pytest
 
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import (
+    MIGRATIONS_DIR,
     Conn,
     Database,
     IntegrityError,
@@ -63,7 +64,7 @@ def add_run(conn: Conn, ticket_id: int, status: str) -> None:
 
 
 def test_migrate_creates_every_table(db: Database) -> None:
-    assert db.user_version() == len(migrations()) == 1
+    assert db.user_version() == len(migrations()) == 2
     with db.read() as conn:
         assert tables(conn) == TABLES
 
@@ -71,7 +72,7 @@ def test_migrate_creates_every_table(db: Database) -> None:
 def test_migrate_twice_is_a_noop(db: Database) -> None:
     with db.tx() as conn:
         add_ticket(conn)
-    assert db.migrate() == 1
+    assert db.migrate() == len(migrations())
     with db.read() as conn:
         assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
@@ -96,6 +97,24 @@ def test_failed_migration_rolls_back(tmp_path: Path) -> None:
     assert database.user_version() == 1
     with database.read() as conn:
         assert tables(conn) == {"a"}
+
+
+def test_an_existing_0001_database_migrates_forward(tmp_path: Path) -> None:
+    only_first = tmp_path / "migrations"
+    only_first.mkdir()
+    first = MIGRATIONS_DIR / "0001_init.sql"
+    (only_first / first.name).write_bytes(first.read_bytes())
+    path = tmp_path / "agentos.db"
+    old = Database(path, only_first)
+    assert old.migrate() == 1
+    with old.tx() as conn:
+        add_ticket(conn)
+
+    db = Database(path)
+    assert db.migrate() == 2
+    with db.read() as conn:
+        row = conn.execute("SELECT key, pr_url FROM tickets").fetchone()
+    assert dict(row) == {"key": "AOS-1", "pr_url": None}
 
 
 def test_migration_numbering_must_be_contiguous(tmp_path: Path) -> None:

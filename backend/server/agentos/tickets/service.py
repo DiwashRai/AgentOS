@@ -309,6 +309,7 @@ def _summary_fields(
         "latest_run": _run_summary(run, row["key"]) if run is not None else None,
         "source": _source(row),
         "repo_name": repo_name(row["repo_url"]),
+        "pr_url": row["pr_url"],
         "updated_at": from_db(row["updated_at"]),
     }
     active = run["id"] if run is not None and run["status"] in ACTIVE else None

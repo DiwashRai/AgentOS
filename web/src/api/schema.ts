@@ -538,6 +538,8 @@ export interface components {
             error?: string | null;
             /** Failed Stage */
             failed_stage?: string | null;
+            /** Pr Url */
+            pr_url?: string | null;
             /**
              * Status
              * @enum {string}
@@ -1287,6 +1289,8 @@ export interface components {
             pipeline_version: number;
             /** Plan */
             plan: components["schemas"]["PlanItem"][] | null;
+            /** Pr Url */
+            pr_url: string | null;
             /**
              * Priority
              * @enum {string}
@@ -1388,6 +1392,8 @@ export interface components {
             phase: "inbox" | "plan" | "build" | "verify" | "review" | "done";
             /** Phase Track */
             phase_track: components["schemas"]["PhaseStep"][];
+            /** Pr Url */
+            pr_url: string | null;
             /**
              * Priority
              * @enum {string}

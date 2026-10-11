@@ -382,6 +382,51 @@ def test_complete_failed_records_the_error(
     assert error(worker.complete()) == (410, "run_gone")
 
 
+PR = "https://github.com/o/r/pull/7"
+
+
+def pr_urls(client: TestClient, key: str) -> tuple[str | None, str | None]:
+    """The ticket's pr_url as (detail, list row)."""
+    detail = client.get(f"/api/tickets/{key}").json()
+    row = next(t for t in client.get("/api/tickets").json() if t["key"] == key)
+    return detail["pr_url"], row["pr_url"]
+
+
+def test_complete_stores_the_pr_url_and_a_later_run_without_one_keeps_it(
+    authed: TestClient, ticket: TicketDetail, runs: RunDriver
+) -> None:
+    assert pr_urls(authed, ticket.key) == (None, None)
+    worker = runs.start(ticket.key)
+    worker.run_stage("plan")
+    assert worker.complete(pr_url=PR).status_code == 204
+    assert pr_urls(authed, ticket.key) == (PR, PR)
+
+    later = runs.start(ticket.key, "implement")
+    assert later.complete("failed", failed_stage="implement").status_code == 204
+    assert pr_urls(authed, ticket.key) == (PR, PR)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "http://github.com/o/r/pull/7",
+        "javascript:alert(1)",
+        "https://user:pw@github.com/o/r/pull/7",
+        "https://github.com/o/r/pull/7 now",
+    ],
+)
+def test_complete_ignores_an_invalid_pr_url(
+    authed: TestClient, ticket: TicketDetail, runs: RunDriver, bad: str
+) -> None:
+    worker = runs.start(ticket.key)
+    assert worker.complete(pr_url=PR).status_code == 204
+    later = runs.start(ticket.key, "implement")
+    r = later.complete("cancelled", pr_url=bad)
+    assert r.status_code == 204, r.text
+    assert runs.get(later.run_id).status == "cancelled"
+    assert pr_urls(authed, ticket.key) == (PR, PR)
+
+
 def gone_routes(worker: Worker, other_status: str = "failed") -> list[Any]:
     """Every worker-token route; `complete` with a status that isn't the run's final one."""
     return [

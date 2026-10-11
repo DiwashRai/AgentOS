@@ -315,6 +315,8 @@ class TicketSummary(ApiModel):
     latest_run: RunSummary | None
     source: SourceLink | None
     repo_name: str | None
+    # The PR for `branch`, as last reported by a worker (a `gh pr view` at the end of a repo run).
+    pr_url: str | None
     updated_at: AwareDatetime
 
 
@@ -580,6 +582,9 @@ class CompleteRequest(ApiModel):
     status: WorkerFinalStatus
     failed_stage: str | None = None
     error: str | None = None
+    # The PR for the run's `branch`, as last reported by a worker (repo mode, when one exists).
+    # The server stores it only if it passes `validate_pr_url`; an invalid one is ignored.
+    pr_url: str | None = Field(default=None, max_length=500)
 
 
 # ------------------------------------------------------------------ live updates (SSE)
