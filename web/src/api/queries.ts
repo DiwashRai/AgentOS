@@ -34,10 +34,12 @@ export function useConfig() {
   });
 }
 
-/** The signed-in user, or null when signed out (401). */
-export function useMe() {
+/** The signed-in user, or null when signed out (401). `refetchInterval` (ms) polls it, e.g. while
+ *  a pending user waits for approval. */
+export function useMe(options?: { refetchInterval?: number }) {
   return useQuery({
     queryKey: keys.me(),
+    refetchInterval: options?.refetchInterval ?? false,
     queryFn: async () => {
       try {
         return await unwrap(api.GET("/api/me"));
@@ -371,3 +373,17 @@ export function usePostChat(key: string) {
 }
 
 export type { Ticket, RunEvent };
+
+/** Take in a source issue by key or link (`ImportResult`; `created: false` = imported before). */
+export function useImportTicket() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["ImportRequest"]) =>
+      unwrap(api.POST("/api/tickets/import", { body })),
+    onSuccess: (r) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.tickets(), exact: true }),
+        queryClient.invalidateQueries({ queryKey: keys.ticket(r.ticket.key) }),
+      ]),
+  });
+}

@@ -6,6 +6,8 @@ import { Navigate, useNavigate, useSearchParams } from "react-router";
 import type { Schemas } from "../../api/client";
 import { useConfig, useLogin, useMe } from "../../api/queries";
 import s from "./LoginPage.module.css";
+import { jiraHost, loginErrorText } from "./loginError";
+import { Logo } from "./Logo";
 import { safeNext } from "./next";
 
 type Mode = "dev" | "cloud" | "datacenter";
@@ -20,6 +22,34 @@ const NOTES: Record<Mode, string> = {
   cloud: "Use your Atlassian email and an API token.",
   datacenter: "Use a Jira personal access token.",
 };
+
+const ATLASSIAN_TOKENS = "https://id.atlassian.com/manage-profile/security/api-tokens";
+
+/** Where the token comes from, when the Space names its Jira. */
+function Note({ mode, jiraUrl }: { mode: Mode; jiraUrl: string | null }) {
+  if (mode === "dev" || !jiraUrl) return <p className={s.note}>{NOTES[mode]}</p>;
+  const host = jiraHost(jiraUrl);
+  if (mode === "cloud") {
+    return (
+      <p className={s.note}>
+        Use the Atlassian email you sign in to {host} with, and an{" "}
+        <a className={s.link} href={ATLASSIAN_TOKENS} target="_blank" rel="noreferrer">
+          API token
+        </a>{" "}
+        for that account.
+      </p>
+    );
+  }
+  return (
+    <p className={s.note}>
+      Use a personal access token from your Jira profile at{" "}
+      <a className={s.link} href={jiraUrl} target="_blank" rel="noreferrer">
+        {host}
+      </a>
+      .
+    </p>
+  );
+}
 
 function Field(props: {
   label: string;
@@ -45,7 +75,8 @@ function Field(props: {
   );
 }
 
-function LoginForm({ mode, next }: { mode: Mode; next: string }) {
+function LoginForm({ config, next }: { config: Schemas["AppConfig"]; next: string }) {
+  const mode = modeOf(config);
   const navigate = useNavigate();
   const login = useLogin();
   const [username, setUsername] = useState("");
@@ -71,22 +102,10 @@ function LoginForm({ mode, next }: { mode: Mode; next: string }) {
       }}
     >
       <div className={s.head}>
-        <span className={s.logo} aria-hidden="true">
-          <svg width="14" height="14" viewBox="0 0 14 14">
-            <circle cx="7" cy="7" r="2.4" style={{ fill: "var(--accent-mark)" }} />
-            <circle
-              cx="7"
-              cy="7"
-              r="5.6"
-              fill="none"
-              style={{ stroke: "var(--bubble-mine-ink)" }}
-              strokeWidth="1.3"
-            />
-          </svg>
-        </span>
-        <h1 className={s.title}>Sign in to AgentOS</h1>
+        <Logo />
+        <h1 className={s.title}>Sign in to {config.space_name || "AgentOS"}</h1>
       </div>
-      <p className={s.note}>{NOTES[mode]}</p>
+      <Note mode={mode} jiraUrl={config.jira_url} />
       {mode === "dev" && (
         <Field label="Username" autoComplete="username" value={username} onChange={setUsername} />
       )}
@@ -110,7 +129,7 @@ function LoginForm({ mode, next }: { mode: Mode; next: string }) {
       )}
       {login.error && (
         <p className={s.error} role="alert">
-          {login.error.message}
+          {loginErrorText(login.error)}
         </p>
       )}
       <button type="submit" className={s.submit} disabled={login.isPending}>
@@ -139,7 +158,7 @@ export function LoginPage() {
           {`Can't reach the server · ${config.error.message}`}
         </p>
       ) : (
-        <LoginForm mode={modeOf(config.data)} next={next} />
+        <LoginForm config={config.data} next={next} />
       )}
     </main>
   );

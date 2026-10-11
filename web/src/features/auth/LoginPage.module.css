@@ -54,6 +54,12 @@
   color: var(--ink-3);
 }
 
+.link {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .field {
   display: flex;
   flex-direction: column;

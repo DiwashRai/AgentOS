@@ -2,6 +2,7 @@
 import { Navigate, Outlet, useLocation } from "react-router";
 
 import { useMe } from "../api/queries";
+import { PendingPage } from "../features/auth/PendingPage";
 import { NewTicketHost } from "../features/newticket/NewTicketHost";
 import { PeekHost } from "../features/peek/PeekHost";
 import { Quiet } from "./Quiet";
@@ -18,6 +19,8 @@ export function Shell() {
     const to = next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
     return <Navigate to={to} replace />;
   }
+  // Not approved yet: nothing else mounts, so no board query fires (they'd all answer 403).
+  if (me.data.role === "pending") return <PendingPage me={me.data} />;
   return (
     <div className={s.app}>
       <Rail />
