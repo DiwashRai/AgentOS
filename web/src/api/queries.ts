@@ -136,8 +136,7 @@ export function useSaveTemplate() {
 export function useTicket(key: string | null) {
   return useQuery({
     queryKey: keys.ticket(key ?? ""),
-    queryFn: () =>
-      unwrap(api.GET("/api/tickets/{key}", { params: { path: { key: key ?? "" } } })),
+    queryFn: () => unwrap(api.GET("/api/tickets/{key}", { params: { path: { key: key ?? "" } } })),
     enabled: key !== null,
     refetchInterval: POLL_MS,
   });
@@ -208,8 +207,7 @@ export function useRuns(key: string) {
 export function useRun(id: number | null, active: boolean) {
   return useQuery({
     queryKey: keys.run(id ?? 0),
-    queryFn: () =>
-      unwrap(api.GET("/api/runs/{run_id}", { params: { path: { run_id: id ?? 0 } } })),
+    queryFn: () => unwrap(api.GET("/api/runs/{run_id}", { params: { path: { run_id: id ?? 0 } } })),
     enabled: id !== null,
     refetchInterval: active ? RUN_POLL_MS : false,
   });
@@ -301,9 +299,7 @@ export function useSaveFile(key: string) {
   const invalidate = useInvalidateTicket();
   return useMutation({
     mutationFn: ({ path, ...body }: Schemas["FileWrite"] & { path: string }) =>
-      unwrap(
-        api.PUT("/api/tickets/{key}/files/{path}", { params: { path: { key, path } }, body }),
-      ),
+      unwrap(api.PUT("/api/tickets/{key}/files/{path}", { params: { path: { key, path } }, body })),
     onSuccess: () => invalidate(key),
   });
 }
