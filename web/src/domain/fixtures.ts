@@ -22,6 +22,7 @@ export function run(status: Run["status"], over: Partial<Run> = {}): Run {
     cancel_requested_at: null,
     error: null,
     launch_ref: null,
+    launch_url: null,
     ...over,
   };
 }

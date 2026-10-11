@@ -71,11 +71,8 @@
   gap: 12px;
 }
 .row3 select,
-.workspace {
+.row2 select {
   width: 100%;
-}
-.workspace {
-  max-width: 180px;
 }
 
 .foot {

@@ -20,6 +20,7 @@ function user(id: number, display_name: string, over: Partial<User> = {}): User 
     avatar_url: null,
     role: "viewer",
     disabled: false,
+    env_admin: false,
     created_at: "2026-10-01T12:00:00Z",
     last_login_at: null,
     ...over,

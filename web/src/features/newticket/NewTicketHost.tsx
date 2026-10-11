@@ -12,10 +12,12 @@ import { Field, Select, fieldStyles as f } from "../pipeline/fields";
 import {
   PRIORITIES,
   TITLE_MAX,
+  NO_REPO,
   TYPES,
-  WORKSPACES,
+  branchPlaceholder,
   hasErrors,
   initialForm,
+  repoOptions,
   toCreateBody,
   trapIndex,
   validate,
@@ -29,10 +31,12 @@ const FOCUSABLE =
 
 function TicketForm({
   defaults,
+  repos,
   people,
   onCreated,
 }: {
   defaults: Defaults;
+  repos: readonly Schemas["RepoInfo"][];
   people: readonly Schemas["Person"][];
   onCreated: (key: string) => void;
 }) {
@@ -52,10 +56,11 @@ function TicketForm({
         e.preventDefault();
         setTouched(true);
         if (hasErrors(validate(form))) {
-          // Send focus to the first field with a problem (the title, or the repo URL).
-          const fields = e.currentTarget.querySelectorAll<HTMLInputElement>("input");
+          // Send focus to the first field with a problem (the title, or the base branch).
           const errs = validate(form);
-          (errs.title ? fields[0] : fields[1])?.focus();
+          e.currentTarget
+            .querySelector<HTMLElement>(errs.title ? "[data-autofocus]" : "[data-branch]")
+            ?.focus();
           return;
         }
         create.mutate(toCreateBody(form), {
@@ -141,53 +146,39 @@ function TicketForm({
           )}
         </Field>
       </div>
-      <Field label="Workspace">
-        {({ id }) => (
-          <Select
-            id={id}
-            className={s.workspace}
-            value={form.workspace}
-            options={WORKSPACES}
-            onChange={(v) => {
-              set("workspace", v as NewTicketForm["workspace"]);
-            }}
-          />
-        )}
-      </Field>
-      {form.workspace === "repo" ? (
-        <div className={s.row2}>
-          <Field label="Repo URL" error={errors.repoUrl}>
+      <div className={s.row2}>
+        <Field label="Repo">
+          {({ id }) => (
+            <Select
+              id={id}
+              value={form.repo}
+              options={repoOptions(repos)}
+              onChange={(v) => {
+                set("repo", v);
+              }}
+            />
+          )}
+        </Field>
+        {form.repo === NO_REPO ? null : (
+          <Field label="Base branch" error={errors.baseBranch}>
             {({ id, describedBy, invalid }) => (
               <input
                 id={id}
                 className={cx(f.input, f.mono)}
-                value={form.repoUrl}
-                placeholder="https://github.com/org/repo"
+                value={form.baseBranch}
+                placeholder={branchPlaceholder(repos, form.repo)}
                 aria-describedby={describedBy}
                 aria-invalid={invalid}
                 spellCheck={false}
-                onChange={(e) => {
-                  set("repoUrl", e.target.value);
-                }}
-              />
-            )}
-          </Field>
-          <Field label="Base branch">
-            {({ id }) => (
-              <input
-                id={id}
-                className={cx(f.input, f.mono)}
-                value={form.baseBranch}
-                placeholder="main"
-                spellCheck={false}
+                data-branch=""
                 onChange={(e) => {
                   set("baseBranch", e.target.value);
                 }}
               />
             )}
           </Field>
-        </div>
-      ) : null}
+        )}
+      </div>
       <div className={s.foot}>
         {create.error ? (
           <p className={s.err} role="alert">
@@ -273,10 +264,10 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
         {ready ? (
           <TicketForm
             defaults={{
-              repoUrl: config.data?.default_repo_url,
-              baseBranch: config.data?.default_base_branch,
+              repo: config.data?.default_repo,
               meId: me.data?.id,
             }}
+            repos={config.data?.repos ?? []}
             people={people.data ?? (me.data ? [me.data] : [])}
             onCreated={(key) => {
               void navigate(`/t/${encodeURIComponent(key)}`);

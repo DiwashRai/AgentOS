@@ -12,6 +12,7 @@ const maya: User = {
   avatar_url: null,
   role: "writer",
   disabled: false,
+  env_admin: false,
   created_at: "2026-10-01T12:00:00Z",
   last_login_at: null,
 };

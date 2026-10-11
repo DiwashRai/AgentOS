@@ -19,26 +19,38 @@ export const PRIORITIES: readonly { value: Create["priority"]; label: string }[]
   { value: "low", label: "Low" },
 ];
 
-export const WORKSPACES: readonly { value: Create["workspace_mode"]; label: string }[] = [
-  { value: "repo", label: "A repo" },
-  { value: "none", label: "None" },
-];
+/** The repo select's value for "no repo" (the ticket runs without a checkout). */
+export const NO_REPO = "";
+
+/** The repo picker: the Space's catalog by name, then "No repo". */
+export function repoOptions(
+  repos: readonly Schemas["RepoInfo"][],
+): readonly { value: string; label: string }[] {
+  return [
+    ...repos.map((r) => ({ value: r.name, label: r.name })),
+    { value: NO_REPO, label: "No repo" },
+  ];
+}
+
+/** The base branch a blank field means: the picked repo's default branch. */
+export function branchPlaceholder(repos: readonly Schemas["RepoInfo"][], repo: string): string {
+  return repos.find((r) => r.name === repo)?.default_branch ?? "";
+}
 
 export interface NewTicketForm {
   title: string;
   description: string;
   type: Create["type"];
   priority: Create["priority"];
-  workspace: Create["workspace_mode"];
-  repoUrl: string;
+  /** A catalog repo name, or NO_REPO. */
+  repo: string;
   baseBranch: string;
   /** A person id as a string, or "" for Unassigned. */
   ownerId: string;
 }
 
 export interface Defaults {
-  repoUrl: string | null | undefined;
-  baseBranch: string | null | undefined;
+  repo: string | null | undefined;
   meId: number | null | undefined;
 }
 
@@ -48,22 +60,21 @@ export function initialForm(d: Defaults): NewTicketForm {
     description: "",
     type: "task",
     priority: "normal",
-    workspace: "repo",
-    repoUrl: d.repoUrl ?? "",
-    baseBranch: d.baseBranch ?? "",
+    repo: d.repo ?? NO_REPO,
+    baseBranch: "",
     ownerId: d.meId == null ? "" : String(d.meId),
   };
 }
 
-export type FormErrors = Partial<Record<"title" | "repoUrl", string>>;
+export type FormErrors = Partial<Record<"title" | "baseBranch", string>>;
 
 export function validate(f: NewTicketForm): FormErrors {
   const errors: FormErrors = {};
   const title = f.title.trim();
   if (!title) errors.title = "Give the ticket a title.";
   else if (title.length > TITLE_MAX) errors.title = `At most ${String(TITLE_MAX)} characters.`;
-  if (f.workspace === "repo" && /\s/.test(f.repoUrl.trim())) {
-    errors.repoUrl = "A repo URL has no spaces.";
+  if (f.repo !== NO_REPO && /\s/.test(f.baseBranch.trim())) {
+    errors.baseBranch = "A branch name has no spaces.";
   }
   return errors;
 }
@@ -72,18 +83,16 @@ export function hasErrors(e: FormErrors): boolean {
   return Object.values(e).some(Boolean);
 }
 
-/** The request body. Empty repo fields go as null (the server's defaults apply). */
+/** The request body. A blank branch goes as null (the repo's default branch applies). */
 export function toCreateBody(f: NewTicketForm): Create {
-  const repo = f.workspace === "repo";
-  const repoUrl = f.repoUrl.trim();
+  const repo = f.repo === NO_REPO ? null : f.repo;
   const branch = f.baseBranch.trim();
   return {
     title: f.title.trim(),
     description: f.description,
     type: f.type,
     priority: f.priority,
-    workspace_mode: f.workspace,
-    repo_url: repo && repoUrl ? repoUrl : null,
+    repo,
     base_branch: repo && branch ? branch : null,
     owner_id: f.ownerId === "" ? null : Number(f.ownerId),
   };
