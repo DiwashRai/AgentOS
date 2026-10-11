@@ -1,0 +1,57 @@
+/* Ticket page layout (prototypes/ticket/ticket.css: .tv, .tv--a, .tv-tk, .tv-talk, .tv-doc). Layout only. */
+
+/* Fills the viewport under the 58px top bar (the shell's main column keeps 24px below). */
+.page {
+  height: calc(100dvh - 58px - 24px);
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(440px, 36vw, 540px);
+  gap: 36px;
+}
+
+/* The ticket column scrolls as one page. */
+.col {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 4px 6px 32px 0;
+  scrollbar-width: thin;
+}
+
+.talk {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.talk > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.doc {
+  padding-top: 14px;
+}
+
+.wide {
+  padding-top: 14px;
+}
+
+.crumb {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.missing > a {
+  margin-left: 18px;
+}

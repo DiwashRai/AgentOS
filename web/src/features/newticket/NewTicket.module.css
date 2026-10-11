@@ -1,0 +1,120 @@
+/* New ticket dialog. Not designed: the peek's panel language (DESIGN §9: --surface, radius 14px,
+   --surface-shadow over --scrim) with kit controls. */
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: start center;
+  padding: 10vh 12px 12px;
+  overflow: auto;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  animation: fade 200ms ease both;
+}
+
+.panel {
+  position: relative;
+  width: min(560px, 100%);
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--surface-shadow), var(--float-shadow);
+  outline: none;
+  animation:
+    fade 220ms ease both,
+    rise 260ms var(--ease-out) both;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 12px 24px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.head > h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-title);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink-1);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 24px 20px;
+}
+
+.desc {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.row3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.row2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 12px;
+}
+.row3 select,
+.workspace {
+  width: 100%;
+}
+.workspace {
+  max-width: 180px;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-soft);
+}
+.note,
+.err {
+  margin: 0 auto 0 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.head + .note {
+  padding: 18px 24px 20px;
+}
+.err {
+  color: var(--blocked);
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes rise {
+  from {
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .panel {
+    animation: none;
+  }
+}

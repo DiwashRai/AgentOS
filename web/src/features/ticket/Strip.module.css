@@ -1,0 +1,155 @@
+/* The strip slot (kit .ao-runstrip / .ao-gatestrip / .ao-runstrip--status, .ao-plan, .ao-lab). */
+.slot {
+  flex: none;
+}
+
+/* Strip swap: fade + 4px rise, 420ms (DESIGN §14). */
+.enter {
+  animation: rise 420ms var(--ease-out) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.run,
+.status {
+  grid-template-columns: 240px minmax(0, 1fr) auto;
+}
+.gate {
+  grid-template-columns: 260px minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.who > span:first-child {
+  max-width: 100%;
+}
+
+.now {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-1);
+  min-width: 0;
+}
+.nowText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.of {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.el {
+  composes: of;
+  margin-left: 4px;
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+/* gate strip */
+.gateWho {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 1px;
+}
+.gateWho > span:first-child {
+  max-width: 100%;
+}
+.gateWho > .meta {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.doc {
+  min-width: 0;
+}
+.lab {
+  composes: k;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.acts {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* kit .ao-plan: numbered lines */
+.plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.plan > li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.plan > li > .k {
+  color: var(--ink-3);
+  padding-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.plan > li.isDone > .k {
+  color: var(--done);
+}
+.plan > li.isDone > span:last-child {
+  color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter {
+    animation: none;
+  }
+}

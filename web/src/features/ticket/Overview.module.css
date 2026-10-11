@@ -1,0 +1,129 @@
+/* Overview tab (DESIGN §7.3; kit .ao-body, .ao-heading, .ao-crit, .ao-ctx; ticket.css .tv-read). */
+.read {
+  max-width: 70ch;
+  padding-top: 4px;
+}
+
+.k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+
+.desc {
+  margin-top: 20px;
+}
+.body {
+  font-size: var(--fs-body);
+  line-height: 1.62;
+  color: var(--ink-2);
+}
+.body > p {
+  margin: 16px 0 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.body > p:first-child {
+  margin-top: 0;
+}
+.editLink {
+  margin-top: 12px;
+}
+
+.edit {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* kit .ao-input, as a textarea */
+.textarea {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink-1);
+  font-size: var(--fs-body);
+  line-height: 1.62;
+  outline: none;
+  resize: vertical;
+}
+.textarea:focus {
+  border-color: var(--focus);
+}
+.editBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.err {
+  margin-right: auto;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+.sec {
+  margin-top: 30px;
+}
+.heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-1);
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+/* kit .ao-crit rows: number · text · state */
+.plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.plan > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 128px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-1);
+}
+.plan > li > .k:first-child {
+  font-variant-numeric: tabular-nums;
+}
+.plan > li.isDone > span:nth-child(2) {
+  color: var(--ink-2);
+}
+.st {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* kit .ao-ctx */
+.ctx {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
