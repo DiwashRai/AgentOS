@@ -6,7 +6,8 @@ import { CompactView } from "../features/compact/CompactView";
 import { QueueView } from "../features/queue/QueueView";
 import { TicketPage } from "../features/ticket/TicketPage";
 import { Shell } from "./Shell";
-import { TeamsView, TemplateView } from "./views/placeholders";
+import { TeamsView } from "./views/placeholders";
+import { TemplateView, UsersView } from "./views/Settings";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -19,7 +20,10 @@ export const router = createBrowserRouter([
       { path: "compact", element: <CompactView /> },
       { path: "teams", element: <TeamsView /> },
       { path: "t/:key/:tab?", element: <TicketPage /> },
+      // The rail's Settings link points at /settings, so it stays current on every section.
+      { path: "settings", element: <Navigate to="/settings/template" replace /> },
       { path: "settings/template", element: <TemplateView /> },
+      { path: "settings/users", element: <UsersView /> },
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },

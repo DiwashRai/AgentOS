@@ -1,0 +1,38 @@
+/* The Settings section pills: kit .ao-pills (as in Compact's filter), with links instead of
+   toggle buttons. The current section is aria-current. */
+.pills {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  margin-left: 8px;
+  background: var(--recess);
+  border-radius: 9px;
+}
+
+.pills > a {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.pills > a:hover {
+  color: var(--ink-1);
+}
+
+.pills > a[aria-current="page"] {
+  background: var(--surface);
+  color: var(--ink-1);
+  box-shadow: var(--surface-shadow);
+}
+
+.pills > a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

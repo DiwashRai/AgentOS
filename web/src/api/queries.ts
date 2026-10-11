@@ -10,6 +10,7 @@ export const keys = {
   me: () => [...keys.all, "me"] as const,
   config: () => [...keys.all, "config"] as const,
   people: () => [...keys.all, "people"] as const,
+  users: () => [...keys.all, "users"] as const,
   template: () => [...keys.all, "template"] as const,
   tickets: () => [...keys.all, "tickets"] as const,
   ticket: (key: string) => [...keys.tickets(), key] as const,
@@ -127,6 +128,32 @@ export function useSaveTemplate() {
     onSuccess: (t) => {
       queryClient.setQueryData(keys.template(), t);
     },
+  });
+}
+
+// ------------------------------------------------------------------ users (admin)
+
+/** Every user, disabled ones included. Admin only (403 otherwise), so callers gate on `enabled`. */
+export function useUsers(enabled = true) {
+  return useQuery({
+    queryKey: keys.users(),
+    queryFn: () => unwrap(api.GET("/api/users")),
+    enabled,
+  });
+}
+
+/** Change one user's role or disabled state. Disabling also ends their sessions (server-side).
+ *  Refetches users and people (owner pickers list only non-disabled users). */
+export function usePatchUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: Schemas["UserPatch"] & { id: number }) =>
+      unwrap(api.PATCH("/api/users/{user_id}", { params: { path: { user_id: id } }, body })),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.users() }),
+        queryClient.invalidateQueries({ queryKey: keys.people() }),
+      ]),
   });
 }
 

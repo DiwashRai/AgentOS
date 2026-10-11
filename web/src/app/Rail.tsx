@@ -10,9 +10,22 @@ import s from "./Rail.module.css";
 import { ThemeMenu } from "./ThemeMenu";
 import { useBoard } from "./useBoard";
 
-function RailLink(props: { to: string; label: string; badge?: boolean; children: ReactNode }) {
+function RailLink(props: {
+  to: string;
+  label: string;
+  badge?: boolean;
+  /** Also current on sub-paths (Settings covers /settings/*). */
+  section?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <NavLink to={props.to} end className={s.link} aria-label={props.label} title={props.label}>
+    <NavLink
+      to={props.to}
+      end={!props.section}
+      className={s.link}
+      aria-label={props.label}
+      title={props.label}
+    >
       {props.children}
       {props.badge && <span className={s.badge} />}
     </NavLink>
@@ -37,7 +50,7 @@ export function Rail() {
       </RailLink>
       <div className={s.spacer} />
       <ThemeMenu />
-      <RailLink to="/settings/template" label="Settings">
+      <RailLink to="/settings" label="Settings" section>
         <SettingsIcon />
       </RailLink>
       {me && (
