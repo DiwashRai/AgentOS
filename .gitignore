@@ -23,6 +23,8 @@ htmlcov/
 # Node / web
 node_modules/
 web/dist/
+# Playwright MCP browser session output (logs, snapshots, screenshots)
+.playwright-mcp/
 *.tsbuildinfo
 
 # Runtime data and local config
