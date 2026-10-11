@@ -1,30 +1,28 @@
-// The design's status kind for a ticket: a display mapping of the server's `attention` (DESIGN
-// §12.4). Selection only: `moving` splits on `latest_run.status` until CONTRACT_REQUESTS #2 gives
-// the server's own running/queued split. Never derives attention itself.
+// The design's status kind for a ticket: a straight display mapping of the server's `attention`
+// (DESIGN §12.4). Selection only: it never derives attention itself.
 import type { Schemas } from "../api/client";
 
 export type StatusKind = "you" | "wait" | "blk" | "run" | "queued" | "done" | "idle";
 export type Attention = Schemas["TicketSummary"]["attention"];
 
-type StatusTicket = Pick<Schemas["TicketSummary"], "attention" | "latest_run">;
+type StatusTicket = Pick<Schemas["TicketSummary"], "attention">;
 type OwnedTicket = Pick<Schemas["TicketSummary"], "owner">;
 
 /** Who "me" is for selection: only the id matters. Null = signed out (nothing is mine). */
 export type MeRef = Pick<Schemas["Me"], "id"> | null;
 
-const BY_ATTENTION: Record<Exclude<Attention, "moving">, StatusKind> = {
+const STATUS_KIND: Record<Attention, StatusKind> = {
   needs_you: "you",
   waiting: "wait",
-  stuck: "blk",
-  up_next: "idle",
+  running: "run",
+  queued: "queued",
+  blocked: "blk",
+  inbox: "idle",
   done: "done",
 };
 
 export function statusKind(t: StatusTicket): StatusKind {
-  if (t.attention !== "moving") return BY_ATTENTION[t.attention];
-  // A moving ticket has an active run; it waits for a runner while queued or dispatched.
-  const s = t.latest_run?.status;
-  return s === "queued" || s === "dispatched" ? "queued" : "run";
+  return STATUS_KIND[t.attention];
 }
 
 export function isMine(t: OwnedTicket, me: MeRef): boolean {

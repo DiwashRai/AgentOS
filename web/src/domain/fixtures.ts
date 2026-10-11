@@ -26,11 +26,25 @@ export function run(status: Run["status"], over: Partial<Run> = {}): Run {
   };
 }
 
+type Step = Schemas["RailStep"];
+type Gate = Schemas["GateInfo"];
+
+/** A gate as the server sends it: "{Stage} sign-off" / "Sign-off". */
+export function gate(state: Gate["state"], over: Partial<Gate> = {}): Gate {
+  return { label: "Plan sign-off", short: "Sign-off", state, person: null, ...over };
+}
+
+/** A rail step; the stage id is the lowercased name. */
+export function step(name: string, state: Step["state"], over: Partial<Step> = {}): Step {
+  return { name, state, stage_id: name.toLowerCase(), phase: "build", gate: null, ...over };
+}
+
 export function ticket(over: Partial<Ticket> = {}): Ticket {
   return {
     key: "AOS-1",
     title: "A ticket",
-    attention: "up_next",
+    attention: "inbox",
+    attention_since: "2026-10-11T10:00:00Z",
     state: "open",
     type: "task",
     priority: "normal",
@@ -42,7 +56,6 @@ export function ticket(over: Partial<Ticket> = {}): Ticket {
     latest_run: null,
     tasks: null,
     phase: "inbox",
-    phase_since: null,
     phase_track: [],
     rail: [],
     now: { actor: null, person: null, progress: null, run_id: null, text: "" },

@@ -5,7 +5,7 @@ import { isMine, type MeRef, statusKind } from "./status";
 
 export type GroupTicket = Pick<
   Schemas["TicketSummary"],
-  "key" | "attention" | "latest_run" | "owner" | "phase_since" | "updated_at"
+  "key" | "attention" | "owner" | "attention_since"
 >;
 
 export interface Groups<T> {
@@ -21,13 +21,9 @@ export interface Groups<T> {
   doneRecent: T[];
 }
 
-/**
- * When the ticket entered its current state: the one place "how long has it waited" is read.
- * Switch to `attention_since` when CONTRACT_REQUESTS #3 lands (it doesn't exist yet); until then
- * `phase_since`, else `updated_at`.
- */
-export function since(t: Pick<GroupTicket, "phase_since" | "updated_at">): string {
-  return t.phase_since ?? t.updated_at;
+/** When the ticket entered its current attention: the one place "how long has it waited" is read. */
+export function since(t: Pick<GroupTicket, "attention_since">): string {
+  return t.attention_since;
 }
 
 function sinceMs(t: GroupTicket): number {

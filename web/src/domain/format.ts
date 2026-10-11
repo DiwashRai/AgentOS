@@ -53,6 +53,11 @@ export function repoShort(name: string | null | undefined): string {
   return last.replace(/\.git$/, "");
 }
 
+/** A person's short name for captions and titles: `Sam Lee` → `Sam`. */
+export function firstName(p: Pick<Schemas["Person"], "display_name">): string {
+  return p.display_name.trim().split(/\s+/)[0] ?? p.display_name;
+}
+
 /** Avatar initials: `Diwash Rai` → `DR`, `dev` → `DE`. */
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);

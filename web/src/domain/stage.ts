@@ -1,11 +1,12 @@
-// The stage glyph / stepper model: one segment per stage of THIS ticket's pipeline, with Inbox and
-// Done bookends, and a diamond for each gate (DESIGN §13.2). Built only from server fields
-// (`rail`, `phase_track`, `attention`, `latest_run`); this module maps them, never derives them.
-// Gate diamonds arrive with RailStep.gate (CONTRACT_REQUESTS #1); until then `gate` stays unset.
+// The stage glyph / stepper model: one segment per stage of THIS ticket's pipeline (disabled
+// stages included, as skipped), with Inbox and Done bookends, and a diamond for each gate
+// (DESIGN §13.2). Built only from server fields (`rail` incl. `RailStep.gate`, `phase_track`,
+// `attention`); this module maps them, never derives them.
 import type { Schemas } from "../api/client";
+import { firstName } from "./format";
 
 export type StepState = "done" | "current" | "upcoming" | "skipped" | "failed";
-export type GateState = "pending" | "passed" | "waiting" | "you";
+export type GateState = Schemas["GateInfo"]["state"];
 
 export interface GlyphGate {
   label: string; // "Plan sign-off"
@@ -29,7 +30,7 @@ export interface GlyphModel {
   live: boolean;
 }
 
-type Ticket = Pick<Schemas["TicketSummary"], "rail" | "phase_track" | "attention" | "latest_run">;
+type Ticket = Pick<Schemas["TicketSummary"], "rail" | "phase_track" | "attention">;
 
 // The server's `stale` (done before, but after the latest run's segment, so it will run again)
 // has no form in the design: it draws as upcoming.
@@ -39,6 +40,7 @@ const RAIL: Record<Schemas["RailStep"]["state"], StepState> = {
   pending: "upcoming",
   failed: "failed",
   stale: "upcoming",
+  skipped: "skipped",
 };
 
 const BOOKEND: Record<Schemas["PhaseStep"]["state"], StepState> = {
@@ -50,6 +52,15 @@ const BOOKEND: Record<Schemas["PhaseStep"]["state"], StepState> = {
   skipped: "skipped",
 };
 
+function glyphGate(g: Schemas["GateInfo"]): GlyphGate {
+  return {
+    label: g.label,
+    short: g.short,
+    state: g.state,
+    person: g.person ? firstName(g.person) : undefined,
+  };
+}
+
 function bookend(t: Ticket, phase: "inbox" | "done", name: string): GlyphStage {
   const step = t.phase_track.find((p) => p.phase === phase);
   return { name, state: step ? BOOKEND[step.state] : "upcoming" };
@@ -58,7 +69,11 @@ function bookend(t: Ticket, phase: "inbox" | "done", name: string): GlyphStage {
 export function stageModel(t: Ticket): GlyphModel {
   const stages: GlyphStage[] = [
     bookend(t, "inbox", "Inbox"),
-    ...t.rail.map((s) => ({ name: s.name, state: RAIL[s.state] })),
+    ...t.rail.map((s): GlyphStage => ({
+      name: s.name,
+      state: RAIL[s.state],
+      gate: s.gate ? glyphGate(s.gate) : undefined,
+    })),
     bookend(t, "done", "Done"),
   ];
   const parked = stages.find((s) => s.gate?.state === "you" || s.gate?.state === "waiting");
@@ -70,6 +85,6 @@ export function stageModel(t: Ticket): GlyphModel {
       current?.name ??
       stages.findLast((s) => s.state === "done")?.name ??
       "",
-    live: t.attention === "moving" && t.latest_run?.status === "running",
+    live: t.attention === "running",
   };
 }

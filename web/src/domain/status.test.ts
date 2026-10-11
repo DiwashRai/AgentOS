@@ -8,23 +8,18 @@ describe("statusKind", () => {
   it.each([
     ["needs_you", "you"],
     ["waiting", "wait"],
-    ["stuck", "blk"],
-    ["up_next", "idle"],
+    ["running", "run"],
+    ["queued", "queued"],
+    ["blocked", "blk"],
+    ["inbox", "idle"],
     ["done", "done"],
   ] as const)("maps %s to %s", (attention, kind) => {
     expect(statusKind(ticket({ attention }))).toBe(kind);
   });
 
-  it("splits moving on the latest run's status", () => {
-    expect(statusKind(ticket({ attention: "moving", latest_run: run("running") }))).toBe("run");
-    expect(statusKind(ticket({ attention: "moving", latest_run: run("queued") }))).toBe("queued");
-    expect(statusKind(ticket({ attention: "moving", latest_run: run("dispatched") }))).toBe(
-      "queued",
-    );
-  });
-
-  it("treats moving without a run status as running", () => {
-    expect(statusKind(ticket({ attention: "moving" }))).toBe("run");
+  it("reads only attention, never the run status", () => {
+    expect(statusKind(ticket({ attention: "queued", latest_run: run("running") }))).toBe("queued");
+    expect(statusKind(ticket({ attention: "running", latest_run: run("dispatched") }))).toBe("run");
   });
 });
 
@@ -41,7 +36,14 @@ describe("words", () => {
   it("never says Stuck or Needs me", () => {
     const all = [...Object.values(statusWords), ...Object.values(attentionWords)];
     expect(all.join(" ")).not.toMatch(/stuck|needs me/i);
-    expect(attentionWords.stuck).toBe("Blocked");
-    expect(attentionWords.up_next).toBe("Inbox");
+    expect(attentionWords.blocked).toBe("Blocked");
+    expect(attentionWords.inbox).toBe("Inbox");
+  });
+
+  it("uses the same word for an attention and its status kind", () => {
+    for (const [attention, word] of Object.entries(attentionWords)) {
+      const kind = statusKind(ticket({ attention: attention as keyof typeof attentionWords }));
+      expect(statusWords[kind]).toBe(word);
+    }
   });
 });

@@ -1,11 +1,11 @@
 // Every number on screen comes from here (DESIGN §12.5, adapted). Selection only: counts over
-// server fields (`attention`, `latest_run.status`, `owner.id`). "Mine" = I own the ticket.
+// server fields (`attention`, `owner.id`). "Mine" = I own the ticket.
 // Dropped from the design: `watching` (no watchers in our model), `atWork`/`mineQueued` (same as
 // `mine` / derivable from groups), `merged` today (no merge time yet; `done` counts all done).
 import type { Schemas } from "../api/client";
 import { isMine, type MeRef, statusKind, type StatusKind } from "./status";
 
-type CountTicket = Pick<Schemas["TicketSummary"], "attention" | "latest_run" | "owner">;
+type CountTicket = Pick<Schemas["TicketSummary"], "attention" | "owner">;
 
 export interface Counts {
   /** status you */

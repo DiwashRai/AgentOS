@@ -13,14 +13,14 @@ export const statusWords: Record<StatusKind, string> = {
   idle: "Inbox",
 };
 
-/** The word for each server `attention` value (web/AGENTS.md mapping table). `moving` covers both
- *  Running and Queued; use `statusWords[statusKind(t)]` when the split matters. */
+/** The word for each server `attention` value (web/AGENTS.md mapping table). */
 export const attentionWords: Record<Attention, string> = {
   needs_you: "Needs you",
   waiting: "Waiting on others",
-  stuck: "Blocked",
-  moving: "Agents at work",
-  up_next: "Inbox",
+  running: "Running",
+  queued: "Queued",
+  blocked: "Blocked",
+  inbox: "Inbox",
   done: "Merged",
 };
 
@@ -36,6 +36,13 @@ export const words = {
   peek: "Peek",
   openTicket: "Open ticket →",
   dispatch: "Dispatch run",
+  approve: "Approve",
+  markDone: "Mark done",
+  retry: "Retry",
+  cancel: "Cancel",
+  cancelling: "Cancelling…",
+  reopen: "Reopen",
+  open: "Open",
   requestChanges: "Request changes",
   agentReads: "The agent reads",
   addContext: "+ Add context",

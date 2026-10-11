@@ -17,15 +17,15 @@ describe("counts", () => {
       [
         ticket({ attention: "needs_you", owner: mine }),
         ticket({ attention: "needs_you", owner: theirs }),
-        ticket({ attention: "stuck", owner: mine }),
-        ticket({ attention: "stuck", owner: theirs }),
-        ticket({ attention: "moving", owner: mine, latest_run: run("running") }),
-        ticket({ attention: "moving", owner: theirs, latest_run: run("running") }),
-        ticket({ attention: "moving", owner: mine, latest_run: run("queued") }),
-        ticket({ attention: "moving", owner: theirs, latest_run: run("dispatched") }),
+        ticket({ attention: "blocked", owner: mine }),
+        ticket({ attention: "blocked", owner: theirs }),
+        ticket({ attention: "running", owner: mine, latest_run: run("running") }),
+        ticket({ attention: "running", owner: theirs, latest_run: run("running") }),
+        ticket({ attention: "queued", owner: mine, latest_run: run("queued") }),
+        ticket({ attention: "queued", owner: theirs, latest_run: run("dispatched") }),
         ticket({ attention: "waiting", owner: mine }),
         ticket({ attention: "waiting", owner: theirs }),
-        ticket({ attention: "up_next", owner: mine }),
+        ticket({ attention: "inbox", owner: mine }),
         ticket({ attention: "done", owner: mine }),
       ],
       me,
@@ -46,7 +46,7 @@ describe("counts", () => {
   });
 
   it("counts nothing as mine when signed out", () => {
-    const c = counts([ticket({ attention: "stuck", owner: mine })], null);
+    const c = counts([ticket({ attention: "blocked", owner: mine })], null);
     expect(c.blocked).toBe(1);
     expect(c.blockedMine).toBe(0);
   });
