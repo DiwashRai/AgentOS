@@ -7,6 +7,7 @@ import { ApiError, type Schemas } from "../../api/client";
 import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
 import { elapsed, firstName, repoShort, srcLabel } from "../../domain/format";
+import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { words } from "../../domain/words";
 import { Button, cx, Kbd, linkClass, RunMeter, StageGlyph, StatusMark, Stepper } from "../../ui";
@@ -41,7 +42,7 @@ function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefin
               <span className={s.tick} role="img" aria-label={item.done ? "Done" : "Open"}>
                 {item.done ? "✓" : "○"}
               </span>
-              <span title={item.text}>{plainText(item.text)}</span>
+              <span title={planText(item.text)}>{plainText(planText(item.text))}</span>
             </li>
           ))}
           {plan.more > 0 && <li className={s.more}>{`+${String(plan.more)} more`}</li>}
@@ -75,7 +76,7 @@ function Run({ ticket: t }: { ticket: Summary }) {
         <span>{line}</span>
       </h3>
       {meter && <RunMeter k={meter.k} n={meter.n} state={meter.state} size="tile" />}
-      {t.now.text && <p className={s.meta}>{t.now.text}</p>}
+      {t.now.text && <p className={s.meta}>{planText(t.now.text)}</p>}
     </section>
   );
 }

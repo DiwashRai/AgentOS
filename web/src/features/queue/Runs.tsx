@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 
 import type { Schemas } from "../../api/client";
 import { elapsed, srcLabel } from "../../domain/format";
+import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { statusKind } from "../../domain/status";
 import { Avatar, cx, RunMeter, StageGlyph, StatusMark } from "../../ui";
@@ -44,7 +45,7 @@ export function RunTile({
         <StageGlyph model={stageModel(t)} size="xs" />
       </div>
       <div className={s.tileNow}>
-        <span title={t.now.text}>{t.now.text}</span>
+        <span title={t.now.text}>{planText(t.now.text)}</span>
         {meter && <span className={s.of}>{meterOfText(meter.k, meter.n, meter.state)}</span>}
       </div>
       {meter && <RunMeter k={meter.k} n={meter.n} state={meter.state} size="tile" />}

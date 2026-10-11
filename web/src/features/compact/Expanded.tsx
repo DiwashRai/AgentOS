@@ -8,6 +8,7 @@ import { useNavigate } from "react-router";
 import type { Schemas } from "../../api/client";
 import { useChat, useTicket } from "../../api/queries";
 import { type Action, ticketActions } from "../../domain/actions";
+import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { words } from "../../domain/words";
 import { Avatar, Button, cx, StatusMark, Stepper } from "../../ui";
@@ -113,7 +114,7 @@ function Plan({
               <span className={s.tick} role="img" aria-label={item.done ? "Done" : "Open"}>
                 {item.done ? "✓" : "○"}
               </span>
-              <span title={item.text}>{plainText(item.text)}</span>
+              <span title={planText(item.text)}>{plainText(planText(item.text))}</span>
             </li>
           ))}
           {plan.more > 0 && <li className={s.more}>{`+${String(plan.more)} more`}</li>}

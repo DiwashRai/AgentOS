@@ -88,6 +88,27 @@ describe("RunMeter", () => {
     expect(html).toContain("--rm-w:36px");
     expect(html).toContain('aria-label="0/4 steps"');
   });
+  it("names strip steps up to the cap", () => {
+    const labels = ["Read", "Edit", "Test", "Lint", "Ship"];
+    const html = renderToStaticMarkup(
+      <RunMeter k={2} n={5} state="running" size="strip" labels={labels} />,
+    );
+    expect(count(html, /<li/g)).toBe(5);
+    expect(html).toContain(">Now<");
+    expect(html).toContain('title="Ship"');
+  });
+  it("draws bare strip segments past the cap", () => {
+    const labels = Array.from({ length: 30 }, (_, i) => `Step text ${String(i)}`);
+    const html = renderToStaticMarkup(
+      <RunMeter k={4} n={30} state="running" size="strip" labels={labels} />,
+    );
+    expect(count(html, /<li/g)).toBe(0);
+    expect(count(html, /<i /g)).toBe(30);
+    expect(html).not.toContain("Step text");
+    expect(html).not.toContain(">Now<");
+    expect(html).toContain("--rm-n:30");
+    expect(html).toContain('aria-label="4/30 steps"');
+  });
 });
 
 describe("Button", () => {

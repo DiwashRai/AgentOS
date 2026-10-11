@@ -119,6 +119,32 @@
   justify-content: flex-end;
 }
 
+/* TASKS.md sections (2+ headings): a quiet mono-caps label + the section's own k of n */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.secHead {
+  composes: k;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--ink-2);
+}
+.secHead > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secHead > span:last-child {
+  flex: none;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
 /* kit .ao-plan: numbered lines */
 .plan {
   list-style: none;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { meterOfText, meterSegments, stripLabel } from "./meter";
+import { meterOfText, meterSegments, STRIP_LABEL_MAX, stripLabel, stripLabelled } from "./meter";
 
 describe("meterSegments", () => {
   it("marks steps before k done and step k current while running", () => {
@@ -21,6 +21,14 @@ describe("meterOfText", () => {
     expect(meterOfText(3, 5, "running")).toBe("3/5");
     expect(meterOfText(3, 5, "finished")).toBe("5/5");
     expect(meterOfText(3, 5, "queued")).toBe("0/5");
+  });
+});
+
+describe("stripLabelled", () => {
+  it("labels strip steps up to the cap only", () => {
+    expect(stripLabelled(STRIP_LABEL_MAX)).toBe(true);
+    expect(stripLabelled(STRIP_LABEL_MAX + 1)).toBe(false);
+    expect(stripLabelled(13)).toBe(false);
   });
 });
 

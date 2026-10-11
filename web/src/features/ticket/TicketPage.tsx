@@ -99,7 +99,7 @@ export function TicketPage() {
         search="Search or jump to a ticket"
         action={
           <IconButton
-            label="Close ticket"
+            label="Back to My queue"
             onClick={() => {
               void navigate("/");
             }}

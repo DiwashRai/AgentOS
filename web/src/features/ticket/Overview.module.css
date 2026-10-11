@@ -114,6 +114,37 @@
 .plan > li.isDone > span:nth-child(2) {
   color: var(--ink-2);
 }
+/* TASKS.md sections (2+ headings): quiet group break (kit .ao-gh, static) with the section's k of n */
+.planSec + .planSec {
+  margin-top: 18px;
+}
+.secHead {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-2);
+}
+.secHead > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secHead > span:last-child {
+  flex: none;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
 .st {
   display: flex;
   align-items: center;

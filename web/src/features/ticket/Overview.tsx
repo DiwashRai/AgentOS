@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket } from "../../api/queries";
+import { planSections, planText, sectionCount, showsSections } from "../../domain/plan";
 import { words } from "../../domain/words";
 import { Button, Chip, LinkButton, StatusMark, cx } from "../../ui";
 import { sortFiles } from "../context/files";
@@ -116,21 +117,28 @@ function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   );
 }
 
-function Plan({ plan }: { plan: Detail["plan"] }) {
-  return (
-    <section className={s.sec} aria-labelledby="ticket-plan">
-      <h2 id="ticket-plan" className={s.heading}>
-        Plan
-        {plan && plan.length > 0 ? <span className={s.k}>{planSummary(plan)}</span> : null}
-      </h2>
-      {plan && plan.length > 0 ? (
-        <ol className={s.plan}>
-          {plan.map((p, i) => (
-            <li key={i} className={cx(p.done && s.isDone)}>
-              <span className={s.k}>{planNumber(i)}</span>
-              <span>{p.text}</span>
+/** The checklist rows; with 2+ TASKS.md sections, each under a quiet heading with its k of n. */
+function PlanSections({ plan }: { plan: Schemas["PlanItem"][] }) {
+  const sections = planSections(plan);
+  const headed = showsSections(sections);
+  return sections.map((sec, j) => {
+    const headId = `ticket-plan-${String(j)}`;
+    const labelled = headed && sec.section !== null;
+    return (
+      <div key={j} className={s.planSec}>
+        {labelled ? (
+          <h3 id={headId} className={s.secHead}>
+            <span title={sec.section ?? undefined}>{sec.section}</span>
+            <span>{sectionCount(sec)}</span>
+          </h3>
+        ) : null}
+        <ol className={s.plan} aria-labelledby={labelled ? headId : undefined}>
+          {sec.items.map(({ item, index }) => (
+            <li key={index} className={cx(item.done && s.isDone)}>
+              <span className={s.k}>{planNumber(index)}</span>
+              <span>{planText(item.text)}</span>
               <span className={s.st}>
-                {p.done ? (
+                {item.done ? (
                   <StatusMark kind="done" name="Done" />
                 ) : (
                   <StatusMark kind="idle" name="Open" />
@@ -139,6 +147,20 @@ function Plan({ plan }: { plan: Detail["plan"] }) {
             </li>
           ))}
         </ol>
+      </div>
+    );
+  });
+}
+
+function Plan({ plan }: { plan: Detail["plan"] }) {
+  return (
+    <section className={s.sec} aria-labelledby="ticket-plan">
+      <h2 id="ticket-plan" className={s.heading}>
+        Plan
+        {plan && plan.length > 0 ? <span className={s.k}>{planSummary(plan)}</span> : null}
+      </h2>
+      {plan && plan.length > 0 ? (
+        <PlanSections plan={plan} />
       ) : (
         <p className={s.empty}>No plan yet.</p>
       )}

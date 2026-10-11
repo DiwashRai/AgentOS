@@ -6,6 +6,7 @@ import { Link as RouterLink, useLocation } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { elapsed } from "../../domain/format";
+import { planSections, planText, sectionCount, showsSections } from "../../domain/plan";
 import { statusKind } from "../../domain/status";
 import { attentionWords } from "../../domain/words";
 import { RunMeter, StatusMark, cx, linkClass } from "../../ui";
@@ -38,7 +39,9 @@ function RunStrip({ t, queued }: { t: Detail; queued: boolean }) {
   const { search } = useLocation();
   const step = queued ? null : progressStep(t.now.progress);
   const plan = t.plan ?? [];
-  const labels = step?.n === plan.length ? plan.map((p) => p.text) : undefined;
+  // Past STRIP_LABEL_MAX steps the meter drops its labels anyway (bare segments).
+  const labels = step?.n === plan.length ? plan.map((p) => planText(p.text)) : undefined;
+  const nowText = planText(t.now.text);
   return (
     <div className={cx(s.strip, s.run)}>
       <div className={s.who}>
@@ -48,8 +51,8 @@ function RunStrip({ t, queued }: { t: Detail; queued: boolean }) {
           <StatusMark kind="run" name={runLabel(t)} />
         )}
         <div className={s.now}>
-          <span className={s.nowText} title={t.now.text}>
-            {queued ? "Waiting for a runner" : t.now.text}
+          <span className={s.nowText} title={nowText}>
+            {queued ? "Waiting for a runner" : nowText}
           </span>
           {step ? <span className={s.of}>{`${String(step.k)}/${String(step.n)}`}</span> : null}
           {queued ? null : <Elapsed startedAt={t.latest_run?.started_at ?? null} />}
@@ -63,6 +66,34 @@ function RunStrip({ t, queued }: { t: Detail; queued: boolean }) {
       <RouterLink className={cx(linkClass, s.k)} to={ticketPath(t.key, "runs", search)}>
         Log →
       </RouterLink>
+    </div>
+  );
+}
+
+/** The numbered plan (kit .ao-plan); with 2+ TASKS.md sections, each under a quiet heading. */
+function PlanList({ plan }: { plan: Schemas["PlanItem"][] }) {
+  const sections = planSections(plan);
+  const headed = showsSections(sections);
+  return (
+    <div className={s.sections}>
+      {sections.map((sec, j) => (
+        <div key={j}>
+          {headed && sec.section !== null ? (
+            <div className={s.secHead}>
+              <span title={sec.section}>{sec.section}</span>
+              <span>{sectionCount(sec)}</span>
+            </div>
+          ) : null}
+          <ol className={s.plan} aria-label={headed ? (sec.section ?? undefined) : undefined}>
+            {sec.items.map(({ item, index }) => (
+              <li key={index} className={cx(item.done && s.isDone)}>
+                <span className={s.k}>{item.done ? "✓" : planNumber(index)}</span>
+                <span>{planText(item.text)}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
     </div>
   );
 }
@@ -86,14 +117,7 @@ function GateStrip({ t, parked, tasksPath }: { t: Detail; parked: ParkedGate; ta
           {mine ? "Plan · what you're signing off" : "Plan · what's being signed off"}
         </div>
         {t.plan && t.plan.length > 0 ? (
-          <ol className={s.plan}>
-            {t.plan.map((p, i) => (
-              <li key={i} className={cx(p.done && s.isDone)}>
-                <span className={s.k}>{p.done ? "✓" : planNumber(i)}</span>
-                <span>{p.text}</span>
-              </li>
-            ))}
-          </ol>
+          <PlanList plan={t.plan} />
         ) : (
           <p className={s.meta}>No plan written yet.</p>
         )}

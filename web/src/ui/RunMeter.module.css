@@ -121,6 +121,11 @@
 .strip > li.isCur > .k {
   color: var(--live-text);
 }
+/* strip past STRIP_LABEL_MAX steps: bare segments (the strip's left side names the step and k/n).
+   The gaps never take more than 40% of the width, so any step count fits. */
+.strip.bare {
+  gap: min(3px, calc(40% / var(--rm-n, 1)));
+}
 
 /* reduced motion: no sweep; the current step is solid live */
 @media (prefers-reduced-motion: reduce) {

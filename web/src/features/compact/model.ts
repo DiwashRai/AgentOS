@@ -6,6 +6,7 @@ import type { Schemas } from "../../api/client";
 import { type CountKey, counts } from "../../domain/counts";
 import { age, elapsed, firstName, repoShort } from "../../domain/format";
 import { since } from "../../domain/groups";
+import { planText } from "../../domain/plan";
 import {
   type Attention,
   isMine,
@@ -274,7 +275,8 @@ export function nowCell(t: NowTicket): NowCell {
     return {
       kind: "run",
       actor: t.now.actor ?? statusWords.run,
-      text: t.now.text,
+      // While running, now.text is the TASKS.md item in progress: drop the agent's own number.
+      text: planText(t.now.text),
       meter: meterOf(t),
     };
   }

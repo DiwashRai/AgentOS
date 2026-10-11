@@ -25,6 +25,15 @@ export function meterOfText(k: number, n: number, state: MeterState): string {
   return `${String(done)}/${String(count)}`;
 }
 
+/** The strip names its steps up to this many (the kit's examples run 4–5); past it, step columns
+ *  shrink to a character or two, so the strip draws the bare segments. */
+export const STRIP_LABEL_MAX = 5;
+
+/** Whether the strip meter draws per-step labels (NOW / NEXT / STEP i and the step's name). */
+export function stripLabelled(n: number): boolean {
+  return n <= STRIP_LABEL_MAX;
+}
+
 /** The strip's mono label over each step: NOW, NEXT (the one after it while running), else STEP i. */
 export function stripLabel(segs: SegState[], i: number, state: MeterState): string {
   if (segs[i] === "cur") return "Now";

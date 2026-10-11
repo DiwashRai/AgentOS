@@ -1,6 +1,13 @@
 import type { CSSProperties, ReactNode } from "react";
 import { cx } from "./cx";
-import { meterOfText, meterSegments, stripLabel, type MeterState, type SegState } from "./meter";
+import {
+  meterOfText,
+  meterSegments,
+  stripLabel,
+  stripLabelled,
+  type MeterState,
+  type SegState,
+} from "./meter";
 import s from "./RunMeter.module.css";
 
 export interface RunMeterProps {
@@ -12,7 +19,8 @@ export interface RunMeterProps {
   size: "tile" | "row" | "hair" | "strip";
   /** Row size only: total width in px (56 default; 48 inline; 36 in the queue rack). */
   width?: number | undefined;
-  /** Strip size only: the step names under the segments. */
+  /** Strip size only: the step names under the segments (up to STRIP_LABEL_MAX steps; past it the
+   *  strip draws bare segments). */
   labels?: string[] | undefined;
   className?: string | undefined;
 }
@@ -31,18 +39,22 @@ function breakable(text: string): ReactNode[] {
 
 export function RunMeter({ k, n, state, size, width, labels, className }: RunMeterProps) {
   const segs = meterSegments(k, n, state);
+  const bare = size === "strip" && !stripLabelled(segs.length);
   const cls = cx(
     s.rm,
     s[size],
+    bare && s.bare,
     state === "finished" && s.isFinished,
     state === "queued" && s.isQueued,
     className,
   );
   const label = `${meterOfText(k, n, state)} steps`;
-  const style =
-    width !== undefined ? ({ "--rm-w": `${String(width)}px` } as CSSProperties) : undefined;
+  const vars: Record<string, string> = {};
+  if (width !== undefined) vars["--rm-w"] = `${String(width)}px`;
+  if (bare) vars["--rm-n"] = String(segs.length);
+  const style = Object.keys(vars).length > 0 ? (vars as CSSProperties) : undefined;
 
-  if (size === "strip") {
+  if (size === "strip" && !bare) {
     return (
       <ol className={cls} role="img" aria-label={label} style={style}>
         {segs.map((seg, i) => {
