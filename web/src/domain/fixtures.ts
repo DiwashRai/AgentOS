@@ -54,6 +54,7 @@ export function ticket(over: Partial<Ticket> = {}): Ticket {
     repo_name: null,
     source: null,
     latest_run: null,
+    pr_url: null,
     tasks: null,
     phase: "inbox",
     phase_track: [],
