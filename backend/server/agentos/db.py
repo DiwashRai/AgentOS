@@ -13,6 +13,7 @@ import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 Conn = sqlite3.Connection
@@ -21,6 +22,9 @@ IntegrityError = sqlite3.IntegrityError
 OperationalError = sqlite3.OperationalError  # e.g. a write inside read(), or a busy timeout
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# Before migrating an existing database, migrate() copies it to {DATA_DIR}/backups/.
+BACKUP_PREFIX = "agentos-"
+BACKUPS_KEPT = 5
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 
 # SPEC §5: on every connection.
@@ -105,10 +109,36 @@ class Database:
         finally:
             conn.close()
 
+    @property
+    def backups_dir(self) -> Path:
+        """`{DATA_DIR}/backups` (the db lives at `{DATA_DIR}/agentos.db`)."""
+        return self.path.parent / "backups"
+
+    def backup(self, conn: Conn, version: int) -> Path:
+        """Copy the database with SQLite's online backup API to
+        `backups/agentos-<UTC timestamp>-v<version>.db`, then keep the newest BACKUPS_KEPT."""
+        self.backups_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        target = self.backups_dir / f"{BACKUP_PREFIX}{stamp}-v{version}.db"
+        partial = target.with_name(target.name + ".partial")  # never counted as a backup
+        partial.unlink(missing_ok=True)
+        dest = sqlite3.connect(partial)
+        try:
+            conn.backup(dest)
+        finally:
+            dest.close()
+        partial.replace(target)
+        backups = sorted(self.backups_dir.glob(f"{BACKUP_PREFIX}*.db"))  # timestamps sort by name
+        for old in backups[:-BACKUPS_KEPT]:
+            old.unlink(missing_ok=True)
+        return target
+
     def migrate(self) -> int:
         """Apply pending migrations in order, each in its own transaction. Returns the version.
 
         Idempotent. Refuses to touch a database whose version is newer than this code knows.
+        An existing database (version > 0) with pending migrations is backed up first; a new
+        one, or one with nothing pending, is not.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         files = migrations(self.migrations_dir)
@@ -121,6 +151,8 @@ class Database:
                     f"{self.path} is at schema version {current}, but this code only knows "
                     f"{known}: refusing to run an older server against a newer database"
                 )
+            if 0 < current < known:  # an existing database is about to change: copy it first
+                self.backup(conn, current)
             for number, path in files[current:]:
                 sql = path.read_text(encoding="utf-8")
                 # executescript() commits any open transaction first, so BEGIN/COMMIT live inside

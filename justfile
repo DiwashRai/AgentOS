@@ -81,3 +81,36 @@ pre-commit-web:
 # Point git at the repo's hooks (run once per clone; `just setup` does this).
 setup-hooks:
     git config core.hooksPath .githooks
+
+# ---- Container: the server only (API + built SPA), as deployed. See backend/deploy/README.md.
+# Docker by default; Podman: `just engine=podman container-build` (or set CONTAINER_ENGINE).
+# Every variable below can be overridden the same way, e.g. `just container_port=9000 container-run`.
+engine := env("CONTAINER_ENGINE", "docker")
+container_image := "agentos:latest"
+container_name := "agentos"
+container_volume := "agentos-data"
+container_port := "8080"
+container_env := "backend/deploy/.env.container"
+container_config := "backend/agentos.toml"
+
+# Build the image from the working tree. Podman needs --format docker to keep the HEALTHCHECK.
+container-build:
+    {{ engine }} build {{ if engine == "podman" { "--format docker " } else { "" } }}-f Containerfile -t {{ container_image }} .
+
+# /data on a named volume, config read-only, secrets from the env file. Replacing the container
+# keeps the volume, so this is also the upgrade step (after container-build).
+# (Re)start the container on host port 8080.
+container-run:
+    if (-not (Test-Path '{{ container_env }}')) { throw "{{ container_env }} not found: copy backend/deploy/container.env.example and fill it in" }
+    if (-not (Test-Path '{{ container_config }}')) { throw "{{ container_config }} not found: copy backend/agentos.toml.example" }
+    -{{ engine }} rm --force {{ container_name }} 2>$null
+    {{ engine }} run --detach --name {{ container_name }} --restart unless-stopped --publish {{ container_port }}:8000 --volume {{ container_volume }}:/data --mount "type=bind,source=$((Resolve-Path '{{ container_config }}').Path),target=/config/agentos.toml,readonly" --env-file '{{ container_env }}' {{ container_image }}
+
+# Follow the container's logs.
+container-logs:
+    {{ engine }} logs --follow {{ container_name }}
+
+# Stop and remove the container. The data volume stays.
+container-stop:
+    {{ engine }} stop {{ container_name }}
+    {{ engine }} rm {{ container_name }}
