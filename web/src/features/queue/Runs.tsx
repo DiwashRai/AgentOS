@@ -10,7 +10,7 @@ import { statusKind } from "../../domain/status";
 import { Avatar, cx, RunMeter, StageGlyph, StatusMark } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import { peekItemProps } from "../peek/usePeek";
-import { meterOf, type RackGroup, rackColumns, runName, runSeconds } from "./model";
+import { CAP, meterOf, type RackGroup, rackColumns, runName, runSeconds } from "./model";
 import s from "./Queue.module.css";
 
 type Ticket = Schemas["TicketSummary"];
@@ -64,7 +64,8 @@ export function RunTiles({
 }) {
   if (tickets.length === 0) return null;
   return (
-    <div className={s.tiles} style={{ "--n": tickets.length } as CSSProperties}>
+    // Always CAP.tiles columns, so one run is one tile wide rather than the whole row.
+    <div className={s.tiles} style={{ "--n": CAP.tiles } as CSSProperties}>
       {tickets.map((t) => (
         <RunTile key={t.key} ticket={t} now={now} onOpen={onOpen} />
       ))}
