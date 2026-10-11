@@ -90,7 +90,7 @@ function RunRow({
   onSelect: () => void;
 }) {
   const secs = spanSeconds(run.started_at, run.finished_at, now);
-  const ref = launchRef(run.launch_ref);
+  const ref = launchRef(run);
   return (
     <li className={cx(s.row, selected && s.selected)}>
       <button type="button" className={s.rowMain} aria-current={selected} onClick={onSelect}>

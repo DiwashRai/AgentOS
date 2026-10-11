@@ -56,14 +56,25 @@ describe("marks", () => {
 });
 
 describe("launchRef", () => {
-  it("URL → link, digits → pid, else text", () => {
-    expect(launchRef("https://github.com/o/r/actions/runs/1")).toEqual({
+  const at = (launch_ref: string | null, launch_url: string | null = null) =>
+    launchRef({ launch_ref, launch_url });
+
+  it("links the launcher's URL: one Actions run, or the workflow's runs page", () => {
+    expect(at("123", "https://github.com/o/r/actions/runs/1")).toEqual({
       href: "https://github.com/o/r/actions/runs/1",
-      text: "Job ↗",
+      text: "Actions run ↗",
     });
-    expect(launchRef("48120")).toEqual({ href: null, text: "pid 48120" });
-    expect(launchRef("runner-7")).toEqual({ href: null, text: "runner-7" });
-    expect(launchRef(null)).toBeNull();
-    expect(launchRef("  ")).toBeNull();
+    expect(at(null, "https://github.com/o/r/actions/workflows/w.yml")).toEqual({
+      href: "https://github.com/o/r/actions/workflows/w.yml",
+      text: "Actions ↗",
+    });
+  });
+
+  it("without a URL: digits → pid, else text; never a link", () => {
+    expect(at("48120")).toEqual({ href: null, text: "pid 48120" });
+    expect(at("runner-7")).toEqual({ href: null, text: "runner-7" });
+    expect(at("https://example.com/x")).toEqual({ href: null, text: "https://example.com/x" });
+    expect(at(null)).toBeNull();
+    expect(at("  ")).toBeNull();
   });
 });

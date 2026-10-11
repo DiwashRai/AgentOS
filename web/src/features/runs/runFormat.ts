@@ -62,11 +62,17 @@ export function spanSeconds(
   return Math.max(0, (to - from) / 1000);
 }
 
-/** A launcher's informational ref: a link when it is a URL (CI job), else mono text (a PID). */
-export function launchRef(ref: string | null): { href: string | null; text: string } | null {
-  if (ref === null || ref.trim() === "") return null;
-  const r = ref.trim();
-  if (/^https?:\/\//i.test(r)) return { href: r, text: "Job ↗" };
+/** Where a run was launched: the launcher's link (`launch_url`: a GitHub Actions run, or the
+ *  workflow's runs page when GitHub didn't name the run), else its ref as mono text (a PID). */
+export function launchRef(
+  run: Pick<Schemas["RunSummary"], "launch_ref" | "launch_url">,
+): { href: string | null; text: string } | null {
+  if (run.launch_url) {
+    const one = /\/actions\/runs\/\d+\/?$/.test(run.launch_url);
+    return { href: run.launch_url, text: one ? "Actions run ↗" : "Actions ↗" };
+  }
+  const r = run.launch_ref?.trim() ?? "";
+  if (r === "") return null;
   if (/^\d+$/.test(r)) return { href: null, text: `pid ${r}` };
   return { href: null, text: r };
 }

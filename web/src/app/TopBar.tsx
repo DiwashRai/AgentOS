@@ -1,8 +1,10 @@
 // The top bar (DESIGN §4, kit.js Kit.topbar): h1 · context · counters · view middle · gap ·
-// search · one button. Counters read the shared counts; views pass only which ones to show.
+// search · one button. Counters read the shared counts; views pass only which ones to show. The
+// context leads with the Space name (the design's workspace slot); the tab title follows the view.
 import { type ReactNode, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
+import { useConfig } from "../api/queries";
 import { COUNTERS, type CountKey } from "../domain/counts";
 import { jumpTarget } from "../domain/search";
 import { words } from "../domain/words";
@@ -120,10 +122,15 @@ function NewTicketButton() {
 
 export function TopBar(props: TopBarProps) {
   const search = props.search ?? "Search or jump to a ticket";
+  const space = useConfig().data?.space_name ?? "";
+  const context = [space, props.context ?? ""].filter(Boolean).join(" · ");
+  useEffect(() => {
+    document.title = [props.title, space || "AgentOS"].join(" · ");
+  }, [props.title, space]);
   return (
     <header className={s.top}>
       <h1>{props.title}</h1>
-      {props.context && <span className={s.ctx}>{props.context}</span>}
+      {context && <span className={s.ctx}>{context}</span>}
       {props.counters && props.counters.length > 0 && <Counters slots={props.counters} />}
       {props.middle}
       <span className={s.grow} />
