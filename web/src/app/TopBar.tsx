@@ -1,14 +1,16 @@
 // The top bar (DESIGN §4, kit.js Kit.topbar): h1 · context · counters · view middle · gap ·
 // search · one button. Counters read the shared counts; views pass only which ones to show.
 import { type ReactNode, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { COUNTERS, type CountKey } from "../domain/counts";
+import { jumpTarget } from "../domain/search";
 import { words } from "../domain/words";
 import { SearchIcon } from "./icons";
 import { isShortcut } from "./keys";
 import s from "./TopBar.module.css";
 import { useBoard } from "./useBoard";
+import { useSearchQuery } from "./useSearchQuery";
 
 export type CounterSlot = CountKey | "|";
 
@@ -44,8 +46,15 @@ function Counters({ slots }: { slots: readonly CounterSlot[] }) {
   );
 }
 
+/**
+ * The search box: `?q=` filters the lists that read it (My queue, Compact). Enter jumps: a
+ * key-shaped query, or the one ticket that matches (src/domain/search.ts). Esc clears, then blurs.
+ */
 function Search({ placeholder }: { placeholder: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const { q, setQ } = useSearchQuery();
+  const { tickets } = useBoard();
+  const navigate = useNavigate();
   // "/" focuses search from anywhere, but never while typing in a field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,8 +75,24 @@ function Search({ placeholder }: { placeholder: string }) {
         type="search"
         placeholder={placeholder}
         aria-label={placeholder}
+        value={q}
+        onChange={(e) => {
+          setQ(e.currentTarget.value);
+        }}
         onKeyDown={(e) => {
-          if (e.key === "Escape") e.currentTarget.blur();
+          if (e.key === "Enter") {
+            const key = jumpTarget(q, tickets);
+            if (key === null) return;
+            e.preventDefault();
+            void navigate(`/t/${encodeURIComponent(key)}`);
+          } else if (e.key === "Escape") {
+            // A non-empty search clears first; that Esc is ours, not the peek's or a row's.
+            if (q !== "") {
+              e.preventDefault();
+              e.stopPropagation();
+              setQ("");
+            } else e.currentTarget.blur();
+          }
         }}
       />
       <kbd className={s.kbd}>/</kbd>

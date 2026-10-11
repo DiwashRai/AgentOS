@@ -1,5 +1,5 @@
 // Compact (DESIGN §6): every ticket, one 36px line each, grouped by attention, filtered by `?f=`
-// (one group) and `?repo=` (one repo). The only list that shows the Inbox. A row expands in place,
+// (one group), `?repo=` (one repo) and the search `?q=`. The only list that shows the Inbox. A row expands in place,
 // one at a time; Esc collapses it (when no peek is open). Every list and number comes from
 // model.ts over useBoard(); this view only lays them out.
 // Cut from the prototype: J/K/P/O keys, the runner pool gauge, FLIP glides, team bands (repos instead).
@@ -10,11 +10,13 @@ import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
+import { useSearchQuery } from "../../app/useSearchQuery";
 import { repoShort } from "../../domain/format";
+import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
 import { GroupHead, Kbd } from "../../ui";
 import { usePeek } from "../peek/usePeek";
-import { NewTicketPrompt } from "../queue/QueueView";
+import { NewTicketPrompt, NoMatches } from "../queue/QueueView";
 import { useNow } from "../runs/useNow";
 import s from "./Compact.module.css";
 import {
@@ -57,8 +59,12 @@ export function CompactView() {
   const filter = parseFilter(params.get(FILTER_PARAM));
   const repo = params.get(REPO_PARAM);
 
+  const { query } = useSearchQuery();
+
+  // The pills count the repo's whole board (they're the legend); the list shows what the filter
+  // and the search (`?q=`) leave.
   const scoped = useMemo(() => inRepo(board.tickets, repo), [board.tickets, repo]);
-  const listed = useMemo(() => byFilter(scoped, filter), [scoped, filter]);
+  const listed = useMemo(() => bySearch(byFilter(scoped, filter), query), [scoped, filter, query]);
   const groups = useMemo(() => compactGroups(listed, board.me, now), [listed, board.me, now]);
   const pillItems = useMemo(() => pills(scoped, board.me, filter), [scoped, board.me, filter]);
 
@@ -92,7 +98,13 @@ export function CompactView() {
   else if (board.error)
     body = <Quiet error>{`Can't reach the server · ${board.error.message}`}</Quiet>;
   else if (board.tickets.length === 0) body = <NewTicketPrompt />;
-  else if (groups.length === 0) body = <p className={s.empty}>{emptyText(filter, repo)}</p>;
+  else if (groups.length === 0)
+    body =
+      query.length > 0 ? (
+        <NoMatches where={filter !== "all" || repo ? "here" : undefined} />
+      ) : (
+        <p className={s.empty}>{emptyText(filter, repo)}</p>
+      );
   else
     body = groups.map((g) => {
       const collapsed = collapsedByDefault(g.id, filter) !== flipped.has(g.id);

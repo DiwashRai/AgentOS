@@ -4,6 +4,7 @@
 import type { Schemas } from "../../api/client";
 import type { Counts } from "../../domain/counts";
 import { firstName } from "../../domain/format";
+import type { Groups } from "../../domain/groups";
 import { isMine, type MeRef, statusKind, type StatusKind } from "../../domain/status";
 import { statusWords } from "../../domain/words";
 import type { MeterState } from "../../ui";
@@ -22,8 +23,24 @@ export const SHOW_ALL_FILTER = {
   doneRecent: "done",
 } as const;
 
-export function showAllHref(group: keyof typeof SHOW_ALL_FILTER): string {
-  return `/compact?f=${SHOW_ALL_FILTER[group]}`;
+/** The search (`q`) rides along, so "Show all N" lists the same N. */
+export function showAllHref(group: keyof typeof SHOW_ALL_FILTER, q = ""): string {
+  return compactHref({ f: SHOW_ALL_FILTER[group], q });
+}
+
+/** `/compact` with the given params (empty ones dropped). */
+export function compactHref(params: Record<string, string>): string {
+  const p = new URLSearchParams();
+  for (const [name, value] of Object.entries(params)) if (value !== "") p.set(name, value);
+  const qs = p.toString();
+  return qs ? `/compact?${qs}` : "/compact";
+}
+
+/** True when My queue lists anything: one of its groups, or the team rack. Inbox tickets and
+ *  the team's waiting tickets are never on it. */
+export function listsAnything(g: Groups<unknown>, rack: readonly RackGroup<unknown>[]): boolean {
+  const lists = [g.needYou, g.atWork, g.waitingMine, g.blocked, g.doneRecent];
+  return lists.some((list) => list.length > 0) || rack.length > 0;
 }
 
 /** The gate the server says the ticket is parked at (on you or on someone), if any. */
