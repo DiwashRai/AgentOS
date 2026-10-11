@@ -1,0 +1,118 @@
+/* Stage glyph: one segment per stage of THIS ticket's pipeline, gates as diamonds between
+   (DESIGN §13.2). Ported from kit.css `.ao-stg`. `isFailed`, `isStale` and `isBlocked` are ours. */
+.stg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.stg > i {
+  flex: none;
+  width: 9px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--rule);
+}
+.stg > i.isDone {
+  background: var(--rule-strong);
+}
+.stg > i.isCur {
+  background: var(--ink-1);
+}
+.stg.isLive > i.isCur {
+  background: var(--live);
+}
+.stg > i.isSkip {
+  height: 1px;
+  background: var(--rule-strong);
+  opacity: 0.55;
+}
+/* ours: a failed stage is the current one, in the blocked colour */
+.stg > i.isFailed {
+  background: var(--blocked);
+}
+/* ours: a stale stage is an upcoming one at reduced opacity */
+.stg > i.isStale {
+  opacity: 0.55;
+}
+
+/* gate notch: a small diamond between two segments */
+.stg > u {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin: 0 1.5px;
+  transform: rotate(45deg);
+  border-radius: 0.5px;
+  box-shadow: inset 0 0 0 1.2px var(--rule-strong);
+  text-decoration: none;
+}
+.stg > u.isPassed {
+  background: var(--rule-strong);
+  box-shadow: none;
+}
+.stg > u.isWait {
+  box-shadow: inset 0 0 0 1.5px var(--waiting);
+}
+.stg > u.isYou {
+  background: var(--waiting);
+  box-shadow: 0 0 0 2px var(--you-ring);
+}
+.stg > b {
+  margin-left: 7px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.stg.isGateYou > b,
+.stg.isGateWait > b {
+  color: var(--waiting);
+}
+.stg.isBlocked > b {
+  color: var(--blocked);
+}
+
+/* tiny variant for sidebar/compact lines (7px segments) */
+.xs > i {
+  width: 7px;
+}
+.xs > u {
+  width: 4.5px;
+  height: 4.5px;
+}
+.xs > b {
+  margin-left: 6px;
+}
+
+/* large variant for boards and column heads: real sizes, never transform: scale() */
+.lg {
+  gap: 3px;
+}
+.lg > i {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+}
+.lg > i.isSkip {
+  height: 1.5px;
+}
+.lg > u {
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  border-radius: 1px;
+  box-shadow: inset 0 0 0 1.4px var(--rule-strong);
+}
+.lg > u.isWait {
+  box-shadow: inset 0 0 0 1.8px var(--waiting);
+}
+.lg > u.isYou {
+  box-shadow: 0 0 0 3px var(--you-ring);
+}
+.lg > u.isPassed {
+  box-shadow: none;
+}

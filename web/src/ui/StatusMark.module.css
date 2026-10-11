@@ -1,0 +1,184 @@
+/* Status marks: exactly one form per state (DESIGN §13.1). Ported from kit.css `.ao-mk`. */
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  min-width: 0;
+  vertical-align: middle;
+}
+.mark > i {
+  flex: none;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+}
+.mark > b {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mark > b.youPill {
+  overflow: visible;
+  flex: none;
+}
+.mark > span {
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* running: live dot that breathes (a soft ring radiating out) */
+.run > i {
+  background: var(--live);
+}
+.run > i::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--live);
+  opacity: 0;
+  animation: breathe 2s ease-out infinite;
+}
+.run > b {
+  color: var(--live-text);
+}
+@keyframes breathe {
+  0% {
+    transform: scale(0.45);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+/* waiting on someone: blue ring + name */
+.wait > i {
+  box-shadow: inset 0 0 0 1.6px var(--waiting);
+}
+.wait > b {
+  color: var(--waiting);
+}
+
+/* waiting on YOU: blue dot + YOU pill (the only YOU form) */
+.you > i {
+  background: var(--waiting);
+}
+.youPill {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 3px 5px 2px;
+  border-radius: 4px;
+  background: var(--waiting);
+  color: var(--you-ink);
+}
+.you > b.youPill {
+  color: var(--you-ink);
+}
+
+/* blocked: one crimson bar */
+.blk > i {
+  width: 3px;
+  height: 11px;
+  border-radius: 1px;
+  background: var(--blocked);
+  margin: 0 2.5px;
+}
+.blk > b {
+  color: var(--blocked);
+}
+
+/* done: green check */
+.done > i {
+  border-radius: 0;
+  width: 9px;
+}
+.done > i::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: -1px;
+  width: 3.5px;
+  height: 7px;
+  border: solid var(--done);
+  border-width: 0 1.7px 1.7px 0;
+  transform: rotate(45deg);
+}
+.done > b {
+  color: var(--done);
+}
+
+/* queued: dashed ring (waiting for a runner). The mask reads alpha only, so any opaque token works. */
+.queued > i {
+  background: repeating-conic-gradient(var(--ink-3) 0 32deg, transparent 32deg 60deg);
+  -webkit-mask: radial-gradient(circle, transparent 2.4px, var(--ink-1) 2.6px);
+  mask: radial-gradient(circle, transparent 2.4px, var(--ink-1) 2.6px);
+}
+.queued > b {
+  color: var(--ink-3);
+}
+
+/* idle: nobody acting (inbox): neutral, not a status colour */
+.idle > i {
+  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
+}
+.idle > b {
+  color: var(--ink-3);
+}
+
+/* mark followed by a mono ask: "YOU · sign off the plan" */
+.mark .ask {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: inherit;
+}
+.you .ask,
+.wait .ask {
+  color: var(--waiting);
+}
+.blk .ask {
+  color: var(--blocked);
+}
+.run .ask {
+  color: var(--live-text);
+}
+.done .ask {
+  color: var(--done);
+}
+.queued .ask,
+.idle .ask {
+  color: var(--ink-3);
+}
+
+/* 7px glyph (counters, pills, group heads): kit's `.ao-counters .ao-mk>i`. The blocked bar keeps its
+   3×11 shape (the kit's rule turned it into a 7px square: "one blocked mark"). */
+.mark.s7:not(.blk) > i {
+  width: 7px;
+  height: 7px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run > i::after {
+    display: none;
+    animation: none;
+  }
+}

@@ -1,0 +1,130 @@
+/* Buttons (DESIGN §13.9). Ported from kit.css `.ao-btn` / `.ao-ib`.
+   primary = ink. accent is ONLY for Dispatch run, and only where there is a ticket. */
+.btn {
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 8px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--t-fast) ease,
+    border-color var(--t-fast) ease,
+    background-color var(--t-fast) ease;
+}
+.btn:hover {
+  border-color: var(--rule-strong);
+  color: var(--ink-1);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:focus-visible,
+.ib:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 7px;
+}
+.lg {
+  height: 40px;
+  padding: 0 17px;
+  font-size: 13.5px;
+}
+.ink {
+  background: var(--ink-1);
+  border-color: var(--ink-1);
+  color: var(--bubble-mine-ink);
+  font-weight: 500;
+}
+.ink:hover {
+  background: var(--ink-hover);
+  border-color: var(--ink-hover);
+  color: var(--bubble-mine-ink);
+}
+.accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow: var(--accent-shadow);
+}
+.accent:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-ink);
+}
+.accent svg {
+  transition: transform 0.18s ease;
+}
+.accent:hover svg {
+  transform: translateX(2px);
+}
+.quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-3);
+}
+.quiet:hover {
+  background: var(--recess);
+  border-color: transparent;
+}
+.btn[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* icon button */
+.ib {
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-3);
+  padding: 0;
+  cursor: pointer;
+}
+.ib:hover {
+  color: var(--ink-1);
+  border-color: var(--rule-strong);
+}
+.bare {
+  border-color: transparent;
+  background: transparent;
+}
+.bare:hover {
+  background: var(--recess);
+  border-color: transparent;
+}
+.ib[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .accent svg {
+    transition: none;
+  }
+  .btn:active,
+  .accent:hover svg {
+    transform: none;
+  }
+}

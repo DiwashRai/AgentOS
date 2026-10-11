@@ -1,0 +1,54 @@
+/* Underline tabs (DESIGN §13.9). Ported from kit.css `.ao-tabs`. The tablist is an inner element so
+   the right slot stays outside it (a tablist may only own tabs). */
+.tabs {
+  display: flex;
+  gap: 22px;
+  border-bottom: 1px solid var(--rule);
+  height: 34px;
+  align-items: flex-end;
+}
+.list {
+  display: flex;
+  gap: 22px;
+  align-items: flex-end;
+  align-self: stretch;
+}
+.list > button {
+  border: 0;
+  background: none;
+  padding: 0 0 9px;
+  font-family: inherit;
+  color: var(--ink-3);
+  font-size: 13px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.list > button:hover {
+  color: var(--ink-1);
+}
+.list > button[aria-selected="true"] {
+  color: var(--ink-1);
+  font-weight: 500;
+  border-bottom-color: var(--ink-1);
+}
+.list > button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.list > button > span {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  margin-left: 5px;
+}
+.right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  padding-bottom: 10px;
+}

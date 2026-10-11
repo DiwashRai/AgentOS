@@ -1,0 +1,37 @@
+/* Avatar (DESIGN §13.9). Ported from kit.css `.ao-av`; 26px is the Talk size (`.ao-msg>.ao-av`). */
+.av {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--av-ink);
+  background: var(--av-1);
+}
+.s24 {
+  width: 24px;
+  height: 24px;
+}
+.s26 {
+  width: 26px;
+  height: 26px;
+}
+.s30 {
+  width: 30px;
+  height: 30px;
+  font-size: 11.5px;
+}
+.av2 {
+  background: var(--av-2);
+}
+.av3 {
+  background: var(--av-3);
+}
+.av4 {
+  background: var(--av-4);
+}

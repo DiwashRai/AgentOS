@@ -1,0 +1,68 @@
+/* Collapsible group break for dense lists (DESIGN §13.9). Ported from kit.css `.ao-gh`. */
+.gh {
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gh:hover {
+  color: var(--ink-1);
+}
+.gh:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 9px;
+}
+.gh > svg {
+  flex: none;
+  color: var(--ink-3);
+  transition: transform var(--t-fast) ease;
+}
+.gh[aria-expanded="false"] > svg {
+  transform: rotate(-90deg);
+}
+.g {
+  display: inline-flex;
+}
+.c {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.r {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+  min-width: 16px;
+}
+.s {
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.s b {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh > svg {
+    transition: none;
+  }
+}

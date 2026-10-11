@@ -8,7 +8,8 @@ import { QueueView } from "./views/QueueView";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
-  // ── Orchestrator: add the component sheet here, e.g. { path: "/kit", element: <KitSheet /> } ──
+  // The component sheet (both themes side by side), outside the shell and the auth guard.
+  { path: "/kit", lazy: async () => ({ Component: (await import("../ui/KitSheet")).default }) },
   {
     element: <Shell />,
     children: [

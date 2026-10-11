@@ -1,0 +1,50 @@
+/* Zone header (DESIGN §13.9). Ported from kit.css `.ao-zh`. */
+.zh {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 30px;
+}
+.zh > h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+}
+.count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.note {
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.rule {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+  align-self: center;
+  margin: 0 4px;
+  min-width: 16px;
+}
+.right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  align-self: center;
+  color: var(--ink-3);
+}
+/* the optional leading mark sits on the centre line (kit: `.ao-zh>.ao-mk`) */
+.mark {
+  display: inline-flex;
+  align-self: center;
+}

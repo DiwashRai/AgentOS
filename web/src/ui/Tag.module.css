@@ -1,0 +1,16 @@
+/* Kicker tag (DESIGN §13.9). Ported from kit.css `.ao-tag`. */
+.tag {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--recess);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.prio {
+  color: var(--blocked);
+}

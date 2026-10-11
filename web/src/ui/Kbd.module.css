@@ -1,0 +1,12 @@
+/* Key cap (DESIGN §13.9). Ported from kit.css `.ao-kbd`. */
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1;
+  color: var(--ink-3);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 5px 1px;
+  background: var(--surface);
+}
