@@ -255,7 +255,9 @@ def test_workflow_declares_the_launcher_inputs() -> None:
     # The launcher sends exactly these (see test_request_shape).
     assert declared == ["server", "token", "run_id"]
     assert "runs-on: [self-hosted, agentos]" in text
-    assert "permissions: {}" in text
+    # Repo access is only this job's token, limited to pushing the branch and its PR.
+    assert "permissions:\n  contents: write\n  pull-requests: write\n" in text
+    assert "GH_TOKEN: ${{ github.token }}" in text
 
 
 def test_workflow_never_interpolates_inputs_into_scripts() -> None:
@@ -269,7 +271,9 @@ def test_workflow_never_interpolates_inputs_into_scripts() -> None:
             continue
         assert re.fullmatch(
             r'run-name: "AgentOS run #\$\{\{ inputs\.run_id \}\}"'
-            r"|AOS_(SERVER|RUN_ID): \$\{\{ inputs\.(server|run_id) \}\}",
+            r"|AOS_(SERVER|RUN_ID): \$\{\{ inputs\.(server|run_id) \}\}"
+            # GitHub masks the job token itself (a secret), so it may sit in a step's env.
+            r"|GH_TOKEN: \$\{\{ github\.token \}\}",
             line,
         ), line
     mask = text.index("::add-mask::")

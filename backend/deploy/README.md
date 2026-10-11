@@ -107,15 +107,22 @@ to the template.
 **Runner checklist** (for the user the runner service runs as):
 - [ ] Self-hosted runner registered on `AGENTOS_GITHUB_REPO` with the label `agentos`
       (the job uses `runs-on: [self-hosted, agentos]`), running as a service.
-- [ ] `python3` >= 3.11, `curl` and `git` installed. The job checks for these first.
-- [ ] `git` can clone and push the ticket repos without prompting (SSH key or a credential
-      helper). The worker sets `GIT_TERMINAL_PROMPT=0`.
-- [ ] The agent CLIs your runtimes use (e.g. `claude`), logged in. `gh` logged in: the worker
-      looks up the branch's PR with it, and the open-pr stage uses it.
+- [ ] `python3` >= 3.11, `curl`, `git` and `gh` installed. The job checks for these first.
+- [ ] The agent CLIs your runtimes use (e.g. `claude`), logged in.
+- [ ] **No** repo credentials of its own: `gh` not logged in, no SSH key, no stored git
+      credentials. Agents run with a shell, so anything the runner holds is theirs too.
+- [ ] The ticket repos' URLs in `agentos.toml` are **https** (the job's token works over https).
 - [ ] `curl $AGENTOS_WORKER_URL/api/health` works **from the runner**.
 
-The job uses the runner's own credentials, never `GITHUB_TOKEN` (`permissions: {}`, no
-checkout). Dispatch inputs show in the Actions UI to anyone who can read the repo. The dispatch
+**Repo credentials = the job's `GITHUB_TOKEN`.** The workflow grants it `contents: write` and
+`pull-requests: write` on this repo only, and it expires with the job. The worker step gets it as
+`GH_TOKEN` (for `gh`: the open-pr stage, the PR lookup), and git uses it through gh's credential
+helper, set for that step only via `GIT_CONFIG_*` (nothing is written to `~/.gitconfig`). Caveat:
+PRs opened with `GITHUB_TOKEN` don't trigger other workflows (e.g. CI). When that matters, use a
+GitHub App token or a fine-grained token (one repo; contents + pull requests) from a repo secret
+instead. Registering the runner with `--ephemeral` gives every run a fresh runner.
+
+No `actions/checkout`: the worker clones the ticket's repo itself. Dispatch inputs show in the Actions UI to anyone who can read the repo. The dispatch
 token is single-use: the worker's claim binds its own token. The job masks the token before
 anything else and never interpolates inputs into its scripts. Its `timeout-minutes: 720` is
 only a backstop. The real limit is the run's time budget (the sum of its stages' `timeout_s`

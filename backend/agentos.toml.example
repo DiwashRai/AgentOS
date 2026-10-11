@@ -12,7 +12,8 @@ default_runtime = "claude"
 #
 # [[repos]]
 # name = "agentos"           # ^[a-z0-9][a-z0-9._-]{0,63}$, unique
-# url = "git@github.com:your-org/your-repo.git"   # https://..., ssh://... or git@host:path
+# url = "https://github.com/your-org/your-repo.git"   # https://..., ssh://... or git@host:path
+#                                                     # (GitHub Actions runners: https)
 # default_branch = "main"    # default "main"
 
 # Placeholders replace whole argv elements; no shell is involved.
