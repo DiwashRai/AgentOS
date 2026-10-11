@@ -5,7 +5,7 @@ import { useEffect, useId, useRef } from "react";
 
 import type { Schemas } from "../../api/client";
 import { stageModel } from "../../domain/stage";
-import { statusKind } from "../../domain/status";
+import { displayKind } from "../../domain/outcome";
 import { cx, Faces, RunMeter, StageGlyph, StatusMark } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import s from "./Compact.module.css";
@@ -61,7 +61,8 @@ export function CompactRow({
 }) {
   const moreId = useId();
   const ref = useRef<HTMLLIElement>(null);
-  const kind = statusKind(t);
+  // A done ticket's mark is its outcome: the green check or the red cross.
+  const kind = displayKind(t);
 
   // An opened row scrolls fully into view (12px top / 20px bottom margins via scroll-margin).
   useEffect(() => {
@@ -73,7 +74,7 @@ export function CompactRow({
   }, [open]);
 
   return (
-    <li ref={ref} className={cx(s.crow, open && s.isOpen, kind === "done" && s.isDone)}>
+    <li ref={ref} className={cx(s.crow, open && s.isOpen, t.attention === "done" && s.isDone)}>
       <button
         type="button"
         className={s.line}

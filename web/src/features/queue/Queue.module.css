@@ -183,6 +183,12 @@
   gap: 6px;
   justify-content: flex-end;
 }
+/* the Complete / Abandon confirm: its own line under the row, right-aligned under the buttons */
+.confirm {
+  grid-column: 1 / -1;
+  justify-self: end;
+  margin: 2px 0 10px;
+}
 .err {
   max-width: 100%;
   font-family: var(--font-mono);

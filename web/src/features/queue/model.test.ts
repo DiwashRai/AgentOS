@@ -79,7 +79,14 @@ describe("asks and people", () => {
     });
     expect(statusMark(w)).toEqual({ kind: "wait", name: "Sam", ask: "PR review" });
     expect(statusMark(ticket({ attention: "blocked" }))).toEqual({ kind: "blk", name: "Blocked" });
-    expect(statusMark(ticket({ attention: "done" }))).toEqual({ kind: "done", name: "Merged" });
+    expect(statusMark(ticket({ attention: "done", state: "done" }))).toEqual({
+      kind: "done",
+      name: "Complete",
+    });
+    expect(statusMark(ticket({ attention: "done", state: "closed" }))).toEqual({
+      kind: "abandoned",
+      name: "Abandoned",
+    });
   });
 });
 

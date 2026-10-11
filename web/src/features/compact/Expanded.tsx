@@ -12,6 +12,7 @@ import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { words } from "../../domain/words";
 import { Avatar, Button, cx, StatusMark, Stepper } from "../../ui";
+import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import { planView, plainText, stagesText } from "../peek/model";
 import { usePeek } from "../peek/usePeek";
@@ -44,7 +45,7 @@ function Actions({ ticket: t }: { ticket: Ticket }) {
           <Button
             key={a.id}
             size="sm"
-            variant={a.variant === "ink" ? "ink" : "default"}
+            variant={a.variant === "accent" ? "default" : a.variant}
             title={a.title}
             disabled={a.disabled === true || action.pending}
             onClick={() => {
@@ -77,6 +78,7 @@ function Actions({ ticket: t }: { ticket: Ticket }) {
           {message}
         </p>
       )}
+      <ActionConfirm confirm={action.confirm} className={s.confirm} />
     </>
   );
 }

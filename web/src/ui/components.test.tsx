@@ -48,6 +48,12 @@ describe("StatusMark", () => {
     expect(html).toContain('role="img"');
     expect(html).toContain('aria-label="Blocked"');
   });
+  it("has an abandoned kind, named Abandoned", () => {
+    const glyph = renderToStaticMarkup(<StatusMark kind="abandoned" glyphOnly />);
+    expect(glyph).toContain('aria-label="Abandoned"');
+    const named = renderToStaticMarkup(<StatusMark kind="abandoned" name="Abandoned" />);
+    expect(named).toContain("<b>Abandoned</b>");
+  });
 });
 
 describe("StageGlyph", () => {
@@ -116,6 +122,11 @@ describe("Button", () => {
     const html = renderToStaticMarkup(<Button variant="accent">Dispatch run</Button>);
     expect(html).toContain('type="button"');
     expect(html).toContain("<svg");
+  });
+  it("renders danger without the accent arrow", () => {
+    const html = renderToStaticMarkup(<Button variant="danger">Abandon</Button>);
+    expect(html).toContain(">Abandon</button>");
+    expect(html).not.toContain("<svg");
   });
 });
 

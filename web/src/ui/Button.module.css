@@ -73,6 +73,19 @@
 .accent:hover svg {
   transform: translateX(2px);
 }
+/* danger: the confirm of a destructive choice (Abandon). --bubble-mine-ink contrasts with
+   --blocked in both themes, as it does with --ink-1. */
+.danger {
+  background: var(--blocked);
+  border-color: var(--blocked);
+  color: var(--bubble-mine-ink);
+  font-weight: 500;
+}
+.danger:hover {
+  background: color-mix(in oklab, var(--blocked) 88%, var(--ink-1));
+  border-color: color-mix(in oklab, var(--blocked) 88%, var(--ink-1));
+  color: var(--bubble-mine-ink);
+}
 .quiet {
   background: transparent;
   border-color: transparent;

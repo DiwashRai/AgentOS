@@ -2,15 +2,24 @@
 // rows and the Ticket page header. Pure: it reads server fields (`attention`, which rail gate is
 // parked on you, whether an enabled stage follows it, `latest_run.cancel_requested_at`) and picks
 // buttons. It never derives board state. What each action does lives with the caller:
-//   approve = POST runs {} (the server picks next_stage) · mark_done = PATCH state=done ·
-//   retry = POST runs {} · dispatch = POST runs {from_stage} ("Run from…") · cancel = POST cancel ·
+//   approve = POST runs {} (the server picks next_stage) · retry = POST runs {} ·
+//   dispatch = POST runs {from_stage} ("Run from…") · cancel = POST cancel ·
+//   complete / abandon = confirm with an optional note, then POST resolve {outcome, note} ·
 //   reopen = PATCH state=open · request_changes = go to the Context tab · open = go to the ticket.
 import type { Schemas } from "../api/client";
 import { firstName } from "./format";
 import { words } from "./words";
 
 export type ActionId =
-  "approve" | "mark_done" | "retry" | "dispatch" | "cancel" | "reopen" | "request_changes" | "open";
+  | "approve"
+  | "complete"
+  | "abandon"
+  | "retry"
+  | "dispatch"
+  | "cancel"
+  | "reopen"
+  | "request_changes"
+  | "open";
 
 /** `ink` = the one primary; `accent` = Dispatch run on a ticket only; `quiet` = transparent. */
 export type ActionVariant = "ink" | "accent" | "default" | "quiet";
@@ -67,6 +76,10 @@ function waitingTitle(t: ActionTicket): string {
 export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
   const header = ctx === "header";
   const open = act("open", words.open, "default");
+  // Abandon is always quiet and leftmost, away from the primary.
+  const abandon = act("abandon", words.abandon, "quiet", {
+    title: "Close this ticket as abandoned",
+  });
   // No quiet Dispatch beside an ink primary: POST runs {} would do exactly what Approve or Retry
   // does ("Run from…" lives in the Pipeline tab).
   const set = (
@@ -84,11 +97,12 @@ export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
       const parked = parkedGate(t, "you");
       const changes = parked ? [act("request_changes", words.requestChanges, "default")] : [];
       if (parked?.more) {
+        // Gate primacy: Approve stays the one primary; only the header may also abandon here.
         const approve = act("approve", words.approve, "ink", { title: parked.gate.label });
-        return set(approve, changes);
+        return set(approve, header ? [abandon, ...changes] : changes);
       }
-      // The last gate, or no gate at all (a succeeded run): the only step left is done.
-      return set(act("mark_done", words.markDone, "ink"), changes);
+      // The last gate, or no gate at all (a succeeded run): the only step left is to close it.
+      return set(act("complete", words.complete, "ink"), [abandon, ...changes]);
     }
     case "waiting":
       return set(
@@ -96,7 +110,7 @@ export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
         header ? [act("dispatch", words.dispatch, "default", { title: waitingTitle(t) })] : [open],
       );
     case "blocked":
-      return set(act("retry", words.retry, "ink"), header ? [] : [open]);
+      return set(act("retry", words.retry, "ink"), header ? [abandon] : [abandon, open]);
     case "running":
     case "queued": {
       const cancelling = t.latest_run?.cancel_requested_at != null;
@@ -106,9 +120,10 @@ export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
       return set(null, [cancel], cancelling);
     }
     case "inbox":
-      // The accent belongs only on a ticket; a row just opens it.
+      // The accent belongs only on a ticket; a row just opens it. Abandon ("won't do") is
+      // header-only, so inbox rows stay a single button.
       return header
-        ? set(act("dispatch", words.dispatch, "accent"))
+        ? set(act("dispatch", words.dispatch, "accent"), [abandon])
         : set(act("open", words.open, "ink"));
     case "done":
       return set(null, [act("reopen", words.reopen, "default")]);

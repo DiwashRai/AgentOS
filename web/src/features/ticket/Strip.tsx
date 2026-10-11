@@ -7,8 +7,9 @@ import { Link as RouterLink, useLocation } from "react-router";
 import type { Schemas } from "../../api/client";
 import { elapsed } from "../../domain/format";
 import { planSections, planText, sectionCount, showsSections } from "../../domain/plan";
+import { OUTCOME_KIND, outcomeOf, resolvedBy, type Outcome } from "../../domain/outcome";
 import { statusKind } from "../../domain/status";
-import { attentionWords } from "../../domain/words";
+import { attentionWords, outcomeWords } from "../../domain/words";
 import { RunMeter, StatusMark, cx, linkClass } from "../../ui";
 import { isTasksFile } from "../context/files";
 import { useNow } from "../runs/useNow";
@@ -136,7 +137,32 @@ function GateStrip({ t, parked, tasksPath }: { t: Detail; parked: ParkedGate; ta
   );
 }
 
+/** A done ticket: Complete (green) or Abandoned (red), who closed it and when, and the note. */
+function OutcomeStrip({ t, outcome }: { t: Detail; outcome: Outcome }) {
+  const now = useNow(30_000);
+  const r = t.resolution;
+  return (
+    <div className={cx(s.strip, s.status)}>
+      <div className={s.who}>
+        <StatusMark kind={OUTCOME_KIND[outcome]} name={outcomeWords[outcome]} />
+      </div>
+      <p className={s.meta}>
+        {r ? resolvedBy(r, now) : statusText(t)}
+        {r?.note ? (
+          <>
+            {" — "}
+            <span className={s.note}>{r.note}</span>
+          </>
+        ) : null}
+      </p>
+      {t.pr_url ? <PrLink url={t.pr_url} className={s.k} /> : <span />}
+    </div>
+  );
+}
+
 function StatusStrip({ t }: { t: Detail }) {
+  const outcome = outcomeOf(t);
+  if (outcome) return <OutcomeStrip t={t} outcome={outcome} />;
   const kind = statusKind(t);
   const name =
     kind === "wait" && t.now.person ? t.now.person.display_name : attentionWords[t.attention];

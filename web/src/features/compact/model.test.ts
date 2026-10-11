@@ -222,6 +222,21 @@ describe("the now column", () => {
     expect(nowCell(ticket({ attention: "inbox" }))).toMatchObject({ text: "Nobody on it yet" });
     expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) })).text).toBe("Draft");
   });
+  it("marks done tickets by outcome, with the note", () => {
+    const abandoned = ticket({
+      attention: "done",
+      state: "closed",
+      resolution: { outcome: "abandoned", note: "Superseded", by: sam, at: at("10") },
+    });
+    expect(nowCell(abandoned)).toEqual({
+      kind: "mark",
+      mark: { kind: "abandoned", name: "Abandoned" },
+      text: "Superseded",
+    });
+    expect(nowCell(ticket({ attention: "done", state: "done" }))).toMatchObject({
+      mark: { kind: "done", name: "Complete" },
+    });
+  });
 });
 
 describe("the expansion", () => {
@@ -239,6 +254,18 @@ describe("the expansion", () => {
     const wait = ticket({ attention: "waiting", now: now({ person: sam, text: "Review" }) });
     expect(moveText(wait)).toEqual({ label: "Waiting on", lead: "Sam · Review" });
     expect(moveText(ticket({ attention: "queued" }))).toEqual({ label: "Now", lead: "Queued" });
+  });
+  it("labels a done ticket with its outcome, over the note", () => {
+    const abandoned = ticket({
+      attention: "done",
+      state: "closed",
+      resolution: { outcome: "abandoned", note: "Superseded", by: sam, at: at("10") },
+    });
+    expect(moveText(abandoned)).toEqual({ label: "Abandoned", lead: "Superseded" });
+    expect(moveText(ticket({ attention: "done", state: "done" }))).toEqual({
+      label: "Complete",
+      lead: "Complete",
+    });
   });
   it("labels the run with the parts the server sent", () => {
     const t = ticket({

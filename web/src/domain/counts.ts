@@ -46,7 +46,7 @@ export const COUNTERS: Record<CountKey, { mark: StatusKind | null; label: string
   waiting: { mark: "wait", label: "waiting on someone" },
   inbox: { mark: "idle", label: "in inbox" },
   inFlight: { mark: null, label: "in flight" },
-  done: { mark: "done", label: "merged" },
+  done: { mark: "done", label: "done" },
 };
 
 export function counts(tickets: readonly CountTicket[], me: MeRef): Counts {

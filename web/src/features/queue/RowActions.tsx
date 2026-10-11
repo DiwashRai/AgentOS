@@ -1,8 +1,10 @@
 // A row's own buttons (gate primacy, src/domain/actions.ts), run through useTicketAction. While an
-// action is pending the buttons are disabled; a failure shows as a quiet inline error.
+// action is pending the buttons are disabled; a failure shows as a quiet inline error. Complete /
+// Abandon open their confirm as a full-width line under the row (it spans the row's grid).
 import type { Schemas } from "../../api/client";
 import { type Action, ticketActions } from "../../domain/actions";
 import { Button } from "../../ui";
+import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import s from "./Queue.module.css";
 
@@ -22,29 +24,33 @@ export function RowActions({ ticket, primaryOnly = false }: RowActionsProps) {
   if (buttons.length === 0) return null;
   const message = action.error ? `Failed · ${action.error.message}` : null;
   return (
-    <div className={s.acts}>
-      <div className={s.btns}>
-        {buttons.map((a) => (
-          <Button
-            key={a.id}
-            size="sm"
-            variant={a.variant === "ink" ? "ink" : "default"}
-            title={a.title}
-            disabled={a.disabled === true || action.pending}
-            onClick={() => {
-              action.reset();
-              action.run(a);
-            }}
-          >
-            {a.label}
-          </Button>
-        ))}
+    <>
+      <div className={s.acts}>
+        <div className={s.btns}>
+          {buttons.map((a) => (
+            <Button
+              key={a.id}
+              size="sm"
+              // A row never carries the accent (the model never gives it one here anyway).
+              variant={a.variant === "accent" ? "default" : a.variant}
+              title={a.title}
+              disabled={a.disabled === true || action.pending}
+              onClick={() => {
+                action.reset();
+                action.run(a);
+              }}
+            >
+              {a.label}
+            </Button>
+          ))}
+        </div>
+        {message && (
+          <span className={s.err} role="alert" title={message}>
+            {message}
+          </span>
+        )}
       </div>
-      {message && (
-        <span className={s.err} role="alert" title={message}>
-          {message}
-        </span>
-      )}
-    </div>
+      <ActionConfirm confirm={action.confirm} className={s.confirm} />
+    </>
   );
 }

@@ -124,6 +124,30 @@
   color: var(--done);
 }
 
+/* abandoned (a done ticket closed as unsuccessful): a crimson cross */
+.abandoned > i {
+  border-radius: 0;
+  width: 9px;
+}
+.abandoned > i::before,
+.abandoned > i::after {
+  content: "";
+  position: absolute;
+  left: 3.6px;
+  top: -0.5px;
+  width: 1.7px;
+  height: 9px;
+  border-radius: 1px;
+  background: var(--blocked);
+  transform: rotate(45deg);
+}
+.abandoned > i::after {
+  transform: rotate(-45deg);
+}
+.abandoned > b {
+  color: var(--blocked);
+}
+
 /* queued: dashed ring (waiting for a runner). The mask reads alpha only, so any opaque token works. */
 .queued > i {
   background: repeating-conic-gradient(var(--ink-3) 0 32deg, transparent 32deg 60deg);
@@ -155,7 +179,8 @@
 .wait .ask {
   color: var(--waiting);
 }
-.blk .ask {
+.blk .ask,
+.abandoned .ask {
   color: var(--blocked);
 }
 .run .ask {

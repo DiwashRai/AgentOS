@@ -6,6 +6,7 @@ import type { Schemas } from "../../api/client";
 import { type CountKey, counts } from "../../domain/counts";
 import { age, elapsed, firstName, repoShort } from "../../domain/format";
 import { since } from "../../domain/groups";
+import { outcomeWord } from "../../domain/outcome";
 import { planText } from "../../domain/plan";
 import {
   type Attention,
@@ -261,7 +262,7 @@ export function updText(t: Pick<Ticket, "attention" | "attention_since">, now: n
   return t.attention === "running" ? "now" : age(since(t), now);
 }
 
-type NowTicket = Pick<Ticket, "attention" | "rail" | "now" | "latest_run">;
+type NowTicket = Pick<Ticket, "attention" | "rail" | "now" | "latest_run" | "state" | "resolution">;
 
 export type NowCell =
   /** `BUILDER · step · meter · 3/5` */
@@ -284,6 +285,7 @@ export function nowCell(t: NowTicket): NowCell {
   let text = t.now.text;
   if (t.attention === "blocked") text = statusText(t);
   else if (t.attention === "inbox") text = t.now.text || words.inboxNote;
+  else if (t.attention === "done") text = t.resolution?.note ?? t.now.text;
   return { kind: "mark", mark, text };
 }
 
@@ -304,6 +306,11 @@ export function moveText(t: NowTicket): { label: string; lead: string } {
       const who = waitingPerson(t);
       const lead = [who ? firstName(who) : "Someone", gate?.label ?? t.now.text].filter(Boolean);
       return { label: "Waiting on", lead: lead.join(" · ") };
+    }
+    case "done": {
+      // "Abandoned" over the note (or the server's status line).
+      const label = outcomeWord(t) ?? attentionWords.done;
+      return { label, lead: t.resolution?.note ?? (statusText(t) || label) };
     }
     default:
       return { label: "Now", lead: statusText(t) || attentionWords[t.attention] };

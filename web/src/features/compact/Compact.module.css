@@ -367,6 +367,9 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+.confirm {
+  margin-top: 8px;
+}
 .err {
   margin: 6px 0 0;
   font-family: var(--font-mono);

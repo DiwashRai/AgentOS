@@ -1,5 +1,6 @@
 // One vocabulary for every view (DESIGN §16). Never "Needs me", never "Stuck".
 // Mono caps labels are uppercased by CSS; these stay in sentence case.
+import type { Schemas } from "../api/client";
 import type { Attention, StatusKind } from "./status";
 
 /** The word for each status kind (marks, legends, group heads). */
@@ -9,8 +10,14 @@ export const statusWords: Record<StatusKind, string> = {
   blk: "Blocked",
   run: "Running",
   queued: "Queued",
-  done: "Merged",
+  done: "Done",
   idle: "Inbox",
+};
+
+/** How a done ticket ended (`resolution.outcome`); src/domain/outcome.ts picks it. */
+export const outcomeWords: Record<Schemas["Resolution"]["outcome"], string> = {
+  completed: "Complete",
+  abandoned: "Abandoned",
 };
 
 /** The word for each server `attention` value (web/AGENTS.md mapping table). */
@@ -21,7 +28,7 @@ export const attentionWords: Record<Attention, string> = {
   queued: "Queued",
   blocked: "Blocked",
   inbox: "Inbox",
-  done: "Merged",
+  done: "Done",
 };
 
 /** Other fixed phrases from DESIGN §16. */
@@ -37,7 +44,9 @@ export const words = {
   openTicket: "Open ticket →",
   dispatch: "Dispatch run",
   approve: "Approve",
-  markDone: "Mark done",
+  complete: "Complete",
+  abandon: "Abandon",
+  resolveNote: "Add a note (optional)",
   retry: "Retry",
   cancel: "Cancel",
   cancelling: "Cancelling…",

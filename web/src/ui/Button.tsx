@@ -3,10 +3,11 @@ import s from "./Button.module.css";
 import { cx } from "./cx";
 import { ArrowIcon } from "./icons";
 
-export type ButtonVariant = "default" | "ink" | "accent" | "quiet";
+export type ButtonVariant = "default" | "ink" | "accent" | "quiet" | "danger";
 
 export interface ButtonProps extends ComponentPropsWithRef<"button"> {
-  /** ink = primary. accent is only ever Dispatch run, only on a ticket (gets the nudging arrow). */
+  /** ink = primary. accent is only ever Dispatch run, only on a ticket (gets the nudging arrow).
+   *  danger = confirming a destructive choice (Abandon), never a resting button. */
   variant?: ButtonVariant | undefined;
   size?: "sm" | "md" | "lg" | undefined;
 }

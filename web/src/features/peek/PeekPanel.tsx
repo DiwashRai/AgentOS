@@ -7,6 +7,7 @@ import { ApiError, type Schemas } from "../../api/client";
 import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
 import { elapsed, firstName, repoShort, srcLabel } from "../../domain/format";
+import { outcomeWord, resolvedBy } from "../../domain/outcome";
 import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { words } from "../../domain/words";
@@ -84,6 +85,8 @@ function Run({ ticket: t }: { ticket: Summary }) {
 
 function Status({ ticket: t }: { ticket: Summary }) {
   const mark = statusMark(t);
+  // A closed ticket's note (Complete / Abandoned) says more than the server's status line.
+  const text = t.resolution?.note ?? t.now.text;
   return (
     <section className={s.sec} aria-label="Status">
       <h3 className={s.lab}>Status</h3>
@@ -91,9 +94,20 @@ function Status({ ticket: t }: { ticket: Summary }) {
         <span>
           <StatusMark kind={mark.kind} name={mark.name} ask={mark.ask} />
         </span>
-        {t.now.text && <p>{t.now.text}</p>}
+        {text && <p>{text}</p>}
       </div>
     </section>
+  );
+}
+
+/** "Abandoned by Diwash · 2h ago" in the facts line. */
+function ResolvedFact({ word, resolution }: { word: string; resolution: Schemas["Resolution"] }) {
+  const now = useNow(30_000);
+  return (
+    <span title={new Date(resolution.at).toLocaleString()}>
+      {`${word} by `}
+      <b>{resolvedBy(resolution, now)}</b>
+    </span>
   );
 }
 
@@ -134,6 +148,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
   const running = t.attention === "running" || t.attention === "queued";
   const runner = t.attention === "running" ? t.latest_run?.launch_ref : null;
   const stages = stagesText(t.rail);
+  const outcome = outcomeWord(t);
 
   return (
     <>
@@ -167,6 +182,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
               Runner <b>{runner}</b>
             </span>
           )}
+          {outcome && t.resolution && <ResolvedFact word={outcome} resolution={t.resolution} />}
           {t.pr_url && <PrLink url={t.pr_url} />}
         </div>
       </header>

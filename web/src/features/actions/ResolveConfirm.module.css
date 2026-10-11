@@ -1,0 +1,66 @@
+/* The Complete / Abandon confirm: a quiet card under the action buttons (kit's quiet language:
+   surface, hairline rule, a 2px edge in the outcome's tone). */
+.confirm {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 380px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  box-shadow: var(--row-edge);
+  text-align: left;
+  cursor: default;
+}
+.complete {
+  border-left: 2px solid var(--done);
+}
+.abandon {
+  border-left: 2px solid var(--blocked);
+}
+
+.note {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--fs-control);
+  line-height: 1.45;
+  outline: none;
+  resize: vertical;
+}
+.note::placeholder {
+  color: var(--ink-3);
+}
+.note:focus {
+  border-color: var(--focus);
+}
+
+.err {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--blocked);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.keys {
+  margin-right: auto;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}

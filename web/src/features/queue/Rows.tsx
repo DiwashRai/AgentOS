@@ -73,7 +73,8 @@ function QuietState({ ticket: t, now }: { ticket: Ticket; now: number }) {
       </span>
     );
   }
-  const text = t.now.text || age(t.attention_since, now);
+  // A closed ticket's note (Complete / Abandoned) says more than the server's status line.
+  const text = t.resolution?.note ?? (t.now.text || age(t.attention_since, now));
   return (
     <span className={s.state}>
       <StatusMark kind={mark.kind} name={mark.name} />

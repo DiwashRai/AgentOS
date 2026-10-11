@@ -5,8 +5,9 @@ import type { Schemas } from "../../api/client";
 import type { Counts } from "../../domain/counts";
 import { firstName } from "../../domain/format";
 import type { Groups } from "../../domain/groups";
-import { isMine, type MeRef, statusKind, type StatusKind } from "../../domain/status";
-import { statusWords } from "../../domain/words";
+import { isMine, type MeRef, statusKind } from "../../domain/status";
+import { type DisplayKind, OUTCOME_KIND, outcomeOf } from "../../domain/outcome";
+import { outcomeWords, statusWords } from "../../domain/words";
 import type { MeterState } from "../../ui";
 
 type Ticket = Schemas["TicketSummary"];
@@ -128,13 +129,18 @@ export function atWorkNote(c: Pick<Counts, "mine" | "running" | "queued">): stri
 }
 
 export interface MarkModel {
-  kind: StatusKind;
+  kind: DisplayKind;
   name?: string | undefined;
   ask?: string | undefined;
 }
 
-/** The status mark with its ask, as the quiet rows and the peek's Status section show it. */
-export function statusMark(t: Pick<Ticket, "attention" | "rail" | "now">): MarkModel {
+/** The status mark with its ask, as the quiet rows and the peek's Status section show it. A done
+ *  ticket shows its outcome: Complete (green) or Abandoned (red). */
+export function statusMark(
+  t: Pick<Ticket, "attention" | "rail" | "now" | "state" | "resolution">,
+): MarkModel {
+  const outcome = outcomeOf(t);
+  if (outcome) return { kind: OUTCOME_KIND[outcome], name: outcomeWords[outcome] };
   const kind = statusKind(t);
   switch (kind) {
     case "you":
@@ -145,7 +151,7 @@ export function statusMark(t: Pick<Ticket, "attention" | "rail" | "now">): MarkM
       return { kind, name: who ? firstName(who) : "Someone", ask: gate?.label };
     }
     case "blk":
-    case "done":
+    case "done": // unreachable: a done ticket always has an outcome
     case "queued":
       return { kind, name: statusWords[kind] };
     case "run":

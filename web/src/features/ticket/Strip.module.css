@@ -85,6 +85,12 @@
   line-height: 1.4;
   color: var(--ink-3);
 }
+/* a resolution note: the person's own words, kept as written */
+.note {
+  color: var(--ink-2);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 
 /* gate strip */
 .gateWho {

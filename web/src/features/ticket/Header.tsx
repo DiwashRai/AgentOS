@@ -8,6 +8,7 @@ import { ticketActions, type Action } from "../../domain/actions";
 import { repoShort, srcLabel } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import { Button, ChevronIcon, Stepper, Tag, cx } from "../../ui";
+import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import { useNow } from "../runs/useNow";
 import s from "./Header.module.css";
@@ -54,6 +55,7 @@ function ActionGroup({ t, readOnly }: { t: Detail; readOnly: boolean }) {
           {actionErrorText(action.error)}
         </p>
       ) : null}
+      <ActionConfirm confirm={action.confirm} className={s.confirm} />
     </div>
   );
 }

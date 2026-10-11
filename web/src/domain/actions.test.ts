@@ -21,21 +21,29 @@ describe("ticketActions", () => {
       expect(row.primary?.title).toBe("Plan sign-off");
     });
 
-    it("adds no Dispatch run in the header (it would just do what Approve does)", () => {
+    it("the header adds a quiet Abandon but no Dispatch run (it would just do what Approve does)", () => {
       expect(shape(ticketActions(parkedOnYou, "header"))).toEqual([
+        "abandon:quiet",
         "request_changes:default",
         "approve:ink",
       ]);
     });
 
-    it("skipped stages after the gate don't count: Mark done", () => {
+    it("never offers Complete while a stage follows the gate", () => {
+      for (const ctx of ["row", "header"] as const) {
+        const s = ticketActions(parkedOnYou, ctx);
+        expect([s.primary, ...s.secondary].some((a) => a?.id === "complete")).toBe(false);
+      }
+    });
+
+    it("skipped stages after the gate don't count: Complete", () => {
       const t = ticket({
         attention: "needs_you",
         rail: [step("Plan", "done", { gate: gate("you") }), step("Build", "skipped")],
       });
       const s = ticketActions(t, "row");
-      expect(s.primary).toMatchObject({ id: "mark_done", label: "Mark done", variant: "ink" });
-      expect(shape(s)).toEqual(["request_changes:default", "mark_done:ink"]);
+      expect(s.primary).toMatchObject({ id: "complete", label: "Complete", variant: "ink" });
+      expect(shape(s)).toEqual(["abandon:quiet", "request_changes:default", "complete:ink"]);
     });
 
     it("an upcoming (stale) stage after the gate still counts", () => {
@@ -46,22 +54,22 @@ describe("ticketActions", () => {
       expect(ticketActions(t, "row").primary?.id).toBe("approve");
     });
 
-    it("the last gate: Mark done", () => {
+    it("the last gate: Complete", () => {
       const t = ticket({
         attention: "needs_you",
         rail: [step("Plan", "done"), step("Build", "done", { gate: gate("you") })],
       });
-      expect(ticketActions(t, "header").primary?.id).toBe("mark_done");
+      expect(ticketActions(t, "header").primary?.id).toBe("complete");
     });
 
-    it("no parked gate (a succeeded run): Mark done, no Request changes", () => {
+    it("no parked gate (a succeeded run): Complete and Abandon, no Request changes", () => {
       const t = ticket({
         attention: "needs_you",
         latest_run: run("succeeded"),
         rail: [step("Plan", "done"), step("Build", "done")],
       });
-      expect(shape(ticketActions(t, "row"))).toEqual(["mark_done:ink"]);
-      expect(shape(ticketActions(t, "header"))).toEqual(["mark_done:ink"]);
+      expect(shape(ticketActions(t, "row"))).toEqual(["abandon:quiet", "complete:ink"]);
+      expect(shape(ticketActions(t, "header"))).toEqual(["abandon:quiet", "complete:ink"]);
     });
 
     it("reads only a gate on you, not passed or pending ones", () => {
@@ -69,7 +77,7 @@ describe("ticketActions", () => {
         attention: "needs_you",
         rail: [step("Plan", "done", { gate: gate("passed") }), step("Build", "pending")],
       });
-      expect(ticketActions(t, "row").primary?.id).toBe("mark_done");
+      expect(ticketActions(t, "row").primary?.id).toBe("complete");
     });
   });
 
@@ -110,14 +118,14 @@ describe("ticketActions", () => {
   describe("blocked", () => {
     const blocked = ticket({ attention: "blocked", latest_run: run("failed") });
 
-    it("Retry is the ink primary; a row can also open the ticket", () => {
+    it("Retry is the ink primary; a row can also abandon or open the ticket", () => {
       const s = ticketActions(blocked, "row");
       expect(s.primary).toMatchObject({ id: "retry", label: "Retry", variant: "ink" });
-      expect(shape(s)).toEqual(["open:default", "retry:ink"]);
+      expect(shape(s)).toEqual(["abandon:quiet", "open:default", "retry:ink"]);
     });
 
-    it("the header has Retry alone", () => {
-      expect(shape(ticketActions(blocked, "header"))).toEqual(["retry:ink"]);
+    it("the header has Retry with a quiet Abandon", () => {
+      expect(shape(ticketActions(blocked, "header"))).toEqual(["abandon:quiet", "retry:ink"]);
     });
   });
 
@@ -144,13 +152,24 @@ describe("ticketActions", () => {
     it("the header's primary is the accent Dispatch run", () => {
       const s = ticketActions(ticket({ attention: "inbox" }), "header");
       expect(s.primary).toMatchObject({ id: "dispatch", label: "Dispatch run", variant: "accent" });
-      expect(s.secondary).toEqual([]);
+      expect(shape(s)).toEqual(["abandon:quiet", "dispatch:accent"]);
     });
 
-    it("a row never carries the accent: it opens the ticket", () => {
+    it("a row never carries the accent or Abandon: it opens the ticket", () => {
       const s = ticketActions(ticket({ attention: "inbox" }), "row");
       expect(shape(s)).toEqual(["open:ink"]);
     });
+  });
+
+  it("waiting and running tickets offer no Complete or Abandon", () => {
+    for (const attention of ["waiting", "running", "queued"] as const) {
+      for (const ctx of ["row", "header"] as const) {
+        const s = ticketActions(ticket({ attention, latest_run: run("running") }), ctx);
+        const ids = [s.primary, ...s.secondary].map((a) => a?.id);
+        expect(ids).not.toContain("complete");
+        expect(ids).not.toContain("abandon");
+      }
+    }
   });
 
   it("done: Reopen only", () => {

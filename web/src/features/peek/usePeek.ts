@@ -6,10 +6,11 @@ import { withoutParam, withParam } from "./params";
 
 export const PEEK_PARAM = "peek";
 
-/** True when `target` sits in a button, link or field inside `item` (not the item itself). */
+/** True when `target` sits in a button, link, field or form (an inline confirm) inside `item`
+ *  (not the item itself). */
 export function isInnerControl(target: EventTarget | null, item: Element): boolean {
   if (!(target instanceof Element)) return false;
-  const control = target.closest("button, a, input, textarea, select");
+  const control = target.closest("button, a, input, textarea, select, form");
   return control !== null && control !== item && item.contains(control);
 }
 

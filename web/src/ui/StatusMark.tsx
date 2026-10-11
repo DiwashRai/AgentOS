@@ -1,7 +1,7 @@
 import { cx } from "./cx";
 import s from "./StatusMark.module.css";
 
-export type MarkKind = "run" | "wait" | "you" | "blk" | "done" | "queued" | "idle";
+export type MarkKind = "run" | "wait" | "you" | "blk" | "done" | "abandoned" | "queued" | "idle";
 
 /** Fallback accessible names for a glyph-only mark (DESIGN §16 vocabulary). */
 export const MARK_WORD: Record<MarkKind, string> = {
@@ -10,6 +10,7 @@ export const MARK_WORD: Record<MarkKind, string> = {
   you: "Needs you",
   blk: "Blocked",
   done: "Done",
+  abandoned: "Abandoned",
   queued: "Queued",
   idle: "Inbox",
 };
