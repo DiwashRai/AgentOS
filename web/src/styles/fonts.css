@@ -1,0 +1,10 @@
+/* Geist 400/500/600/700 + Geist Mono 400/500/600, self-hosted from npm (@fontsource/geist,
+   @fontsource/geist-mono). No Google Fonts request: this also runs on a work network.
+   Each file declares every subset with a unicode-range, so the browser fetches only what it uses. */
+@import "@fontsource/geist/400.css";
+@import "@fontsource/geist/500.css";
+@import "@fontsource/geist/600.css";
+@import "@fontsource/geist/700.css";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource/geist-mono/600.css";

@@ -1,0 +1,215 @@
+/* =====================================================================
+   AgentOS design tokens · copied from design/agentos-design-pack/tokens/tokens.css.
+   The only change from the pack: the theme selectors. We use `data-theme` (not `data-palette`):
+     Type Case Cool (light, default) = "light" (alias "company-light")
+     Harbour (dark)                  = "dark"  (alias "company-dark")
+   They are plain attribute selectors (not `:root[...]`), so a subtree can carry its own theme
+   (the theme menu's swatches and the kit sheet use this). index.html sets the attribute on <html>
+   before first paint; `:root:not([data-theme])` is a fallback if that script never ran.
+   This is the ONLY file allowed to hold raw colour values.
+   Min text size is 11px (--fs-mono). Contrast: every text token on every ground >= 4.5:1 (see THEMES.md).
+   ===================================================================== */
+
+/* Type Case Cool · light · default */
+:root:not([data-theme]),
+[data-theme="light"],
+[data-theme="company-light"] {
+  color-scheme: light;
+  /* Surfaces */
+  --page: #eff0f1;
+  --recess: #e3e4e6;
+  --surface: #fbfbfb;
+  --surface-raised: #ffffff;
+  --field: #f4f5f6;
+  --track: #dee0e2;
+  /* Ink */
+  --ink-1: #1a1b1d;
+  --ink-2: #37393c;
+  --ink-3: #5b5f63;
+  --ink-hover: #303236;
+  /* Rules */
+  --rule: #d7dadc;
+  --rule-soft: #e8e9eb;
+  --rule-strong: #abb0b4;
+  /* Accent (Dispatch run, logo, focus) */
+  --accent: #c4461a;
+  --accent-hover: #ab3a12;
+  --accent-ink: #ffffff;
+  --accent-text: #ad3c12;
+  --accent-mark: #ee6a33;
+  --accent-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 1px 2px rgba(80, 30, 5, 0.22);
+  --focus: #c4461a;
+  /* Live (running agents) */
+  --live: #e0571f;
+  --live-text: #ad3c12;
+  --live-ring: rgba(224, 87, 31, 0.18);
+  --live-past: #c96b44;
+  --live-sweep: rgba(224, 87, 31, 0.3);
+  /* Status */
+  --waiting: #175176;
+  --you-ink: #ffffff;
+  --you-ring: rgba(23, 81, 118, 0.2);
+  --blocked: #a62441;
+  --done: #437032;
+  /* Talk */
+  --bubble: #eeeff1;
+  --bubble-ink: #26282b;
+  --bubble-mine: #212325;
+  --bubble-mine-ink: #f2f3f4;
+  --mention: #f6a079;
+  /* Avatars */
+  --av-1: #f4af8c;
+  --av-2: #a8c9d4;
+  --av-3: #e4d186;
+  --av-4: #cbbfe1;
+  --av-ink: #1a1b1d;
+  /* Depth and overlays */
+  --scrim: rgba(239, 240, 241, 0.55);
+  --recess-shadow: inset 0 1px 3px rgba(40, 46, 54, 0.1), inset 0 0 0 1px rgba(40, 46, 54, 0.05);
+  --surface-shadow:
+    0 0 0 1px rgba(40, 46, 54, 0.07), 0 1px 2px rgba(40, 46, 54, 0.06),
+    0 4px 10px -6px rgba(40, 46, 54, 0.14);
+  --row-edge: 0 1px 0 rgba(40, 46, 54, 0.05);
+  --float-shadow: 0 18px 40px -18px rgba(40, 46, 54, 0.35);
+}
+
+/* Harbour · dark */
+[data-theme="dark"],
+[data-theme="company-dark"] {
+  color-scheme: dark;
+  /* Surfaces */
+  --page: #161b22;
+  --recess: #0f1318;
+  --surface: #1e242c;
+  --surface-raised: #262d36;
+  --field: #1a1f26;
+  --track: #2e3641;
+  /* Ink */
+  --ink-1: #efebe3;
+  --ink-2: #cbcdcf;
+  --ink-3: #979ea7;
+  --ink-hover: #d8d4cb;
+  /* Rules */
+  --rule: #2d353f;
+  --rule-soft: #242b34;
+  --rule-strong: #4b5664;
+  /* Accent (Dispatch run, logo, focus) */
+  --accent: #e1a548;
+  --accent-hover: #ebb563;
+  --accent-ink: #1d1404;
+  --accent-text: #e9b665;
+  --accent-mark: #e1a548;
+  --accent-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 2px rgba(0, 0, 0, 0.45);
+  --focus: #e9b665;
+  /* Live (running agents) */
+  --live: #e8ab4f;
+  --live-text: #e9b665;
+  --live-ring: rgba(232, 171, 79, 0.22);
+  --live-past: #9c7a44;
+  --live-sweep: rgba(232, 171, 79, 0.3);
+  /* Status */
+  --waiting: #6fa5e0;
+  --you-ink: #0c1d30;
+  --you-ring: rgba(111, 165, 224, 0.22);
+  --blocked: #ec6f86;
+  --done: #a9d8ad;
+  /* Talk */
+  --bubble: #28303a;
+  --bubble-ink: #e6e4de;
+  --bubble-mine: #e9e3d6;
+  --bubble-mine-ink: #161b22;
+  --mention: #7f4f00;
+  /* Avatars */
+  --av-1: #e6b46a;
+  --av-2: #8fbde8;
+  --av-3: #9fcfa4;
+  --av-4: #c3b2e6;
+  --av-ink: #161b22;
+  /* Depth and overlays */
+  --scrim: rgba(15, 19, 24, 0.6);
+  --recess-shadow: inset 0 1px 3px rgba(0, 4, 12, 0.5), inset 0 0 0 1px rgba(0, 4, 12, 0.4);
+  --surface-shadow:
+    inset 0 1px 0 rgba(220, 235, 255, 0.04), 0 0 0 1px rgba(0, 4, 12, 0.32),
+    0 4px 10px -6px rgba(0, 4, 12, 0.55);
+  --row-edge: 0 1px 0 rgba(0, 4, 12, 0.3);
+  --float-shadow: 0 18px 40px -18px rgba(0, 4, 12, 0.75);
+}
+
+/* ---------- theme-independent tokens ---------- */
+:root {
+  /* Fonts: Geist 400/500/600/700 and Geist Mono 400/500/600, self-hosted (src/styles/fonts.css). */
+  --font-display: "Geist", "Inter Display", "Inter", system-ui, sans-serif;
+  --font-sans: "Geist", "Inter", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+
+  /* Type scale (size · line-height · weight · tracking) */
+  --fs-display: 34px; /* ticket h1 · 1.1 · 600 · -0.025em */
+  --fs-title: 21px; /* peek title · 1.2 · 600 · -0.015em (top-bar h1 is 20px · 600 · -0.01em) */
+  --fs-heading: 15px; /* zone headers, section h2 · 1.35 · 600 · -0.005em */
+  --fs-lead: 15px; /* standfirst · 1.5 */
+  --fs-body: 14px; /* description body · 1.62 */
+  --fs-ui: 13px; /* base: rows, chat, controls */
+  --fs-meta: 12px; /* sub-lines, notes */
+  --fs-mono: 11px; /* mono caps labels · 500 · +0.05em · uppercase · 1.25. THE FLOOR: no text below 11px */
+  /* in-between sizes used by components: 12.5px (buttons, inline run, rack titles, meta rows), 13.5px (row/tile titles) */
+  --fs-row-title: 13.5px;
+  --fs-control: 12.5px;
+
+  /* Spacing (px values used by the kit; 4px-ish rhythm with a few 2/3/5/7/9 optical steps) */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 10px;
+  --sp-6: 12px;
+  --sp-7: 14px;
+  --sp-8: 16px;
+  --sp-9: 18px;
+  --sp-10: 24px;
+  --sp-11: 32px;
+  --sp-12: 36px;
+
+  /* Radii */
+  --r-xs: 4px; /* kbd, inline code, YOU pill */
+  --r-sm: 6px; /* rack line, small hover pads */
+  --r-btn-sm: 7px; /* small buttons, chips, icon buttons, pills inner */
+  --r-md: 8px; /* buttons, inputs, sidebar items, rail items, team items */
+  --r-row: 9px; /* item rows, compact rows, pills track, Talk sheet */
+  --r-sheet: 10px; /* sheets, run tiles, menus */
+  --r-lg: 12px; /* Talk recess */
+  --r-xl: 14px; /* the surface recess, peek, queue overlay */
+  --r-pill: 999px; /* reactions, typing dots */
+
+  /* Fixed sizes */
+  --h-line: 28px; /* one-line rows: rack line, wait line, small buttons */
+  --h-group: 32px; /* group head, column head, overflow strip */
+  --h-compact: 36px; /* compact row line */
+  --h-quiet: 42px; /* quiet row (Waiting on others / Blocked / Done) */
+  --h-team-item: 44px; /* All teams item */
+  --h-item: 52px; /* Needs-you item row (min-height) */
+  --h-btn-sm: 28px;
+  --h-btn: 34px;
+  --h-btn-lg: 40px;
+  --h-top: 58px; /* top bar */
+  --w-rail: 60px; /* left rail */
+  --w-peek: 560px; /* peek panel (min(560px, 100vw - 24px)), 12px inset from top/right/bottom */
+  --w-queue: 392px; /* queue overlay, 10px from the rail */
+  --av: 20px; /* avatar floor; also 24, 26 (Talk), 30 (rail) */
+
+  /* Motion. Animate transform and opacity only, and only on live things. */
+  --lift: -3px; /* hover / focus lift, translate only */
+  --t-fast: 0.16s; /* lift, hover colour, chip, button */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-glide: cubic-bezier(0.2, 0.75, 0.2, 1);
+  --dur-scrim: 200ms; /* scrim fade; peek opacity is 220ms */
+  --dur-panel: 260ms; /* peek slide (24px) and queue overlay slide (18px), --ease-out */
+  --dur-reveal: 260ms; /* compact row expand: 4px rise + fade */
+  --dur-msg: 350ms; /* new Talk message: 8px rise + fade */
+  --dur-swap: 450ms; /* step label cross-fade (one line height) */
+  --dur-enter: 500ms; /* unmatched element fades in from 6px below */
+  --dur-glide: 1100ms; /* FLIP move between places (queue hand-off uses 1200ms) */
+  --dur-breathe: 2s; /* running dot ring: scale .45 -> 1.45, opacity .75 -> 0 */
+  --dur-sweep: 1.7s; /* current run step sweep, --ease-out */
+  --dur-blink: 1.4s; /* current arc segment of the live dot (opacity -> .35) */
+  --dur-typing: 1.2s; /* typing dots bob 2px, staggered .15s */
+}

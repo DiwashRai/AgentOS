@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentOS</title>
+    <script>
+      // Apply the saved theme before first paint (no flash). Keep in sync with src/app/theme.ts.
+      (function () {
+        var theme = "light";
+        try {
+          var saved = localStorage.getItem("agentos-theme");
+          if (["light", "dark", "company-light", "company-dark"].indexOf(saved) >= 0) theme = saved;
+        } catch (e) {
+          // Storage blocked: use the default.
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,18 +1,20 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import "./styles/fonts.css";
+import "./styles/tokens.css";
+import "./styles/base.css";
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { App } from "./App";
+import { App } from "./app/App";
+import { watchVisibility } from "./app/motion";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+watchVisibility();
 
 createRoot(root).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <App />
   </StrictMode>,
 );

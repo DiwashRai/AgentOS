@@ -1,0 +1,6 @@
+/* kit .ao-surface */
+.surface {
+  background: var(--recess);
+  box-shadow: var(--recess-shadow);
+  border-radius: 14px;
+}

@@ -1,0 +1,97 @@
+/* Ported from kit.css .ao-rail* and .ao-av / .ao-av--30 */
+.rail {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  width: 60px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 0;
+  border-right: 1px solid var(--rule);
+  background: var(--page);
+}
+
+/* Lift the rail (and its theme menu) above the main column while the menu is open. */
+.rail:has([aria-haspopup="menu"][aria-expanded="true"]) {
+  z-index: 45;
+}
+
+.logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--ink-1);
+  display: grid;
+  place-items: center;
+  margin-bottom: 14px;
+}
+
+.link {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  transition:
+    background-color var(--t-fast),
+    color var(--t-fast);
+}
+
+.link:hover {
+  background: var(--recess);
+  color: var(--ink-1);
+}
+
+.link[aria-current] {
+  background: var(--recess);
+  color: var(--ink-1);
+  box-shadow: var(--recess-shadow);
+}
+
+.badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--waiting);
+  box-shadow: 0 0 0 2px var(--page);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.avatar {
+  flex: none;
+  margin-top: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11.5px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--av-ink);
+  background: var(--av-1);
+}
+
+.avatar[data-av="2"] {
+  background: var(--av-2);
+}
+
+.avatar[data-av="3"] {
+  background: var(--av-3);
+}
+
+.avatar[data-av="4"] {
+  background: var(--av-4);
+}

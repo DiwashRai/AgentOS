@@ -1,0 +1,130 @@
+/* Not designed in the pack: a small sheet centred on the page, in kit values. */
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+/* kit .ao-sheet, with --surface-shadow so it reads as a sheet on the bare page */
+.sheet {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--surface-shadow);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* kit .ao-rail__logo */
+.logo {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--ink-1);
+  display: grid;
+  place-items: center;
+}
+
+/* kit .ao-heading */
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-1);
+}
+
+/* kit .ao-meta */
+.note {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* kit .ao-k */
+.label,
+.quiet {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+
+.quiet {
+  margin: 0;
+}
+
+/* kit .ao-input */
+.input {
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink-1);
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.input:focus {
+  border-color: var(--focus);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+/* kit .ao-btn .ao-btn--ink */
+.submit {
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 8px;
+  border: 1px solid var(--ink-1);
+  background: var(--ink-1);
+  color: var(--bubble-mine-ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition:
+    transform var(--t-fast) ease,
+    border-color var(--t-fast) ease,
+    background-color var(--t-fast) ease;
+}
+
+.submit:hover {
+  background: var(--ink-hover);
+  border-color: var(--ink-hover);
+}
+
+.submit:active {
+  transform: translateY(1px);
+}
+
+.submit[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
