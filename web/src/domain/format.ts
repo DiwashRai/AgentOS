@@ -53,6 +53,12 @@ export function repoShort(name: string | null | undefined): string {
   return last.replace(/\.git$/, "");
 }
 
+/** A PR link's caption: `…/pull/12` → `PR #12`; any other URL → `PR`. */
+export function prLabel(url: string): string {
+  const n = /\/pull\/(\d+)\/?$/.exec(url)?.[1];
+  return n ? `PR #${n}` : "PR";
+}
+
 /** A person's short name for captions and titles: `Sam Lee` → `Sam`. */
 export function firstName(p: Pick<Schemas["Person"], "display_name">): string {
   return p.display_name.trim().split(/\s+/)[0] ?? p.display_name;

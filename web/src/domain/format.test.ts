@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ticket } from "./fixtures";
-import { age, avatarTone, elapsed, initials, isOld, repoShort, srcLabel } from "./format";
+import { age, avatarTone, elapsed, initials, isOld, prLabel, repoShort, srcLabel } from "./format";
 
 const now = Date.parse("2026-10-11T12:00:00Z");
 const ago = (min: number) => new Date(now - min * 60_000).toISOString();
@@ -72,6 +72,16 @@ describe("repoShort", () => {
     [null, ""],
   ])("%s → %s", (name, expected) => {
     expect(repoShort(name)).toBe(expected);
+  });
+});
+
+describe("prLabel", () => {
+  it.each([
+    ["https://github.com/DiwashRai/agentos-scratch/pull/2", "PR #2"],
+    ["https://github.com/acme/api/pull/123/", "PR #123"],
+    ["https://gitlab.example/acme/api/-/merge_requests/7", "PR"],
+  ])("%s → %s", (url, expected) => {
+    expect(prLabel(url)).toBe(expected);
   });
 });
 

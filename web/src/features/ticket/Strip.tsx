@@ -25,6 +25,7 @@ import {
   ticketPath,
   type ParkedGate,
 } from "./model";
+import { PrLink } from "./PrLink";
 import s from "./Strip.module.css";
 
 type Detail = Schemas["TicketDetail"];
@@ -129,6 +130,7 @@ function GateStrip({ t, parked, tasksPath }: { t: Detail; parked: ParkedGate; ta
         >
           Edit TASKS.md →
         </RouterLink>
+        {t.pr_url ? <PrLink url={t.pr_url} className={s.k} /> : null}
       </div>
     </div>
   );
@@ -148,7 +150,8 @@ function StatusStrip({ t }: { t: Detail }) {
         )}
       </div>
       <span className={s.meta}>{statusText(t)}</span>
-      <span />
+      {/* "review the result and mark done": the thing to review */}
+      {t.pr_url ? <PrLink url={t.pr_url} className={s.k} /> : <span />}
     </div>
   );
 }

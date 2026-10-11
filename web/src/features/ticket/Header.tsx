@@ -11,6 +11,7 @@ import { Button, ChevronIcon, Stepper, Tag, cx } from "../../ui";
 import { useTicketAction } from "../actions/useTicketAction";
 import { useNow } from "../runs/useNow";
 import s from "./Header.module.css";
+import { PrLink } from "./PrLink";
 import {
   actionErrorText,
   firstParagraph,
@@ -128,6 +129,14 @@ export function Header({ t }: { t: Detail }) {
           <dt>Pipeline</dt>
           <dd>{pipelineText(t.pipeline)}</dd>
         </div>
+        {t.pr_url ? (
+          <div>
+            <dt>Pull request</dt>
+            <dd>
+              <PrLink url={t.pr_url} />
+            </dd>
+          </div>
+        ) : null}
       </dl>
       <div className={s.steps}>
         <Stepper model={stageModel(t)} />
