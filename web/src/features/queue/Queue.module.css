@@ -1,0 +1,413 @@
+/* My queue (DESIGN §5). Values ported from kit.css `.ao-row`, `.ao-row--quiet`, `.ao-ask`,
+   `.ao-tile`, `.ao-rl`, `.ao-gh.is-static`, `.ao-overflow` and prototypes/queue/main.html. */
+
+/* ---------- layout (prototypes/queue/main.html) ---------- */
+.surface {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 18px 18px;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bottom .list {
+  margin-top: 4px;
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+.rack {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 20px;
+  align-items: start;
+}
+.rack > div {
+  min-width: 0;
+}
+.rackGroup + .rackGroup {
+  margin-top: 10px;
+}
+
+/* ---------- shared bits ---------- */
+.src {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.age {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+.old {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+.of {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+.empty {
+  margin: 4px 0 0;
+  padding: 0 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.nothing {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 2px;
+}
+.nothing > .empty {
+  margin: 0;
+}
+
+/* hover = lift only (kit .ao-lift); keyboard focus lifts too */
+.lift {
+  cursor: pointer;
+  transition:
+    transform var(--t-fast) ease,
+    background-color var(--t-fast) ease,
+    border-color var(--t-fast) ease;
+}
+.lift:hover {
+  transform: translateY(var(--lift));
+  background: var(--surface-raised);
+  border-color: var(--rule-strong);
+}
+.lift:focus-visible {
+  transform: translateY(var(--lift));
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 9px;
+}
+
+/* ---------- item row (Needs you) ---------- */
+.row {
+  display: grid;
+  grid-template-columns: 150px 112px minmax(0, 1fr) 330px 58px 188px;
+  align-items: center;
+  column-gap: 14px;
+  min-height: 52px;
+  padding: 0 10px 0 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  box-shadow: var(--row-edge);
+  position: relative;
+}
+.stage {
+  min-width: 0;
+  overflow: hidden;
+}
+.stage > b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ti {
+  min-width: 0;
+}
+.title {
+  display: block;
+  font-size: var(--fs-row-title);
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ask {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--rule-soft);
+}
+.ask > span {
+  max-width: 100%;
+}
+.askText {
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  min-width: 0;
+}
+.btns {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.err {
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.03em;
+  color: var(--blocked);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* overflow strip under the capped list (kit .ao-overflow, chips cut) */
+.overflow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 4px 0 14px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.overflow > b {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.overflow > :last-child {
+  margin-left: auto;
+}
+
+/* ---------- quiet row (Waiting / Blocked / Done) ---------- */
+.quiet {
+  display: grid;
+  grid-template-columns: 150px 112px minmax(140px, 1fr) minmax(0, max-content);
+  align-items: center;
+  column-gap: 14px;
+  min-height: 42px;
+  padding: 0 12px;
+  background: var(--field);
+  border: 1px solid transparent;
+  border-radius: 9px;
+}
+.quiet .title {
+  font-size: var(--fs-ui);
+}
+.quiet.withAct {
+  grid-template-columns: 150px 112px minmax(140px, 1fr) minmax(0, max-content) auto;
+}
+.isDone .title {
+  color: var(--ink-2);
+}
+.state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+.state > * {
+  flex: none;
+}
+.state > span:last-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- run tile (your runs) ---------- */
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 10px 13px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  position: relative;
+}
+.tileHd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.tileHd > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.tileEl {
+  flex: none;
+  margin-left: auto;
+  padding-left: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.tileTtl {
+  font-size: var(--fs-row-title);
+  font-weight: 500;
+  color: var(--ink-1);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.6em;
+}
+.tileMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  min-width: 0;
+  min-height: 20px;
+}
+.tileMeta > :last-child {
+  margin-left: auto;
+}
+.tileNow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+  min-width: 0;
+}
+.tileNow > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- the rack ---------- */
+/* static group head (kit .ao-gh.is-static), aligned with the rack lines that bleed 6px */
+.gh {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+  min-width: 0;
+}
+.gh > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.ghCount {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.ghRule {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+  min-width: 16px;
+}
+.rl {
+  display: grid;
+  grid-template-columns: 12px 84px minmax(0, 1fr) 36px 30px 20px;
+  align-items: center;
+  column-gap: 8px;
+  height: 28px;
+  padding: 0 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    transform var(--t-fast) ease,
+    background-color var(--t-fast) ease;
+}
+.rl:hover {
+  background: var(--field);
+  transform: translateY(-2px);
+}
+.rl:focus-visible {
+  transform: translateY(-2px);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 9px;
+}
+.rlT {
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isQueued .rlT {
+  color: var(--ink-3);
+}
+.rlMark {
+  display: inline-flex;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lift,
+  .rl {
+    transition: none;
+  }
+  .lift:hover,
+  .lift:focus-visible,
+  .rl:hover,
+  .rl:focus-visible {
+    transform: none;
+  }
+}

@@ -1,0 +1,256 @@
+/* The Peek (DESIGN §9). Ported from kit.css `.ao-scrim`, `.ao-peek*`, `.ao-facts`, `.ao-lab`,
+   `.ao-steps`. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 40;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+.scrim.isOpen {
+  opacity: 1;
+}
+
+.peek {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(560px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 14px;
+  box-shadow: var(--surface-shadow);
+  overflow: hidden auto;
+  scrollbar-width: thin;
+  z-index: 41;
+  opacity: 0;
+  transform: translateX(24px);
+  transition:
+    opacity 0.22s ease,
+    transform var(--dur-panel) var(--ease-out);
+}
+.peek.isOpen {
+  opacity: 1;
+  transform: none;
+}
+.peek:focus {
+  outline: none;
+}
+.peek > * {
+  flex: none;
+}
+
+/* header */
+.head {
+  padding: 18px 24px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  min-width: 0;
+  white-space: nowrap;
+}
+.bar > button {
+  flex: none;
+}
+.src {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+.sp {
+  flex: 1;
+}
+.title {
+  font-family: var(--font-display);
+  font-size: var(--fs-title);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink-1);
+  margin: 12px 0 6px;
+}
+.desc {
+  margin: 0;
+  font-size: var(--fs-ui);
+  line-height: 1.5;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.facts b {
+  color: var(--ink-1);
+  font-weight: 500;
+}
+
+/* sections */
+.sec {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  min-width: 0;
+}
+.lab > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isLive {
+  color: var(--live-text);
+}
+.labNote {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.meta {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.status > p {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+}
+
+/* plan items (kit .ao-steps) */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.steps > li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-control);
+  color: var(--ink-1);
+  min-height: 19px;
+}
+.steps > li > span:last-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.steps > li.isDone {
+  color: var(--ink-3);
+}
+.tick {
+  justify-self: center;
+  font-size: var(--fs-mono);
+  line-height: 1;
+}
+.isDone .tick {
+  color: var(--done);
+}
+.steps > li.more {
+  display: block;
+  min-height: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+  padding-left: 22px;
+}
+
+/* Talk fills the rest (min 240px) */
+.talk {
+  flex: 1 1 0;
+  min-height: 240px;
+  margin: 12px 12px 10px;
+  display: flex;
+}
+
+/* footer */
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px 14px;
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+}
+.keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.quiet {
+  margin: 0;
+  padding: 18px 24px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.quiet[data-error] {
+  color: var(--blocked);
+}
+.quietBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 18px 24px 0;
+}
