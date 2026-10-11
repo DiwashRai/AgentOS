@@ -64,7 +64,7 @@ def add_run(conn: Conn, ticket_id: int, status: str) -> None:
 
 
 def test_migrate_creates_every_table(db: Database) -> None:
-    assert db.user_version() == len(migrations()) == 2
+    assert db.user_version() == len(migrations()) == 3
     with db.read() as conn:
         assert tables(conn) == TABLES
 
@@ -111,10 +111,10 @@ def test_an_existing_0001_database_migrates_forward(tmp_path: Path) -> None:
         add_ticket(conn)
 
     db = Database(path)
-    assert db.migrate() == 2
+    assert db.migrate() == 3
     with db.read() as conn:
-        row = conn.execute("SELECT key, pr_url FROM tickets").fetchone()
-    assert dict(row) == {"key": "AOS-1", "pr_url": None}
+        row = conn.execute("SELECT key, pr_url, repo FROM tickets").fetchone()
+    assert dict(row) == {"key": "AOS-1", "pr_url": None, "repo": None}
 
 
 def test_migration_numbering_must_be_contiguous(tmp_path: Path) -> None:

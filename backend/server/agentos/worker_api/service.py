@@ -30,8 +30,9 @@ from agentos.models import (
 from agentos.pipeline.manifest import build_manifest
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status
+from agentos.pipeline.space import SpaceConfig
 from agentos.runs.service import TERMINAL, finish, token_hash
-from agentos.tickets.service import ticket_pipeline, ticket_ref
+from agentos.tickets.service import run_ticket_ref, ticket_pipeline
 from agentos.validate import path_key, validate_path, validate_pr_url
 
 log = logging.getLogger(__name__)
@@ -64,12 +65,16 @@ class _Claim:
 
 
 def claim(
-    db: Database, runtimes: RuntimesConfig, dispatch_token: str, worker_token: str
+    db: Database,
+    runtimes: RuntimesConfig,
+    space: SpaceConfig,
+    dispatch_token: str,
+    worker_token: str,
 ) -> Manifest:
     """dispatched → running, binding the worker token and building the manifest from the bundle
     as it is now (the bundle locks from here). A safe retry with the same worker token returns
     the stored manifest; another worker token → 409 `already_claimed`; terminal → 410."""
-    outcome = _claim(db, runtimes, token_hash(dispatch_token), token_hash(worker_token))
+    outcome = _claim(db, runtimes, space, token_hash(dispatch_token), token_hash(worker_token))
     if outcome.error is not None:
         raise outcome.error
     if outcome.manifest is None:  # pragma: no cover - _claim sets one or the other
@@ -77,7 +82,9 @@ def claim(
     return outcome.manifest
 
 
-def _claim(db: Database, runtimes: RuntimesConfig, dispatch_hash: str, worker_hash: str) -> _Claim:
+def _claim(
+    db: Database, runtimes: RuntimesConfig, space: SpaceConfig, dispatch_hash: str, worker_hash: str
+) -> _Claim:
     """Errors are returned rather than raised where the transaction must still commit (a run
     whose manifest can't be built is failed)."""
     now = utcnow()
@@ -94,7 +101,7 @@ def _claim(db: Database, runtimes: RuntimesConfig, dispatch_hash: str, worker_ha
         if run["status"] != "dispatched":
             raise _gone(run["id"], run["status"])
         try:
-            manifest = _build(conn, run, runtimes)
+            manifest = _build(conn, run, runtimes, space)
         except ApiError as exc:
             error = f"cannot build the manifest: {exc.message}"
             finish(conn, run["id"], "failed", ("dispatched",), now=now, error=error)
@@ -114,9 +121,10 @@ def _claim(db: Database, runtimes: RuntimesConfig, dispatch_hash: str, worker_ha
         return _Claim(manifest=manifest)
 
 
-def _build(conn: Conn, run: Row, runtimes: RuntimesConfig) -> Manifest:
+def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
     """The run's stages come from the ticket's current pipeline: it is locked while the run is
-    active, so it is the one validated at dispatch."""
+    active, so it is the one validated at dispatch. The workspace's repo URL and base branch are
+    resolved from the Space's catalog now; a repo that left it fails the run."""
     ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
     pipeline = ticket_pipeline(ticket)
     by_id = {s.id: s for s in pipeline.stages}
@@ -126,7 +134,11 @@ def _build(conn: Conn, run: Row, runtimes: RuntimesConfig) -> Manifest:
             raise ApiError(422, "invalid_stage", f"stage {stage_id}: no longer in the pipeline")
         stages.append(by_id[stage_id])
     return build_manifest(
-        run["id"], ticket_ref(ticket), stages, current_bundle(conn, ticket["id"]), runtimes
+        run["id"],
+        run_ticket_ref(ticket, space),
+        stages,
+        current_bundle(conn, ticket["id"]),
+        runtimes,
     )
 
 

@@ -1,21 +1,27 @@
-"""Tickets: create, list filters, detail, patch and pipeline PUT (SPEC §4, §6, §10)."""
+"""Tickets: create, list filters, detail, patch and pipeline PUT (SPEC §4, §6, §10), and the
+repo catalog (SPEC §17): repo by name, catalog changes, the startup backfill."""
 
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.config import Settings
+from agentos.config import Settings, load_config
 from agentos.context import AppContext
+from agentos.db import Database
 from agentos.main import create_app
 from agentos.models import Me, Pipeline, TicketDetail, TicketSummary
 from agentos.pipeline.scaffold import default_pipeline
+from agentos.tickets.service import backfill_repos
 
+RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
 CSRF = {"X-AgentOS": "1"}
 BASE_URL = "http://127.0.0.1:8000"
 CreateTicket = Callable[..., TicketDetail]
@@ -70,9 +76,9 @@ def test_create_returns_a_fresh_ticket(authed: TestClient) -> None:
         "task",
         "normal",
     )
-    assert (t.state, t.workspace_mode, t.repo_url, t.base_branch) == ("open", "repo", None, "main")
+    assert (t.state, t.workspace_mode) == ("open", "repo")
+    assert (t.repo_name, t.repo_url, t.base_branch) == ("r", "https://github.com/o/r.git", "main")
     assert t.branch == "agent/AOS-1"
-    assert t.repo_name is None
     assert t.pipeline == default_pipeline()
     assert t.pipeline_version == 1
     assert t.owner is None
@@ -115,39 +121,57 @@ def test_keys_are_sequential_and_skip_taken_ones(authed: TestClient, ctx: AppCon
     assert post(authed).json()["key"] == "AOS-4"
 
 
-def test_key_prefix_and_repo_defaults_come_from_settings(settings: Settings) -> None:
-    custom = settings.model_copy(
-        update={
-            "key_prefix": "ZED",
-            "default_repo_url": "https://github.com/org/repo.git",
-            "default_base_branch": "develop",
-        }
+def test_key_prefix_comes_from_settings(settings: Settings) -> None:
+    with started(settings.model_copy(update={"key_prefix": "ZED"})) as c:
+        assert post(c).json()["key"] == "ZED-1"
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param({}, ("r", "https://github.com/o/r.git", "main"), id="omitted=default"),
+        pytest.param({"repo": "docs"}, ("docs", "git@github.com:o/docs.git", "develop"), id="docs"),
+        pytest.param(
+            {"repo": "docs", "base_branch": "release/1.0"},
+            ("docs", "git@github.com:o/docs.git", "release/1.0"),
+            id="own-branch",
+        ),
+        pytest.param({"repo": None}, (None, None, None), id="null=no-repo"),
+    ],
+)
+def test_create_picks_a_catalog_repo(
+    authed: TestClient, body: dict[str, Any], expected: tuple[Any, ...]
+) -> None:
+    t = TicketDetail.model_validate(post(authed, **body).json())
+    assert (t.repo_name, t.repo_url, t.base_branch) == expected
+    assert t.workspace_mode == ("none" if body.get("repo", "r") is None else "repo")
+    summary = next(s for s in board(authed) if s.key == t.key)
+    assert summary.repo_name == expected[0]
+
+
+def test_omitted_repo_without_a_default_repo_is_no_repo(settings: Settings, tmp_path: Path) -> None:
+    toml = tmp_path / "no_default.toml"
+    toml.write_text(
+        RUNTIMES_TOML.read_text(encoding="utf-8").replace('default_repo = "r"\n', ""),
+        encoding="utf-8",
     )
-    with started(custom) as c:
+    with started(settings.model_copy(update={"config": toml})) as c:
         t = TicketDetail.model_validate(post(c).json())
-        assert t.key == "ZED-1"
-        assert t.repo_url == "https://github.com/org/repo.git"
-        assert t.repo_name == "repo"
-        assert t.base_branch == "develop"
-        explicit = post(c, repo_url="git@github.com:a/b.git", base_branch="release/1.0").json()
-        assert (explicit["repo_url"], explicit["base_branch"]) == (
-            "git@github.com:a/b.git",
-            "release/1.0",
-        )
+    assert (t.workspace_mode, t.repo_name, t.branch) == ("none", None, None)
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        pytest.param({"repo_url": "file:///etc"}, id="repo-url"),
-        pytest.param({"repo_url": "https://user:pw@example.com/r.git"}, id="credentials"),
+        pytest.param({"repo": "nope"}, id="unknown-repo"),
+        pytest.param({"repo": "R"}, id="repo-names-are-exact"),
+        pytest.param({"repo_url": "https://github.com/o/r.git"}, id="no-repo-url-field"),
         pytest.param({"base_branch": "../main"}, id="base-branch"),
         pytest.param({"base_branch": "main.lock"}, id="base-branch-lock"),
         pytest.param({"title": "   "}, id="blank-title"),
         pytest.param({"labels": [f"l{i}" for i in range(21)]}, id="too-many-labels"),
         pytest.param({"labels": ["x" * 51]}, id="label-too-long"),
-        pytest.param({"workspace_mode": "none", "repo_url": "https://e.com/r.git"}, id="none-url"),
-        pytest.param({"workspace_mode": "none", "base_branch": "main"}, id="none-branch"),
+        pytest.param({"repo": None, "base_branch": "main"}, id="none-branch"),
     ],
 )
 def test_create_validates_input(authed: TestClient, body: dict[str, Any]) -> None:
@@ -164,9 +188,7 @@ def test_labels_are_stripped_and_deduped(authed: TestClient) -> None:
 
 
 def test_no_repo_ticket(authed: TestClient) -> None:
-    t = TicketDetail.model_validate(
-        post(authed, title="Write a report", workspace_mode="none").json()
-    )
+    t = TicketDetail.model_validate(post(authed, title="Write a report", repo=None).json())
     assert (t.workspace_mode, t.repo_url, t.base_branch, t.branch) == ("none", None, None, None)
     stages = {s.id: s for s in t.pipeline.stages}
     assert not stages["open-pr"].enabled  # requires_repo stages are disabled
@@ -292,7 +314,7 @@ def test_viewer_can_read_but_not_create(
 def test_patch_fields(authed: TestClient, create_ticket: CreateTicket, login: LoginFn) -> None:
     sam = login("sam")
     login("dev")
-    t = create_ticket("Original title", repo_url="https://github.com/o/r.git")
+    t = create_ticket("Original title")
     response = patch(
         authed,
         t.key,
@@ -318,44 +340,67 @@ def test_patch_fields(authed: TestClient, create_ticket: CreateTicket, login: Lo
     assert p.owner.id == sam.id
     assert p.base_branch == "develop"
     assert p.updated_at > t.updated_at
-    cleared = patch(authed, t.key, owner_id=None, repo_url=None, base_branch=None).json()
-    assert (cleared["owner"], cleared["repo_url"], cleared["base_branch"]) == (None, None, None)
-    assert cleared["repo_name"] is None
+    cleared = TicketDetail.model_validate(
+        patch(authed, t.key, owner_id=None, base_branch=None).json()
+    )
+    assert cleared.owner is None
+    assert (cleared.repo_name, cleared.base_branch) == ("r", "main")  # back to the repo's default
+
+
+def test_patch_repo(authed: TestClient, create_ticket: CreateTicket) -> None:
+    t = create_ticket(base_branch="feature/x")
+    docs = TicketDetail.model_validate(patch(authed, t.key, repo="docs").json())
+    assert (docs.repo_name, docs.repo_url) == ("docs", "git@github.com:o/docs.git")
+    assert docs.base_branch == "feature/x"  # the ticket's own branch is kept
+    # Null = no-repo mode: the base branch goes, and so do the enabled requires_repo stages.
+    none = TicketDetail.model_validate(patch(authed, t.key, repo=None).json())
+    assert (none.workspace_mode, none.repo_name, none.repo_url) == ("none", None, None)
+    assert (none.base_branch, none.branch) == (None, None)
+    assert not next(s for s in none.pipeline.stages if s.id == "open-pr").enabled
+    assert none.pipeline_version == t.pipeline_version + 1
+    back = TicketDetail.model_validate(patch(authed, t.key, repo="docs").json())
+    assert (back.workspace_mode, back.base_branch, back.branch) == (
+        "repo",
+        "develop",
+        "agent/AOS-1",
+    )
 
 
 def test_patch_validates(authed: TestClient, create_ticket: CreateTicket) -> None:
     t = create_ticket()
-    none = create_ticket(workspace_mode="none")
+    none = create_ticket(repo=None)
     cases: list[tuple[str, dict[str, Any], str]] = [
         (t.key, {"title": None}, "validation_error"),
         (t.key, {"state": None}, "validation_error"),
         (t.key, {"title": " "}, "validation_error"),
-        (t.key, {"repo_url": "ftp://x/y"}, "validation_error"),
+        (t.key, {"repo": "nope"}, "validation_error"),
+        (t.key, {"repo_url": "https://github.com/o/r.git"}, "validation_error"),
         (t.key, {"base_branch": "a..b"}, "validation_error"),
+        (t.key, {"repo": None, "base_branch": "main"}, "validation_error"),
         (t.key, {"labels": [str(i) for i in range(21)]}, "validation_error"),
         (t.key, {"owner_id": 999}, "user_not_found"),
-        (none.key, {"repo_url": "https://e.com/r.git"}, "validation_error"),
         (none.key, {"base_branch": "main"}, "validation_error"),
     ]
     for key, body, expected in cases:
         response = patch(authed, key, **body)
         assert response.status_code == 422, (body, response.text)
         assert code(response) == expected, body
-    assert patch(authed, none.key, repo_url=None).status_code == 200  # clearing is fine
+    assert "'nope'" in patch(authed, t.key, repo="nope").json()["error"]["message"]
+    assert patch(authed, none.key, repo=None).status_code == 200  # clearing is fine
     assert patch(authed, "AOS-999", title="x").status_code == 404
 
 
 def test_patch_during_an_active_run(
     authed: TestClient, create_ticket: CreateTicket, add_run: AddRun
 ) -> None:
-    t = create_ticket(repo_url="https://github.com/o/r.git")
+    t = create_ticket()
     add_run(t.key, "queued", [("plan", "pending")])
-    for body in ({"state": "done"}, {"repo_url": None}, {"base_branch": "dev"}):
+    for body in ({"state": "done"}, {"repo": None}, {"repo": "docs"}, {"base_branch": "dev"}):
         response = patch(authed, t.key, **body)
         assert response.status_code == 409, body
         assert code(response) == "run_active"
-    # Other fields, and unchanged values of the guarded ones, are fine.
-    response = patch(authed, t.key, title="Renamed", state="open", base_branch="main")
+    # Other fields, and values that leave the workspace as it is, are fine.
+    response = patch(authed, t.key, title="Renamed", state="open", repo="r", base_branch="main")
     assert response.status_code == 200, response.text
     assert response.json()["title"] == "Renamed"
 
@@ -433,7 +478,7 @@ def test_put_pipeline_validates(
 
 
 def test_put_pipeline_on_a_no_repo_ticket(authed: TestClient, create_ticket: CreateTicket) -> None:
-    t = create_ticket(workspace_mode="none")
+    t = create_ticket(repo=None)
     enabled = [s.model_copy(update={"enabled": True}) for s in t.pipeline.stages]
     response = put_pipeline(authed, t.key, Pipeline(stages=enabled[:2] + enabled[3:]), 1)
     assert response.status_code == 422
@@ -441,3 +486,85 @@ def test_put_pipeline_on_a_no_repo_ticket(authed: TestClient, create_ticket: Cre
     assert "open-pr" in response.json()["error"]["message"]
     # Kept disabled, it is fine; its prompt still has to render (ticket.branch renders as None).
     assert put_pipeline(authed, t.key, t.pipeline, 1).status_code == 200
+
+
+# ------------------------------------------------------------------ repo catalog changes
+
+
+def with_catalog(tmp_path: Path, name: str, catalog: str) -> Path:
+    """A copy of the test config whose [space] + [[repos]] are replaced by `catalog`."""
+    text = RUNTIMES_TOML.read_text(encoding="utf-8")
+    start, end = text.index("[space]"), text.index("[runtimes.fake]")
+    path = tmp_path / name
+    path.write_text(text[:start] + catalog + text[end:], encoding="utf-8")
+    return path
+
+
+def test_a_catalog_change_reaches_existing_tickets(settings: Settings, tmp_path: Path) -> None:
+    with started(settings) as c:
+        key = post(c, repo="docs").json()["key"]
+        own = post(c, repo="docs", base_branch="stable").json()["key"]
+
+    moved = with_catalog(
+        tmp_path,
+        "moved.toml",
+        '[[repos]]\nname = "docs"\nurl = "https://example.com/new/docs.git"\n'
+        'default_branch = "trunk"\n',
+    )
+    with started(settings.model_copy(update={"config": moved})) as c:
+        t = TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json())
+        assert (t.repo_url, t.base_branch) == ("https://example.com/new/docs.git", "trunk")
+        assert c.get(f"/api/tickets/{own}").json()["base_branch"] == "stable"
+
+    # The repo left the catalog: still a repo ticket, with nothing to resolve (dispatch refuses
+    # it: test_runs).
+    gone = with_catalog(tmp_path, "gone.toml", "")
+    with started(settings.model_copy(update={"config": gone})) as c:
+        t = TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json())
+    assert (t.workspace_mode, t.repo_name, t.repo_url, t.base_branch) == (
+        "repo",
+        "docs",
+        None,
+        None,
+    )
+
+
+def test_startup_backfills_legacy_repo_urls(
+    settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    with started(settings) as c:
+        k = [post(c).json()["key"] for _ in range(4)]
+    legacy = {  # tickets as created before the repo catalog: repo_url + a stored base branch
+        k[0]: ("https://GitHub.com/o/r/", "main"),  # matches r: its default branch is cleared
+        k[1]: ("git@github.com:o/docs", "release"),  # matches docs: its own branch is kept
+        k[2]: ("https://github.com/other/x.git", "main"),  # in no catalog entry
+        k[3]: (None, "main"),  # a repo ticket that never had a URL
+    }
+    db = Database(settings.db_path)
+    with db.tx() as conn:
+        for key, (url, branch) in legacy.items():
+            conn.execute(
+                "UPDATE tickets SET repo = NULL, workspace_mode = 'repo', repo_url = ?, "
+                "base_branch = ? WHERE key = ?",
+                (url, branch, key),
+            )
+
+    with caplog.at_level(logging.WARNING), started(settings) as c:
+        got = {key: TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json()) for key in k}
+    assert (got[k[0]].repo_name, got[k[0]].base_branch) == ("r", "main")
+    assert (got[k[1]].repo_name, got[k[1]].base_branch) == ("docs", "release")
+    for key in k[2:]:  # unmatched: acts as a no-repo ticket
+        assert (got[key].workspace_mode, got[key].repo_name, got[key].branch) == (
+            "none",
+            None,
+            None,
+        )
+    with db.read() as conn:
+        assert (
+            conn.execute("SELECT base_branch FROM tickets WHERE key = ?", (k[0],)).fetchone()[0]
+            is None
+        )
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(f"{k[2]}, {k[3]}" in w for w in warnings), warnings
+    # Idempotent: a second pass changes nothing and reports the same unmatched tickets.
+    assert backfill_repos(db, load_config(RUNTIMES_TOML).space) == k[2:]

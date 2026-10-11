@@ -48,10 +48,8 @@ def test_every_get_matches_its_model(
 ) -> None:
     sam = login("sam")
     login("dev")
-    repo = create_ticket(
-        "Repo ticket", labels=["x"], owner_id=sam.id, repo_url="https://github.com/o/r.git"
-    )
-    no_repo = create_ticket("No-repo ticket", workspace_mode="none")
+    repo = create_ticket("Repo ticket", labels=["x"], owner_id=sam.id, repo="docs")
+    no_repo = create_ticket("No-repo ticket", repo=None)
     closed = create_ticket("Closed ticket")
     client.patch(f"/api/tickets/{closed.key}", json={"state": "closed"}, headers=CSRF)
     client.post(f"/api/tickets/{repo.key}/chat", json={"body": "hi"}, headers=CSRF)

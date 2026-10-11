@@ -18,13 +18,14 @@ def health() -> Health:
 
 @router.get("/config")
 def app_config(ctx: Ctx) -> AppConfig:
-    settings, runtimes = ctx.settings, ctx.runtimes
+    settings, runtimes, space = ctx.settings, ctx.runtimes, ctx.space
     return AppConfig(
         auth_mode="dev" if settings.dev_auth else "jira",
         jira_deployment=None if settings.dev_auth else settings.jira_deployment,
         key_prefix=settings.key_prefix,
-        default_repo_url=settings.default_repo_url,
-        default_base_branch=settings.default_base_branch,
+        space_name=space.name,
+        repos=[repo.info() for repo in space.repos],
+        default_repo=space.default_repo,
         runtimes=sorted(runtimes.runtimes),
         default_runtime=runtimes.default_runtime,
     )

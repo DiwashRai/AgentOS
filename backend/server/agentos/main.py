@@ -35,6 +35,7 @@ from agentos.stream import router as stream_router
 from agentos.templates.routes import router as template_router
 from agentos.templates.service import seed_default as seed_default_template
 from agentos.tickets.routes import router as tickets_router
+from agentos.tickets.service import backfill_repos as backfill_ticket_repos
 from agentos.worker_api.routes import router as worker_router
 
 log = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ def create_app(
             raise
         app.state.ctx = ctx
         seed_default_template(ctx.db)
+        backfill_ticket_repos(ctx.db, ctx.space)
         stop = asyncio.Event()
         loops: list[asyncio.Task[None]] = []
         if run_loops:

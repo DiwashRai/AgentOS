@@ -113,14 +113,24 @@ class ErrorBody(ApiModel):
 # ------------------------------------------------------------------ app config & health
 
 
+class RepoInfo(ApiModel):
+    """One entry of the Space's repo catalog (`[[repos]]` in agentos.toml)."""
+
+    name: str
+    url: str
+    default_branch: str
+
+
 class AppConfig(ApiModel):
     """Public, unauthenticated: what the UI needs before login and for forms."""
 
     auth_mode: Literal["dev", "jira"]
     jira_deployment: Literal["cloud", "datacenter"] | None
     key_prefix: str
-    default_repo_url: str | None
-    default_base_branch: str
+    space_name: str
+    repos: list[RepoInfo]
+    # A catalog name: what a new ticket gets when its `repo` is omitted.
+    default_repo: str | None
     runtimes: list[str]
     default_runtime: str
 
@@ -314,7 +324,7 @@ class TicketSummary(ApiModel):
     chat_count: int
     latest_run: RunSummary | None
     source: SourceLink | None
-    repo_name: str | None
+    repo_name: str | None  # the ticket's repo catalog name; null = no-repo mode
     # The PR for `branch`, as last reported by a worker (a `gh pr view` at the end of a repo run).
     pr_url: str | None
     updated_at: AwareDatetime
@@ -324,6 +334,8 @@ class TicketDetail(TicketSummary):
     description: str
     slug: str
     skill_name: str
+    # `repo_name` set → "repo". `repo_url` is resolved from the catalog (null if the repo left
+    # it); `base_branch` is the ticket's own, else the repo's default_branch (null: no repo).
     workspace_mode: WorkspaceMode
     repo_url: str | None
     base_branch: str | None
@@ -343,16 +355,18 @@ class TicketCreate(ApiModel):
     type: TicketType = "task"
     priority: Priority = "normal"
     labels: list[str] = Field(default_factory=list)
-    workspace_mode: WorkspaceMode = "repo"
-    repo_url: str | None = None
+    # A repo catalog name. Omitted → the Space's `default_repo`; null → no-repo mode.
+    repo: str | None = None
+    # Omitted/null → the repo's `default_branch`.
     base_branch: str | None = None
     owner_id: int | None = None
 
 
 class TicketPatch(PatchModel):
-    """`repo_url`, `base_branch`, `owner_id` may be null (clears them); others: omit or set."""
+    """`repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may
+    be null; others: omit or set."""
 
-    clearable: ClassVar[frozenset[str]] = frozenset({"repo_url", "base_branch", "owner_id"})
+    clearable: ClassVar[frozenset[str]] = frozenset({"repo", "base_branch", "owner_id"})
 
     title: str | SkipJsonSchema[None] = Field(default=None, min_length=1, max_length=200)
     description: str | SkipJsonSchema[None] = None
@@ -360,7 +374,7 @@ class TicketPatch(PatchModel):
     priority: Priority | SkipJsonSchema[None] = None
     labels: list[str] | SkipJsonSchema[None] = None
     state: TicketState | SkipJsonSchema[None] = None
-    repo_url: str | None = None
+    repo: str | None = None
     base_branch: str | None = None
     owner_id: int | None = None
 

@@ -15,7 +15,6 @@ from agentos.models import RunSummary, TicketDetail, TicketSummary
 from tests.run_support import CSRF, RunDriver, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
-REPO = "https://github.com/o/r.git"
 
 
 def put_pipeline(client: TestClient, key: str, edit: Callable[[dict[str, Any]], None]) -> None:
@@ -60,7 +59,7 @@ def run_count(ctx: AppContext) -> int:
 def test_dispatch_queues_the_next_segment(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     run = runs.queue(t.key)
     assert run.status == "queued"
     assert run.from_stage == "plan"
@@ -87,7 +86,7 @@ def test_dispatch_queues_the_next_segment(
 def test_dispatch_from_a_stage_runs_to_the_end_and_sums_the_budget(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     run = runs.queue(t.key, "implement")
     assert run.stage_ids == ["implement", "review", "open-pr"]  # lint is disabled
     assert runs.db_run(run.id)["time_budget_s"] == 3 * 3600
@@ -97,20 +96,20 @@ def test_dispatch_from_a_stage_runs_to_the_end_and_sums_the_budget(
 def test_dispatch_needs_an_open_ticket(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, state: str
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     authed.patch(f"/api/tickets/{t.key}", json={"state": state}, headers=CSRF)
     assert error(runs.dispatch(t.key)) == (409, "invalid_stage")
 
 
-@pytest.mark.parametrize("field", ["repo_url", "base_branch"])
-def test_dispatch_needs_repo_fields_in_repo_mode(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext, field: str
+def test_dispatch_needs_the_repo_in_the_catalog(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
-    t = create_ticket(repo_url=REPO)
-    authed.patch(f"/api/tickets/{t.key}", json={field: None}, headers=CSRF)
+    t = create_ticket()
+    with ctx.db.tx() as conn:  # as if the repo was removed from agentos.toml
+        conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (t.key,))
     r = runs.dispatch(t.key)
     assert error(r) == (422, "validation_error")
-    assert field in r.json()["error"]["message"]
+    assert "'gone'" in r.json()["error"]["message"]
     assert run_count(ctx) == 0
 
 
@@ -125,7 +124,7 @@ def test_dispatch_unknown_ticket(authed: TestClient, runs: RunDriver) -> None:
 def test_dispatch_rejects_bad_stages(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, from_stage: str, why: str
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     r = runs.dispatch(t.key, from_stage)
     assert error(r) == (422, "invalid_stage")
     assert why in r.json()["error"]["message"]
@@ -135,7 +134,7 @@ def test_dispatch_rejects_requires_repo_in_no_repo_mode(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
     # A no-repo ticket can't enable open-pr (pipeline save refuses), so flip it in the db.
-    t = create_ticket(workspace_mode="none")
+    t = create_ticket(repo=None)
     edit_in_db(ctx, t.key, lambda p: stage_of(p, "open-pr").update(enabled=True))
     r = runs.dispatch(t.key, "review")
     assert error(r) == (422, "invalid_stage")
@@ -146,7 +145,7 @@ def test_dispatch_rejects_requires_repo_in_no_repo_mode(
 def test_nothing_to_run_after_the_last_stage(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(workspace_mode="none")
+    t = create_ticket(repo=None)
     worker = runs.start(t.key, "review")  # the last enabled stage (open-pr is disabled)
     worker.run_stage("review")
     assert worker.complete().status_code == 204
@@ -160,7 +159,7 @@ def test_nothing_to_run_after_the_last_stage(
 def test_render_error_leaves_no_run(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     # Prompts are render-checked on save, so break one in the db (as a later Jinja change could).
     edit_in_db(ctx, t.key, lambda p: stage_of(p, "plan").update(prompt="{{ nope.x }}"))
     r = runs.dispatch(t.key)
@@ -174,7 +173,7 @@ def test_render_error_leaves_no_run(
 def test_one_active_run_per_ticket(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     runs.queue(t.key)
     assert error(runs.dispatch(t.key)) == (409, "run_active")
     assert error(runs.dispatch(t.key, "implement")) == (409, "run_active")
@@ -183,7 +182,7 @@ def test_one_active_run_per_ticket(
 def test_shell_stage_without_command_is_rejected(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
-    t = create_ticket(workspace_mode="none")
+    t = create_ticket(repo=None)
     edit_in_db(ctx, t.key, lambda p: stage_of(p, "lint").update(enabled=True))
     r = runs.dispatch(t.key, "lint")
     assert error(r) == (422, "invalid_stage")
@@ -196,7 +195,7 @@ def test_shell_stage_without_command_is_rejected(
 def test_list_runs_newest_first(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     first = runs.queue(t.key)
     authed.post(f"/api/runs/{first.id}/cancel", headers=CSRF)
     second = runs.queue(t.key)
@@ -213,7 +212,7 @@ def test_get_run_404(authed: TestClient) -> None:
 def test_manifest_is_404_until_claimed(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     run = runs.queue(t.key)
     r = authed.get(f"/api/runs/{run.id}/manifest")
     assert error(r) == (404, "not_found")
@@ -227,7 +226,7 @@ def test_manifest_is_404_until_claimed(
 def test_stage_names_fall_back_to_the_id(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     worker = runs.start(t.key)
     worker.run_stage("plan")
     worker.complete()
@@ -246,7 +245,7 @@ def test_stage_names_fall_back_to_the_id(
 
 
 def test_event_paging(authed: TestClient, create_ticket: CreateTicket, runs: RunDriver) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     worker = runs.start(t.key)
     assert worker.events(*(log_event(i, "plan", f"line {i}") for i in range(1, 11))).json() == {
         "cancel": False
@@ -273,7 +272,7 @@ def test_event_paging(authed: TestClient, create_ticket: CreateTicket, runs: Run
 
 
 def test_cancel_queued(authed: TestClient, create_ticket: CreateTicket, runs: RunDriver) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     run = runs.queue(t.key)
     r = authed.post(f"/api/runs/{run.id}/cancel", headers=CSRF)
     cancelled = RunSummary.model_validate(r.json())
@@ -286,7 +285,7 @@ def test_cancel_queued(authed: TestClient, create_ticket: CreateTicket, runs: Ru
 def test_cancel_running_waits_for_the_worker(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     worker = runs.start(t.key)
     worker.events(event(1, "stage_started", "plan"))
     worker.seq = 1
@@ -310,7 +309,7 @@ def test_cancel_running_waits_for_the_worker(
 def test_cancel_terminal_is_unchanged(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
     worker = runs.start(t.key)
     worker.run_stage("plan")
     worker.complete()
@@ -327,7 +326,7 @@ def test_cancel_terminal_is_unchanged(
 def test_bundle_locked_from_claim_to_complete(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(repo_url=REPO)
+    t = create_ticket()
 
     def put(content: str, base: int, path: str = "notes.md") -> Any:
         return authed.put(
@@ -376,7 +375,7 @@ def board(client: TestClient, key: str) -> tuple[str, str, str, str, str | None]
 def test_board_through_plan_gate_continue_succeed(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(workspace_mode="none")  # plan(gate) → implement → review (open-pr off)
+    t = create_ticket(repo=None)  # plan(gate) → implement → review (open-pr off)
     assert board(authed, t.key) == (
         "inbox",
         "inbox",
@@ -446,7 +445,7 @@ def test_board_through_plan_gate_continue_succeed(
 def test_retry_after_a_failure_starts_at_the_failed_stage(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(workspace_mode="none")
+    t = create_ticket(repo=None)
     worker = runs.start(t.key, "implement")
     worker.run_stage("implement")
     worker.run_stage("review", "failed")

@@ -44,19 +44,19 @@ def list_tickets(
 
 @router.post("", status_code=201)
 def create_ticket(body: TicketCreate, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.create_ticket(ctx.db, ctx.settings, user, body)
+    return service.create_ticket(ctx.db, ctx.settings, ctx.space, user, body)
 
 
 @router.get("/{key}")
 def get_ticket(key: str, user: CurrentUser, ctx: Ctx) -> TicketDetail:
-    return service.get_ticket(ctx.db, key, user.id)
+    return service.get_ticket(ctx.db, ctx.space, key, user.id)
 
 
 @router.patch("/{key}")
 def patch_ticket(key: str, body: TicketPatch, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.patch_ticket(ctx.db, key, user, body)
+    return service.patch_ticket(ctx.db, ctx.space, key, user, body)
 
 
 @router.put("/{key}/pipeline")
 def put_pipeline(key: str, body: PipelineUpdate, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.put_pipeline(ctx.db, ctx.runtimes, key, user, body)
+    return service.put_pipeline(ctx.db, ctx.runtimes, ctx.space, key, user, body)

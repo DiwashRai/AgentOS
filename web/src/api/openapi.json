@@ -13,11 +13,7 @@
             "title": "Auth Mode",
             "type": "string"
           },
-          "default_base_branch": {
-            "title": "Default Base Branch",
-            "type": "string"
-          },
-          "default_repo_url": {
+          "default_repo": {
             "anyOf": [
               {
                 "type": "string"
@@ -26,7 +22,7 @@
                 "type": "null"
               }
             ],
-            "title": "Default Repo Url"
+            "title": "Default Repo"
           },
           "default_runtime": {
             "title": "Default Runtime",
@@ -51,20 +47,32 @@
             "title": "Key Prefix",
             "type": "string"
           },
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/RepoInfo"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
           "runtimes": {
             "items": {
               "type": "string"
             },
             "title": "Runtimes",
             "type": "array"
+          },
+          "space_name": {
+            "title": "Space Name",
+            "type": "string"
           }
         },
         "required": [
           "auth_mode",
           "jira_deployment",
           "key_prefix",
-          "default_repo_url",
-          "default_base_branch",
+          "space_name",
+          "repos",
+          "default_repo",
           "runtimes",
           "default_runtime"
         ],
@@ -1318,6 +1326,31 @@
         "title": "RailStep",
         "type": "object"
       },
+      "RepoInfo": {
+        "additionalProperties": false,
+        "description": "One entry of the Space's repo catalog (`[[repos]]` in agentos.toml).",
+        "properties": {
+          "default_branch": {
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "default_branch"
+        ],
+        "title": "RepoInfo",
+        "type": "object"
+      },
       "RunDetail": {
         "additionalProperties": false,
         "properties": {
@@ -2161,7 +2194,7 @@
             "title": "Priority",
             "type": "string"
           },
-          "repo_url": {
+          "repo": {
             "anyOf": [
               {
                 "type": "string"
@@ -2170,7 +2203,7 @@
                 "type": "null"
               }
             ],
-            "title": "Repo Url"
+            "title": "Repo"
           },
           "title": {
             "maxLength": 200,
@@ -2187,15 +2220,6 @@
               "task"
             ],
             "title": "Type",
-            "type": "string"
-          },
-          "workspace_mode": {
-            "default": "repo",
-            "enum": [
-              "repo",
-              "none"
-            ],
-            "title": "Workspace Mode",
             "type": "string"
           }
         },
@@ -2511,7 +2535,7 @@
       },
       "TicketPatch": {
         "additionalProperties": false,
-        "description": "`repo_url`, `base_branch`, `owner_id` may be null (clears them); others: omit or set.",
+        "description": "`repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may\nbe null; others: omit or set.",
         "properties": {
           "base_branch": {
             "anyOf": [
@@ -2555,7 +2579,7 @@
             "title": "Priority",
             "type": "string"
           },
-          "repo_url": {
+          "repo": {
             "anyOf": [
               {
                 "type": "string"
@@ -2564,7 +2588,7 @@
                 "type": "null"
               }
             ],
-            "title": "Repo Url"
+            "title": "Repo"
           },
           "state": {
             "enum": [

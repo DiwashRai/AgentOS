@@ -1,7 +1,21 @@
-# Agent runtimes: argv templates resolved by the server (SPEC §7). Copy to backend/agentos.toml.
-# Placeholders replace whole argv elements; no shell is involved.
+# Copy to backend/agentos.toml. Read once at startup (restart after editing).
+# Top-level keys (default_runtime) must stay above the first [table].
+
+# Agent runtimes: argv templates resolved by the server (SPEC §7); the tables are below.
 default_runtime = "claude"
 
+# The Space (SPEC §17): this AgentOS instance and its repo catalog. Tickets reference a repo by
+# name, so moving a repo is a change here. Zero [[repos]] is valid (no-repo tickets only).
+# [space]
+# name = "AgentOS"           # shown in the top bar; default "AgentOS"
+# default_repo = "agentos"   # what a new ticket gets when it names no repo; must be a [[repos]] name
+#
+# [[repos]]
+# name = "agentos"           # ^[a-z0-9][a-z0-9._-]{0,63}$, unique
+# url = "git@github.com:your-org/your-repo.git"   # https://..., ssh://... or git@host:path
+# default_branch = "main"    # default "main"
+
+# Placeholders replace whole argv elements; no shell is involved.
 [runtimes.claude]
 # Pinned on this machine: claude 2.1.296. Re-verify headless behaviour when upgrading.
 argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"]

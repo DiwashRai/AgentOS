@@ -1,4 +1,5 @@
-"""Settings: pydantic-settings (AGENTOS_* env) + agentos.toml loader + startup checks (SPEC §14).
+"""Settings: pydantic-settings (AGENTOS_* env) + agentos.toml loader (runtimes, Space and repo
+catalog) + startup checks (SPEC §14, §17).
 
 The server runs from `backend/`, so `.env`, `agentos.toml` and relative paths resolve from there.
 """
@@ -8,16 +9,16 @@ from __future__ import annotations
 import ipaddress
 import re
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
-from pydantic import ValidationError, field_validator
+from pydantic import BaseModel, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from agentos.errors import ApiError
 from agentos.pipeline.runtime import RuntimesConfig
-from agentos.validate import validate_base_branch, validate_repo_url
+from agentos.pipeline.space import SpaceConfig
 
 KEY_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9]*$")
 
@@ -42,7 +43,7 @@ class Settings(BaseSettings):
         env_prefix="AGENTOS_",
         env_file=".env",
         env_file_encoding="utf-8",
-        env_ignore_empty=True,  # `AGENTOS_DEFAULT_REPO_URL=` means "unset", not ""
+        env_ignore_empty=True,  # `AGENTOS_JIRA_URL=` means "unset", not ""
         extra="forbid",  # a typo'd AGENTOS_* key in .env fails startup instead of being ignored
         validate_default=True,
     )
@@ -55,11 +56,10 @@ class Settings(BaseSettings):
     port: int = 8000
     config: Path = Path("agentos.toml")
     key_prefix: str = "AOS"
-    default_repo_url: str | None = None
-    default_base_branch: str = "main"
     launcher: Literal["local", "github"] = "local"
     local_max_concurrency: int | None = 2  # None ("none"/"unlimited" in env) = no limit
     worker_env_file: Path | None = None
+    web_dir: Path | None = None  # the built SPA (web/dist) to serve; None = API only (dev)
     claim_timeout_s: int = 900
     dev_auth: bool = False
     trust_proxy: bool = False
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     jira_board_ids: Annotated[list[int], NoDecode] = []
     admins: Annotated[list[str], NoDecode] = []
 
-    @field_validator("data_dir", "workspaces_dir", "config", "worker_env_file")
+    @field_validator("data_dir", "workspaces_dir", "config", "worker_env_file", "web_dir")
     @classmethod
     def _absolute(cls, value: Path | None) -> Path | None:
         return None if value is None else value.expanduser().resolve()
@@ -118,24 +118,46 @@ def _describe(err: Any) -> str:
     return f"{name}: {err.get('msg', 'invalid')}"
 
 
-def load_runtimes(path: Path) -> RuntimesConfig:
-    """Parse `agentos.toml` (SPEC §7) into RuntimesConfig."""
+@dataclass(frozen=True, slots=True)
+class FileConfig:
+    """`agentos.toml`: the agent runtimes (SPEC §7) and the Space with its repo catalog (§17)."""
+
+    runtimes: RuntimesConfig
+    space: SpaceConfig
+
+
+_M = TypeVar("_M", bound=BaseModel)
+_SPACE_KEYS = ("space", "repos")  # top-level keys that belong to SpaceConfig; the rest: runtimes
+
+
+def load_config(path: Path) -> FileConfig:
+    """Parse `agentos.toml` once. Every problem in both parts is reported in one ConfigError."""
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ConfigError(
-            [f"{path}: runtime config not found (copy agentos.toml.example, or set AGENTOS_CONFIG)"]
+            [f"{path}: config not found (copy agentos.toml.example, or set AGENTOS_CONFIG)"]
         ) from None
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError([f"{path}: cannot read TOML: {exc}"]) from None
+    space_data = {k: data.pop(k) for k in _SPACE_KEYS if k in data}
+    problems: list[str] = []
+    runtimes = _validated(RuntimesConfig, data, path, problems)
+    space = _validated(SpaceConfig, space_data, path, problems)
+    if runtimes is None or space is None:
+        raise ConfigError(problems)
+    return FileConfig(runtimes=runtimes, space=space)
+
+
+def _validated(model: type[_M], data: dict[str, Any], path: Path, problems: list[str]) -> _M | None:
+    """`model` validated from `data`, or None with its errors appended to `problems`."""
     try:
-        return RuntimesConfig.model_validate(data)
+        return model.model_validate(data)
     except ValidationError as exc:
-        problems = []
         for err in exc.errors():
             where = ".".join(str(p) for p in err["loc"]) or "(root)"
             problems.append(f"{path}: {where}: {err['msg']}")
-        raise ConfigError(problems) from None
+        return None
 
 
 def is_loopback_host(host: str | None) -> bool:
@@ -204,16 +226,6 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
         problems.append(
             f"AGENTOS_KEY_PREFIX={settings.key_prefix!r} must match {KEY_PREFIX_RE.pattern}"
         )
-
-    for name, value, check in (
-        ("AGENTOS_DEFAULT_REPO_URL", settings.default_repo_url, validate_repo_url),
-        ("AGENTOS_DEFAULT_BASE_BRANCH", settings.default_base_branch, validate_base_branch),
-    ):
-        if value is not None:
-            try:
-                check(value)
-            except ApiError as exc:
-                problems.append(f"{name}={value!r}: {exc.message}")
 
     if settings.local_max_concurrency is not None and settings.local_max_concurrency < 1:
         problems.append("AGENTOS_LOCAL_MAX_CONCURRENCY must be >= 1 (or 'unlimited')")

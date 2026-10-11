@@ -31,7 +31,7 @@ def armed(reaper: Reaper, now: datetime) -> Reaper:
 
 
 def started(create_ticket: CreateTicket, runs: RunDriver, title: str = "T") -> Worker:
-    return runs.start(create_ticket(title, workspace_mode="none").key)
+    return runs.start(create_ticket(title, repo=None).key)
 
 
 # ------------------------------------------------------------------ rule 1: grace
@@ -69,8 +69,8 @@ def test_never_connected(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reaper: Reaper
 ) -> None:
     timeout = runs.ctx.settings.claim_timeout_s
-    old = runs.queue(create_ticket("old", workspace_mode="none").key).id
-    young = runs.queue(create_ticket("young", workspace_mode="none").key).id
+    old = runs.queue(create_ticket("old", repo=None).key).id
+    young = runs.queue(create_ticket("young", repo=None).key).id
     runs.tick()
     now = utcnow()
     runs.set_run(old, dispatched_at=to_db(now - timedelta(seconds=timeout + 1)))

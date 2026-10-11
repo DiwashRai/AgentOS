@@ -25,7 +25,7 @@ def error(r: Any) -> tuple[int, str]:
 
 @pytest.fixture
 def ticket(authed: TestClient, create_ticket: CreateTicket) -> TicketDetail:
-    return create_ticket("Worker API", repo_url=REPO)
+    return create_ticket("Worker API")
 
 
 def skill_dir(t: TicketDetail) -> str:
@@ -136,6 +136,32 @@ def test_a_manifest_that_cannot_be_built_fails_the_run(
     assert detail.error is not None
     assert detail.error.startswith("cannot build the manifest: stage plan")
     assert [s.status for s in detail.stage_runs] == ["cancelled"]
+
+
+def test_manifest_workspace_comes_from_the_repo_catalog(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
+) -> None:
+    m = runs.start(create_ticket(repo="docs").key).manifest
+    assert (m.workspace.repo_url, m.workspace.base_branch) == (
+        "git@github.com:o/docs.git",
+        "develop",
+    )
+    m = runs.start(create_ticket(repo="docs", base_branch="release/2").key).manifest
+    assert m.workspace.base_branch == "release/2"
+
+
+def test_a_repo_that_left_the_catalog_fails_the_run_at_claim(
+    ticket: TicketDetail, runs: RunDriver, ctx: AppContext
+) -> None:
+    run = runs.queue(ticket.key)
+    runs.tick()
+    with ctx.db.tx() as conn:  # as if agentos.toml lost the repo between dispatch and claim
+        conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (ticket.key,))
+    assert error(runs.claim(run.id)) == (410, "run_gone")
+    detail = runs.get(run.id)
+    assert detail.status == "failed"
+    assert detail.error is not None
+    assert "cannot build the manifest: repo: 'gone'" in detail.error
 
 
 # ------------------------------------------------------------------ events
@@ -341,7 +367,7 @@ def test_complete_gated_then_repeat_is_idempotent(ticket: TicketDetail, runs: Ru
 def test_gate_on_the_last_enabled_stage_succeeds(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    t = create_ticket(workspace_mode="none")  # open-pr is disabled
+    t = create_ticket(repo=None)  # open-pr is disabled
     detail = authed.get(f"/api/tickets/{t.key}").json()
     pipeline = detail["pipeline"]
     next(s for s in pipeline["stages"] if s["id"] == "review")["gate_after"] = True

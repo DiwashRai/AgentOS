@@ -490,18 +490,20 @@ export interface components {
              * @enum {string}
              */
             auth_mode: "dev" | "jira";
-            /** Default Base Branch */
-            default_base_branch: string;
-            /** Default Repo Url */
-            default_repo_url: string | null;
+            /** Default Repo */
+            default_repo: string | null;
             /** Default Runtime */
             default_runtime: string;
             /** Jira Deployment */
             jira_deployment: ("cloud" | "datacenter") | null;
             /** Key Prefix */
             key_prefix: string;
+            /** Repos */
+            repos: components["schemas"]["RepoInfo"][];
             /** Runtimes */
             runtimes: string[];
+            /** Space Name */
+            space_name: string;
         };
         /** ChatMessage */
         ChatMessage: {
@@ -937,6 +939,18 @@ export interface components {
              */
             state: "pending" | "done" | "current" | "failed" | "stale" | "skipped";
         };
+        /**
+         * RepoInfo
+         * @description One entry of the Space's repo catalog (`[[repos]]` in agentos.toml).
+         */
+        RepoInfo: {
+            /** Default Branch */
+            default_branch: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+        };
         /** RunDetail */
         RunDetail: {
             /** Cancel Requested At */
@@ -1224,8 +1238,8 @@ export interface components {
              * @enum {string}
              */
             priority: "high" | "normal" | "low";
-            /** Repo Url */
-            repo_url?: string | null;
+            /** Repo */
+            repo?: string | null;
             /** Title */
             title: string;
             /**
@@ -1234,12 +1248,6 @@ export interface components {
              * @enum {string}
              */
             type: "feature" | "bug" | "improvement" | "task";
-            /**
-             * Workspace Mode
-             * @default repo
-             * @enum {string}
-             */
-            workspace_mode: "repo" | "none";
         };
         /** TicketDetail */
         TicketDetail: {
@@ -1333,7 +1341,8 @@ export interface components {
         };
         /**
          * TicketPatch
-         * @description `repo_url`, `base_branch`, `owner_id` may be null (clears them); others: omit or set.
+         * @description `repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may
+         *     be null; others: omit or set.
          */
         TicketPatch: {
             /** Base Branch */
@@ -1349,8 +1358,8 @@ export interface components {
              * @enum {string}
              */
             priority?: "high" | "normal" | "low";
-            /** Repo Url */
-            repo_url?: string | null;
+            /** Repo */
+            repo?: string | null;
             /**
              * State
              * @enum {string}

@@ -36,8 +36,14 @@ from agentos.models import (
 from agentos.pipeline.manifest import render_stages
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import check_segment, segment
+from agentos.pipeline.space import SpaceConfig
 from agentos.tickets.board import RunFact, StageRunFact, next_stage
-from agentos.tickets.service import active_run_id, get_ticket_row, ticket_pipeline, ticket_ref
+from agentos.tickets.service import (
+    active_run_id,
+    get_ticket_row,
+    run_ticket_ref,
+    ticket_pipeline,
+)
 
 ACTIVE: tuple[RunStatus, ...] = ("queued", "dispatched", "running")
 TERMINAL: tuple[RunStatus, ...] = ("succeeded", "gated", "failed", "cancelled")
@@ -159,6 +165,7 @@ def _latest_run_fact(conn: Conn, ticket_id: int) -> RunFact | None:
 def dispatch(
     db: Database,
     runtimes: RuntimesConfig,
+    space: SpaceConfig,
     launcher_name: str,
     key: str,
     user: Me,
@@ -167,19 +174,15 @@ def dispatch(
     """Queue a run (SPEC §8 "Dispatch"), all in one transaction: a 422 leaves no run row.
 
     "Continue" and "Retry" are dispatches with the default `from_stage` (`board.next_stage`);
-    "Run from…" passes one. The manifest is built later, at claim.
+    "Run from…" passes one. The manifest is built later, at claim. A ticket whose repo is no
+    longer in the Space's catalog → 422 `validation_error`.
     """
     now = to_db(utcnow())
     with db.tx() as conn:
         ticket = get_ticket_row(conn, key)
         if ticket["state"] != "open":
             raise ApiError(409, "invalid_stage", f"{key} is {ticket['state']}; reopen it first")
-        if ticket["workspace_mode"] == "repo":
-            for field in ("repo_url", "base_branch"):
-                if not ticket[field]:
-                    raise ApiError(
-                        422, "validation_error", f"{field}: a repo ticket needs one to dispatch"
-                    )
+        ref = run_ticket_ref(ticket, space)
         if active_run_id(conn, ticket["id"]) is not None:
             raise ApiError(409, "run_active", f"{key} already has an active run")
         pipeline = ticket_pipeline(ticket)
@@ -188,7 +191,7 @@ def dispatch(
             if from_stage is None:
                 raise ApiError(422, "invalid_stage", "nothing to run; pick a stage")
         stages = segment(pipeline, from_stage)
-        check_segment(stages, ticket["workspace_mode"])
+        check_segment(stages, ref.workspace_mode)
         try:
             cursor = conn.execute(
                 "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
@@ -201,7 +204,7 @@ def dispatch(
         if run_id is None:  # pragma: no cover - sqlite always sets it after an INSERT
             raise RuntimeError("INSERT INTO runs returned no rowid")
         # Validate now (render errors → 422, rolling the run back); the manifest is built at claim.
-        render_stages(run_id, ticket_ref(ticket), stages, runtimes)
+        render_stages(run_id, ref, stages, runtimes)
         conn.execute(
             "UPDATE runs SET stage_ids = ?, time_budget_s = ? WHERE id = ?",
             (json.dumps([s.id for s in stages]), sum(s.timeout_s for s in stages), run_id),

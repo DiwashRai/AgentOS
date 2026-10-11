@@ -2,8 +2,8 @@
 dispatcher and reaper loops on), the real LocalProcessLauncher, the real worker.py and a temp bare
 git repo as the remote, driven only through the HTTP API. Agent stages run `fake_agent.py`.
 
-The remote is reached through an `https://` repo_url (validate_repo_url accepts nothing else)
-that the worker's git rewrites to the bare repo's file:// URL with `url.<file-url>.insteadOf`,
+The remote is the catalog repo `remote`. Its `https://` URL (validate_repo_url accepts no file://)
+is what the worker's git rewrites to the bare repo's file:// URL with `url.<file-url>.insteadOf`,
 set via GIT_CONFIG_* in the worker env file (AGENTOS_WORKER_ENV_FILE). No server escape hatch.
 
 Skip with `pytest -m "not e2e"`.
@@ -176,9 +176,7 @@ class E2E:
         body = {
             "title": title,
             "description": "Say hello from a module.",
-            "workspace_mode": "repo",
-            "repo_url": REPO_URL,
-            "base_branch": "main",
+            "repo": "remote",  # REPO_URL in the catalog; base branch = its default (main)
             "owner_id": self.me.id,
         }
         return TicketDetail.model_validate(self.send("POST", "/api/tickets", body, 201))
@@ -265,8 +263,8 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
         runtimes = root / "runtimes_e2e.toml"  # never `agentos.toml` (gitignored)
         argv = json.dumps([sys.executable, str(FAKE_AGENT)])
         runtimes.write_bytes(
-            f'default_runtime = "fake"\n\n[runtimes.fake]\nargv = {argv}\n'
-            'prompt_via = "stdin"\n'.encode()
+            f'default_runtime = "fake"\n\n[[repos]]\nname = "remote"\nurl = "{REPO_URL}"\n\n'
+            f'[runtimes.fake]\nargv = {argv}\nprompt_via = "stdin"\n'.encode()
         )
         worker_env = root / "worker.env"
         worker_env.write_bytes(

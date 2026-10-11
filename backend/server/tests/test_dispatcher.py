@@ -26,7 +26,7 @@ CreateTicket = Callable[..., TicketDetail]
 
 
 def queue_three(create_ticket: CreateTicket, runs: RunDriver) -> list[int]:
-    return [runs.queue(create_ticket(f"T{i}", workspace_mode="none").key).id for i in range(3)]
+    return [runs.queue(create_ticket(f"T{i}", repo=None).key).id for i in range(3)]
 
 
 def status(runs: RunDriver, run_id: int) -> str:
@@ -50,8 +50,8 @@ def test_running_runs_count_towards_the_limit(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, launcher: FakeLauncher
 ) -> None:
     launcher.max_concurrency = 1
-    worker = runs.start(create_ticket("A", workspace_mode="none").key)
-    b = runs.queue(create_ticket("B", workspace_mode="none").key).id
+    worker = runs.start(create_ticket("A", repo=None).key)
+    b = runs.queue(create_ticket("B", repo=None).key).id
     assert runs.tick() == []
     worker.complete()
     assert runs.tick() == [b]
@@ -72,7 +72,7 @@ def test_tokens_and_launch_ref(
     launcher: FakeLauncher,
     ctx: AppContext,
 ) -> None:
-    run_id = runs.queue(create_ticket(workspace_mode="none").key).id
+    run_id = runs.queue(create_ticket(repo=None).key).id
     runs.tick()
     [(launched_id, server_url, token)] = launcher.launched
     assert launched_id == run_id
@@ -115,7 +115,7 @@ def test_launch_failure_fails_the_run_and_carries_on(
 def test_other_launchers_runs_are_left_alone(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
-    run_id = runs.queue(create_ticket(workspace_mode="none").key).id
+    run_id = runs.queue(create_ticket(repo=None).key).id
     runs.set_run(run_id, launcher="github")
     assert runs.tick() == []
 
@@ -157,7 +157,7 @@ def with_loops(
 
 
 def dispatch(client: TestClient) -> int:
-    r = client.post("/api/tickets", json={"title": "x", "workspace_mode": "none"}, headers=CSRF)
+    r = client.post("/api/tickets", json={"title": "x", "repo": None}, headers=CSRF)
     run = client.post(f"/api/tickets/{r.json()['key']}/runs", json={}, headers=CSRF)
     run_id: int = run.json()["id"]
     return run_id

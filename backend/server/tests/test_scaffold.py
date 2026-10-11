@@ -9,7 +9,6 @@ import pytest
 from agentos.pipeline.scaffold import (
     default_pipeline,
     names,
-    repo_name,
     skill_dir,
     skill_name,
     slugify,
@@ -71,21 +70,6 @@ def test_names_repo_mode() -> None:
 
 def test_names_no_repo_mode_has_no_branch() -> None:
     assert names("AOS-42", "x", "none").branch is None
-
-
-@pytest.mark.parametrize(
-    ("url", "name"),
-    [
-        (None, None),
-        ("", None),
-        ("https://github.com/org/app.git", "app"),
-        ("https://github.com/org/app/", "app"),
-        ("git@github.com:org/app.git", "app"),
-        ("git@github.com:app.git", "app"),
-    ],
-)
-def test_repo_name(url: str | None, name: str | None) -> None:
-    assert repo_name(url) == name
 
 
 def test_default_pipeline_seed() -> None:

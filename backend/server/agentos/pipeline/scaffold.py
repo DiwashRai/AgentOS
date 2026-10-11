@@ -158,10 +158,3 @@ def names(key: str, slug: str, workspace_mode: WorkspaceMode) -> TicketNames:
         out=f"{d}/out",
         branch=f"agent/{key}" if workspace_mode == "repo" else None,
     )
-
-
-def repo_name(url: str | None) -> str | None:
-    if not url:
-        return None
-    tail = url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
-    return tail.removesuffix(".git") or None
