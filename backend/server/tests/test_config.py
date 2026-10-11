@@ -245,6 +245,47 @@ def test_jira_required_without_dev_auth(tmp_path: Path, runtimes: RuntimesConfig
     startup_checks(ok, runtimes)
 
 
+JIRA_URL = "https://x.atlassian.net"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"jira_service_email": "bot@x.com"}, "both AGENTOS_JIRA_SERVICE_EMAIL"),
+        ({"jira_service_token": "s3cret-tok"}, "both AGENTOS_JIRA_SERVICE_EMAIL"),
+        (
+            {"jira_url": None, "jira_service_email": "b@x.com", "jira_service_token": "s3cret-tok"},
+            "AGENTOS_JIRA_SERVICE_TOKEN needs AGENTOS_JIRA_URL",
+        ),
+        (
+            {"jira_service_email": "b@x.com", "jira_service_token": "s3cret tok"},
+            "printable ASCII",
+        ),
+        ({"jira_url": "ftp://x"}, "AGENTOS_JIRA_URL"),  # checked in dev auth mode too
+    ],
+)
+def test_jira_service_account_checks(
+    tmp_path: Path, overrides: dict[str, Any], expected: str
+) -> None:
+    found = problems(make(tmp_path, **{"jira_url": JIRA_URL, **overrides}))
+    assert any(expected in p for p in found), found
+    assert not any("s3cret" in p for p in found)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"jira_service_email": "bot@x.com", "jira_service_token": "s3cret-tok"},  # dev auth: import
+        {"jira_deployment": "datacenter", "jira_service_token": "pat"},  # DC: a PAT, no email
+        {},  # no service account: no import
+    ],
+)
+def test_jira_service_account_accepted(
+    tmp_path: Path, runtimes: RuntimesConfig, overrides: dict[str, Any]
+) -> None:
+    startup_checks(make(tmp_path, jira_url=JIRA_URL, **overrides), runtimes)
+
+
 def test_github_launcher_needs_repo_and_token(tmp_path: Path) -> None:
     found = problems(make(tmp_path, launcher="github"))
     assert any("AGENTOS_GITHUB_REPO" in p for p in found)
@@ -328,6 +369,7 @@ def test_api_config_reflects_dev_settings(tmp_path: Path) -> None:
         default_repo="r",
         runtimes=["claude", "fake"],
         default_runtime="fake",
+        sources=[],
     )
 
 

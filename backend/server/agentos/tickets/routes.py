@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from agentos.auth.deps import CurrentUser, Writer
 from agentos.errors import ERROR_RESPONSES
 from agentos.http_deps import Ctx
 from agentos.models import (
+    ImportRequest,
+    ImportResult,
     PipelineUpdate,
     Priority,
     TicketCreate,
@@ -45,6 +47,15 @@ def list_tickets(
 @router.post("", status_code=201)
 def create_ticket(body: TicketCreate, user: Writer, ctx: Ctx) -> TicketDetail:
     return service.create_ticket(ctx.db, ctx.settings, ctx.space, user, body)
+
+
+@router.post("/import", responses={201: {"model": ImportResult, "description": "Imported"}})
+def import_ticket(body: ImportRequest, user: Writer, ctx: Ctx, response: Response) -> ImportResult:
+    """Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with
+    `created: false` and the ticket it was imported as before."""
+    result = service.import_ticket(ctx.db, ctx.settings, ctx.space, ctx.jira_source, user, body)
+    response.status_code = 201 if result.created else 200
+    return result
 
 
 @router.get("/{key}")

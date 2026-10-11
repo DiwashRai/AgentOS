@@ -72,6 +72,17 @@
             "title": "Runtimes",
             "type": "array"
           },
+          "sources": {
+            "items": {
+              "enum": [
+                "jira",
+                "github"
+              ],
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
           "space_name": {
             "title": "Space Name",
             "type": "string"
@@ -86,7 +97,8 @@
           "repos",
           "default_repo",
           "runtimes",
-          "default_runtime"
+          "default_runtime",
+          "sources"
         ],
         "title": "AppConfig",
         "type": "object"
@@ -291,6 +303,7 @@
               "run_active",
               "bundle_locked",
               "already_claimed",
+              "key_taken",
               "invalid_stage",
               "invalid_pipeline",
               "render_error",
@@ -669,6 +682,42 @@
           "status"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "ImportRequest": {
+        "additionalProperties": false,
+        "description": "A source ticket to import: a Jira key (`SCRUM-6`) or its browse link.",
+        "properties": {
+          "ref": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "title": "ImportRequest",
+        "type": "object"
+      },
+      "ImportResult": {
+        "additionalProperties": false,
+        "description": "`created: false` = the issue was imported before; `ticket` is that ticket.",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/TicketDetail"
+          }
+        },
+        "required": [
+          "ticket",
+          "created"
+        ],
+        "title": "ImportResult",
         "type": "object"
       },
       "LogData": {
@@ -3815,6 +3864,68 @@
           }
         },
         "summary": "Create Ticket",
+        "tags": [
+          "tickets"
+        ]
+      }
+    },
+    "/api/tickets/import": {
+      "post": {
+        "description": "Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with\n`created: false` and the ticket it was imported as before.",
+        "operationId": "import_ticket_api_tickets_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            },
+            "description": "Imported"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Import Ticket",
         "tags": [
           "tickets"
         ]

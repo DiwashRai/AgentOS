@@ -16,7 +16,9 @@ Docker and Podman both work. The `just` recipes default to Docker; add `engine=p
    Dev auth can't run in the container (it needs a loopback host), so this uses Jira: people
    sign in with their Jira email + API token, need access to one of `AGENTOS_JIRA_PROJECTS`, and
    wait for an admin's approval after their first sign-in (Settings › Users). List yourself in
-   `AGENTOS_ADMINS` (account id or email) so the first sign-in is an admin.
+   `AGENTOS_ADMINS` (account id or email) so the first sign-in is an admin. Importing Jira
+   issues as tickets needs a service account: `AGENTOS_JIRA_SERVICE_EMAIL` +
+   `AGENTOS_JIRA_SERVICE_TOKEN` (leave both empty to turn import off).
 3. Build and start:
 
    ```

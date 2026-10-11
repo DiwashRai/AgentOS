@@ -236,6 +236,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Ticket
+         * @description Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with
+         *     `created: false` and the ticket it was imported as before.
+         */
+        post: operations["import_ticket_api_tickets_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{key}": {
         parameters: {
             query?: never;
@@ -507,6 +528,8 @@ export interface components {
             repos: components["schemas"]["RepoInfo"][];
             /** Runtimes */
             runtimes: string[];
+            /** Sources */
+            sources: ("jira" | "github")[];
             /** Space Name */
             space_name: string;
         };
@@ -570,7 +593,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
+            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
             /** Message */
             message: string;
         };
@@ -704,6 +727,23 @@ export interface components {
              * @constant
              */
             status: "ok";
+        };
+        /**
+         * ImportRequest
+         * @description A source ticket to import: a Jira key (`SCRUM-6`) or its browse link.
+         */
+        ImportRequest: {
+            /** Ref */
+            ref: string;
+        };
+        /**
+         * ImportResult
+         * @description `created: false` = the issue was imported before; `ticket` is that ticket.
+         */
+        ImportResult: {
+            /** Created */
+            created: boolean;
+            ticket: components["schemas"]["TicketDetail"];
         };
         /** LogData */
         LogData: {
@@ -2065,6 +2105,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    import_ticket_api_tickets_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            /** @description Imported */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
                 };
             };
             /** @description Client error */

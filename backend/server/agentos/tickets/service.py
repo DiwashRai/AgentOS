@@ -1,5 +1,5 @@
-"""Tickets (SPEC §4, §10, §13): create (key, slug, template copy, scaffold = bundle v1), the board
-list and detail, patch and pipeline edits.
+"""Tickets (SPEC §4, §10, §13): create (key, slug, template copy, scaffold = bundle v1), import
+from a ticket source (§12), the board list and detail, patch and pipeline edits.
 
 The board is batch-loaded: a fixed number of queries for any number of tickets (tickets + owners,
 latest runs + creators, their stage_runs, the ever-succeeded GROUP BY, TASKS.md of running
@@ -23,6 +23,8 @@ from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
 from agentos.files.service import write_version
 from agentos.models import (
+    ImportRequest,
+    ImportResult,
     Me,
     Person,
     Pipeline,
@@ -45,6 +47,12 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.scaffold import names, slugify
 from agentos.pipeline.segment import validate_pipeline
 from agentos.pipeline.space import SpaceConfig
+from agentos.sources.base import (
+    SourceNotFound,
+    SourceUnauthorized,
+    SourceUnavailable,
+    TicketSource,
+)
 from agentos.templates import service as templates
 from agentos.tickets.board import ACTIVE, RunFact, StageRunFact, TicketFacts, derive, for_viewer
 from agentos.validate import validate_base_branch, validate_key
@@ -53,6 +61,7 @@ log = logging.getLogger(__name__)
 
 MAX_LABELS = 20
 MAX_LABEL_CHARS = 50
+MAX_TITLE_CHARS = 200  # TicketCreate.title max_length: an imported summary is cut to it
 
 _SELECT_TICKETS = (
     "SELECT t.*, o.display_name AS owner_name, o.avatar_url AS owner_avatar "
@@ -390,67 +399,208 @@ def create_ticket(
     elif body.base_branch is not None:
         raise ApiError(422, "validation_error", "base_branch: a no-repo ticket can't have one")
     base_branch = validate_base_branch(body.base_branch) if body.base_branch is not None else None
-    resolved = space.resolve(repo, base_branch)
-    now = to_db(utcnow())
     with db.tx() as conn:
         if body.owner_id is not None:
             _check_owner(conn, body.owner_id)
         key = _allocate_key(conn, settings.key_prefix)
-        slug = slugify(title, key)
-        template = templates.current(conn)
-        pipeline = template.template.pipeline
-        if resolved.mode == "none":
-            pipeline = _without_repo_stages(pipeline)
-        ref = TicketRef(
-            key=key,
-            slug=slug,
-            title=title,
-            description=body.description,
-            type=body.type,
-            source_url=None,
-            repo_url=resolved.url,
-            base_branch=resolved.base_branch,
-            workspace_mode=resolved.mode,
-        )
-        scaffold = render_scaffold(template.template.scaffold, ref)
-        cursor = conn.execute(
-            "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
-            "workspace_mode, repo, base_branch, template_id, pipeline, pipeline_version, "
-            "owner_id, created_by, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
-            (
-                key,
-                slug,
-                title,
-                body.description,
-                body.type,
-                body.priority,
-                json.dumps(labels),
-                resolved.mode,
-                repo,
-                base_branch,
-                template.id,
-                pipeline.model_dump_json(),
-                body.owner_id,
-                user.id,
-                now,
-                now,
+        _insert_ticket(
+            conn,
+            space,
+            user,
+            _NewTicket(
+                key=key,
+                title=title,
+                description=body.description,
+                type=body.type,
+                priority=body.priority,
+                labels=labels,
+                repo=repo,
+                base_branch=base_branch,
+                owner_id=body.owner_id,
             ),
         )
-        ticket_id = cursor.lastrowid
-        if ticket_id is None:  # pragma: no cover - sqlite always sets it after an INSERT
-            raise RuntimeError("INSERT INTO tickets returned no rowid")
-        for entry in scaffold:
-            write_version(
-                conn,
-                ticket_id,
-                entry.path,
-                entry.content,
-                entry.mode,
-                author_user_id=user.id,
-                now=from_db(now),
-            )
         return _detail(conn, space, key, user.id)
+
+
+@dataclass(frozen=True, slots=True)
+class _NewTicket:
+    """A validated new ticket (native or imported): what `_insert_ticket` stores."""
+
+    key: str
+    title: str
+    description: str
+    type: TicketType
+    priority: Priority
+    labels: list[str]
+    repo: str | None  # a catalog name (already checked); None = no-repo mode
+    base_branch: str | None  # the ticket's own; None = the repo's default_branch
+    owner_id: int | None
+    source: SourceLink | None = None
+
+
+def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) -> int:
+    """Insert the ticket with a copy of the current template's pipeline and its rendered scaffold
+    as bundle v1 (inside the caller's transaction, so a render error leaves nothing behind)."""
+    resolved = space.resolve(new.repo, new.base_branch)
+    now = utcnow()
+    slug = slugify(new.title, new.key)
+    template = templates.current(conn)
+    pipeline = template.template.pipeline
+    if resolved.mode == "none":
+        pipeline = _without_repo_stages(pipeline)
+    source = new.source
+    ref = TicketRef(
+        key=new.key,
+        slug=slug,
+        title=new.title,
+        description=new.description,
+        type=new.type,
+        source_url=source.url if source is not None else None,
+        repo_url=resolved.url,
+        base_branch=resolved.base_branch,
+        workspace_mode=resolved.mode,
+    )
+    scaffold = render_scaffold(template.template.scaffold, ref)
+    cursor = conn.execute(
+        "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
+        "workspace_mode, repo, base_branch, template_id, pipeline, pipeline_version, "
+        "owner_id, source, external_id, source_url, created_by, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            new.key,
+            slug,
+            new.title,
+            new.description,
+            new.type,
+            new.priority,
+            json.dumps(new.labels),
+            resolved.mode,
+            new.repo,
+            new.base_branch,
+            template.id,
+            pipeline.model_dump_json(),
+            new.owner_id,
+            source.source if source is not None else None,
+            source.external_id if source is not None else None,
+            source.url if source is not None else None,
+            user.id,
+            to_db(now),
+            to_db(now),
+        ),
+    )
+    ticket_id = cursor.lastrowid
+    if ticket_id is None:  # pragma: no cover - sqlite always sets it after an INSERT
+        raise RuntimeError("INSERT INTO tickets returned no rowid")
+    for entry in scaffold:
+        write_version(
+            conn, ticket_id, entry.path, entry.content, entry.mode, author_user_id=user.id, now=now
+        )
+    return ticket_id
+
+
+# ------------------------------------------------------------------ import (SPEC §12, §17)
+
+
+def import_ticket(
+    db: Database,
+    settings: Settings,
+    space: SpaceConfig,
+    source: TicketSource | None,
+    user: Me,
+    body: ImportRequest,
+) -> ImportResult:
+    """Take in a source ticket by key or link (manual take-in: the importer owns it).
+
+    Not configured → 501; an unparseable ref, a project outside AGENTOS_JIRA_PROJECTS or a key
+    AgentOS can't use → 422; imported before → that ticket, `created: false`, without a source
+    call. The source can't see it → 404 `ticket_not_found`; the source rejects the service
+    account or is down → 502 `upstream_error`. Another ticket already has the key → 409
+    `key_taken`. The fetch happens outside the write transaction; inside it the import is
+    re-checked, so two concurrent imports of one issue end with one ticket.
+
+    The ticket gets the key, the source link, the mapped fields (imported text is stored as plain,
+    untrusted data), the Space's `default_repo` and the template, exactly like a native ticket.
+    """
+    if source is None:
+        raise ApiError(
+            501,
+            "not_implemented",
+            "Jira import isn't configured (AGENTOS_JIRA_URL and AGENTOS_JIRA_SERVICE_TOKEN)",
+        )
+    external_id = source.parse_ref(body.ref)
+    if external_id is None:
+        raise ApiError(
+            422, "validation_error", f"ref: not a {source.name} issue key or link to one"
+        )
+    if source.name == "jira":  # the external id is the issue key: check it before any Jira call
+        _check_import_key(settings, external_id)
+    with db.read() as conn:
+        if (key := _imported_key(conn, source.name, external_id)) is not None:
+            return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
+    try:
+        fetched = source.fetch(external_id)
+    except SourceNotFound:
+        raise ApiError(404, "ticket_not_found", f"{source.name} can't see {external_id}") from None
+    except SourceUnauthorized:
+        raise ApiError(
+            502,
+            "upstream_error",
+            f"{source.name} rejected the service account (AGENTOS_JIRA_SERVICE_EMAIL / _TOKEN)",
+        ) from None
+    except SourceUnavailable:
+        raise ApiError(
+            502, "upstream_error", f"{source.name} didn't answer; try again shortly"
+        ) from None
+    _check_import_key(settings, fetched.key)  # a moved issue answers with its new key
+    new = _NewTicket(
+        key=fetched.key,
+        title=fetched.title[:MAX_TITLE_CHARS].strip() or fetched.key,
+        description=fetched.description,
+        type=fetched.type,
+        priority=fetched.priority,
+        labels=_fit_labels(fetched.labels),
+        repo=space.default_repo,
+        base_branch=None,
+        owner_id=user.id,
+        source=SourceLink(source=source.name, external_id=fetched.external_id, url=fetched.url),
+    )
+    with db.tx() as conn:
+        if (key := _imported_key(conn, source.name, fetched.external_id)) is not None:
+            return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
+        if conn.execute("SELECT 1 FROM tickets WHERE key = ?", (new.key,)).fetchone():
+            raise ApiError(409, "key_taken", f"Another ticket already has the key {new.key}")
+        _insert_ticket(conn, space, user, new)
+        return ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
+
+
+def _check_import_key(settings: Settings, key: str) -> None:
+    """The key must be a valid ticket key, in one of the Space's Jira projects when those are set
+    (the Space is the trust boundary)."""
+    validate_key(key)
+    project = key.rsplit("-", 1)[0]
+    if settings.jira_projects and project not in settings.jira_projects:
+        projects = ", ".join(settings.jira_projects)
+        raise ApiError(
+            422, "validation_error", f"ref: {key} is not in this Space's Jira projects ({projects})"
+        )
+
+
+def _imported_key(conn: Conn, source: str, external_id: str) -> str | None:
+    """The key of the ticket imported from (source, external_id), if any."""
+    row = conn.execute(
+        "SELECT key FROM tickets WHERE source = ? AND external_id = ?", (source, external_id)
+    ).fetchone()
+    return None if row is None else str(row["key"])
+
+
+def _fit_labels(labels: Sequence[str]) -> list[str]:
+    """Imported labels within the label limits: what doesn't fit is dropped, never an error."""
+    out: list[str] = []
+    for label in labels:
+        label = label.strip()
+        if label and len(label) <= MAX_LABEL_CHARS and label not in out:
+            out.append(label)
+    return out[:MAX_LABELS]
 
 
 def _allocate_key(conn: Conn, prefix: str) -> str:

@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     jira_deployment: Literal["cloud", "datacenter"] = "cloud"
     # The Space's Jira projects: signing in needs browse access to at least one of them.
     jira_projects: Annotated[list[str], NoDecode] = []
+    # The service account for server-to-Jira calls (SPEC §11): issue import. Cloud: email + classic
+    # API token; Data Center: a PAT (the email is unused). Import is on when the token is set.
+    jira_service_email: str | None = None
+    jira_service_token: SecretStr | None = None
     admins: Annotated[list[str], NoDecode] = []
     # AGENTOS_LAUNCHER=github: the workflow (backend/deploy/github/agentos-worker.yml) dispatched
     # per run, on `github_ref` of `github_repo`. The token needs Actions: write on that repo.
@@ -205,6 +209,25 @@ def _git_repo_containing(path: Path) -> Path | None:
     return None
 
 
+def _jira_service_problems(settings: Settings) -> list[str]:
+    """The import service account: the token needs AGENTOS_JIRA_URL; Cloud needs the email and
+    the token together (or neither). Problems name the settings, never the token's value."""
+    email, secret = settings.jira_service_email, settings.jira_service_token
+    token = secret.get_secret_value() if secret is not None else None
+    problems: list[str] = []
+    if token is not None:
+        if not settings.jira_url:
+            problems.append("AGENTOS_JIRA_SERVICE_TOKEN needs AGENTOS_JIRA_URL")
+        if not (token.isascii() and token.isprintable() and " " not in token):
+            problems.append("AGENTOS_JIRA_SERVICE_TOKEN must be printable ASCII without spaces")
+    if settings.jira_deployment == "cloud" and (email is None) != (token is None):
+        problems.append(
+            "Jira Cloud needs both AGENTOS_JIRA_SERVICE_EMAIL and AGENTOS_JIRA_SERVICE_TOKEN "
+            "(or neither: no Jira import)"
+        )
+    return problems
+
+
 def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
     """Validate cross-field rules, then create the data, logs and workspaces dirs.
 
@@ -232,10 +255,11 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
     else:
         if not settings.jira_url:
             problems.append("AGENTOS_JIRA_URL is required unless AGENTOS_DEV_AUTH=1")
-        elif problem := _url_problem("AGENTOS_JIRA_URL", settings.jira_url):
-            problems.append(problem)
         if not settings.jira_projects:
             problems.append("AGENTOS_JIRA_PROJECTS is required unless AGENTOS_DEV_AUTH=1")
+    if settings.jira_url and (problem := _url_problem("AGENTOS_JIRA_URL", settings.jira_url)):
+        problems.append(problem)
+    problems.extend(_jira_service_problems(settings))
 
     if settings.launcher == "github":
         # The launcher's own constructor checks the values' shapes (context.build_context).

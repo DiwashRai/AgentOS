@@ -29,4 +29,5 @@ def app_config(ctx: Ctx) -> AppConfig:
         default_repo=space.default_repo,
         runtimes=sorted(runtimes.runtimes),
         default_runtime=runtimes.default_runtime,
+        sources=["jira"] if ctx.jira_source is not None else [],
     )

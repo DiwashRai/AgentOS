@@ -22,6 +22,7 @@ ROLES: tuple[Role, ...] = ("viewer", "writer", "admin")
 
 MUTATING_ROLES: dict[tuple[str, str], Role] = {
     ("POST", "/api/tickets"): "writer",
+    ("POST", "/api/tickets/import"): "writer",
     ("PATCH", "/api/tickets/{key}"): "writer",
     ("PUT", "/api/tickets/{key}/pipeline"): "writer",
     ("PUT", "/api/tickets/{key}/files/{path}"): "writer",

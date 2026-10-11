@@ -15,7 +15,7 @@ from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.space import SpaceConfig
 from agentos.ratelimit import RateLimiter
-from agentos.sources.jira import JiraClient
+from agentos.sources.jira import JiraClient, JiraSource
 
 LOGIN_ATTEMPTS_PER_MINUTE = 10  # SPEC §11
 
@@ -36,6 +36,19 @@ class AppContext:
     # Jira login attempts per (client IP, submitted email/username).
     login_limiter: RateLimiter = field(default_factory=_login_limiter)
     # Later: broker.
+
+    @property
+    def jira_source(self) -> JiraSource | None:
+        """Jira import: the Jira client with the service account (AGENTOS_JIRA_SERVICE_*), or None
+        when either is missing (startup checks keep the pair consistent). Built per use from
+        `jira` and `settings`, so a test that swaps either one is honoured."""
+        token = self.settings.jira_service_token
+        if self.jira is None or token is None:
+            return None
+        creds = self.jira.credentials(
+            token=token.get_secret_value(), email=self.settings.jira_service_email
+        )
+        return JiraSource(self.jira, creds)
 
 
 def build_context(settings: Settings, launcher: Launcher | None = None) -> AppContext:

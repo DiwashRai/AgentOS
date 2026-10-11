@@ -1,4 +1,5 @@
-"""A small Jira REST client (SPEC §11, §12): login checks today, issue import next (request 11).
+"""A small Jira REST client (SPEC §11, §12): login checks, and `JiraSource`, the ticket source
+that imports an issue by key or browse URL (request 11).
 
 An adapter: plain values in, dataclasses out, its own exceptions for failures (the caller maps
 them to `ApiError`). No db, no services, no web framework.
@@ -11,25 +12,41 @@ no traceback carries the httpx request (which holds the `Authorization` header).
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
+from agentos.models import Priority, TicketType
+from agentos.sources.base import (
+    SourceError,
+    SourceNotFound,
+    SourceTicket,
+    SourceUnauthorized,
+    SourceUnavailable,
+)
+
 Deployment = Literal["cloud", "datacenter"]
 TIMEOUT_S = 10.0
+# What an import reads; Cloud and DC both serve `description` as a wiki-markup string (or null).
+ISSUE_FIELDS = ("summary", "description", "issuetype", "priority", "labels")
 
 
-class JiraError(Exception):
+class JiraError(SourceError):
     """Base class. Messages name the path and status only, never credentials."""
 
 
-class JiraUnauthorized(JiraError):
+class JiraUnauthorized(JiraError, SourceUnauthorized):
     """Jira rejected the credentials (401/403)."""
 
 
-class JiraUnavailable(JiraError):
+class JiraNotFound(JiraError, SourceNotFound):
+    """The issue doesn't exist or the credentials can't see it (Jira answers 404 or 403)."""
+
+
+class JiraUnavailable(JiraError, SourceUnavailable):
     """Network error, timeout, 5xx or an unexpected response."""
 
 
@@ -114,6 +131,20 @@ class JiraClient:
             return False
         raise JiraUnavailable(f"GET {path}: {status}")
 
+    def issue(
+        self, creds: JiraCredentials, key: str, fields: tuple[str, ...] = ISSUE_FIELDS
+    ) -> dict[str, Any]:
+        """`GET /rest/api/2/issue/{key}?fields=...` (the raw JSON). 401 → JiraUnauthorized;
+        403/404 → JiraNotFound (Jira hides issues the credentials can't browse); anything else
+        but 200 → JiraUnavailable."""
+        path = f"/rest/api/2/issue/{_segment(key)}"
+        response = self.get(creds, path, params={"fields": ",".join(fields)})
+        if response.status_code == 401:
+            raise JiraUnauthorized(f"GET {path}: 401")
+        if response.status_code in (403, 404):
+            raise JiraNotFound(f"GET {path}: {response.status_code}")
+        return self._json(path, response)
+
     # ------------------------------------------------------------------ plumbing
 
     def get(
@@ -144,6 +175,115 @@ class JiraClient:
         if not isinstance(data, dict):
             raise JiraUnavailable(f"GET {path}: not a JSON object")
         return data
+
+
+# ------------------------------------------------------------------ the ticket source (import)
+
+# A Jira issue key as people type it (project keys may hold `_`; the ticket key validator decides
+# whether AgentOS can use it). Matched case-insensitively, stored upper-case.
+_ISSUE_KEY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*-[0-9]+")
+
+# Jira issue type / priority names (Cloud and DC defaults), lower-cased → AgentOS values.
+# Anything unknown: type `task`, priority `normal`.
+_TYPES: dict[str, TicketType] = {
+    "bug": "bug",
+    "story": "feature",
+    "epic": "feature",
+    "new feature": "feature",
+    "improvement": "improvement",
+}
+_PRIORITIES: dict[str, Priority] = {
+    "highest": "high",
+    "high": "high",
+    "blocker": "high",
+    "critical": "high",
+    "medium": "normal",
+    "low": "low",
+    "lowest": "low",
+    "minor": "low",
+    "trivial": "low",
+}
+
+
+class JiraSource:
+    """`TicketSource` for Jira: `parse_ref` takes a key or a `{JIRA_URL}/browse/KEY` link (or
+    `?selectedIssue=KEY` on the same site); `fetch` reads the issue with the service account."""
+
+    name: Literal["jira"] = "jira"
+
+    def __init__(self, client: JiraClient, creds: JiraCredentials) -> None:
+        self.client = client
+        self._creds = creds
+        site = urlsplit(client.base_url)
+        self._host = (site.hostname or "").lower()
+        self._port = _port(site.scheme, site.port)
+        self._base_path = site.path.rstrip("/")
+
+    def browse_url(self, key: str) -> str:
+        return f"{self.client.base_url}/browse/{key}"
+
+    def parse_ref(self, ref: str) -> str | None:
+        """The issue key (upper-case), or None if `ref` is neither a key nor a link to an issue on
+        this Jira site."""
+        ref = ref.strip()
+        if _ISSUE_KEY_RE.fullmatch(ref):
+            return ref.upper()
+        try:
+            parts = urlsplit(ref)
+            port = _port(parts.scheme, parts.port)
+        except ValueError:  # e.g. a bad port or an unbalanced IPv6 bracket
+            return None
+        same_site = (parts.hostname or "").lower() == self._host and port == self._port
+        if parts.scheme.lower() not in ("http", "https") or not same_site:
+            return None
+        path = parts.path.rstrip("/")
+        browse = f"{self._base_path}/browse/"
+        if path.startswith(browse):
+            candidate = path[len(browse) :]
+            return candidate.upper() if _ISSUE_KEY_RE.fullmatch(candidate) else None
+        if path == self._base_path or path.startswith(f"{self._base_path}/"):
+            selected = parse_qs(parts.query).get("selectedIssue", [])
+            if len(selected) == 1 and _ISSUE_KEY_RE.fullmatch(selected[0]):
+                return selected[0].upper()
+        return None
+
+    def fetch(self, external_id: str) -> SourceTicket:
+        """The issue, mapped. JiraNotFound / JiraUnauthorized / JiraUnavailable on failure."""
+        data = self.client.issue(self._creds, external_id)
+        key = data.get("key")
+        fields = data.get("fields")
+        if not isinstance(key, str) or not _ISSUE_KEY_RE.fullmatch(key):
+            raise JiraUnavailable(f"issue {external_id}: no key in the response")
+        if not isinstance(fields, dict):
+            raise JiraUnavailable(f"issue {external_id}: no fields in the response")
+        description = fields.get("description")
+        labels = fields.get("labels")
+        key = key.upper()
+        return SourceTicket(
+            external_id=key,
+            key=key,
+            project=key.rsplit("-", 1)[0],
+            title=(_str_or_none(fields.get("summary")) or "").strip(),
+            description=description if isinstance(description, str) else "",
+            type=_TYPES.get(_name(fields.get("issuetype")), "task"),
+            priority=_PRIORITIES.get(_name(fields.get("priority")), "normal"),
+            labels=[x for x in labels if isinstance(x, str)] if isinstance(labels, list) else [],
+            url=self.browse_url(key),
+        )
+
+    def post_comment(self, external_id: str, body: str) -> str:
+        raise NotImplementedError("Jira comment sync is not built yet (SPEC §11 M1)")
+
+
+def _name(value: object) -> str:
+    """`{"name": "Bug", ...}` → "bug"; anything else → ""."""
+    name = value.get("name") if isinstance(value, dict) else None
+    return name.strip().lower() if isinstance(name, str) else ""
+
+
+def _port(scheme: str, port: int | None) -> int | None:
+    """The effective port (`https://x` and `https://x:443` are the same site)."""
+    return port if port is not None else {"http": 80, "https": 443}.get(scheme.lower())
 
 
 def _str_or_none(value: object) -> str | None:

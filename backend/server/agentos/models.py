@@ -74,6 +74,7 @@ ErrorCode = Literal[
     "run_active",
     "bundle_locked",
     "already_claimed",
+    "key_taken",  # an import whose key another ticket already has
     # runs & pipeline
     "invalid_stage",
     "invalid_pipeline",
@@ -138,6 +139,9 @@ class AppConfig(ApiModel):
     default_repo: str | None
     runtimes: list[str]
     default_runtime: str
+    # Where tickets can be imported from (POST /api/tickets/import): ["jira"] when the Jira URL and
+    # service account are configured, else [].
+    sources: list[Literal["jira", "github"]]
 
 
 class Health(ApiModel):
@@ -387,6 +391,19 @@ class TicketPatch(PatchModel):
     repo: str | None = None
     base_branch: str | None = None
     owner_id: int | None = None
+
+
+class ImportRequest(ApiModel):
+    """A source ticket to import: a Jira key (`SCRUM-6`) or its browse link."""
+
+    ref: str = Field(min_length=1, max_length=2000)
+
+
+class ImportResult(ApiModel):
+    """`created: false` = the issue was imported before; `ticket` is that ticket."""
+
+    ticket: TicketDetail
+    created: bool
 
 
 class PipelineUpdate(ApiModel):
