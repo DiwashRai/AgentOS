@@ -9,8 +9,19 @@ export const keys = {
   all: ["agentos"] as const,
   me: () => [...keys.all, "me"] as const,
   config: () => [...keys.all, "config"] as const,
+  people: () => [...keys.all, "people"] as const,
+  template: () => [...keys.all, "template"] as const,
   tickets: () => [...keys.all, "tickets"] as const,
   ticket: (key: string) => [...keys.tickets(), key] as const,
+  // Everything below hangs off its ticket, so invalidating a ticket refreshes all of it.
+  files: (key: string) => [...keys.ticket(key), "files"] as const,
+  file: (key: string, path: string) => [...keys.files(key), path] as const,
+  versions: (key: string, path: string) => [...keys.files(key), path, "versions"] as const,
+  chat: (key: string) => [...keys.ticket(key), "chat"] as const,
+  runs: (key: string) => [...keys.ticket(key), "runs"] as const,
+  run: (id: number) => [...keys.all, "run", id] as const,
+  runEvents: (id: number) => [...keys.run(id), "events"] as const,
+  manifest: (id: number) => [...keys.run(id), "manifest"] as const,
 };
 
 /** Public app config (auth mode, key prefix, defaults). Static for the life of the server. */
@@ -67,6 +78,273 @@ export function useTickets() {
   return useQuery({
     queryKey: keys.tickets(),
     queryFn: () => unwrap(api.GET("/api/tickets")),
-    refetchInterval: 3000,
+    refetchInterval: POLL_MS,
   });
 }
+
+const POLL_MS = 3000;
+const RUN_POLL_MS = 1000;
+/** Keep at most this many log events per run in memory (SPEC §13: last 5,000 lines). */
+const MAX_EVENTS = 5000;
+
+type Ticket = Schemas["TicketDetail"];
+/** `RunEvent` is a union on `type` (models.py). */
+type RunEvent =
+  | Schemas["StageStartedEvent"]
+  | Schemas["StageFinishedEvent"]
+  | Schemas["LogEvent"]
+  | Schemas["WarningEvent"];
+
+/** Mutations change server-derived state everywhere (attention, rail, now): refetch the ticket,
+ *  its children and the board. Never patch the cache by hand. */
+function useInvalidateTicket() {
+  const queryClient = useQueryClient();
+  return (key: string) =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: keys.ticket(key) }),
+      queryClient.invalidateQueries({ queryKey: keys.tickets(), exact: true }),
+    ]);
+}
+
+// ------------------------------------------------------------------ people & template
+
+export function usePeople() {
+  return useQuery({
+    queryKey: keys.people(),
+    queryFn: () => unwrap(api.GET("/api/people")),
+    staleTime: 60_000,
+  });
+}
+
+export function useTemplate() {
+  return useQuery({ queryKey: keys.template(), queryFn: () => unwrap(api.GET("/api/template")) });
+}
+
+export function useSaveTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["TemplateUpdate"]) => unwrap(api.PUT("/api/template", { body })),
+    onSuccess: (t) => {
+      queryClient.setQueryData(keys.template(), t);
+    },
+  });
+}
+
+// ------------------------------------------------------------------ tickets
+
+/** One ticket's detail (pipeline, next_stage, active_run_id…). Polled while open, like the board. */
+export function useTicket(key: string | null) {
+  return useQuery({
+    queryKey: keys.ticket(key ?? ""),
+    queryFn: () =>
+      unwrap(api.GET("/api/tickets/{key}", { params: { path: { key: key ?? "" } } })),
+    enabled: key !== null,
+    refetchInterval: POLL_MS,
+  });
+}
+
+export function useCreateTicket() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["TicketCreate"]) => unwrap(api.POST("/api/tickets", { body })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.tickets(), exact: true }),
+  });
+}
+
+export function usePatchTicket(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: (body: Schemas["TicketPatch"]) =>
+      unwrap(api.PATCH("/api/tickets/{key}", { params: { path: { key } }, body })),
+    onSuccess: () => invalidate(key),
+  });
+}
+
+/** 409 `stale_version` or `run_active` → the caller shows "changed by someone else, reload". */
+export function useSavePipeline(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: (body: Schemas["PipelineUpdate"]) =>
+      unwrap(api.PUT("/api/tickets/{key}/pipeline", { params: { path: { key } }, body })),
+    onSuccess: () => invalidate(key),
+  });
+}
+
+// ------------------------------------------------------------------ runs
+
+/** Dispatch / Continue / Retry: `from_stage` omitted = the server's `next_stage`. */
+export function useDispatch(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: (fromStage?: string) =>
+      unwrap(
+        api.POST("/api/tickets/{key}/runs", {
+          params: { path: { key } },
+          body: { from_stage: fromStage ?? null },
+        }),
+      ),
+    onSuccess: () => invalidate(key),
+  });
+}
+
+export function useCancelRun(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: (runId: number) =>
+      unwrap(api.POST("/api/runs/{run_id}/cancel", { params: { path: { run_id: runId } } })),
+    onSuccess: () => invalidate(key),
+  });
+}
+
+export function useRuns(key: string) {
+  return useQuery({
+    queryKey: keys.runs(key),
+    queryFn: () => unwrap(api.GET("/api/tickets/{key}/runs", { params: { path: { key } } })),
+    refetchInterval: POLL_MS,
+  });
+}
+
+/** One run with its stage_runs; polled every second while `active`. */
+export function useRun(id: number | null, active: boolean) {
+  return useQuery({
+    queryKey: keys.run(id ?? 0),
+    queryFn: () =>
+      unwrap(api.GET("/api/runs/{run_id}", { params: { path: { run_id: id ?? 0 } } })),
+    enabled: id !== null,
+    refetchInterval: active ? RUN_POLL_MS : false,
+  });
+}
+
+/**
+ * A run's events, fetched incrementally: each poll asks only for events after the last seq it has
+ * and appends them (keeping the newest MAX_EVENTS). Polls every second while `active`.
+ */
+export function useRunEvents(id: number | null, active: boolean) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: keys.runEvents(id ?? 0),
+    queryFn: async (): Promise<RunEvent[]> => {
+      const runId = id ?? 0;
+      const have = queryClient.getQueryData<RunEvent[]>(keys.runEvents(runId)) ?? [];
+      const after = have.at(-1)?.seq;
+      const fresh: RunEvent[] = [];
+      // Drain in pages of 1000 so a reopened finished run loads fully.
+      for (;;) {
+        const lastSeq = fresh.at(-1)?.seq ?? after;
+        const page = await unwrap(
+          api.GET("/api/runs/{run_id}/events", {
+            params: {
+              path: { run_id: runId },
+              query: { limit: 1000, ...(lastSeq === undefined ? {} : { after_seq: lastSeq }) },
+            },
+          }),
+        );
+        fresh.push(...page);
+        if (page.length < 1000) break;
+      }
+      return fresh.length === 0 ? have : [...have, ...fresh].slice(-MAX_EVENTS);
+    },
+    enabled: id !== null,
+    refetchInterval: active ? RUN_POLL_MS : false,
+  });
+}
+
+/** Exactly what was sent to the worker; can be MiBs, so fetched only when the view opens. */
+export function useManifest(id: number | null) {
+  return useQuery({
+    queryKey: keys.manifest(id ?? 0),
+    queryFn: () =>
+      unwrap(api.GET("/api/runs/{run_id}/manifest", { params: { path: { run_id: id ?? 0 } } })),
+    enabled: id !== null,
+    staleTime: Infinity,
+  });
+}
+
+// ------------------------------------------------------------------ files (the bundle)
+
+export function useFiles(key: string) {
+  return useQuery({
+    queryKey: keys.files(key),
+    queryFn: () => unwrap(api.GET("/api/tickets/{key}/files", { params: { path: { key } } })),
+    refetchInterval: POLL_MS,
+  });
+}
+
+export function useFile(key: string, path: string | null) {
+  return useQuery({
+    queryKey: keys.file(key, path ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/tickets/{key}/files/{path}", {
+          params: { path: { key, path: path ?? "" } },
+        }),
+      ),
+    enabled: path !== null,
+  });
+}
+
+export function useFileVersions(key: string, path: string | null) {
+  return useQuery({
+    queryKey: keys.versions(key, path ?? ""),
+    queryFn: () =>
+      unwrap(
+        api.GET("/api/tickets/{key}/versions/{path}", {
+          params: { path: { key, path: path ?? "" } },
+        }),
+      ),
+    enabled: path !== null,
+  });
+}
+
+/** Create (`base_version: 0`) or update a file. 409 `stale_version` / `bundle_locked` → caller. */
+export function useSaveFile(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: ({ path, ...body }: Schemas["FileWrite"] & { path: string }) =>
+      unwrap(
+        api.PUT("/api/tickets/{key}/files/{path}", { params: { path: { key, path } }, body }),
+      ),
+    onSuccess: () => invalidate(key),
+  });
+}
+
+export function useDeleteFile(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: ({ path, baseVersion }: { path: string; baseVersion: number }) =>
+      unwrap(
+        api.DELETE("/api/tickets/{key}/files/{path}", {
+          params: { path: { key, path }, query: { base_version: baseVersion } },
+        }),
+      ),
+    onSuccess: () => invalidate(key),
+  });
+}
+
+// ------------------------------------------------------------------ chat (Talk)
+
+/** The latest messages, oldest first. Polled until SSE ships. */
+export function useChat(key: string | null) {
+  return useQuery({
+    queryKey: keys.chat(key ?? ""),
+    queryFn: () =>
+      unwrap(api.GET("/api/tickets/{key}/chat", { params: { path: { key: key ?? "" } } })),
+    enabled: key !== null,
+    refetchInterval: POLL_MS,
+  });
+}
+
+export function usePostChat(key: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) =>
+      unwrap(api.POST("/api/tickets/{key}/chat", { params: { path: { key } }, body: { body } })),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.chat(key) }),
+        queryClient.invalidateQueries({ queryKey: keys.tickets(), exact: true }),
+      ]),
+  });
+}
+
+export type { Ticket, RunEvent };
