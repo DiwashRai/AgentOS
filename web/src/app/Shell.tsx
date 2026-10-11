@@ -2,6 +2,8 @@
 import { Navigate, Outlet, useLocation } from "react-router";
 
 import { useMe } from "../api/queries";
+import { NewTicketHost } from "../features/newticket/NewTicketHost";
+import { PeekHost } from "../features/peek/PeekHost";
 import { Quiet } from "./Quiet";
 import { Rail } from "./Rail";
 import s from "./Shell.module.css";
@@ -22,6 +24,9 @@ export function Shell() {
       <main className={s.main}>
         <Outlet />
       </main>
+      {/* URL-driven overlays over every view: ?peek=KEY and ?new=1 */}
+      <PeekHost />
+      <NewTicketHost />
     </div>
   );
 }

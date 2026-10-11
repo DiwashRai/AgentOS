@@ -5,6 +5,11 @@
   padding: 8px 18px 18px;
 }
 
+.scroll {
+  composes: fill;
+  overflow-y: auto;
+}
+
 .queue {
   composes: fill;
   display: flex;

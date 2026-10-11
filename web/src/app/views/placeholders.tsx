@@ -1,9 +1,6 @@
-// Placeholder views: each renders its final top bar (DESIGN §6–8) over an empty surface.
-// The real views replace these one by one.
-import { useNavigate, useParams } from "react-router";
-
+// Placeholder views (Compact, All teams) and the Settings › Template page wrapper.
 import { useLogout } from "../../api/queries";
-import { CloseIcon } from "../icons";
+import { TemplatePage } from "../../features/pipeline";
 import { Quiet } from "../Quiet";
 import { Surface } from "../Surface";
 import { TopBar } from "../TopBar";
@@ -32,53 +29,31 @@ export function TeamsView() {
   );
 }
 
-export function TicketView() {
-  const { key = "", tab = "overview" } = useParams();
-  const navigate = useNavigate();
-  return (
-    <>
-      <TopBar
-        title="Ticket"
-        middle={<span className={s.crumb}>{key}</span>}
-        search="Search or jump to a ticket"
-        action={
-          <button
-            type="button"
-            className={s.iconButton}
-            aria-label="Close ticket"
-            title="Close ticket"
-            onClick={() => {
-              void navigate("/");
-            }}
-          >
-            <CloseIcon />
-          </button>
-        }
-      />
-      <Surface className={s.fill}>
-        <Quiet>{`${key} · ${tab}`}</Quiet>
-      </Surface>
-    </>
-  );
-}
-
+/** Settings: the pipeline template. Sign out lives here until the avatar gets a menu. */
 export function TemplateView() {
   const logout = useLogout();
   return (
     <>
-      <TopBar title="Template" context="The pipeline every new ticket starts from" />
-      <Surface className={s.fill}>
-        <button
-          type="button"
-          className={s.quietButton}
-          disabled={logout.isPending}
-          onClick={() => {
-            logout.mutate();
-          }}
-        >
-          Sign out
-        </button>
+      <TopBar
+        title="Template"
+        context="The pipeline every new ticket starts from"
+        search={false}
+        action={
+          <button
+            type="button"
+            className={s.quietButton}
+            disabled={logout.isPending}
+            onClick={() => {
+              logout.mutate();
+            }}
+          >
+            Sign out
+          </button>
+        }
+      />
+      <Surface className={s.scroll}>
         {logout.error && <Quiet error>{logout.error.message}</Quiet>}
+        <TemplatePage />
       </Surface>
     </>
   );
