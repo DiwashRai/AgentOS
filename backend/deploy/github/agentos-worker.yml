@@ -1,0 +1,109 @@
+# AgentOS worker: runs one AgentOS run on a self-hosted runner.
+#
+# The AgentOS server's GitHub Actions launcher dispatches this workflow once per run with three
+# inputs (server, token, run_id). The job downloads worker.py from the server and runs it; the
+# worker claims the run, clones the ticket's repo itself, runs the stages and pushes the branch.
+#
+# Install: this file must be on the DEFAULT branch of the repo AgentOS dispatches to
+# (AGENTOS_GITHUB_REPO), at .github/workflows/agentos-worker.yml (GitHub only accepts
+# workflow_dispatch for workflows it knows from the default branch). The template lives in
+# backend/deploy/github/; a backend test keeps the two copies byte-identical.
+#
+# The runner (labels: self-hosted, agentos) needs, for the user it runs as:
+#   - Python >= 3.11 as `python3`, curl, git with push access to the ticket repos
+#   - the agent CLIs the pipeline's runtimes use (e.g. `claude`), logged in
+#   - `gh`, logged in (opens PRs; the worker also asks it for the branch's PR URL)
+# The job uses the runner's own credentials, never GITHUB_TOKEN, hence `permissions: {}` and no
+# actions/checkout.
+#
+# The server URL (AGENTOS_WORKER_URL) must be reachable FROM THE RUNNER. A WSL2 runner can't
+# reach the Windows host as 127.0.0.1 unless WSL uses mirrored networking; see
+# backend/deploy/README.md.
+#
+# Security: dispatch inputs are visible to anyone who can read this repo's Actions runs. The
+# dispatch token is single-use (the worker's claim binds its own token to the run) and is masked
+# before anything else. Inputs are never interpolated into scripts (`${{ }}` in a `run:` block is
+# a script-injection hole): the token is read from the event payload, the rest from `env:`.
+
+name: AgentOS worker
+run-name: "AgentOS run #${{ inputs.run_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: AgentOS server URL the worker dials (AGENTOS_WORKER_URL)
+        required: true
+        type: string
+      token:
+        description: Single-use dispatch token (masked)
+        required: true
+        type: string
+      run_id:
+        description: AgentOS run id
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  work:
+    runs-on: [self-hosted, agentos]
+    # A backstop only. The server's limit is the run's time budget (the sum of its stages'
+    # timeout_s, plus 15 min): past it the reaper fails the run and the worker aborts on its next
+    # call. Stage timeouts are at most 6 h each, so keep this above your longest pipeline.
+    timeout-minutes: 720
+    defaults:
+      run:
+        shell: bash
+    env:
+      AOS_SERVER: ${{ inputs.server }}
+      AOS_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Mask the dispatch token
+        # Read from the event payload, not `env:`: a step's env is printed in the log before the
+        # step runs, i.e. before the mask exists.
+        run: |
+          token="$(python3 -c 'import json, os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["inputs"]["token"])')"
+          if [ -z "$token" ]; then echo "::error::the token input is empty"; exit 1; fi
+          echo "::add-mask::$token"
+
+      - name: Check the inputs and the runner
+        run: |
+          if ! [[ "$AOS_RUN_ID" =~ ^[0-9]+$ ]]; then echo "::error::run_id must be a number"; exit 1; fi
+          case "$AOS_SERVER" in
+            http://*|https://*) ;;
+            *) echo "::error::server must be an http(s) URL"; exit 1 ;;
+          esac
+          python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "worker.py needs Python >= 3.11, found " + sys.version.split()[0])'
+          command -v git >/dev/null || { echo "::error::git is not installed"; exit 1; }
+          command -v curl >/dev/null || { echo "::error::curl is not installed"; exit 1; }
+
+      - name: Download worker.py
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 \
+            --output "$RUNNER_TEMP/agentos-worker-$AOS_RUN_ID.py" \
+            "${AOS_SERVER%/}/api/worker/worker.py"
+
+      - name: Run the worker
+        run: |
+          AGENTOS_TOKEN="$(python3 -c 'import json, os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["inputs"]["token"])')"
+          export AGENTOS_TOKEN  # the worker reads it and removes it from the stages' env
+          export PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8
+          # Agents read untrusted ticket text; stop the runner from acting on workflow commands
+          # (`::...::`) that anything prints from here on. Masks stay in effect.
+          echo "::stop-commands::$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+          cd "$RUNNER_TEMP"  # outside any checkout, so no parent CLAUDE.md/AGENTS.md leaks in
+          exec python3 "$RUNNER_TEMP/agentos-worker-$AOS_RUN_ID.py" \
+            --server "$AOS_SERVER" \
+            --workdir "$RUNNER_TEMP/agentos-run-$AOS_RUN_ID"
+
+      - name: Clean up
+        if: always()
+        # The worker keeps a failed run's workdir for debugging; on a runner nobody looks there,
+        # and RUNNER_TEMP is emptied between jobs anyway. This makes the cleanup explicit.
+        run: |
+          if [[ "$AOS_RUN_ID" =~ ^[0-9]+$ ]]; then
+            rm -rf -- "$RUNNER_TEMP/agentos-run-$AOS_RUN_ID" "$RUNNER_TEMP/agentos-worker-$AOS_RUN_ID.py"
+          fi

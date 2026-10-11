@@ -309,7 +309,9 @@ class RunSummary(ApiModel):
     # Set while a running run waits for its worker to acknowledge a cancel (UI: "Cancelling…").
     cancel_requested_at: AwareDatetime | None
     error: str | None
-    launch_ref: str | None
+    launch_ref: str | None  # informational: a PID (local), the Actions run URL (github)
+    # The launcher's page for this run (the GitHub Actions run); null for the local launcher.
+    launch_url: str | None
 
 
 class TicketSummary(ApiModel):

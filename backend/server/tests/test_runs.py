@@ -56,6 +56,34 @@ def run_count(ctx: AppContext) -> int:
 # ------------------------------------------------------------------ dispatch
 
 
+@pytest.mark.parametrize(
+    ("launcher_name", "launch_ref", "url"),
+    [
+        (
+            "github",
+            "https://github.com/o/r/actions/runs/9",
+            "https://github.com/o/r/actions/runs/9",
+        ),
+        ("local", "4242", None),  # a PID
+        ("github", None, None),  # not launched yet
+    ],
+)
+def test_launch_url_links_the_github_run(
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    launcher_name: str,
+    launch_ref: str | None,
+    url: str | None,
+) -> None:
+    t = create_ticket()
+    run = runs.queue(t.key)
+    runs.set_run(run.id, launcher=launcher_name, launch_ref=launch_ref)
+    assert runs.get(run.id).launch_url == url
+    latest = authed.get(f"/api/tickets/{t.key}").json()["latest_run"]
+    assert latest["launch_url"] == url
+
+
 def test_dispatch_queues_the_next_segment(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
@@ -69,6 +97,7 @@ def test_dispatch_queues_the_next_segment(
     assert run.created_by.display_name == "dev"
     assert run.started_at is None
     assert run.launch_ref is None
+    assert run.launch_url is None
     row = runs.db_run(run.id)
     assert row["time_budget_s"] == 3600
     assert row["launcher"] == "local"

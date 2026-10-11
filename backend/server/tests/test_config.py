@@ -16,6 +16,8 @@ from agentos.config import (
     load_settings,
     startup_checks,
 )
+from agentos.context import build_context
+from agentos.launchers.github import GitHubActionsLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, RepoInfo
 from agentos.pipeline.runtime import RuntimesConfig
@@ -243,8 +245,21 @@ def test_jira_required_without_dev_auth(tmp_path: Path, runtimes: RuntimesConfig
     startup_checks(ok, runtimes)
 
 
-def test_github_launcher_not_available(tmp_path: Path) -> None:
-    assert any("M1" in p for p in problems(make(tmp_path, launcher="github")))
+def test_github_launcher_needs_repo_and_token(tmp_path: Path) -> None:
+    found = problems(make(tmp_path, launcher="github"))
+    assert any("AGENTOS_GITHUB_REPO" in p for p in found)
+    assert any("AGENTOS_GITHUB_TOKEN" in p for p in found)
+
+
+def test_github_launcher_is_built_from_settings(tmp_path: Path) -> None:
+    github = {"launcher": "github", "github_repo": "o/r", "github_token": "t0ken"}
+    ctx = build_context(make(tmp_path, **github))
+    assert isinstance(ctx.launcher, GitHubActionsLauncher)
+    assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("github", None)
+    with pytest.raises(ConfigError) as caught:
+        build_context(make(tmp_path, **{**github, "github_repo": "not a repo"}))
+    assert "AGENTOS_GITHUB_" in str(caught.value)
+    assert "t0ken" not in str(caught.value)
 
 
 @pytest.mark.parametrize("prefix", ["aos", "1AB", "A-B", ""])

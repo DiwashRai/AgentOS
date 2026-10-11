@@ -67,7 +67,7 @@ _SQL_BOARD = (
 _SQL_ONE = _SELECT_TICKETS + "WHERE t.key = ?"
 _SQL_LATEST_RUNS = (
     "SELECT r.id, r.ticket_id, r.status, r.from_stage, r.stage_ids, r.created_by, r.created_at, "
-    "r.started_at, r.finished_at, r.cancel_requested_at, r.error, r.launch_ref, "
+    "r.started_at, r.finished_at, r.cancel_requested_at, r.error, r.launcher, r.launch_ref, "
     "u.display_name AS creator_name, u.avatar_url AS creator_avatar "
     "FROM runs r LEFT JOIN users u ON u.id = r.created_by "
     "WHERE r.id IN (SELECT MAX(id) FROM runs "
@@ -271,7 +271,16 @@ def _run_summary(run: Row, ticket_key: str) -> RunSummary:
         cancel_requested_at=from_db_opt(run["cancel_requested_at"]),
         error=run["error"],
         launch_ref=run["launch_ref"],
+        launch_url=launch_url(run["launcher"], run["launch_ref"]),
     )
+
+
+def launch_url(launcher: str, launch_ref: str | None) -> str | None:
+    """The launcher's page for a run: the GitHub launcher's ref is the Actions run URL; the local
+    launcher's is a PID (no page)."""
+    if launcher == "github" and launch_ref is not None and launch_ref.startswith("https://"):
+        return launch_ref
+    return None
 
 
 def _tasks(row: Row) -> TaskProgress | None:

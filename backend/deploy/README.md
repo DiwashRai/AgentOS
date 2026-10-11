@@ -13,7 +13,10 @@ Docker and Podman both work. The `just` recipes default to Docker; add `engine=p
 1. `backend/agentos.toml`: copy `backend/agentos.toml.example` (the Space, the repo catalog and
    the runtimes). It is mounted read-only at `/config/agentos.toml`.
 2. `backend/deploy/.env.container`: copy `container.env.example` and fill it in (gitignored).
-   Dev auth can't run in the container (it needs a loopback host), so this uses Jira.
+   Dev auth can't run in the container (it needs a loopback host), so this uses Jira: people
+   sign in with their Jira email + API token, need access to one of `AGENTOS_JIRA_PROJECTS`, and
+   wait for an admin's approval after their first sign-in (Settings › Users). List yourself in
+   `AGENTOS_ADMINS` (account id or email) so the first sign-in is an admin.
 3. Build and start:
 
    ```
@@ -68,10 +71,69 @@ database that is newer than it knows).
   example `--userns=keep-id:uid=10001,gid=10001` or `podman unshare chown 10001:10001 <dir>`).
 - On SELinux hosts, bind mounts need `:Z`/`:z` or the `relabel=shared` mount option.
 
+## GitHub Actions runner
+
+From the container, runs go to a GitHub Actions runner: the local launcher would try to run
+workers inside the container, which has no agent CLIs. For each run, the server dispatches the
+workflow `github/agentos-worker.yml`. The runner downloads `GET /api/worker/worker.py` from the
+server and runs it, and the worker dials back to `AGENTOS_WORKER_URL`.
+
+**Settings** (in `.env.container`):
+
+```
+AGENTOS_LAUNCHER=github
+AGENTOS_GITHUB_REPO=DiwashRai/AgentOS        # the repo whose Actions run the workflow
+AGENTOS_GITHUB_WORKFLOW=agentos-worker.yml   # default
+AGENTOS_GITHUB_REF=main                      # the branch the workflow file is on; default main
+AGENTOS_GITHUB_TOKEN=github_pat_...          # secret
+# AGENTOS_GITHUB_API_URL=https://ghe.example.com/api/v3   # GHES only; default api.github.com
+AGENTOS_WORKER_URL=http://<reachable from the runner>:8080
+```
+
+(`--env-file` takes no inline comments; they're only here to explain each line.)
+
+**Token:** use a fine-grained PAT that covers only the one repository, with the repository
+permission **Actions: Read and write** (dispatching needs write; Metadata: read is added
+automatically). It can't push code or read secrets. A classic PAT would need the whole `repo`
+scope, so avoid it.
+
+**Install the workflow:** copy `github/agentos-worker.yml` to `.github/workflows/agentos-worker.yml`
+on the repo's **default branch** and push it. GitHub only dispatches workflows it knows from the
+default branch. In this repo the copy already exists, and a backend test keeps it byte-identical
+to the template.
+
+**Runner checklist** (for the user the runner service runs as):
+- [ ] Self-hosted runner registered on `AGENTOS_GITHUB_REPO` with the label `agentos`
+      (the job uses `runs-on: [self-hosted, agentos]`), running as a service.
+- [ ] `python3` >= 3.11, `curl` and `git` installed. The job checks for these first.
+- [ ] `git` can clone and push the ticket repos without prompting (SSH key or a credential
+      helper). The worker sets `GIT_TERMINAL_PROMPT=0`.
+- [ ] The agent CLIs your runtimes use (e.g. `claude`), logged in. `gh` logged in: the worker
+      looks up the branch's PR with it, and the open-pr stage uses it.
+- [ ] `curl $AGENTOS_WORKER_URL/api/health` works **from the runner**.
+
+The job uses the runner's own credentials, never `GITHUB_TOKEN` (`permissions: {}`, no
+checkout). Dispatch inputs show in the Actions UI to anyone who can read the repo. The dispatch
+token is single-use: the worker's claim binds its own token. The job masks the token before
+anything else and never interpolates inputs into its scripts. Its `timeout-minutes: 720` is
+only a backstop. The real limit is the run's time budget (the sum of its stages' `timeout_s`
+plus 15 min). Past it, the reaper fails the run and the worker stops on its next call.
+
+**WSL2 runner and `AGENTOS_WORKER_URL`.** The container publishes host port 8080 on Windows.
+Inside WSL2, `127.0.0.1` means the WSL VM, not Windows, unless WSL uses mirrored networking:
+- **Mirrored networking** (simplest; Windows 11 22H2+): put `networkingMode=mirrored` under
+  `[wsl2]` in `%UserProfile%\.wslconfig`, then run `wsl --shutdown`. After that,
+  `AGENTOS_WORKER_URL=http://127.0.0.1:8080` works from the runner. The browser keeps using
+  `AGENTOS_PUBLIC_URL`.
+- **NAT (the default):** use the Windows host's IP as WSL sees it:
+  `ip route show default | awk '{print $3}'` inside WSL. That IP can change after a reboot. The
+  Windows firewall must allow inbound TCP 8080 from the WSL network. Set it in
+  `AGENTOS_WORKER_URL=http://<that-ip>:8080`.
+- If the runner has an HTTP proxy configured, add that host to `NO_PROXY`. The worker only
+  bypasses proxies for loopback hosts.
+
 ## Not yet
 
-- The GitHub Actions launcher (D5). Until it lands, the server can only use the local launcher,
-  which would try to run workers inside this container (no agent CLIs). So dispatching from the
-  container doesn't work yet.
 - TLS and proxy details (W5): put a reverse proxy in front and set
-  `AGENTOS_PUBLIC_URL=https://...`. `AGENTOS_TRUST_PROXY` exists but isn't used yet.
+  `AGENTOS_PUBLIC_URL=https://...`. `AGENTOS_TRUST_PROXY=1` makes the login rate limit use the
+  proxy's client-IP headers.

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from agentos.pipeline.runtime import RuntimesConfig
@@ -69,13 +69,21 @@ class Settings(BaseSettings):
     # The Space's Jira projects: signing in needs browse access to at least one of them.
     jira_projects: Annotated[list[str], NoDecode] = []
     admins: Annotated[list[str], NoDecode] = []
+    # AGENTOS_LAUNCHER=github: the workflow (backend/deploy/github/agentos-worker.yml) dispatched
+    # per run, on `github_ref` of `github_repo`. The token needs Actions: write on that repo.
+    github_repo: str | None = None
+    github_workflow: str = "agentos-worker.yml"
+    github_ref: str = "main"
+    github_token: SecretStr | None = None
+    github_api_url: str = "https://api.github.com"  # GHES: https://<host>/api/v3
+    github_api_version: str = "2022-11-28"
 
     @field_validator("data_dir", "workspaces_dir", "config", "worker_env_file", "web_dir")
     @classmethod
     def _absolute(cls, value: Path | None) -> Path | None:
         return None if value is None else value.expanduser().resolve()
 
-    @field_validator("public_url", "worker_url", "jira_url")
+    @field_validator("public_url", "worker_url", "jira_url", "github_api_url")
     @classmethod
     def _strip_slash(cls, value: str | None) -> str | None:
         return None if value is None else value.rstrip("/")
@@ -230,7 +238,15 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
             problems.append("AGENTOS_JIRA_PROJECTS is required unless AGENTOS_DEV_AUTH=1")
 
     if settings.launcher == "github":
-        problems.append("AGENTOS_LAUNCHER=github is not available until M1; use 'local'")
+        # The launcher's own constructor checks the values' shapes (context.build_context).
+        for name, value in (
+            ("AGENTOS_GITHUB_REPO", settings.github_repo),
+            ("AGENTOS_GITHUB_TOKEN", settings.github_token),
+        ):
+            if not value:
+                problems.append(f"{name} is required with AGENTOS_LAUNCHER=github")
+        if problem := _url_problem("AGENTOS_GITHUB_API_URL", settings.github_api_url):
+            problems.append(problem)
 
     if not KEY_PREFIX_RE.match(settings.key_prefix):
         problems.append(

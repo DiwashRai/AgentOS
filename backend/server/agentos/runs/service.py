@@ -41,6 +41,7 @@ from agentos.tickets.board import RunFact, StageRunFact, next_stage
 from agentos.tickets.service import (
     active_run_id,
     get_ticket_row,
+    launch_url,
     run_ticket_ref,
     ticket_pipeline,
 )
@@ -106,6 +107,7 @@ def _summary(row: Row) -> RunSummary:
         cancel_requested_at=from_db_opt(row["cancel_requested_at"]),
         error=row["error"],
         launch_ref=row["launch_ref"],
+        launch_url=launch_url(row["launcher"], row["launch_ref"]),
     )
 
 

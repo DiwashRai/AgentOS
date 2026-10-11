@@ -976,6 +976,8 @@ export interface components {
             id: number;
             /** Launch Ref */
             launch_ref: string | null;
+            /** Launch Url */
+            launch_url: string | null;
             /** Stage Ids */
             stage_ids: string[];
             /** Stage Runs */
@@ -1010,6 +1012,8 @@ export interface components {
             id: number;
             /** Launch Ref */
             launch_ref: string | null;
+            /** Launch Url */
+            launch_url: string | null;
             /** Stage Ids */
             stage_ids: string[];
             /** Started At */

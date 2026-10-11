@@ -1437,6 +1437,17 @@
             ],
             "title": "Launch Ref"
           },
+          "launch_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Launch Url"
+          },
           "stage_ids": {
             "items": {
               "type": "string"
@@ -1494,6 +1505,7 @@
           "cancel_requested_at",
           "error",
           "launch_ref",
+          "launch_url",
           "stage_runs"
         ],
         "title": "RunDetail",
@@ -1571,6 +1583,17 @@
             ],
             "title": "Launch Ref"
           },
+          "launch_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Launch Url"
+          },
           "stage_ids": {
             "items": {
               "type": "string"
@@ -1620,7 +1643,8 @@
           "finished_at",
           "cancel_requested_at",
           "error",
-          "launch_ref"
+          "launch_ref",
+          "launch_url"
         ],
         "title": "RunSummary",
         "type": "object"
