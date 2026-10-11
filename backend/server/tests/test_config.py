@@ -369,6 +369,7 @@ def test_api_config_reflects_dev_settings(tmp_path: Path) -> None:
         default_repo="r",
         runtimes=["claude", "fake"],
         default_runtime="fake",
+        default_model=None,
         sources=[],
     )
 

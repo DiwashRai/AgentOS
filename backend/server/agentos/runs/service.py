@@ -37,6 +37,7 @@ from agentos.pipeline.manifest import render_stages
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import check_segment, segment
 from agentos.pipeline.space import SpaceConfig
+from agentos.templates.service import current_defaults
 from agentos.tickets.board import RunFact, StageRunFact, next_stage
 from agentos.tickets.service import (
     active_run_id,
@@ -206,7 +207,7 @@ def dispatch(
         if run_id is None:  # pragma: no cover - sqlite always sets it after an INSERT
             raise RuntimeError("INSERT INTO runs returned no rowid")
         # Validate now (render errors → 422, rolling the run back); the manifest is built at claim.
-        render_stages(run_id, ref, stages, runtimes)
+        render_stages(run_id, ref, stages, runtimes, defaults=current_defaults(conn))
         conn.execute(
             "UPDATE runs SET stage_ids = ?, time_budget_s = ? WHERE id = ?",
             (json.dumps([s.id for s in stages]), sum(s.timeout_s for s in stages), run_id),

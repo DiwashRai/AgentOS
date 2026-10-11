@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from agentos.errors import ApiError
-from agentos.models import FileEntry, Manifest, Stage
+from agentos.models import FileEntry, Manifest, Stage, TemplateDefaults
 from agentos.pipeline.manifest import build_manifest, render_stages, resolve_agent
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig, RuntimeSpec
@@ -47,6 +47,7 @@ TICKET = TicketRef(
     workspace_mode="repo",
 )
 D = ".claude/skills/context-aos-42-fix-login-bug"
+NONE = TemplateDefaults()  # no Space defaults: the config's default_runtime, no model
 
 
 def agent(
@@ -85,28 +86,78 @@ def agent(
     ],
 )
 def test_resolve_agent(stage: Stage, argv: list[str], stdin: str | None) -> None:
-    assert resolve_agent(stage, "P", RUNTIMES) == (argv, stdin)
+    assert resolve_agent(stage, "P", RUNTIMES, defaults=NONE) == (argv, stdin)
 
 
 def test_resolve_agent_prompt_is_one_element() -> None:
     prompt = 'multi\nline {model} "quoted" & | prompt'
-    argv, stdin = resolve_agent(agent(runtime="copilot", model="m"), prompt, RUNTIMES)
+    argv, stdin = resolve_agent(
+        agent(runtime="copilot", model="m"), prompt, RUNTIMES, defaults=NONE
+    )
     assert argv[-2:] == ["-p", prompt]  # the whole prompt, unsplit and unsubstituted
     assert stdin is None
 
 
 def test_resolve_agent_unknown_runtime() -> None:
     with pytest.raises(ApiError) as e:
-        resolve_agent(agent(runtime="gemini"), "P", RUNTIMES)
+        resolve_agent(agent(runtime="gemini"), "P", RUNTIMES, defaults=NONE)
     assert (e.value.status, e.value.code) == (422, "invalid_stage")
     assert e.value.message == "stage implement: unknown runtime 'gemini'"
+
+
+@pytest.mark.parametrize(
+    ("stage", "defaults", "argv", "stdin"),
+    [
+        # a null model takes the Space default; the stage's own model wins
+        (agent(), TemplateDefaults(model="haiku"), [*CLAUDE_ARGV, "--model", "haiku"], "P"),
+        (
+            agent(model="opus"),
+            TemplateDefaults(model="haiku"),
+            [*CLAUDE_ARGV, "--model", "opus"],
+            "P",
+        ),
+        # a null runtime takes the Space default runtime; the stage's own runtime wins
+        (agent(), TemplateDefaults(runtime="copilot"), ["copilot", "--allow-all", "-p", "P"], None),
+        (agent(runtime="claude"), TemplateDefaults(runtime="copilot"), CLAUDE_ARGV, "P"),
+        # the Space model belongs to the Space runtime: a stage on another runtime doesn't get it
+        (
+            agent(runtime="copilot"),
+            TemplateDefaults(model="haiku"),
+            ["copilot", "--allow-all", "-p", "P"],
+            None,
+        ),
+        (
+            agent(runtime="claude"),
+            TemplateDefaults(model="haiku"),
+            [*CLAUDE_ARGV, "--model", "haiku"],
+            "P",
+        ),
+        (
+            agent(),
+            TemplateDefaults(runtime="copilot", model="gpt"),
+            ["copilot", "--allow-all", "--model={model}", "gpt", "-p", "P"],
+            None,
+        ),
+    ],
+)
+def test_resolve_agent_space_defaults(
+    stage: Stage, defaults: TemplateDefaults, argv: list[str], stdin: str | None
+) -> None:
+    assert resolve_agent(stage, "P", RUNTIMES, defaults=defaults) == (argv, stdin)
+
+
+def test_resolve_agent_unknown_space_default_runtime() -> None:
+    """A Space default runtime that left the config fails like a stage's own would."""
+    with pytest.raises(ApiError) as e:
+        resolve_agent(agent(), "P", RUNTIMES, defaults=TemplateDefaults(runtime="gone"))
+    assert (e.value.status, e.value.code) == (422, "invalid_stage")
 
 
 def test_render_stages_shell_and_agent() -> None:
     lint = Stage(
         id="lint", name="Lint", kind="shell", phase="verify", command="make lint", timeout_s=600
     )
-    stages = render_stages(5, TICKET, [agent(model="sonnet"), lint], RUNTIMES)
+    stages = render_stages(5, TICKET, [agent(model="sonnet"), lint], RUNTIMES, defaults=NONE)
     assert [s.model_dump() for s in stages] == [
         {
             "id": "implement",
@@ -132,7 +183,7 @@ def test_render_stages_shell_and_agent() -> None:
 def test_render_stages_render_error_names_stage() -> None:
     bad = agent().model_copy(update={"prompt": "{{ run.nope }}"})
     with pytest.raises(ApiError) as e:
-        render_stages(1, TICKET, [bad], RUNTIMES)
+        render_stages(1, TICKET, [bad], RUNTIMES, defaults=NONE)
     assert e.value.code == "render_error"
     assert e.value.message.startswith("stage implement: ")
 
@@ -143,7 +194,7 @@ def _bundle(ticket: TicketRef = TICKET) -> list[FileEntry]:
 
 def test_build_manifest_default_ticket() -> None:
     p = default_pipeline()
-    m = build_manifest(42, TICKET, segment(p, "implement"), _bundle(), RUNTIMES)
+    m = build_manifest(42, TICKET, segment(p, "implement"), _bundle(), RUNTIMES, defaults=NONE)
     assert Manifest.model_validate_json(m.model_dump_json()) == m
     assert m.protocol == 1
     assert m.run_id == 42
@@ -183,7 +234,13 @@ def test_build_manifest_library_files_are_not_synced_and_bundle_wins() -> None:
         FileEntry(path="agents.md", content="library copy", mode="block"),
     ]
     m = build_manifest(
-        1, TICKET, segment(default_pipeline(), "plan"), _bundle(), RUNTIMES, library=library
+        1,
+        TICKET,
+        segment(default_pipeline(), "plan"),
+        _bundle(),
+        RUNTIMES,
+        defaults=NONE,
+        library=library,
     )
     assert m.files[0].model_dump() == {
         "path": ".claude/skills/review-checklist/SKILL.md",
@@ -197,7 +254,9 @@ def test_build_manifest_library_files_are_not_synced_and_bundle_wins() -> None:
 
 def test_build_manifest_no_repo_nulls_workspace() -> None:
     t = replace(TICKET, workspace_mode="none")
-    m = build_manifest(1, t, segment(default_pipeline(), "plan"), _bundle(t), RUNTIMES)
+    m = build_manifest(
+        1, t, segment(default_pipeline(), "plan"), _bundle(t), RUNTIMES, defaults=NONE
+    )
     assert m.workspace.model_dump() == {
         "mode": "none",
         "repo_url": None,
@@ -215,7 +274,7 @@ def test_fixture_shape_matches_builder() -> None:
     assert {f.mode for f in fixture.files} == {"replace", "block"}
     assert {s.kind for s in fixture.stages} == {"agent", "shell"}
     built = build_manifest(
-        42, TICKET, segment(default_pipeline(), "implement"), _bundle(), RUNTIMES
+        42, TICKET, segment(default_pipeline(), "implement"), _bundle(), RUNTIMES, defaults=NONE
     )
     assert set(built.model_dump()) == set(fixture.model_dump())
     assert built.ticket == fixture.ticket

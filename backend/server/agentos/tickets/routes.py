@@ -14,6 +14,7 @@ from agentos.models import (
     ImportResult,
     PipelineUpdate,
     Priority,
+    ResolveRequest,
     TicketCreate,
     TicketDetail,
     TicketPatch,
@@ -66,6 +67,13 @@ def get_ticket(key: str, user: CurrentUser, ctx: Ctx) -> TicketDetail:
 @router.patch("/{key}")
 def patch_ticket(key: str, body: TicketPatch, user: Writer, ctx: Ctx) -> TicketDetail:
     return service.patch_ticket(ctx.db, ctx.space, key, user, body)
+
+
+@router.post("/{key}/resolve")
+def resolve_ticket(key: str, body: ResolveRequest, user: Writer, ctx: Ctx) -> TicketDetail:
+    """Close the ticket: `completed` → state done, `abandoned` → state closed (both stay on the
+    board as `done`). 409 `run_active` during a run. Reopen with PATCH `state: open`."""
+    return service.resolve_ticket(ctx.db, ctx.space, key, user, body)
 
 
 @router.put("/{key}/pipeline")

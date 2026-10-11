@@ -53,6 +53,13 @@ def test_every_get_matches_its_model(
     no_repo = create_ticket("No-repo ticket", repo=None)
     closed = create_ticket("Closed ticket")
     client.patch(f"/api/tickets/{closed.key}", json={"state": "closed"}, headers=CSRF)
+    abandoned = create_ticket("Abandoned ticket")
+    response = client.post(
+        f"/api/tickets/{abandoned.key}/resolve",
+        json={"outcome": "abandoned", "note": "not needed"},
+        headers=CSRF,
+    )
+    assert response.status_code == 200, response.text
     client.post(f"/api/tickets/{repo.key}/chat", json={"body": "hi"}, headers=CSRF)
     client.put(
         f"/api/tickets/{repo.key}/files/gone.md",
@@ -88,8 +95,9 @@ def test_every_get_matches_its_model(
     # No intake queries in the test config; test_intake.py validates filled answers.
     check(client, "/api/intake", list[IntakeQuery])
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
-    assert len(summaries) == 3
+    assert len(summaries) == 4
     assert any(s.latest_run is not None for s in summaries)
+    assert any(s.resolution is not None for s in summaries)
     for summary in summaries:
         key = summary.key
         check(client, f"/api/tickets/{key}", TicketDetail)

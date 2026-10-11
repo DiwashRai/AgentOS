@@ -13,6 +13,17 @@
             "title": "Auth Mode",
             "type": "string"
           },
+          "default_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Model"
+          },
           "default_repo": {
             "anyOf": [
               {
@@ -98,6 +109,7 @@
           "default_repo",
           "runtimes",
           "default_runtime",
+          "default_model",
           "sources"
         ],
         "title": "AppConfig",
@@ -1547,6 +1559,78 @@
         "title": "RepoInfo",
         "type": "object"
       },
+      "Resolution": {
+        "additionalProperties": false,
+        "description": "How a ticket was closed, and by whom. Cleared by any PATCH that changes `state`.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "$ref": "#/components/schemas/Person"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "abandoned"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "note",
+          "by",
+          "at"
+        ],
+        "title": "Resolution",
+        "type": "object"
+      },
+      "ResolveRequest": {
+        "additionalProperties": false,
+        "description": "POST /api/tickets/{key}/resolve. `note` is stripped; blank \u2192 null. Not a chat message.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "abandoned"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "ResolveRequest",
+        "type": "object"
+      },
       "RunDetail": {
         "additionalProperties": false,
         "properties": {
@@ -2318,6 +2402,9 @@
       "Template": {
         "additionalProperties": false,
         "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/TemplateDefaults"
+          },
           "pipeline": {
             "$ref": "#/components/schemas/Pipeline"
           },
@@ -2336,17 +2423,54 @@
         "required": [
           "pipeline",
           "scaffold",
+          "defaults",
           "version"
         ],
         "title": "Template",
         "type": "object"
       },
+      "TemplateDefaults": {
+        "additionalProperties": false,
+        "description": "The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's\nown `runtime` / `model` wins; unset here \u2192 the server config's `default_runtime` / no model.\n`runtime` must be a configured runtime (422 `validation_error`).",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._:/-]{1,100}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime"
+          }
+        },
+        "title": "TemplateDefaults",
+        "type": "object"
+      },
       "TemplateUpdate": {
         "additionalProperties": false,
+        "description": "PUT: `pipeline` and `scaffold` replace the current ones. `defaults` omitted = keep the\ncurrent defaults (explicit null is rejected); send `{}` or nulls to clear them.",
         "properties": {
           "base_version": {
             "title": "Base Version",
             "type": "integer"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/TemplateDefaults",
+            "title": "Defaults"
           },
           "pipeline": {
             "$ref": "#/components/schemas/Pipeline"
@@ -2650,6 +2774,16 @@
             ],
             "title": "Repo Url"
           },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "skill_name": {
             "title": "Skill Name",
             "type": "string"
@@ -2722,6 +2856,7 @@
           "priority",
           "labels",
           "state",
+          "resolution",
           "owner",
           "attention",
           "attention_since",
@@ -2955,6 +3090,16 @@
             ],
             "title": "Repo Name"
           },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source": {
             "anyOf": [
               {
@@ -3011,6 +3156,7 @@
           "priority",
           "labels",
           "state",
+          "resolution",
           "owner",
           "attention",
           "attention_since",
@@ -4704,6 +4850,69 @@
           }
         },
         "summary": "Put Pipeline",
+        "tags": [
+          "tickets"
+        ]
+      }
+    },
+    "/api/tickets/{key}/resolve": {
+      "post": {
+        "description": "Close the ticket: `completed` \u2192 state done, `abandoned` \u2192 state closed (both stay on the\nboard as `done`). 409 `run_active` during a run. Reopen with PATCH `state: open`.",
+        "operationId": "resolve_ticket_api_tickets__key__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Resolve Ticket",
         "tags": [
           "tickets"
         ]

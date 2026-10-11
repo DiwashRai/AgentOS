@@ -32,6 +32,7 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status
 from agentos.pipeline.space import SpaceConfig
 from agentos.runs.service import TERMINAL, finish, token_hash
+from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
 from agentos.validate import path_key, validate_path, validate_pr_url
 
@@ -124,7 +125,8 @@ def _claim(
 def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
     """The run's stages come from the ticket's current pipeline: it is locked while the run is
     active, so it is the one validated at dispatch. The workspace's repo URL and base branch are
-    resolved from the Space's catalog now; a repo that left it fails the run."""
+    resolved from the Space's catalog now; a repo that left it fails the run. Null stage
+    runtimes/models take the Space defaults as they are now (the current template's)."""
     ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
     pipeline = ticket_pipeline(ticket)
     by_id = {s.id: s for s in pipeline.stages}
@@ -139,6 +141,7 @@ def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -
         stages,
         current_bundle(conn, ticket["id"]),
         runtimes,
+        defaults=current_defaults(conn),
     )
 
 

@@ -138,7 +138,11 @@ class AppConfig(ApiModel):
     # A catalog name: what a new ticket gets when its `repo` is omitted.
     default_repo: str | None
     runtimes: list[str]
+    # The effective Space defaults for an agent stage whose `runtime` / `model` is null (what a
+    # dispatch resolves to now): the template's `defaults`, else the server config's
+    # `default_runtime` / no model (the runtime CLI's own default; no `--model` is passed).
     default_runtime: str
+    default_model: str | None
     # Where tickets can be imported from (POST /api/tickets/import): ["jira"] when the Jira URL and
     # service account are configured, else [].
     sources: list[Literal["jira", "github"]]
@@ -190,6 +194,10 @@ class FileEntry(ApiModel):
     mode: Mode = "replace"
 
 
+# A model name becomes one argv element: no whitespace or control characters.
+MODEL_PATTERN = r"^[A-Za-z0-9._:/-]{1,100}$"
+
+
 class Stage(ApiModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,31}$")
     name: str = Field(min_length=1, max_length=60)
@@ -201,9 +209,12 @@ class Stage(ApiModel):
     gate_after: bool = False
     requires_repo: bool = False
     prompt: str = Field(default="", max_length=65536)
+    # null = the Space default (`Template.defaults`, then the server config), resolved when the
+    # run's manifest is built, so changing the Space default reaches every stage that leaves these
+    # null.
     runtime: str | None = None
     agent: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:/-]{1,100}$")
-    model: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:/-]{1,100}$")
+    model: str | None = Field(default=None, pattern=MODEL_PATTERN)
     command: str = ""
     timeout_s: int = Field(default=3600, ge=60, le=21600)
 
@@ -213,15 +224,29 @@ class Pipeline(ApiModel):
     library_sets: list[int] = Field(default_factory=list)
 
 
+class TemplateDefaults(ApiModel):
+    """The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's
+    own `runtime` / `model` wins; unset here → the server config's `default_runtime` / no model.
+    `runtime` must be a configured runtime (422 `validation_error`)."""
+
+    runtime: str | None = None
+    model: str | None = Field(default=None, pattern=MODEL_PATTERN)
+
+
 class Template(ApiModel):
     pipeline: Pipeline
     scaffold: list[FileEntry]
+    defaults: TemplateDefaults
     version: int
 
 
-class TemplateUpdate(ApiModel):
+class TemplateUpdate(PatchModel):
+    """PUT: `pipeline` and `scaffold` replace the current ones. `defaults` omitted = keep the
+    current defaults (explicit null is rejected); send `{}` or nulls to clear them."""
+
     pipeline: Pipeline
     scaffold: list[FileEntry]
+    defaults: TemplateDefaults | SkipJsonSchema[None] = None
     base_version: int
 
 
@@ -318,6 +343,28 @@ class RunSummary(ApiModel):
     launch_url: str | None
 
 
+# ------------------------------------------------------------------ resolution (request 15)
+
+# `completed` → state `done`; `abandoned` → state `closed`.
+ResolveOutcome = Literal["completed", "abandoned"]
+
+
+class Resolution(ApiModel):
+    """How a ticket was closed, and by whom. Cleared by any PATCH that changes `state`."""
+
+    outcome: ResolveOutcome
+    note: str | None
+    by: Person
+    at: AwareDatetime
+
+
+class ResolveRequest(ApiModel):
+    """POST /api/tickets/{key}/resolve. `note` is stripped; blank → null. Not a chat message."""
+
+    outcome: ResolveOutcome
+    note: str | None = Field(default=None, max_length=2000)
+
+
 class TicketSummary(ApiModel):
     key: str
     title: str
@@ -325,6 +372,8 @@ class TicketSummary(ApiModel):
     priority: Priority
     labels: list[str]
     state: TicketState
+    # Set by POST .../resolve (Complete / Abandon); null if open or closed through PATCH `state`.
+    resolution: Resolution | None
     owner: Person | None
     # Derived by the server (SPEC §13). `attention` and the rail's gate states depend on the viewer
     # (owner vs not). `attention_since`: when the ticket entered its current attention.

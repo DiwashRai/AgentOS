@@ -30,6 +30,9 @@ from agentos.models import (
     Pipeline,
     PipelineUpdate,
     Priority,
+    Resolution,
+    ResolveOutcome,
+    ResolveRequest,
     RunSummary,
     SourceLink,
     TaskProgress,
@@ -64,13 +67,17 @@ MAX_LABEL_CHARS = 50
 MAX_TITLE_CHARS = 200  # TicketCreate.title max_length: an imported summary is cut to it
 
 _SELECT_TICKETS = (
-    "SELECT t.*, o.display_name AS owner_name, o.avatar_url AS owner_avatar "
+    "SELECT t.*, o.display_name AS owner_name, o.avatar_url AS owner_avatar, "
+    "rv.display_name AS resolver_name, rv.avatar_url AS resolver_avatar "
     "FROM tickets t LEFT JOIN users o ON o.id = t.owner_id "
+    "LEFT JOIN users rv ON rv.id = t.resolved_by "
 )
+# An abandoned ticket (closed with a resolution) is listed like a done one; `include_closed` only
+# adds tickets closed through PATCH `state` (no resolution).
 _SQL_BOARD = (
     _SELECT_TICKETS + "WHERE (:type IS NULL OR t.type = :type) "
     "AND (:priority IS NULL OR t.priority = :priority) "
-    "AND (:include_closed OR t.state != 'closed') "
+    "AND (:include_closed OR t.state != 'closed' OR t.resolution_outcome IS NOT NULL) "
     "ORDER BY t.updated_at DESC, t.id DESC"
 )
 _SQL_ONE = _SELECT_TICKETS + "WHERE t.key = ?"
@@ -103,6 +110,10 @@ _SQL_CURRENT_CONTENT = (
 _SQL_CHAT_COUNTS = (
     "SELECT ticket_id, COUNT(*) AS n FROM chat_messages "
     "WHERE ticket_id IN (SELECT value FROM json_each(?)) GROUP BY ticket_id"
+)
+_SQL_CLEAR_RESOLUTION = (
+    "UPDATE tickets SET resolution_outcome = NULL, resolution_note = NULL, resolved_by = NULL, "
+    "resolved_at = NULL WHERE id = ?"
 )
 _SQL_ACTIVE_RUN = (
     "SELECT id FROM runs WHERE ticket_id = ? AND status IN ('queued', 'dispatched', 'running')"
@@ -305,6 +316,20 @@ def _source(row: Row) -> SourceLink | None:
     return SourceLink(source=row["source"], external_id=row["external_id"], url=row["source_url"])
 
 
+def _resolution(row: Row) -> Resolution | None:
+    """From the `resolution_*` columns (and the resolver's name, joined in `_SELECT_TICKETS`).
+    A resolver whose user row is gone (never expected: users are disabled, not deleted) → None."""
+    by = _person(row["resolved_by"], row["resolver_name"], row["resolver_avatar"])
+    if row["resolution_outcome"] is None or by is None:
+        return None
+    return Resolution(
+        outcome=row["resolution_outcome"],
+        note=row["resolution_note"],
+        by=by,
+        at=from_db(row["resolved_at"]),
+    )
+
+
 def _summary_fields(
     row: Row, facts: _Facts, viewer_id: int
 ) -> tuple[dict[str, Any], str | None, int | None]:
@@ -336,6 +361,7 @@ def _summary_fields(
         "priority": row["priority"],
         "labels": json.loads(row["labels"]),
         "state": row["state"],
+        "resolution": _resolution(row),
         "owner": owner,
         "attention": view.attention,
         "attention_since": board.attention_since,
@@ -677,7 +703,8 @@ def patch_ticket(
     db: Database, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
     """Apply the set fields. `state`, `repo` and `base_branch` changes → 409 `run_active` while a
-    run is active. The slug never changes (it names the skill directory).
+    run is active. The slug never changes (it names the skill directory). A `state` change clears
+    the resolution (`resolve_ticket` sets it).
 
     `repo` must be a catalog name (422 otherwise); null switches to no-repo mode, which clears
     `base_branch` and disables the pipeline's `requires_repo` stages (as creation does).
@@ -728,6 +755,8 @@ def patch_ticket(
                 "id": row["id"],
             },
         )
+        if "state" in changed:  # PATCH carries no outcome: reopen, or done/closed unresolved
+            conn.execute(_SQL_CLEAR_RESOLUTION, (row["id"],))
         if row["repo"] is not None and values["repo"] is None:
             pipeline = ticket_pipeline(row)
             stripped = _without_repo_stages(pipeline)
@@ -737,6 +766,29 @@ def patch_ticket(
                     "WHERE id = ?",
                     (stripped.model_dump_json(), row["id"]),
                 )
+        return _detail(conn, space, key, user.id)
+
+
+_RESOLVED_STATE: dict[ResolveOutcome, str] = {"completed": "done", "abandoned": "closed"}
+
+
+def resolve_ticket(
+    db: Database, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
+) -> TicketDetail:
+    """Close the ticket as `completed` (state done) or `abandoned` (state closed), with an optional
+    note (stripped; blank → null). 409 `run_active` while a run is active. Resolving a resolved
+    ticket again replaces its resolution (e.g. Abandon → Complete, or a new note)."""
+    note = (body.note or "").strip() or None
+    with db.tx() as conn:
+        row = get_ticket_row(conn, key)
+        if active_run_id(conn, row["id"]) is not None:
+            raise ApiError(409, "run_active", "Can't close a ticket during a run")
+        now = to_db(utcnow())
+        conn.execute(
+            "UPDATE tickets SET state = ?, resolution_outcome = ?, resolution_note = ?, "
+            "resolved_by = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+            (_RESOLVED_STATE[body.outcome], body.outcome, note, user.id, now, now, row["id"]),
+        )
         return _detail(conn, space, key, user.id)
 
 
@@ -768,7 +820,8 @@ def put_pipeline(
                         f"stage {stage.id}: requires a repo; this ticket has none",
                     )
         agent_stages = [s for s in pipeline.stages if s.kind == "agent"]
-        render_stages(0, ticket_ref(row, space), agent_stages, runtimes)
+        defaults = templates.current_defaults(conn)
+        render_stages(0, ticket_ref(row, space), agent_stages, runtimes, defaults=defaults)
         conn.execute(
             "UPDATE tickets SET pipeline = ?, pipeline_version = pipeline_version + 1, "
             "updated_at = ? WHERE id = ?",

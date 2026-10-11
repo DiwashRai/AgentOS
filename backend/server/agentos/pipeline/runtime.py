@@ -9,6 +9,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agentos.models import TemplateDefaults
+
 
 class RuntimeSpec(BaseModel):
     """One `[runtimes.<name>]` table. Placeholders (`{model}`, `{agent}`, `{prompt}`) replace
@@ -44,3 +46,18 @@ class RuntimesConfig(BaseModel):
         if self.default_runtime not in self.runtimes:
             raise ValueError(f"default_runtime {self.default_runtime!r} is not in [runtimes]")
         return self
+
+
+class SpaceDefaults(BaseModel):
+    """The effective defaults for an agent stage whose `runtime` / `model` is null."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    runtime: str
+    model: str | None
+
+
+def space_defaults(defaults: TemplateDefaults, runtimes: RuntimesConfig) -> SpaceDefaults:
+    """The template's defaults, falling back to the config's `default_runtime` and to no model
+    (the runtime CLI's own default). The one place this chain lives: manifests and AppConfig."""
+    return SpaceDefaults(runtime=defaults.runtime or runtimes.default_runtime, model=defaults.model)

@@ -367,6 +367,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{key}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Ticket
+         * @description Close the ticket: `completed` → state done, `abandoned` → state closed (both stay on the
+         *     board as `done`). 409 `run_active` during a run. Reopen with PATCH `state: open`.
+         */
+        post: operations["resolve_ticket_api_tickets__key__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tickets/{key}/runs": {
         parameters: {
             query?: never;
@@ -535,6 +556,8 @@ export interface components {
              * @enum {string}
              */
             auth_mode: "dev" | "jira";
+            /** Default Model */
+            default_model: string | null;
             /** Default Repo */
             default_repo: string | null;
             /** Default Runtime */
@@ -1077,6 +1100,38 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * Resolution
+         * @description How a ticket was closed, and by whom. Cleared by any PATCH that changes `state`.
+         */
+        Resolution: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            by: components["schemas"]["Person"];
+            /** Note */
+            note: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "completed" | "abandoned";
+        };
+        /**
+         * ResolveRequest
+         * @description POST /api/tickets/{key}/resolve. `note` is stripped; blank → null. Not a chat message.
+         */
+        ResolveRequest: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "completed" | "abandoned";
+        };
         /** RunDetail */
         RunDetail: {
             /** Cancel Requested At */
@@ -1335,16 +1390,35 @@ export interface components {
         };
         /** Template */
         Template: {
+            defaults: components["schemas"]["TemplateDefaults"];
             pipeline: components["schemas"]["Pipeline"];
             /** Scaffold */
             scaffold: components["schemas"]["FileEntry"][];
             /** Version */
             version: number;
         };
-        /** TemplateUpdate */
+        /**
+         * TemplateDefaults
+         * @description The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's
+         *     own `runtime` / `model` wins; unset here → the server config's `default_runtime` / no model.
+         *     `runtime` must be a configured runtime (422 `validation_error`).
+         */
+        TemplateDefaults: {
+            /** Model */
+            model?: string | null;
+            /** Runtime */
+            runtime?: string | null;
+        };
+        /**
+         * TemplateUpdate
+         * @description PUT: `pipeline` and `scaffold` replace the current ones. `defaults` omitted = keep the
+         *     current defaults (explicit null is rejected); send `{}` or nulls to clear them.
+         */
         TemplateUpdate: {
             /** Base Version */
             base_version: number;
+            /** Defaults */
+            defaults?: components["schemas"]["TemplateDefaults"];
             pipeline: components["schemas"]["Pipeline"];
             /** Scaffold */
             scaffold: components["schemas"]["FileEntry"][];
@@ -1440,6 +1514,7 @@ export interface components {
             repo_name: string | null;
             /** Repo Url */
             repo_url: string | null;
+            resolution: components["schemas"]["Resolution"] | null;
             /** Skill Name */
             skill_name: string;
             /** Slug */
@@ -1542,6 +1617,7 @@ export interface components {
             rail: components["schemas"]["RailStep"][];
             /** Repo Name */
             repo_name: string | null;
+            resolution: components["schemas"]["Resolution"] | null;
             source: components["schemas"]["SourceLink"] | null;
             /**
              * State
@@ -2650,6 +2726,50 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PipelineUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    resolve_ticket_api_tickets__key__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveRequest"];
             };
         };
         responses: {
