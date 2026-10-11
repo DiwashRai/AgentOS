@@ -1,20 +1,38 @@
-// The Template page (SPEC §13 "Other pages"): the pipeline every new ticket starts from, edited
-// with the same PipelineEditor (admins save; everyone else reads), plus the scaffold files
-// listed read-only. Renders a content column; the route wraps it in the shell's TopBar + Surface.
+// The Template page (SPEC §13 "Other pages"): the Space defaults (runtime, model) and the pipeline
+// every new ticket starts from, edited with the same PipelineEditor and saved together (admins
+// save; everyone else reads), plus the scaffold files listed read-only. Renders a content column;
+// the route wraps it in the shell's TopBar + Surface.
+import { useMemo } from "react";
+
 import { useConfig, useMe, useSaveTemplate, useTemplate } from "../../api/queries";
 import { Tag, ZoneHead } from "../../ui";
-import { describeSaveError, issueCount, validatePipeline } from "./model";
+import { DefaultsSection } from "./DefaultsSection";
+import {
+  defaultsBody,
+  describeSaveError,
+  effectiveDefaults,
+  issueCount,
+  sameTemplateForm,
+  validateDefaults,
+  validatePipeline,
+  type TemplateForm,
+} from "./model";
 import s from "./pages.module.css";
 import { PipelineEditor } from "./PipelineEditor";
 import { SaveBar } from "./SaveBar";
-import { usePipelineDraft } from "./useDraft";
+import { useDraft } from "./useDraft";
 
 export function TemplatePage() {
   const template = useTemplate();
   const config = useConfig();
   const me = useMe();
   const save = useSaveTemplate();
-  const draft = usePipelineDraft(template.data?.pipeline, template.data?.version);
+  const t = template.data;
+  const saved = useMemo<TemplateForm | undefined>(
+    () => (t ? { pipeline: t.pipeline, defaults: t.defaults } : undefined),
+    [t],
+  );
+  const draft = useDraft(saved, t?.version, sameTemplateForm);
 
   if (template.isPending || config.isPending) {
     return (
@@ -30,17 +48,21 @@ export function TemplatePage() {
       </p>
     );
   }
-  const t = template.data;
-  const value = draft.value ?? t.pipeline;
+  const data = template.data;
+  const value = draft.value ?? { pipeline: data.pipeline, defaults: data.defaults };
   const { runtimes, default_runtime } = config.data;
   const isAdmin = me.data?.role === "admin";
-  const issues = issueCount(validatePipeline(value.stages, runtimes));
+  const readOnly = !isAdmin || save.isPending;
+  const defaultsIssues = validateDefaults(value.defaults, runtimes);
+  const issues =
+    issueCount(validatePipeline(value.pipeline.stages, runtimes)) +
+    Object.keys(defaultsIssues).length;
 
   return (
     <div className={s.page}>
       <SaveBar
         title="Template pipeline"
-        meta={`${String(value.stages.length)} stages · version ${String(t.version)}`}
+        meta={`${String(value.pipeline.stages.length)} stages · version ${String(data.version)}`}
         dirty={draft.dirty}
         readOnly={!isAdmin}
         saveDisabledReason={
@@ -62,9 +84,10 @@ export function TemplatePage() {
         onSave={() => {
           save.mutate(
             {
-              pipeline: value,
-              scaffold: t.scaffold,
-              base_version: draft.baseVersion ?? t.version,
+              pipeline: value.pipeline,
+              scaffold: data.scaffold,
+              defaults: defaultsBody(value.defaults),
+              base_version: draft.baseVersion ?? data.version,
             },
             {
               onSuccess: () => {
@@ -82,26 +105,40 @@ export function TemplatePage() {
           : "Only admins can change the template. New tickets copy this pipeline when they are created."}
       </p>
 
-      <PipelineEditor
-        value={value}
-        onChange={draft.edit}
-        readOnly={!isAdmin || save.isPending}
+      <DefaultsSection
+        value={value.defaults}
+        saved={data.defaults}
         runtimes={runtimes}
         defaultRuntime={default_runtime}
+        issues={defaultsIssues}
+        readOnly={readOnly}
+        onChange={(defaults) => {
+          draft.edit({ ...value, defaults });
+        }}
+      />
+
+      <PipelineEditor
+        value={value.pipeline}
+        onChange={(pipeline) => {
+          draft.edit({ ...value, pipeline });
+        }}
+        readOnly={readOnly}
+        runtimes={runtimes}
+        space={effectiveDefaults(value.defaults, data.defaults, config.data)}
       />
 
       <section className={s.scaffold} aria-labelledby="scaffold-head">
         <ZoneHead
           id="scaffold-head"
           title="Scaffold"
-          count={t.scaffold.length}
+          count={data.scaffold.length}
           note="Files written into every new ticket's context, rendered once at creation."
         />
-        {t.scaffold.length === 0 ? (
+        {data.scaffold.length === 0 ? (
           <p className={s.quiet}>No scaffold files.</p>
         ) : (
           <ul className={s.files}>
-            {t.scaffold.map((file) => (
+            {data.scaffold.map((file) => (
               <li key={file.path} className={s.file}>
                 <code className={s.path}>{file.path}</code>
                 <Tag

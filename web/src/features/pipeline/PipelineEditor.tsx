@@ -13,6 +13,7 @@ import {
   type Action,
   type Draft,
   type Pipeline,
+  type SpaceDefaults,
 } from "./model";
 import s from "./PipelineEditor.module.css";
 import { StageRow } from "./StageRow";
@@ -21,9 +22,10 @@ export interface PipelineEditorProps {
   value: Pipeline;
   onChange: (p: Pipeline) => void;
   readOnly?: boolean | undefined;
-  /** Runtime names from /api/config; a stage's empty runtime means `defaultRuntime`. */
+  /** Runtime names from /api/config. */
   runtimes: string[];
-  defaultRuntime: string;
+  /** What a stage's unset runtime / model falls back to (shown as placeholders). */
+  space: SpaceDefaults;
 }
 
 /**
@@ -36,7 +38,7 @@ export function PipelineEditor({
   onChange,
   readOnly = false,
   runtimes,
-  defaultRuntime,
+  space,
 }: PipelineEditorProps) {
   // `seen` is the last value this draft matches; a different `value` came from outside.
   const [state, setState] = useState<{ draft: Draft; seen: Pipeline }>(() => ({
@@ -152,7 +154,7 @@ export function PipelineEditor({
               open={open.has(row.uid)}
               readOnly={readOnly}
               runtimes={runtimes}
-              defaultRuntime={defaultRuntime}
+              space={space}
               focusName={focusUid === row.uid}
               moveId={moveId}
               onToggleOpen={() => {

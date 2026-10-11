@@ -227,6 +227,11 @@ export function optional(value: string): string | null {
   return v === "" ? null : v;
 }
 
+/** A select whose first option ("") means unset → null. */
+export function unsetIfEmpty(value: string): string | null {
+  return value === "" ? null : value;
+}
+
 // ------------------------------------------------------------------ preview
 
 /**
@@ -300,6 +305,120 @@ export function describeSaveError(e: unknown): SaveProblem {
     return { text: e.message, reload: false };
   }
   return { text: e instanceof Error ? e.message : "Something went wrong.", reload: false };
+}
+
+// ------------------------------------------------------------------ Space defaults
+
+/** The template's Space defaults as the admin set them (missing or null = not set). */
+export type Defaults = Schemas["TemplateDefaults"];
+
+/** Unset is always `null` (never "" or missing), as the PUT body sends it. */
+export interface DefaultsBody {
+  runtime: string | null;
+  model: string | null;
+}
+
+/**
+ * The effective Space defaults a stage with an unset runtime/model falls back to.
+ * `runtime: null` = a server default whose name isn't known here (see `effectiveDefaults`);
+ * `model: null` = no Space model (the CLI's own default).
+ */
+export interface SpaceDefaults {
+  runtime: string | null;
+  model: string | null;
+}
+
+/** What the Template page edits and saves in one go. */
+export interface TemplateForm {
+  pipeline: Pipeline;
+  defaults: Defaults;
+}
+
+export const CLI_DEFAULT = "The CLI's default";
+
+export function defaultsBody(d: Defaults): DefaultsBody {
+  return { runtime: d.runtime ?? null, model: d.model ?? null };
+}
+
+export function sameDefaults(a: Defaults, b: Defaults): boolean {
+  return (a.runtime ?? null) === (b.runtime ?? null) && (a.model ?? null) === (b.model ?? null);
+}
+
+export function sameTemplateForm(a: TemplateForm, b: TemplateForm): boolean {
+  return sameDefaults(a.defaults, b.defaults) && samePipeline(a.pipeline, b.pipeline);
+}
+
+/** /api/config's effective defaults (the template's, else the server's runtime and no model). */
+export function configDefaults(config: {
+  default_runtime: string;
+  default_model: string | null;
+}): SpaceDefaults {
+  return { runtime: config.default_runtime, model: config.default_model };
+}
+
+/**
+ * The defaults stages fall back to while the Template page's form is being edited: the draft's,
+ * else what the server would use. /api/config only names the *effective* runtime, so once the
+ * saved template sets one, the server config's own runtime is unknown (`runtime: null`).
+ */
+export function effectiveDefaults(
+  draft: Defaults,
+  saved: Defaults,
+  config: { default_runtime: string },
+): SpaceDefaults {
+  return {
+    runtime: draft.runtime ?? (saved.runtime == null ? config.default_runtime : null),
+    model: draft.model ?? null,
+  };
+}
+
+/** The Space runtime select's unset option: the server config's runtime, named when known. */
+export function serverRuntimeLabel(saved: Defaults, config: { default_runtime: string }): string {
+  return saved.runtime == null ? `Server default (${config.default_runtime})` : "Server default";
+}
+
+/** Runtime choices: unset ("") first, then every runtime, keeping an unknown current value
+ *  selectable so it shows (and fails validation) instead of vanishing. */
+export function runtimeOptions(
+  runtimes: readonly string[],
+  unsetLabel: string,
+  current: string | null | undefined,
+): { value: string; label: string }[] {
+  const names = current && !runtimes.includes(current) ? [...runtimes, current] : runtimes;
+  return [{ value: "", label: unsetLabel }, ...names.map((r) => ({ value: r, label: r }))];
+}
+
+/** A stage's runtime choices; unset = the Space default. */
+export function stageRuntimeOptions(
+  runtimes: readonly string[],
+  space: SpaceDefaults,
+  current: string | null | undefined,
+): { value: string; label: string }[] {
+  const unset = space.runtime ? `Space default (${space.runtime})` : "Space default";
+  return runtimeOptions(runtimes, unset, current);
+}
+
+/** A stage's unset-model placeholder. The Space model only applies to stages on the Space
+ *  runtime; a stage on another runtime without its own model gets the CLI's default. */
+export function stageModelPlaceholder(
+  stageRuntime: string | null | undefined,
+  space: SpaceDefaults,
+): string {
+  if (space.model == null) return CLI_DEFAULT;
+  const onSpaceRuntime = stageRuntime == null || stageRuntime === space.runtime;
+  return onSpaceRuntime ? `Space default (${space.model})` : CLI_DEFAULT;
+}
+
+export type DefaultsIssues = Partial<Record<"runtime" | "model", string>>;
+
+/** Mirrors models.py `TemplateDefaults` (runtime must be configured; model pattern). */
+export function validateDefaults(d: Defaults, runtimes: readonly string[]): DefaultsIssues {
+  const out: DefaultsIssues = {};
+  if (d.runtime != null && !runtimes.includes(d.runtime)) {
+    out.runtime = `Unknown runtime "${d.runtime}".`;
+  }
+  if (d.model != null && !AGENT_RE.test(d.model)) out.model = PATTERN_HINT;
+  return out;
 }
 
 /** "1 h", "45 min", "1 h 30 min", "90 s": a reading aid next to the seconds field. */

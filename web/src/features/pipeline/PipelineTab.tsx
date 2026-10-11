@@ -5,7 +5,13 @@ import { useState } from "react";
 import { useConfig, useDispatch, useMe, useSavePipeline, useTicket } from "../../api/queries";
 import { Button } from "../../ui";
 import { Select } from "./fields";
-import { describeSaveError, issueCount, runnableStages, validatePipeline } from "./model";
+import {
+  configDefaults,
+  describeSaveError,
+  issueCount,
+  runnableStages,
+  validatePipeline,
+} from "./model";
 import s from "./pages.module.css";
 import { PipelineEditor } from "./PipelineEditor";
 import { SaveBar } from "./SaveBar";
@@ -36,7 +42,7 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
     );
   }
   const value = draft.value ?? ticket.data.pipeline;
-  const { runtimes, default_runtime } = config.data;
+  const { runtimes } = config.data;
 
   const canWrite = me.data?.role === "writer" || me.data?.role === "admin";
   const active = ticket.data.active_run_id !== null;
@@ -143,7 +149,7 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
         onChange={draft.edit}
         readOnly={readOnly}
         runtimes={runtimes}
-        defaultRuntime={default_runtime}
+        space={configDefaults(config.data)}
       />
     </div>
   );

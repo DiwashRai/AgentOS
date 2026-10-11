@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../api/client";
 import {
+  CLI_DEFAULT,
+  configDefaults,
+  defaultsBody,
   describeSaveError,
   draftFrom,
+  effectiveDefaults,
   formatTimeout,
   freshId,
   idEditable,
@@ -14,8 +18,16 @@ import {
   previewModel,
   reduce,
   runnableStages,
+  runtimeOptions,
+  sameDefaults,
   samePipeline,
+  sameTemplateForm,
+  serverRuntimeLabel,
+  stageModelPlaceholder,
+  stageRuntimeOptions,
   toPipeline,
+  unsetIfEmpty,
+  validateDefaults,
   validatePipeline,
   type Draft,
   type Pipeline,
@@ -291,7 +303,9 @@ describe("helpers", () => {
     expect(samePipeline(a, { stages: [stage("a", { enabled: false })] })).toBe(false);
   });
 
-  it("optional blanks to null", () => {
+  it("optional and unsetIfEmpty blank to null", () => {
+    expect(unsetIfEmpty("")).toBeNull();
+    expect(unsetIfEmpty("claude")).toBe("claude");
     expect(optional("  ")).toBeNull();
     expect(optional(" opus ")).toBe("opus");
   });
@@ -313,5 +327,123 @@ describe("helpers", () => {
     expect(
       describeSaveError(new ApiError(422, "invalid_pipeline", "stage lint: needs a command")),
     ).toEqual({ text: "stage lint: needs a command", reload: false });
+  });
+});
+
+describe("Space defaults", () => {
+  const RT = ["claude", "copilot"];
+  const space = { runtime: "claude", model: "claude-sonnet-4" };
+
+  it("stage runtime: the unset option names the Space runtime", () => {
+    expect(stageRuntimeOptions(RT, space, null)).toEqual([
+      { value: "", label: "Space default (claude)" },
+      { value: "claude", label: "claude" },
+      { value: "copilot", label: "copilot" },
+    ]);
+    expect(stageRuntimeOptions(RT, { runtime: null, model: null }, null)[0]?.label).toBe(
+      "Space default",
+    );
+    // An unknown current runtime stays selectable (and fails validation).
+    expect(stageRuntimeOptions(RT, space, "gemini").map((o) => o.value)).toEqual([
+      "",
+      "claude",
+      "copilot",
+      "gemini",
+    ]);
+    expect(runtimeOptions(RT, "Server default (claude)", undefined)[0]).toEqual({
+      value: "",
+      label: "Server default (claude)",
+    });
+  });
+
+  it("stage model: the Space model only on the Space runtime", () => {
+    expect(stageModelPlaceholder(null, space)).toBe("Space default (claude-sonnet-4)");
+    expect(stageModelPlaceholder(undefined, space)).toBe("Space default (claude-sonnet-4)");
+    expect(stageModelPlaceholder("claude", space)).toBe("Space default (claude-sonnet-4)");
+    expect(stageModelPlaceholder("copilot", space)).toBe(CLI_DEFAULT);
+    expect(stageModelPlaceholder(null, { runtime: "claude", model: null })).toBe(CLI_DEFAULT);
+    expect(CLI_DEFAULT).toBe("The CLI's default");
+  });
+
+  it("configDefaults reads /api/config's effective defaults", () => {
+    expect(configDefaults({ default_runtime: "claude", default_model: null })).toEqual({
+      runtime: "claude",
+      model: null,
+    });
+  });
+
+  it("effectiveDefaults follows the draft, else the server's", () => {
+    const config = { default_runtime: "claude" };
+    // Nothing set anywhere: the server's runtime, no model.
+    expect(effectiveDefaults({}, {}, config)).toEqual({ runtime: "claude", model: null });
+    // The draft wins.
+    expect(effectiveDefaults({ runtime: "copilot", model: "gpt-5" }, {}, config)).toEqual({
+      runtime: "copilot",
+      model: "gpt-5",
+    });
+    // Saved = effective: config already names it.
+    const saved = { runtime: "copilot", model: null };
+    expect(effectiveDefaults(saved, saved, { default_runtime: "copilot" }).runtime).toBe("copilot");
+    // Cleared in the draft while the saved template sets one: the server's own is unknown.
+    expect(effectiveDefaults({ runtime: null }, saved, { default_runtime: "copilot" })).toEqual({
+      runtime: null,
+      model: null,
+    });
+  });
+
+  it("serverRuntimeLabel names the server runtime only when the template sets none", () => {
+    expect(serverRuntimeLabel({}, { default_runtime: "claude" })).toBe("Server default (claude)");
+    expect(serverRuntimeLabel({ runtime: null }, { default_runtime: "claude" })).toBe(
+      "Server default (claude)",
+    );
+    expect(serverRuntimeLabel({ runtime: "copilot" }, { default_runtime: "copilot" })).toBe(
+      "Server default",
+    );
+  });
+
+  it("validateDefaults mirrors TemplateDefaults", () => {
+    expect(validateDefaults({}, RT)).toEqual({});
+    expect(validateDefaults({ runtime: "copilot", model: "claude-opus-4.1" }, RT)).toEqual({});
+    expect(Object.keys(validateDefaults({ runtime: "gemini", model: "has space" }, RT))).toEqual([
+      "runtime",
+      "model",
+    ]);
+  });
+
+  it("sameDefaults / sameTemplateForm treat missing as null", () => {
+    expect(sameDefaults({}, { runtime: null, model: null })).toBe(true);
+    expect(sameDefaults({ model: "x" }, { model: null })).toBe(false);
+    const form = { pipeline: SEED, defaults: {} };
+    expect(sameTemplateForm(form, { pipeline: SEED, defaults: { runtime: null } })).toBe(true);
+    expect(sameTemplateForm(form, { pipeline: SEED, defaults: { runtime: "claude" } })).toBe(false);
+    expect(
+      sameTemplateForm(form, { pipeline: { stages: SEED.stages.slice(1) }, defaults: {} }),
+    ).toBe(false);
+  });
+});
+
+describe("unset is null in PUT bodies", () => {
+  it("defaultsBody always sends both keys, unset as null", () => {
+    expect(defaultsBody({})).toEqual({ runtime: null, model: null });
+    expect(defaultsBody({ runtime: "claude", model: null })).toEqual({
+      runtime: "claude",
+      model: null,
+    });
+    expect(JSON.stringify(defaultsBody({ model: "opus" }))).toBe('{"runtime":null,"model":"opus"}');
+  });
+
+  it("a stage's cleared runtime/model/agent are null in the pipeline, never empty", () => {
+    let d = draftFrom({
+      stages: [stage("a", { runtime: "copilot", model: "gpt-5", agent: "planner" })],
+    });
+    const uid = d.rows[0]?.uid ?? 0;
+    // What the fields send when blanked: the select's "" and an empty text input.
+    d = reduce(d, {
+      type: "patch",
+      uid,
+      patch: { runtime: unsetIfEmpty(""), model: optional(""), agent: optional("   ") },
+    });
+    const body = JSON.parse(JSON.stringify(toPipeline(d))) as Pipeline;
+    expect(body.stages[0]).toMatchObject({ runtime: null, model: null, agent: null });
   });
 });

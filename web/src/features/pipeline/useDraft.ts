@@ -1,6 +1,6 @@
-// A pipeline draft over a saved copy, shared by the Pipeline tab and the Template page.
-// `base` is the version the draft started from, so a save never silently overwrites someone
-// else's change (the server answers 409 `stale_version` instead).
+// A draft over a saved copy, shared by the Pipeline tab (a pipeline) and the Template page (the
+// pipeline plus the Space defaults). `base` is the version the draft started from, so a save never
+// silently overwrites someone else's change (the server answers 409 `stale_version` instead).
 import { useEffect, useState } from "react";
 import { useBlocker } from "react-router";
 
@@ -8,30 +8,40 @@ import { samePipeline, type Pipeline } from "./model";
 
 const LEAVE = "Leave without saving your pipeline changes?";
 
-export interface PipelineDraft {
+export interface Draft<T> {
   /** What the editor shows: the draft while there are changes, else the saved copy. */
-  value: Pipeline | undefined;
+  value: T | undefined;
   dirty: boolean;
   /** The `base_version` to save with. */
   baseVersion: number | undefined;
-  edit: (p: Pipeline) => void;
+  edit: (value: T) => void;
   discard: () => void;
 }
+
+export type PipelineDraft = Draft<Pipeline>;
 
 export function usePipelineDraft(
   saved: Pipeline | undefined,
   version: number | undefined,
 ): PipelineDraft {
-  const [draft, setDraft] = useState<{ pipeline: Pipeline; base: number | undefined } | null>(null);
-  const dirty = draft !== null && saved !== undefined && !samePipeline(draft.pipeline, saved);
+  return useDraft(saved, version, samePipeline);
+}
+
+export function useDraft<T>(
+  saved: T | undefined,
+  version: number | undefined,
+  same: (a: T, b: T) => boolean,
+): Draft<T> {
+  const [draft, setDraft] = useState<{ value: T; base: number | undefined } | null>(null);
+  const dirty = draft !== null && saved !== undefined && !same(draft.value, saved);
   useUnsavedWarning(dirty);
   return {
-    value: dirty ? draft.pipeline : saved,
+    value: dirty ? draft.value : saved,
     dirty,
     baseVersion: dirty ? draft.base : version,
     // A draft that matches the saved copy again starts over from the current version.
-    edit: (pipeline) => {
-      setDraft({ pipeline, base: dirty ? draft.base : version });
+    edit: (value) => {
+      setDraft({ value, base: dirty ? draft.base : version });
     },
     discard: () => {
       setDraft(null);

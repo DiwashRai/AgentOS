@@ -9,9 +9,13 @@ import {
   idEditable,
   optional,
   PHASES,
+  stageModelPlaceholder,
+  stageRuntimeOptions,
   TIMEOUT_MAX,
   TIMEOUT_MIN,
+  unsetIfEmpty,
   type Row,
+  type SpaceDefaults,
   type StageIssues,
   type StagePatch,
 } from "./model";
@@ -30,7 +34,7 @@ export interface StageRowProps {
   open: boolean;
   readOnly: boolean;
   runtimes: readonly string[];
-  defaultRuntime: string;
+  space: SpaceDefaults;
   /** Focus the name field once mounted (a stage just added). */
   focusName: boolean;
   /** Prefix for the move buttons' ids, so the editor can return focus after a move. */
@@ -236,9 +240,9 @@ export function StageRow(props: StageRowProps) {
                       aria-invalid={invalid}
                       value={stage.runtime ?? ""}
                       disabled={readOnly}
-                      options={runtimeOptions(props.runtimes, props.defaultRuntime, stage.runtime)}
+                      options={stageRuntimeOptions(props.runtimes, props.space, stage.runtime)}
                       onChange={(v) => {
-                        onPatch({ runtime: v === "" ? null : v });
+                        onPatch({ runtime: unsetIfEmpty(v) });
                       }}
                     />
                   )}
@@ -267,7 +271,7 @@ export function StageRow(props: StageRowProps) {
                       id={id}
                       className={cx(f.input, f.mono)}
                       value={stage.model ?? ""}
-                      placeholder="runtime default"
+                      placeholder={stageModelPlaceholder(stage.runtime, props.space)}
                       readOnly={readOnly}
                       spellCheck={false}
                       autoComplete="off"
@@ -377,16 +381,4 @@ function TimeoutField(props: {
       )}
     </Field>
   );
-}
-
-function runtimeOptions(
-  runtimes: readonly string[],
-  fallback: string,
-  current: string | null | undefined,
-) {
-  const names = current && !runtimes.includes(current) ? [...runtimes, current] : runtimes;
-  return [
-    { value: "", label: `Default (${fallback})` },
-    ...names.map((r) => ({ value: r, label: r })),
-  ];
 }
