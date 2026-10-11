@@ -1,0 +1,278 @@
+/* Talk (DESIGN §11). Ported from kit.css `.ao-talk`, `.ao-thread`, `.ao-msg`, `.ao-bub`,
+   `.ao-compose`. No reactions, typing dots or composer icons (cut). */
+
+/* The recess. The parent sizes it; Talk fills it. */
+.talk {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--recess);
+  box-shadow: var(--recess-shadow);
+  border-radius: 12px;
+  padding: 7px;
+}
+.ticket {
+  height: 100%;
+}
+/* In the peek, Talk takes the remaining height and keeps a usable minimum. */
+.peek {
+  flex: 1 1 0;
+  min-height: 240px;
+}
+
+.sheet {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border-radius: 9px;
+  box-shadow: var(--surface-shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.head > b {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
+}
+.note {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.threadWrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+/* Short threads start at the top under the header; long ones scroll and open at the newest. */
+.thread {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 14px 12px;
+  scroll-padding-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  scrollbar-width: thin;
+}
+.thread > :first-child {
+  margin-top: 0;
+}
+
+.day {
+  text-align: center;
+  color: var(--ink-3);
+  margin: 6px 0 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.msg {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 9px;
+  margin-top: 10px;
+}
+.who {
+  font-size: 12.5px;
+  color: var(--ink-1);
+  font-weight: 600;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+.bs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  margin-top: 3px;
+}
+.bub {
+  display: inline-block;
+  max-width: 94%;
+  background: var(--bubble);
+  border-radius: 4px 14px 14px 14px;
+  padding: 7px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--bubble-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bub + .bub {
+  border-radius: 14px;
+}
+.link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* The kit's `justify-items: end` shrink-wraps the block, so the 82% max-width resolves against
+   the text itself and short bubbles wrap early; stretch and right-align the contents instead. */
+.mine {
+  grid-template-columns: minmax(0, 1fr);
+}
+.mine .who {
+  justify-content: flex-end;
+}
+.mine .bs {
+  align-items: flex-end;
+}
+.mine .bub {
+  background: var(--bubble-mine);
+  color: var(--bubble-mine-ink);
+  border-radius: 14px 4px 14px 14px;
+  max-width: 82%;
+}
+.mine .bub + .bub {
+  border-radius: 14px;
+}
+.mine .link {
+  color: var(--mention);
+}
+
+/* A new message rises 8px and fades in (base.css turns this off under reduced motion). */
+.isNew {
+  animation: msgin 0.35s var(--ease-out) both;
+}
+@keyframes msgin {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.empty {
+  margin: 14px 0 4px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.quiet {
+  margin: 14px 0 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* "New messages ↓": shown when a message arrives while scrolled up. Hover = lift only. */
+.pill {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  translate: -50% 0;
+  padding: 5px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: var(--surface-shadow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-1);
+  transition:
+    transform var(--t-fast) ease,
+    border-color var(--t-fast) ease;
+}
+.pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--rule-strong);
+}
+.pill:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+.composeWrap {
+  flex: none;
+}
+.compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 8px 10px 10px;
+  padding: 5px 5px 5px 13px;
+  border: 1px solid var(--rule);
+  border-radius: 11px;
+  background: var(--field);
+  transition: border-color var(--t-fast);
+}
+.compose:focus-within {
+  border-color: var(--focus);
+}
+.compose > textarea {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  resize: none;
+  font-size: 13px;
+  color: var(--ink-1);
+  height: 30px;
+  line-height: 20px;
+  padding: 5px 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.compose > textarea::placeholder {
+  color: var(--ink-3);
+}
+.compose > button {
+  margin-bottom: 1px;
+}
+.error {
+  margin: -4px 14px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  color: var(--blocked);
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
