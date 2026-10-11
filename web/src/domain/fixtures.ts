@@ -56,6 +56,7 @@ export function ticket(over: Partial<Ticket> = {}): Ticket {
     source: null,
     latest_run: null,
     pr_url: null,
+    resolution: null,
     tasks: null,
     phase: "inbox",
     phase_track: [],
