@@ -83,6 +83,10 @@
             "title": "Runtimes",
             "type": "array"
           },
+          "server_default_runtime": {
+            "title": "Server Default Runtime",
+            "type": "string"
+          },
           "sources": {
             "items": {
               "enum": [
@@ -110,6 +114,7 @@
           "runtimes",
           "default_runtime",
           "default_model",
+          "server_default_runtime",
           "sources"
         ],
         "title": "AppConfig",
@@ -316,6 +321,7 @@
               "bundle_locked",
               "already_claimed",
               "key_taken",
+              "in_use",
               "invalid_stage",
               "invalid_pipeline",
               "render_error",
@@ -815,6 +821,57 @@
         "title": "IntakeItem",
         "type": "object"
       },
+      "IntakePreview": {
+        "additionalProperties": false,
+        "description": "POST /api/settings/intake/preview (\"Test query\"): live, not cached. The same filtering and\nerror messages as GET /api/intake, at most 5 items; `total` counts every candidate.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "error",
+          "items"
+        ],
+        "title": "IntakePreview",
+        "type": "object"
+      },
+      "IntakePreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "jql": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Jql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jql"
+        ],
+        "title": "IntakePreviewRequest",
+        "type": "object"
+      },
       "IntakeQuery": {
         "additionalProperties": false,
         "description": "One `[[intake.queries]]` entry with its current candidates, newest-updated first, capped.\n`total` = how many candidates the JQL has (exact up to the fetch window, else estimated from\nJira's approximate count). A failing query has `error` (a short message) and no items.",
@@ -863,6 +920,137 @@
           "error"
         ],
         "title": "IntakeQuery",
+        "type": "object"
+      },
+      "IntakeQueryIn": {
+        "additionalProperties": false,
+        "description": "`id: null` = a new query: the server makes a unique id from its name. Sent ids are kept.",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "jql": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Jql",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "jql"
+        ],
+        "title": "IntakeQueryIn",
+        "type": "object"
+      },
+      "IntakeQuerySpec": {
+        "additionalProperties": false,
+        "description": "One intake query: a JQL whose matches the Intake tab lists (request 14).",
+        "properties": {
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "jql": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Jql",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "jql"
+        ],
+        "title": "IntakeQuerySpec",
+        "type": "object"
+      },
+      "IntakeSettings": {
+        "additionalProperties": false,
+        "description": "Settings > Intake: the queries, in tab order.",
+        "properties": {
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeQuerySpec"
+            },
+            "title": "Queries",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "queries",
+          "version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "IntakeSettings",
+        "type": "object"
+      },
+      "IntakeSettingsUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/settings/intake. The JQL isn't checked against Jira (it might be down): use the\npreview. Saving drops the intake cache.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeQueryIn"
+            },
+            "maxItems": 50,
+            "title": "Queries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queries",
+          "base_version"
+        ],
+        "title": "IntakeSettingsUpdate",
         "type": "object"
       },
       "LogData": {
@@ -1534,9 +1722,68 @@
         "title": "RailStep",
         "type": "object"
       },
+      "RepoEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "default_branch": {
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open_ticket_count": {
+            "title": "Open Ticket Count",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "default_branch",
+          "open_ticket_count"
+        ],
+        "title": "RepoEntry",
+        "type": "object"
+      },
+      "RepoEntryIn": {
+        "additionalProperties": false,
+        "description": "`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).",
+        "properties": {
+          "default_branch": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "default_branch"
+        ],
+        "title": "RepoEntryIn",
+        "type": "object"
+      },
       "RepoInfo": {
         "additionalProperties": false,
-        "description": "One entry of the Space's repo catalog (`[[repos]]` in agentos.toml).",
+        "description": "One entry of the Space's repo catalog (Settings > Repos).",
         "properties": {
           "default_branch": {
             "title": "Default Branch",
@@ -1557,6 +1804,70 @@
           "default_branch"
         ],
         "title": "RepoInfo",
+        "type": "object"
+      },
+      "RepoSettings": {
+        "additionalProperties": false,
+        "description": "Settings > Repos: the Space's repo catalog. Tickets reference a repo by name, so changing a\nURL or default branch reaches every ticket that uses it.",
+        "properties": {
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/RepoEntry"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "repos",
+          "version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "RepoSettings",
+        "type": "object"
+      },
+      "RepoSettingsUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/settings/repos: the whole catalog, in order. Names are unique and can't be renamed\n(a missing name = removed, a new one = added). Removing a repo that open tickets or the\nSpace's `default_repo` use \u2192 409 `in_use`; done and closed tickets keep the name.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/RepoEntryIn"
+            },
+            "maxItems": 100,
+            "title": "Repos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "repos",
+          "base_version"
+        ],
+        "title": "RepoSettingsUpdate",
         "type": "object"
       },
       "Resolution": {
@@ -1942,6 +2253,130 @@
           "url"
         ],
         "title": "SourceLink",
+        "type": "object"
+      },
+      "SpaceSettings": {
+        "additionalProperties": false,
+        "description": "Settings > Space. `key_prefix` only affects new native tickets (stored keys never change).\n`jira_projects`: signing in needs browse access to one of them (AGENTOS_ADMINS people\nexcepted); imports and intake only take issues from them.",
+        "properties": {
+          "claim_timeout_s": {
+            "title": "Claim Timeout S",
+            "type": "integer"
+          },
+          "default_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Repo"
+          },
+          "jira_projects": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Jira Projects",
+            "type": "array"
+          },
+          "key_prefix": {
+            "title": "Key Prefix",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "default_repo",
+          "key_prefix",
+          "jira_projects",
+          "claim_timeout_s",
+          "version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "SpaceSettings",
+        "type": "object"
+      },
+      "SpaceSettingsUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,\n`key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project\nrepeats, or `jira_projects` is empty while sign-in is with Jira.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "claim_timeout_s": {
+            "maximum": 86400.0,
+            "minimum": 60.0,
+            "title": "Claim Timeout S",
+            "type": "integer"
+          },
+          "default_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Repo"
+          },
+          "jira_projects": {
+            "items": {
+              "pattern": "^[A-Z][A-Z0-9_]+$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Jira Projects",
+            "type": "array"
+          },
+          "key_prefix": {
+            "pattern": "^[A-Z][A-Z0-9]{0,9}$",
+            "title": "Key Prefix",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "default_repo",
+          "key_prefix",
+          "jira_projects",
+          "claim_timeout_s",
+          "base_version"
+        ],
+        "title": "SpaceSettingsUpdate",
         "type": "object"
       },
       "Stage": {
@@ -3921,6 +4356,328 @@
         "summary": "Get Manifest",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/api/settings/intake": {
+      "get": {
+        "operationId": "get_intake_api_settings_intake_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Intake",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "put_intake_api_settings_intake_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakeSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Put Intake",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/intake/preview": {
+      "post": {
+        "description": "Test a JQL before saving it: live (never cached), at most 5 items, with the same filtering\nand error messages as GET /api/intake.",
+        "operationId": "preview_intake_api_settings_intake_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakePreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Preview Intake",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/repos": {
+      "get": {
+        "operationId": "get_repos_api_settings_repos_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Repos",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "put_repos_api_settings_repos_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Put Repos",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/space": {
+      "get": {
+        "operationId": "get_space_api_settings_space_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Space",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "put_space_api_settings_space_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Put Space",
+        "tags": [
+          "settings"
         ]
       }
     },

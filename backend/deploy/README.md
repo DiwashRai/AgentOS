@@ -10,14 +10,16 @@ Docker and Podman both work. The `just` recipes default to Docker; add `engine=p
 
 ## First run
 
-1. `backend/agentos.toml`: copy `backend/agentos.toml.example` (the Space, the repo catalog and
-   the runtimes). It is mounted read-only at `/config/agentos.toml`.
+1. `backend/agentos.toml`: copy `backend/agentos.toml.example` (the runtimes). It is mounted
+   read-only at `/config/agentos.toml`. Its `[space]`, `[[repos]]` and `[[intake.queries]]` are
+   optional and only seed the settings on the very first start (see "Settings in the app").
 2. `backend/deploy/.env.container`: copy `container.env.example` and fill it in (gitignored).
    Dev auth can't run in the container (it needs a loopback host), so this uses Jira: people
-   sign in with their Jira email + API token, need access to one of `AGENTOS_JIRA_PROJECTS`, and
-   wait for an admin's approval after their first sign-in (Settings › Users). List yourself in
-   `AGENTOS_ADMINS` (account id or email) so the first sign-in is an admin. Importing Jira
-   issues as tickets needs a service account: `AGENTOS_JIRA_SERVICE_EMAIL` +
+   sign in with their Jira email + API token, need access to one of the Space's Jira projects
+   (Settings › Space), and wait for an admin's approval after their first sign-in
+   (Settings › Users). List yourself in `AGENTOS_ADMINS` (account id or email): admins only need
+   a valid Jira token, so the first sign-in is an admin who can then set up the Space. Importing
+   Jira issues as tickets needs a service account: `AGENTOS_JIRA_SERVICE_EMAIL` +
    `AGENTOS_JIRA_SERVICE_TOKEN` (leave both empty to turn import off).
 3. Build and start:
 
@@ -38,6 +40,29 @@ Every name, path and the port is a `just` variable: for example,
 
 The healthcheck probes `GET /api/health` every 30 s (`docker ps` shows `healthy`). The process
 runs as uid/gid 10001 and can't write to the application files.
+
+## Settings in the app
+
+What an admin may change lives in the database and is edited in **Settings**; changes apply at
+once, without a restart:
+- **Space:** the Space's name, the default repo, the key prefix for new native tickets, the Jira
+  projects (signing in needs browse access to one of them; `AGENTOS_ADMINS` people excepted, so a
+  bad save can't lock the admins out) and the claim timeout. Plus the **repo catalog** (separate
+  Save): tickets reference a repo by name, so changing a URL is safe; removing a repo that open
+  tickets or the default repo use is refused.
+- **Intake:** the Jira queries the Intake tab lists, with a "Test query" preview.
+
+The env keeps what the server needs to start, who may sign in, and secrets. The minimal
+`.env.container`: `AGENTOS_PUBLIC_URL`, `AGENTOS_WORKER_URL`, `AGENTOS_JIRA_URL`,
+`AGENTOS_ADMINS`, `AGENTOS_JIRA_SERVICE_EMAIL`, `AGENTOS_JIRA_SERVICE_TOKEN`, `AGENTOS_LAUNCHER`
+and the `AGENTOS_GITHUB_*` runner settings (with `AGENTOS_GITHUB_TOKEN`).
+
+**First start / upgrade from an older version:** each settings area with nothing in the database
+yet is seeded once, from `agentos.toml` (`[space]` name and default_repo, `[[repos]]`,
+`[[intake.queries]]`) and the env vars that moved into the app (`AGENTOS_KEY_PREFIX`,
+`AGENTOS_JIRA_PROJECTS`, `AGENTOS_CLAIM_TIMEOUT_S`), else from built-in defaults. After that
+they are ignored: the server logs a warning at startup for each one still set, naming the
+Settings tab that replaced it. Remove them once the warnings appear.
 
 ## Upgrade
 
@@ -111,7 +136,7 @@ to the template.
 - [ ] The agent CLIs your runtimes use (e.g. `claude`), logged in.
 - [ ] **No** repo credentials of its own: `gh` not logged in, no SSH key, no stored git
       credentials. Agents run with a shell, so anything the runner holds is theirs too.
-- [ ] The ticket repos' URLs in `agentos.toml` are **https** (the job's token works over https).
+- [ ] The ticket repos' URLs (Settings › Space, repos) are **https** (the job's token works over https).
 - [ ] `curl $AGENTOS_WORKER_URL/api/health` works **from the runner**.
 
 **Repo credentials = the job's `GITHUB_TOKEN`.** The workflow grants it `contents: write` and

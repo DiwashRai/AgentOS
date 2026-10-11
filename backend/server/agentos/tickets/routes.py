@@ -47,14 +47,14 @@ def list_tickets(
 
 @router.post("", status_code=201)
 def create_ticket(body: TicketCreate, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.create_ticket(ctx.db, ctx.settings, ctx.space, user, body)
+    return service.create_ticket(ctx.db, ctx.space, user, body)
 
 
 @router.post("/import", responses={201: {"model": ImportResult, "description": "Imported"}})
 def import_ticket(body: ImportRequest, user: Writer, ctx: Ctx, response: Response) -> ImportResult:
     """Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with
     `created: false` and the ticket it was imported as before."""
-    result = service.import_ticket(ctx.db, ctx.settings, ctx.space, ctx.jira_source, user, body)
+    result = service.import_ticket(ctx.db, ctx.space, ctx.jira_source, user, body)
     response.status_code = 201 if result.created else 200
     return result
 

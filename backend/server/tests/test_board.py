@@ -861,12 +861,12 @@ TASKS = TaskProgress(done=2, total=5)
         ),
         pytest.param(
             facts(run("gated", [("review", "succeeded")]), pipeline=OPEN_PR_DISABLED),
-            now("review the result and mark done"),
+            now("review the result and complete it"),
             id="gated-with-nothing-left",
         ),
         pytest.param(
             facts(run("succeeded", [("open-pr", "succeeded")]), tasks=TASKS),
-            now("review the result and mark done", progress=TASKS),
+            now("review the result and complete it", progress=TASKS),
             id="succeeded-complete",
         ),
         pytest.param(
@@ -876,7 +876,7 @@ TASKS = TaskProgress(done=2, total=5)
         ),
         pytest.param(
             facts(run("succeeded", [("gone", "succeeded")])),
-            now("review the result and mark done"),
+            now("review the result and complete it"),
             id="succeeded-anchor-removed",
         ),
         pytest.param(

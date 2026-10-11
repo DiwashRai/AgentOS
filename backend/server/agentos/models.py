@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 # `pending` = signed in but not approved by an admin yet: only GET /api/me, logout and the public
@@ -75,6 +75,7 @@ ErrorCode = Literal[
     "bundle_locked",
     "already_claimed",
     "key_taken",  # an import whose key another ticket already has
+    "in_use",  # a settings save would remove something that is still used (e.g. a repo)
     # runs & pipeline
     "invalid_stage",
     "invalid_pipeline",
@@ -118,7 +119,7 @@ class ErrorBody(ApiModel):
 
 
 class RepoInfo(ApiModel):
-    """One entry of the Space's repo catalog (`[[repos]]` in agentos.toml)."""
+    """One entry of the Space's repo catalog (Settings > Repos)."""
 
     name: str
     url: str
@@ -143,6 +144,9 @@ class AppConfig(ApiModel):
     # `default_runtime` / no model (the runtime CLI's own default; no `--model` is passed).
     default_runtime: str
     default_model: str | None
+    # The server config's `default_runtime`: what `default_runtime` falls back to when the
+    # template sets no Space runtime (whatever the template says).
+    server_default_runtime: str
     # Where tickets can be imported from (POST /api/tickets/import): ["jira"] when the Jira URL and
     # service account are configured, else [].
     sources: list[Literal["jira", "github"]]
@@ -495,6 +499,167 @@ class IntakeQuery(ApiModel):
     items: list[IntakeItem]
     total: int
     error: str | None
+
+
+# ------------------------------------------------------------------ settings (edited in the app)
+#
+# Admin-only (GET and PUT). Each area is one document: GET returns it with `version`,
+# `updated_at` and `updated_by` (null = seeded on first start, not saved by anyone); PUT sends it
+# back whole as an `*Update` (no read-only fields) with `base_version` → 409 `stale_version` if
+# someone else saved first. Changes apply without a restart.
+
+KEY_PREFIX_PATTERN = r"^[A-Z][A-Z0-9]{0,9}$"
+JIRA_PROJECT_PATTERN = r"^[A-Z][A-Z0-9_]+$"
+REPO_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,63}$"
+INTAKE_QUERY_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+SPACE_NAME_MAX = 100
+CLAIM_TIMEOUT_MIN_S = 60
+CLAIM_TIMEOUT_MAX_S = 86400
+MAX_JIRA_PROJECTS = 50
+MAX_REPOS = 100
+MAX_INTAKE_QUERIES = 50
+INTAKE_NAME_MAX = 100
+JQL_MAX = 4000
+
+JiraProjectKey = Annotated[str, Field(pattern=JIRA_PROJECT_PATTERN)]
+
+
+def _stripped(value: str) -> str:
+    """Strip; blank → ValueError (reported as 422 `validation_error` with the field path)."""
+    if not value.strip():
+        raise ValueError("must not be blank")
+    return value.strip()
+
+
+class SpaceSettings(ApiModel):
+    """Settings > Space. `key_prefix` only affects new native tickets (stored keys never change).
+    `jira_projects`: signing in needs browse access to one of them (AGENTOS_ADMINS people
+    excepted); imports and intake only take issues from them."""
+
+    name: str
+    default_repo: str | None  # a repo catalog name: what a new ticket gets when it names none
+    key_prefix: str
+    jira_projects: list[str]
+    claim_timeout_s: int  # a dispatched run whose worker never connects fails after this
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class SpaceSettingsUpdate(ApiModel):
+    """PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,
+    `key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project
+    repeats, or `jira_projects` is empty while sign-in is with Jira."""
+
+    name: str = Field(min_length=1, max_length=SPACE_NAME_MAX)
+    default_repo: str | None
+    key_prefix: str = Field(pattern=KEY_PREFIX_PATTERN)
+    jira_projects: list[JiraProjectKey] = Field(max_length=MAX_JIRA_PROJECTS)
+    claim_timeout_s: int = Field(ge=CLAIM_TIMEOUT_MIN_S, le=CLAIM_TIMEOUT_MAX_S)
+    base_version: int
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class RepoEntry(ApiModel):
+    name: str
+    url: str
+    default_branch: str
+    # Open tickets that use this repo: removing it is refused (409 `in_use`) while this is > 0.
+    open_ticket_count: int
+
+
+class RepoSettings(ApiModel):
+    """Settings > Repos: the Space's repo catalog. Tickets reference a repo by name, so changing a
+    URL or default branch reaches every ticket that uses it."""
+
+    repos: list[RepoEntry]
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class RepoEntryIn(ApiModel):
+    """`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https)."""
+
+    name: str = Field(pattern=REPO_NAME_PATTERN)
+    url: str = Field(min_length=1, max_length=500)
+    default_branch: str = Field(min_length=1, max_length=255)
+
+
+class RepoSettingsUpdate(ApiModel):
+    """PUT /api/settings/repos: the whole catalog, in order. Names are unique and can't be renamed
+    (a missing name = removed, a new one = added). Removing a repo that open tickets or the
+    Space's `default_repo` use → 409 `in_use`; done and closed tickets keep the name."""
+
+    repos: list[RepoEntryIn] = Field(max_length=MAX_REPOS)
+    base_version: int
+
+
+class IntakeQuerySpec(ApiModel):
+    """One intake query: a JQL whose matches the Intake tab lists (request 14)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(pattern=INTAKE_QUERY_ID_PATTERN)
+    name: str = Field(min_length=1, max_length=INTAKE_NAME_MAX)
+    jql: str = Field(min_length=1, max_length=JQL_MAX)
+
+    @field_validator("name", "jql")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class IntakeSettings(ApiModel):
+    """Settings > Intake: the queries, in tab order."""
+
+    queries: list[IntakeQuerySpec]
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class IntakeQueryIn(ApiModel):
+    """`id: null` = a new query: the server makes a unique id from its name. Sent ids are kept."""
+
+    id: str | None = Field(pattern=INTAKE_QUERY_ID_PATTERN)
+    name: str = Field(min_length=1, max_length=INTAKE_NAME_MAX)
+    jql: str = Field(min_length=1, max_length=JQL_MAX)
+
+    @field_validator("name", "jql")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class IntakeSettingsUpdate(ApiModel):
+    """PUT /api/settings/intake. The JQL isn't checked against Jira (it might be down): use the
+    preview. Saving drops the intake cache."""
+
+    queries: list[IntakeQueryIn] = Field(max_length=MAX_INTAKE_QUERIES)
+    base_version: int
+
+
+class IntakePreviewRequest(ApiModel):
+    jql: str = Field(min_length=1, max_length=JQL_MAX)
+
+    @field_validator("jql")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class IntakePreview(ApiModel):
+    """POST /api/settings/intake/preview ("Test query"): live, not cached. The same filtering and
+    error messages as GET /api/intake, at most 5 items; `total` counts every candidate."""
+
+    total: int
+    error: str | None
+    items: list[IntakeItem]
 
 
 # ------------------------------------------------------------------ files

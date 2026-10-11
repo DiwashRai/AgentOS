@@ -20,12 +20,15 @@ from agentos.models import (
     FileInfo,
     FileVersionInfo,
     IntakeQuery,
+    IntakeSettings,
     Manifest,
     Me,
     Person,
+    RepoSettings,
     RunDetail,
     RunEvent,
     RunSummary,
+    SpaceSettings,
     Template,
     TicketDetail,
     TicketSummary,
@@ -94,6 +97,19 @@ def test_every_get_matches_its_model(
     check(client, "/api/template", Template)
     # No intake queries in the test config; test_intake.py validates filled answers.
     check(client, "/api/intake", list[IntakeQuery])
+    # Settings: seeded (updated_by null), then saved by someone (updated_by set).
+    space = check(client, "/api/settings/space", SpaceSettings)
+    assert space.updated_by is None
+    body = space.model_dump(exclude={"version", "updated_at", "updated_by"})
+    saved = client.put(
+        "/api/settings/space", json={**body, "base_version": space.version}, headers=CSRF
+    )
+    assert saved.status_code == 200, saved.text
+    assert check(client, "/api/settings/space", SpaceSettings).updated_by is not None
+    assert check(client, "/api/settings/repos", RepoSettings).repos
+    queries = {"queries": [{"id": None, "name": "To do", "jql": "x"}], "base_version": 1}
+    assert client.put("/api/settings/intake", json=queries, headers=CSRF).status_code == 200
+    assert check(client, "/api/settings/intake", IntakeSettings).queries
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
     assert len(summaries) == 4
     assert any(s.latest_run is not None for s in summaries)

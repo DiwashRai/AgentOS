@@ -36,6 +36,7 @@ def login(body: LoginRequest, request: Request, response: Response, ctx: Ctx) ->
         client_ip=_client_ip(request, ctx.settings.trust_proxy),
         jira=ctx.jira,
         limiter=ctx.login_limiter,
+        projects=ctx.space.jira_projects,
     )
     response.set_cookie(
         SESSION_COOKIE,

@@ -17,10 +17,7 @@ router = APIRouter(prefix="/api/intake", tags=["intake"], responses=ERROR_RESPON
 def list_intake(_: CurrentUser, ctx: Ctx) -> list[IntakeQuery]:
     """Each configured intake query with the Jira issues it matches that aren't in AgentOS yet
     (newest-updated first, capped). "Take in" one with POST /api/tickets/import."""
+    space = ctx.space
     return service.list_intake(
-        ctx.db,
-        ctx.space.intake.queries,
-        ctx.jira_source,
-        ctx.settings.jira_projects,
-        ctx.intake_cache,
+        ctx.db, space.intake.queries, ctx.jira_source, space.jira_projects, ctx.intake_cache
     )

@@ -187,7 +187,7 @@ def test_the_lifespan_runs_the_reaper(settings: Settings, monkeypatch: pytest.Mo
     with with_loops(settings, launcher, monkeypatch) as (client, ctx):
         run_id = dispatch(client)
         wait_for("the launch", lambda: bool(launcher.launched))
-        long_ago = to_db(utcnow() - timedelta(seconds=ctx.settings.claim_timeout_s + 60))
+        long_ago = to_db(utcnow() - timedelta(seconds=ctx.space.claim_timeout_s + 60))
         with ctx.db.tx() as conn:
             conn.execute("UPDATE runs SET dispatched_at = ? WHERE id = ?", (long_ago, run_id))
         wait_for(

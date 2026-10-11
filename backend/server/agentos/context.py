@@ -5,9 +5,18 @@ No FastAPI here: routes get it through `agentos.http_deps.Ctx`; loops and tests 
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
-from agentos.config import ConfigError, Settings, load_config, startup_checks
+from agentos.config import (
+    MOVED_ENV,
+    ConfigError,
+    FileConfig,
+    Settings,
+    load_config,
+    seed_space,
+    startup_checks,
+)
 from agentos.db import Database
 from agentos.launchers.base import Launcher
 from agentos.launchers.github import GitHubActionsLauncher
@@ -16,13 +25,23 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.space import SpaceConfig
 from agentos.ratelimit import RateLimiter
 from agentos.sources.jira import JiraClient, JiraSearch, JiraSource
+from agentos.space_store import Area, SpaceStore, missing_areas, seed
 from agentos.ttlcache import TtlCache
+
+log = logging.getLogger(__name__)
 
 LOGIN_ATTEMPTS_PER_MINUTE = 10  # SPEC §11
 INTAKE_CACHE_TTL_S = 45.0  # request 14: how long an intake query's Jira answer is reused
 
 # An intake query's last Jira answer (or its error message), by query id.
 IntakeCache = TtlCache[str, JiraSearch | str]
+
+# agentos.toml's Space tables: how the startup log names each and the tab that replaced it.
+_TOML_TABLES: dict[Area, tuple[str, str]] = {
+    "space": ("[space]", "Settings > Space"),
+    "repos": ("[[repos]]", "Settings > Space (Repos)"),
+    "intake": ("[[intake.queries]]", "Settings > Intake"),
+}
 
 
 def _login_limiter() -> RateLimiter:
@@ -37,15 +56,21 @@ def _intake_cache() -> IntakeCache:
 class AppContext:
     settings: Settings
     runtimes: RuntimesConfig
-    space: SpaceConfig  # the Space's name and repo catalog (agentos.toml)
     db: Database
     launcher: Launcher
+    # The Space's settings, repo catalog and intake queries (db `settings`, edited in the app).
+    space_store: SpaceStore
     # The Jira REST client when AGENTOS_JIRA_URL is set (tests swap in a MockTransport one).
     jira: JiraClient | None = None
     # Jira login attempts per (client IP, submitted email/username).
     login_limiter: RateLimiter = field(default_factory=_login_limiter)
     intake_cache: IntakeCache = field(default_factory=_intake_cache)
     # Later: broker.
+
+    @property
+    def space(self) -> SpaceConfig:
+        """The Space as currently saved (cached; a settings save clears the cache)."""
+        return self.space_store.current()
 
     @property
     def jira_source(self) -> JiraSource | None:
@@ -62,7 +87,8 @@ class AppContext:
 
 
 def build_context(settings: Settings, launcher: Launcher | None = None) -> AppContext:
-    """Load agentos.toml, run the startup checks (creating data/logs/workspaces), migrate the db.
+    """Load agentos.toml, run the startup checks (creating data/logs/workspaces), migrate the db,
+    seed the Space's settings on first start.
 
     `launcher=None` builds the configured one (`AGENTOS_LAUNCHER`).
     Raises config.ConfigError or db.MigrationError with a readable message.
@@ -73,15 +99,48 @@ def build_context(settings: Settings, launcher: Launcher | None = None) -> AppCo
         launcher = _launcher(settings)
     db = Database(settings.db_path)
     db.migrate()
+    seed_settings(db, settings, config)
     jira = JiraClient(settings.jira_url, settings.jira_deployment) if settings.jira_url else None
     return AppContext(
         settings=settings,
         runtimes=config.runtimes,
-        space=config.space,
         db=db,
         launcher=launcher,
+        space_store=SpaceStore(db),
         jira=jira,
     )
+
+
+def seed_settings(db: Database, settings: Settings, config: FileConfig) -> list[Area]:
+    """Seed each settings area that has no db row yet from agentos.toml and the moved env vars
+    (one transaction; idempotent), then warn about every moved var and agentos.toml table that
+    is now ignored. Returns the seeded areas. An invalid moved var → ConfigError, but only when
+    it is about to seed (once seeded, it is just ignored)."""
+    moved = settings.moved_env
+    missing = missing_areas(db)
+    seeded: list[Area] = []
+    if missing:
+        space = seed_space(config.space, moved) if "space" in missing else config.space
+        seeded = seed(db, space, missing)
+    for area in seeded:
+        log.info("Settings: seeded %s from agentos.toml and env (first start)", area)
+    for name, tab in MOVED_ENV.items():
+        if name not in moved:
+            continue
+        if "space" in seeded:
+            log.warning(
+                "%s seeded %s on this first start and is ignored from now on: edit it in %s "
+                "and remove the variable",
+                name,
+                tab,
+                tab,
+            )
+        else:
+            log.warning("%s is ignored: edit it in %s (and remove the variable)", name, tab)
+    for area, (table, tab) in _TOML_TABLES.items():
+        if area in config.space_tables and area not in seeded:
+            log.warning("agentos.toml %s is ignored: edit it in %s (and remove it)", table, tab)
+    return seeded
 
 
 def _launcher(settings: Settings) -> Launcher:

@@ -1,29 +1,60 @@
-"""The Space (SPEC §17): one AgentOS instance, its name, its repo catalog and its intake queries.
+"""The Space (SPEC §17): one AgentOS instance, its settings, its repo catalog and its intake
+queries.
 
-`agentos.toml` holds `[space]` (name, default_repo), `[[repos]]` (name, url, default_branch) and
-`[[intake.queries]]` (id, name, jql: the Jira issues the Intake tab offers to take in).
+They are edited in the app (Settings > Space, Repos, Intake) and stored in the db `settings`
+table (`agentos.space_store`); on first start each area is seeded from `agentos.toml` (`[space]`
+name/default_repo, `[[repos]]`, `[[intake.queries]]`) and the moved env vars (config.py).
 Tickets store a repo *name*; its URL and default branch are resolved from the catalog when they
-are read or dispatched, so moving a repo is a config change.
+are read or dispatched, so moving a repo is a settings change.
 
-Pure: config.py parses the TOML into these; services pass a `SpaceConfig` in.
+Pure: services pass a `SpaceConfig` in.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agentos.errors import ApiError
-from agentos.models import RepoInfo, WorkspaceMode
+from agentos.models import (
+    CLAIM_TIMEOUT_MAX_S,
+    CLAIM_TIMEOUT_MIN_S,
+    INTAKE_QUERY_ID_PATTERN,
+    KEY_PREFIX_PATTERN,
+    REPO_NAME_PATTERN,
+    SPACE_NAME_MAX,
+    IntakeQuerySpec,
+    JiraProjectKey,
+    RepoInfo,
+    WorkspaceMode,
+)
 from agentos.validate import validate_base_branch, validate_repo_url
 
-REPO_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,63}$"
-INTAKE_QUERY_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+__all__ = [
+    "INTAKE_QUERY_ID_PATTERN",
+    "REPO_NAME_PATTERN",
+    "IntakeQuerySpec",
+    "IntakeSection",
+    "RepoSpec",
+    "ResolvedRepo",
+    "SpaceConfig",
+    "SpaceSection",
+    "query_id",
+    "repo_url_key",
+]
+
 DEFAULT_SPACE_NAME = "AgentOS"
 DEFAULT_BRANCH = "main"
+DEFAULT_KEY_PREFIX = "AOS"
+DEFAULT_CLAIM_TIMEOUT_S = 900
+# The keys agentos.toml's `[space]` may hold (the first-start seed); the rest come from env.
+SPACE_TOML_KEYS = ("name", "default_repo")
+DEFAULT_QUERY_ID = "query"
+_QUERY_ID_MAX = 64
 
 
 def _checked(check: Callable[[str], str], value: str) -> str:
@@ -58,33 +89,43 @@ class RepoSpec(BaseModel):
 
 
 class SpaceSection(BaseModel):
-    """The `[space]` table."""
+    """The Space's own settings (Settings > Space; the db `space` area). Every rule that needs no
+    other area lives here, so the API and the first-start seed check the same things."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = Field(default=DEFAULT_SPACE_NAME, min_length=1, max_length=100)
+    name: str = Field(default=DEFAULT_SPACE_NAME, min_length=1, max_length=SPACE_NAME_MAX)
     default_repo: str | None = None
+    key_prefix: str = Field(default=DEFAULT_KEY_PREFIX, pattern=KEY_PREFIX_PATTERN)
+    jira_projects: tuple[JiraProjectKey, ...] = ()
+    claim_timeout_s: int = Field(
+        default=DEFAULT_CLAIM_TIMEOUT_S, ge=CLAIM_TIMEOUT_MIN_S, le=CLAIM_TIMEOUT_MAX_S
+    )
 
-
-class IntakeQuerySpec(BaseModel):
-    """One `[[intake.queries]]` entry: a JQL whose matches the Intake tab lists (request 14)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    id: str = Field(pattern=INTAKE_QUERY_ID_PATTERN)
-    name: str = Field(min_length=1, max_length=100)
-    jql: str = Field(min_length=1, max_length=4000)
-
-    @field_validator("name", "jql")
+    @field_validator("name")
     @classmethod
-    def _not_blank(cls, value: str) -> str:
+    def _name(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("must not be blank")
         return value.strip()
 
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        seen: set[str] = set()
+        for key in self.jira_projects:
+            if key in seen:
+                raise ValueError(f"jira_projects: {key!r} is listed twice")
+            seen.add(key)
+        if self.key_prefix in seen:
+            raise ValueError(
+                f"key_prefix: {self.key_prefix!r} is one of jira_projects (native keys would take "
+                "real Jira keys, which then can't be imported); pick another prefix"
+            )
+        return self
+
 
 class IntakeSection(BaseModel):
-    """The `[intake]` table. Zero queries is valid (the Intake tab is empty)."""
+    """The intake queries (Settings > Intake). Zero queries is valid (the Intake tab is empty)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -92,8 +133,8 @@ class IntakeSection(BaseModel):
 
 
 class SpaceConfig(BaseModel):
-    """`[space]` + `[[repos]]` + `[intake]` of `agentos.toml`. Zero repos is valid (no-repo
-    tickets only); zero intake queries too."""
+    """The Space's settings, repo catalog and intake queries: one consistent snapshot. Zero repos is
+    valid (no-repo tickets only); zero intake queries too."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -128,6 +169,18 @@ class SpaceConfig(BaseModel):
     @property
     def default_repo(self) -> str | None:
         return self.space.default_repo
+
+    @property
+    def key_prefix(self) -> str:
+        return self.space.key_prefix
+
+    @property
+    def jira_projects(self) -> tuple[str, ...]:
+        return self.space.jira_projects
+
+    @property
+    def claim_timeout_s(self) -> int:
+        return self.space.claim_timeout_s
 
     def repo(self, name: str) -> RepoSpec | None:
         return next((r for r in self.repos if r.name == name), None)
@@ -182,3 +235,17 @@ def repo_url_key(url: str) -> str:
         return f"{scheme.lower()}://{authority.lower()}{sep}{path}"
     authority, sep, path = u.partition(":")  # scp-like git@host:path
     return f"{authority.lower()}{sep}{path}"
+
+
+def query_id(name: str, taken: Collection[str]) -> str:
+    """A new intake query's id from its name, not in `taken`: `SCRUM: to do` → `scrum-to-do`,
+    then `scrum-to-do-2`, `-3`... A name with no letters or digits → `query`. Always matches
+    INTAKE_QUERY_ID_PATTERN."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")[:_QUERY_ID_MAX].rstrip("-")
+    base = base or DEFAULT_QUERY_ID
+    candidate, n = base, 1
+    while candidate in taken:
+        n += 1
+        suffix = f"-{n}"
+        candidate = base[: _QUERY_ID_MAX - len(suffix)].rstrip("-") + suffix
+    return candidate

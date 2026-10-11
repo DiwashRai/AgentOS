@@ -33,9 +33,13 @@ MUTATING_ROLES: dict[tuple[str, str], Role] = {
     ("POST", "/api/runs/{run_id}/cancel"): "writer",
     ("PUT", "/api/template"): "admin",
     ("PATCH", "/api/users/{user_id}"): "admin",
+    ("PUT", "/api/settings/space"): "admin",
+    ("PUT", "/api/settings/repos"): "admin",
+    ("PUT", "/api/settings/intake"): "admin",
+    ("POST", "/api/settings/intake/preview"): "admin",
 }
 PUBLIC_GETS = {"/api/health", "/api/config", "/api/worker/worker.py"}
-ADMIN_GETS = {"/api/users"}
+ADMIN_GETS = {"/api/users", "/api/settings/space", "/api/settings/repos", "/api/settings/intake"}
 
 # Path parameters point at things that don't exist, so a missing gate can't mutate stub data.
 SAMPLE = {"key": "NOPE-999", "path": "SKILL.md", "run_id": "999999", "user_id": "999999"}

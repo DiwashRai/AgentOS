@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -72,17 +73,19 @@ def login(
     client_ip: str,
     jira: JiraClient | None,
     limiter: RateLimiter,
+    projects: Sequence[str],
 ) -> Session:
     """Authenticate, upsert the user and create a session: dev auth or Jira (SPEC §11).
 
     `host` is the request's Host header; `proxied` is True when it carried any PROXY_HEADERS;
-    `client_ip` is the address Jira logins are rate-limited by.
+    `client_ip` is the address Jira logins are rate-limited by; `projects` are the Space's Jira
+    projects (Settings > Space), one of which a Jira login must be able to browse.
     """
     if settings.dev_auth:
         return _dev_login(db, body, host=host, proxied=proxied)
     if jira is None:  # pragma: no cover - startup checks require AGENTOS_JIRA_URL
         raise ApiError(500, "internal_error", "Jira is not configured")
-    return _jira_login(db, settings, jira, limiter, body, client_ip=client_ip)
+    return _jira_login(db, settings, jira, limiter, body, client_ip=client_ip, projects=projects)
 
 
 def _jira_login(
@@ -93,9 +96,11 @@ def _jira_login(
     body: LoginRequest,
     *,
     client_ip: str,
+    projects: Sequence[str],
 ) -> Session:
     """`/myself` checks the credentials, project access gates the Space, a first login waits for
-    an admin (`pending`) unless ADMINS lists the person."""
+    an admin (`pending`) unless ADMINS lists the person. ADMINS people skip the project check, so
+    a bad `jira_projects` save can't lock the admins out."""
     email = (body.email or "").strip()
     who = (email or body.username or "").strip().casefold()
     if not limiter.hit((client_ip, who)):
@@ -110,19 +115,19 @@ def _jira_login(
     creds = jira.credentials(token=token, email=email or None)
     try:
         profile = jira.myself(creds)
-        allowed = any(jira.can_browse_project(creds, key) for key in settings.jira_projects)
+        env_admin = _profile_is_admin(settings, profile)
+        allowed = env_admin or any(jira.can_browse_project(creds, key) for key in projects)
     except JiraUnauthorized:
         raise ApiError(401, "invalid_credentials", "Jira rejected these credentials") from None
     except JiraUnavailable:
         raise ApiError(502, "upstream_error", "Jira didn't answer; try again shortly") from None
     if not allowed:
-        projects = ", ".join(settings.jira_projects)
-        raise ApiError(
-            403,
-            "no_project_access",
-            f"Your Jira account can't see this Space's projects: {projects}",
+        why = (
+            f"Your Jira account can't see this Space's projects: {', '.join(projects)}"
+            if projects
+            else "This Space has no Jira projects set up yet; ask an admin"
         )
-    env_admin = _profile_is_admin(settings, profile)
+        raise ApiError(403, "no_project_access", why)
     now = utcnow()
     with db.tx() as conn:
         user_id = _upsert_identity(

@@ -1,11 +1,14 @@
-# Copy to backend/agentos.toml. Read once at startup (restart after editing).
+# Copy to backend/agentos.toml. Read once at startup (restart after editing the runtimes).
 # Top-level keys (default_runtime) must stay above the first [table].
 
 # Agent runtimes: argv templates resolved by the server (SPEC §7); the tables are below.
 default_runtime = "claude"
 
-# The Space (SPEC §17): this AgentOS instance and its repo catalog. Tickets reference a repo by
-# name, so moving a repo is a change here. Zero [[repos]] is valid (no-repo tickets only).
+# The Space (SPEC §17), its repo catalog and its intake queries are edited in the app by admins
+# (Settings > Space, Settings > Intake) and stored in the database. The tables below are a SEED
+# ONLY: on the very first start (an empty settings area) they fill it; after that they are
+# ignored (the server logs a warning while they are still here). Every one is optional.
+# Zero [[repos]] is valid (no-repo tickets only).
 # [space]
 # name = "AgentOS"           # shown in the top bar; default "AgentOS"
 # default_repo = "agentos"   # what a new ticket gets when it names no repo; must be a [[repos]] name
@@ -16,10 +19,10 @@ default_runtime = "claude"
 #                                                     # (GitHub Actions runners: https)
 # default_branch = "main"    # default "main"
 
-# Intake: the Intake tab lists the Jira issues each query matches that aren't in AgentOS yet, with
-# "Take in" (= import). Fetched live with the Jira service account (AGENTOS_JIRA_SERVICE_*) and
-# cached ~45 s. "ORDER BY updated DESC" is appended unless the JQL has its own ORDER BY. Issues
-# outside AGENTOS_JIRA_PROJECTS are not offered. Zero queries is valid (the tab is empty).
+# Intake (seed only, like the above): the Intake tab lists the Jira issues each query matches that
+# aren't in AgentOS yet, with "Take in" (= import). Fetched live with the Jira service account
+# (AGENTOS_JIRA_SERVICE_*) and cached ~45 s. "ORDER BY updated DESC" is appended unless the JQL
+# has its own ORDER BY. Issues outside the Space's Jira projects are not offered.
 # [[intake.queries]]
 # id = "scrum-todo"          # ^[a-z0-9][a-z0-9_-]{0,63}$, unique
 # name = "SCRUM: to do"      # shown in the tab

@@ -1,5 +1,6 @@
-"""Intake candidates (request 14): for each `[[intake.queries]]` JQL, the matching Jira issues that
-aren't in AgentOS yet, fetched live with the service account. "Take in" is the existing import.
+"""Intake candidates (request 14): for each intake query's JQL (Settings > Intake), the matching
+Jira issues that aren't in AgentOS yet, fetched live with the service account. "Take in" is the
+existing import. `preview` answers one JQL being edited (live, uncached).
 
 Jira's answer is cached per query (`AppContext.intake_cache`, ~45 s), errors included; the
 already-imported filter reads the db on every call, so a taken-in issue leaves the list at once.
@@ -14,8 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from agentos.db import Conn, Database
 from agentos.errors import ApiError
-from agentos.models import IntakeAssignee, IntakeItem, IntakeQuery
-from agentos.pipeline.space import IntakeQuerySpec
+from agentos.models import IntakeAssignee, IntakeItem, IntakePreview, IntakeQuery, IntakeQuerySpec
 from agentos.sources.jira import (
     JiraBadQuery,
     JiraCandidate,
@@ -31,6 +31,7 @@ from agentos.validate import validate_key
 # filtered out of this window, then the rest is capped at ITEM_CAP.
 FETCH_LIMIT = 100
 ITEM_CAP = 50
+PREVIEW_CAP = 5
 MAX_PARALLEL = 4
 
 NOT_CONFIGURED = "Jira import isn't configured (AGENTOS_JIRA_URL and AGENTOS_JIRA_SERVICE_TOKEN)"
@@ -122,6 +123,32 @@ def _importable(key: str, projects: Collection[str]) -> bool:
     return not projects or key.rsplit("-", 1)[0] in projects
 
 
+def preview(
+    db: Database, jql: str, source: JiraSource | None, projects: Collection[str]
+) -> IntakePreview:
+    """Settings > Intake "Test query": one JQL, fetched live (never cached), with the same
+    filtering, total and error messages as `list_intake`, at most PREVIEW_CAP items."""
+    if source is None:
+        return IntakePreview(total=0, error=NOT_CONFIGURED, items=[])
+    result = _fetch(source, jql)
+    if isinstance(result, str):
+        return IntakePreview(total=0, error=result, items=[])
+    with db.read() as conn:
+        taken = _in_agentos(conn, {c.key for c in result.issues})
+    items, total = _candidates(result, taken, projects, PREVIEW_CAP)
+    return IntakePreview(total=total, error=None, items=items)
+
+
+def _candidates(
+    result: JiraSearch, taken: Collection[str], projects: Collection[str], cap: int
+) -> tuple[list[IntakeItem], int]:
+    """The first `cap` candidates (newest-updated first) and how many there are in all."""
+    fresh = [c for c in result.issues if c.key not in taken and _importable(c.key, projects)]
+    fresh.sort(key=lambda c: c.updated_at, reverse=True)
+    others = len(result.issues) - len(fresh)
+    return [_item(c) for c in fresh[:cap]], max(result.count - others, len(fresh))
+
+
 def _answer(
     spec: IntakeQuerySpec,
     result: JiraSearch | str,
@@ -130,16 +157,9 @@ def _answer(
 ) -> IntakeQuery:
     if isinstance(result, str):
         return _failed(spec, result)
-    fresh = [c for c in result.issues if c.key not in taken and _importable(c.key, projects)]
-    fresh.sort(key=lambda c: c.updated_at, reverse=True)
-    others = len(result.issues) - len(fresh)
+    items, total = _candidates(result, taken, projects, ITEM_CAP)
     return IntakeQuery(
-        id=spec.id,
-        name=spec.name,
-        jql=spec.jql,
-        items=[_item(c) for c in fresh[:ITEM_CAP]],
-        total=max(result.count - others, len(fresh)),
-        error=None,
+        id=spec.id, name=spec.name, jql=spec.jql, items=items, total=total, error=None
     )
 
 

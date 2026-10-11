@@ -1,27 +1,50 @@
-"""Settings: pydantic-settings (AGENTOS_* env) + agentos.toml loader (runtimes, Space and repo
-catalog) + startup checks (SPEC §14, §17).
+"""Settings: pydantic-settings (AGENTOS_* env) + agentos.toml loader (runtimes, and the Space's
+first-start seed) + startup checks (SPEC §14, §17).
 
 The server runs from `backend/`, so `.env`, `agentos.toml` and relative paths resolve from there.
+What an admin may change lives in the db and is edited in the app (Settings); env keeps what the
+server needs to start, who may sign in, and secrets.
 """
 
 from __future__ import annotations
 
 import ipaddress
-import re
+import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from agentos.pipeline.runtime import RuntimesConfig
-from agentos.pipeline.space import SpaceConfig
+from agentos.pipeline.space import SPACE_TOML_KEYS, SpaceConfig, SpaceSection
 
-KEY_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9]*$")
-JIRA_PROJECT_RE = re.compile(r"^[A-Z][A-Z0-9_]+$")
+# Env vars whose settings moved into the app, and the Settings tab that replaced each. A moved var
+# that is still set doesn't stop startup: it is ignored with a warning, and its value seeds the
+# setting on first start only (when the db has no row for it yet).
+MOVED_ENV: dict[str, str] = {
+    "AGENTOS_KEY_PREFIX": "Settings > Space",
+    "AGENTOS_JIRA_PROJECTS": "Settings > Space",
+    "AGENTOS_CLAIM_TIMEOUT_S": "Settings > Space",
+}
+# The SpaceSection field each moved var seeds.
+_MOVED_FIELD = {
+    "AGENTOS_KEY_PREFIX": "key_prefix",
+    "AGENTOS_JIRA_PROJECTS": "jira_projects",
+    "AGENTOS_CLAIM_TIMEOUT_S": "claim_timeout_s",
+}
 
 
 class ConfigError(Exception):
@@ -56,18 +79,14 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     config: Path = Path("agentos.toml")
-    key_prefix: str = "AOS"
     launcher: Literal["local", "github"] = "local"
     local_max_concurrency: int | None = 2  # None ("none"/"unlimited" in env) = no limit
     worker_env_file: Path | None = None
     web_dir: Path | None = None  # the built SPA (web/dist) to serve; None = API only (dev)
-    claim_timeout_s: int = 900
     dev_auth: bool = False
     trust_proxy: bool = False
     jira_url: str | None = None
     jira_deployment: Literal["cloud", "datacenter"] = "cloud"
-    # The Space's Jira projects: signing in needs browse access to at least one of them.
-    jira_projects: Annotated[list[str], NoDecode] = []
     # The service account for server-to-Jira calls (SPEC §11): issue import. Cloud: email + classic
     # API token; Data Center: a PAT (the email is unused). Import is on when the token is set.
     jira_service_email: str | None = None
@@ -82,6 +101,34 @@ class Settings(BaseSettings):
     github_api_url: str = "https://api.github.com"  # GHES: https://<host>/api/v3
     github_api_version: str = "2022-11-28"
 
+    # MOVED_ENV vars that were set (env wins over .env), by name: the first-start seed only.
+    _moved_env: dict[str, str] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _set_aside_moved(cls, data: Any, handler: ModelWrapValidatorHandler[Settings]) -> Settings:
+        """Take the MOVED_ENV vars out before validation (`extra="forbid"` would refuse them in
+        `.env`; env vars that aren't fields are never read) and keep their raw values aside."""
+        moved: dict[str, str] = {}
+        if isinstance(data, dict):
+            data = dict(data)
+            for name in MOVED_ENV:  # .env extras arrive under their full lower-case name
+                value = data.pop(name.lower(), None)
+                if isinstance(value, str) and value.strip():
+                    moved[name] = value.strip()
+        environ = {k.upper(): v for k, v in os.environ.items()}
+        for name in MOVED_ENV:
+            if environ.get(name, "").strip():
+                moved[name] = environ[name].strip()
+        settings = handler(data)
+        settings._moved_env = moved
+        return settings
+
+    @property
+    def moved_env(self) -> dict[str, str]:
+        """The moved vars that are still set (name → raw value)."""
+        return dict(self._moved_env)
+
     @field_validator("data_dir", "workspaces_dir", "config", "worker_env_file", "web_dir")
     @classmethod
     def _absolute(cls, value: Path | None) -> Path | None:
@@ -92,18 +139,10 @@ class Settings(BaseSettings):
     def _strip_slash(cls, value: str | None) -> str | None:
         return None if value is None else value.rstrip("/")
 
-    @field_validator("jira_projects", "admins", mode="before")
+    @field_validator("admins", mode="before")
     @classmethod
     def _csv(cls, value: object) -> object:
         return _split_csv(value)
-
-    @field_validator("jira_projects")
-    @classmethod
-    def _project_keys(cls, value: list[str]) -> list[str]:
-        bad = [key for key in value if not JIRA_PROJECT_RE.match(key)]
-        if bad:
-            raise ValueError(f"not Jira project keys ({JIRA_PROJECT_RE.pattern}): {bad}")
-        return value
 
     @field_validator("local_max_concurrency", mode="before")
     @classmethod
@@ -142,11 +181,14 @@ def _describe(err: Any) -> str:
 
 @dataclass(frozen=True, slots=True)
 class FileConfig:
-    """`agentos.toml`: the agent runtimes (SPEC §7) and the Space with its repo catalog and intake
-    queries (§17)."""
+    """`agentos.toml`: the agent runtimes (SPEC §7) and the Space's first-start seed (§17):
+    `[space]` name/default_repo, `[[repos]]`, `[[intake.queries]]`. Once an area has a db row,
+    its tables here are ignored. `space_tables` = which of `space`, `repos`, `intake` the file has.
+    """
 
     runtimes: RuntimesConfig
     space: SpaceConfig
+    space_tables: frozenset[str] = frozenset()
 
 
 _M = TypeVar("_M", bound=BaseModel)
@@ -166,11 +208,39 @@ def load_config(path: Path) -> FileConfig:
         raise ConfigError([f"{path}: cannot read TOML: {exc}"]) from None
     space_data = {k: data.pop(k) for k in _SPACE_KEYS if k in data}
     problems: list[str] = []
+    table = space_data.get("space")
+    if isinstance(table, dict):  # only name/default_repo: the rest is env (seed) or the app
+        for key in sorted(set(table) - set(SPACE_TOML_KEYS)):
+            del table[key]
+            problems.append(
+                f"{path}: space.{key}: not an agentos.toml key (only {', '.join(SPACE_TOML_KEYS)})"
+            )
     runtimes = _validated(RuntimesConfig, data, path, problems)
     space = _validated(SpaceConfig, space_data, path, problems)
-    if runtimes is None or space is None:
+    if runtimes is None or space is None or problems:
         raise ConfigError(problems)
-    return FileConfig(runtimes=runtimes, space=space)
+    return FileConfig(runtimes=runtimes, space=space, space_tables=frozenset(space_data))
+
+
+def seed_space(file_space: SpaceConfig, moved_env: Mapping[str, str]) -> SpaceConfig:
+    """The first-start seed: agentos.toml's Space with the values of the MOVED_ENV vars that are
+    set. An invalid value → ConfigError naming the variable (as when they were settings)."""
+    values: dict[str, Any] = file_space.space.model_dump()
+    for name, field in _MOVED_FIELD.items():
+        if name in moved_env:
+            raw = moved_env[name]
+            values[field] = _split_csv(raw) if field == "jira_projects" else raw
+    try:
+        section = SpaceSection.model_validate(values)
+    except ValidationError as exc:
+        problems: list[str] = []
+        for err in exc.errors():
+            loc = str(err["loc"][0]) if err["loc"] else ""
+            var = next((n for n, f in _MOVED_FIELD.items() if f == loc), None)
+            where = var or (f"agentos.toml space.{loc}" if loc else "AGENTOS_* (Space seed)")
+            problems.append(f"{where}: {err['msg'].removeprefix('Value error, ')}")
+        raise ConfigError(problems) from None
+    return file_space.model_copy(update={"space": section})
 
 
 def _validated(model: type[_M], data: dict[str, Any], path: Path, problems: list[str]) -> _M | None:
@@ -254,11 +324,8 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
                 "AGENTOS_DEV_AUTH=1 requires a loopback AGENTOS_PUBLIC_URL "
                 f"(got {settings.public_url!r})"
             )
-    else:
-        if not settings.jira_url:
-            problems.append("AGENTOS_JIRA_URL is required unless AGENTOS_DEV_AUTH=1")
-        if not settings.jira_projects:
-            problems.append("AGENTOS_JIRA_PROJECTS is required unless AGENTOS_DEV_AUTH=1")
+    elif not settings.jira_url:
+        problems.append("AGENTOS_JIRA_URL is required unless AGENTOS_DEV_AUTH=1")
     if settings.jira_url and (problem := _url_problem("AGENTOS_JIRA_URL", settings.jira_url)):
         problems.append(problem)
     problems.extend(_jira_service_problems(settings))
@@ -274,15 +341,8 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
         if problem := _url_problem("AGENTOS_GITHUB_API_URL", settings.github_api_url):
             problems.append(problem)
 
-    if not KEY_PREFIX_RE.match(settings.key_prefix):
-        problems.append(
-            f"AGENTOS_KEY_PREFIX={settings.key_prefix!r} must match {KEY_PREFIX_RE.pattern}"
-        )
-
     if settings.local_max_concurrency is not None and settings.local_max_concurrency < 1:
         problems.append("AGENTOS_LOCAL_MAX_CONCURRENCY must be >= 1 (or 'unlimited')")
-    if settings.claim_timeout_s < 1:
-        problems.append("AGENTOS_CLAIM_TIMEOUT_S must be >= 1")
     if settings.worker_env_file is not None and not settings.worker_env_file.is_file():
         problems.append(f"AGENTOS_WORKER_ENV_FILE={settings.worker_env_file} does not exist")
 

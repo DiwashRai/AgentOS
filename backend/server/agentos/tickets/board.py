@@ -300,7 +300,7 @@ def _attention_since(standing: Standing, facts: TicketFacts) -> datetime:
 def _parked(state: TicketState, pipeline: Pipeline, run: RunFact | None) -> str | None:
     """The stage whose gate holds the ticket: an open ticket whose latest run is gated or
     succeeded parks at the run's last stage if that stage is enabled and has `gate_after`. A gate
-    on the final enabled stage parks a succeeded run until "mark done"."""
+    on the final enabled stage parks a succeeded run until "complete"."""
     if state != "open" or run is None or run.status not in PARKED:
         return None
     last = _last_stage(run)
@@ -439,4 +439,4 @@ def _now(standing: Standing, facts: TicketFacts, nxt: str | None) -> NowInfo:
     last = _last_stage(run)
     if nxt is not None and last is not None:
         return info(f"review {name(last).lower()} and continue", progress=facts.tasks)
-    return info("review the result and mark done", progress=facts.tasks)
+    return info("review the result and complete it", progress=facts.tasks)

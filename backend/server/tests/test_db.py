@@ -29,6 +29,7 @@ TABLES = {
     "stage_runs",
     "run_events",
     "chat_messages",
+    "settings",
 }
 NOW = "2026-10-10T12:00:00.000000+00:00"
 

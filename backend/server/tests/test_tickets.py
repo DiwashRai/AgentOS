@@ -19,7 +19,9 @@ from agentos.db import Database
 from agentos.main import create_app
 from agentos.models import Me, Pipeline, TicketDetail, TicketSummary
 from agentos.pipeline.scaffold import default_pipeline
+from agentos.pipeline.space import RepoSpec
 from agentos.tickets.service import backfill_repos
+from tests.settings_support import set_repos, set_space
 
 RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
 CSRF = {"X-AgentOS": "1"}
@@ -121,9 +123,10 @@ def test_keys_are_sequential_and_skip_taken_ones(authed: TestClient, ctx: AppCon
     assert post(authed).json()["key"] == "AOS-4"
 
 
-def test_key_prefix_comes_from_settings(settings: Settings) -> None:
-    with started(settings.model_copy(update={"key_prefix": "ZED"})) as c:
-        assert post(c).json()["key"] == "ZED-1"
+def test_key_prefix_comes_from_the_space_settings(authed: TestClient, ctx: AppContext) -> None:
+    assert post(authed).json()["key"] == "AOS-1"
+    set_space(ctx, key_prefix="ZED")  # applies to the next ticket, no restart
+    assert post(authed).json()["key"] == "ZED-1"
 
 
 @pytest.mark.parametrize(
@@ -519,36 +522,22 @@ def test_put_pipeline_on_a_no_repo_ticket(authed: TestClient, create_ticket: Cre
 # ------------------------------------------------------------------ repo catalog changes
 
 
-def with_catalog(tmp_path: Path, name: str, catalog: str) -> Path:
-    """A copy of the test config whose [space] + [[repos]] are replaced by `catalog`."""
-    text = RUNTIMES_TOML.read_text(encoding="utf-8")
-    start, end = text.index("[space]"), text.index("[runtimes.fake]")
-    path = tmp_path / name
-    path.write_text(text[:start] + catalog + text[end:], encoding="utf-8")
-    return path
+def test_a_catalog_change_reaches_existing_tickets(authed: TestClient, ctx: AppContext) -> None:
+    key = post(authed, repo="docs").json()["key"]
+    own = post(authed, repo="docs", base_branch="stable").json()["key"]
 
-
-def test_a_catalog_change_reaches_existing_tickets(settings: Settings, tmp_path: Path) -> None:
-    with started(settings) as c:
-        key = post(c, repo="docs").json()["key"]
-        own = post(c, repo="docs", base_branch="stable").json()["key"]
-
-    moved = with_catalog(
-        tmp_path,
-        "moved.toml",
-        '[[repos]]\nname = "docs"\nurl = "https://example.com/new/docs.git"\n'
-        'default_branch = "trunk"\n',
+    set_space(ctx, default_repo=None)  # "r" leaves the catalog too
+    set_repos(  # Settings > Repos: no restart needed
+        ctx, [RepoSpec(name="docs", url="https://example.com/new/docs.git", default_branch="trunk")]
     )
-    with started(settings.model_copy(update={"config": moved})) as c:
-        t = TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json())
-        assert (t.repo_url, t.base_branch) == ("https://example.com/new/docs.git", "trunk")
-        assert c.get(f"/api/tickets/{own}").json()["base_branch"] == "stable"
+    t = TicketDetail.model_validate(authed.get(f"/api/tickets/{key}").json())
+    assert (t.repo_url, t.base_branch) == ("https://example.com/new/docs.git", "trunk")
+    assert authed.get(f"/api/tickets/{own}").json()["base_branch"] == "stable"
 
     # The repo left the catalog: still a repo ticket, with nothing to resolve (dispatch refuses
     # it: test_runs).
-    gone = with_catalog(tmp_path, "gone.toml", "")
-    with started(settings.model_copy(update={"config": gone})) as c:
-        t = TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json())
+    set_repos(ctx, [])
+    t = TicketDetail.model_validate(authed.get(f"/api/tickets/{key}").json())
     assert (t.workspace_mode, t.repo_name, t.repo_url, t.base_branch) == (
         "repo",
         "docs",

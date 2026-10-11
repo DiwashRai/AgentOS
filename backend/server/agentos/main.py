@@ -31,6 +31,7 @@ from agentos.runs import dispatcher
 from agentos.runs.reaper import INTERVAL_S as REAPER_INTERVAL_S
 from agentos.runs.reaper import Reaper
 from agentos.runs.routes import router as runs_router
+from agentos.settings.routes import router as settings_router
 from agentos.social.routes import router as chat_router
 from agentos.spa import router as spa_router
 from agentos.stream import router as stream_router
@@ -114,6 +115,7 @@ def create_app(
         chat_router,
         runs_router,
         template_router,
+        settings_router,
         stream_router,
         worker_router,
         spa_router,  # last: its catch-all serves the SPA for every non-/api path

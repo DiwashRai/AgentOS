@@ -204,6 +204,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Intake */
+        get: operations["get_intake_api_settings_intake_get"];
+        /** Put Intake */
+        put: operations["put_intake_api_settings_intake_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/intake/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Intake
+         * @description Test a JQL before saving it: live (never cached), at most 5 items, with the same filtering
+         *     and error messages as GET /api/intake.
+         */
+        post: operations["preview_intake_api_settings_intake_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Repos */
+        get: operations["get_repos_api_settings_repos_get"];
+        /** Put Repos */
+        put: operations["put_repos_api_settings_repos_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/space": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Space */
+        get: operations["get_space_api_settings_space_get"];
+        /** Put Space */
+        put: operations["put_space_api_settings_space_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stream": {
         parameters: {
             query?: never;
@@ -572,6 +647,8 @@ export interface components {
             repos: components["schemas"]["RepoInfo"][];
             /** Runtimes */
             runtimes: string[];
+            /** Server Default Runtime */
+            server_default_runtime: string;
             /** Sources */
             sources: ("jira" | "github")[];
             /** Space Name */
@@ -637,7 +714,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
+            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "in_use" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
             /** Message */
             message: string;
         };
@@ -830,6 +907,24 @@ export interface components {
             url: string;
         };
         /**
+         * IntakePreview
+         * @description POST /api/settings/intake/preview ("Test query"): live, not cached. The same filtering and
+         *     error messages as GET /api/intake, at most 5 items; `total` counts every candidate.
+         */
+        IntakePreview: {
+            /** Error */
+            error: string | null;
+            /** Items */
+            items: components["schemas"]["IntakeItem"][];
+            /** Total */
+            total: number;
+        };
+        /** IntakePreviewRequest */
+        IntakePreviewRequest: {
+            /** Jql */
+            jql: string;
+        };
+        /**
          * IntakeQuery
          * @description One `[[intake.queries]]` entry with its current candidates, newest-updated first, capped.
          *     `total` = how many candidates the JQL has (exact up to the fetch window, else estimated from
@@ -848,6 +943,57 @@ export interface components {
             name: string;
             /** Total */
             total: number;
+        };
+        /**
+         * IntakeQueryIn
+         * @description `id: null` = a new query: the server makes a unique id from its name. Sent ids are kept.
+         */
+        IntakeQueryIn: {
+            /** Id */
+            id: string | null;
+            /** Jql */
+            jql: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * IntakeQuerySpec
+         * @description One intake query: a JQL whose matches the Intake tab lists (request 14).
+         */
+        IntakeQuerySpec: {
+            /** Id */
+            id: string;
+            /** Jql */
+            jql: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * IntakeSettings
+         * @description Settings > Intake: the queries, in tab order.
+         */
+        IntakeSettings: {
+            /** Queries */
+            queries: components["schemas"]["IntakeQuerySpec"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * IntakeSettingsUpdate
+         * @description PUT /api/settings/intake. The JQL isn't checked against Jira (it might be down): use the
+         *     preview. Saving drops the intake cache.
+         */
+        IntakeSettingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            /** Queries */
+            queries: components["schemas"]["IntakeQueryIn"][];
         };
         /** LogData */
         LogData: {
@@ -1088,9 +1234,32 @@ export interface components {
              */
             state: "pending" | "done" | "current" | "failed" | "stale" | "skipped";
         };
+        /** RepoEntry */
+        RepoEntry: {
+            /** Default Branch */
+            default_branch: string;
+            /** Name */
+            name: string;
+            /** Open Ticket Count */
+            open_ticket_count: number;
+            /** Url */
+            url: string;
+        };
+        /**
+         * RepoEntryIn
+         * @description `url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).
+         */
+        RepoEntryIn: {
+            /** Default Branch */
+            default_branch: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+        };
         /**
          * RepoInfo
-         * @description One entry of the Space's repo catalog (`[[repos]]` in agentos.toml).
+         * @description One entry of the Space's repo catalog (Settings > Repos).
          */
         RepoInfo: {
             /** Default Branch */
@@ -1099,6 +1268,35 @@ export interface components {
             name: string;
             /** Url */
             url: string;
+        };
+        /**
+         * RepoSettings
+         * @description Settings > Repos: the Space's repo catalog. Tickets reference a repo by name, so changing a
+         *     URL or default branch reaches every ticket that uses it.
+         */
+        RepoSettings: {
+            /** Repos */
+            repos: components["schemas"]["RepoEntry"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * RepoSettingsUpdate
+         * @description PUT /api/settings/repos: the whole catalog, in order. Names are unique and can't be renamed
+         *     (a missing name = removed, a new one = added). Removing a repo that open tickets or the
+         *     Space's `default_repo` use → 409 `in_use`; done and closed tickets keep the name.
+         */
+        RepoSettingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            /** Repos */
+            repos: components["schemas"]["RepoEntryIn"][];
         };
         /**
          * Resolution
@@ -1213,6 +1411,52 @@ export interface components {
             source: "jira" | "github" | "todoist";
             /** Url */
             url: string;
+        };
+        /**
+         * SpaceSettings
+         * @description Settings > Space. `key_prefix` only affects new native tickets (stored keys never change).
+         *     `jira_projects`: signing in needs browse access to one of them (AGENTOS_ADMINS people
+         *     excepted); imports and intake only take issues from them.
+         */
+        SpaceSettings: {
+            /** Claim Timeout S */
+            claim_timeout_s: number;
+            /** Default Repo */
+            default_repo: string | null;
+            /** Jira Projects */
+            jira_projects: string[];
+            /** Key Prefix */
+            key_prefix: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * SpaceSettingsUpdate
+         * @description PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,
+         *     `key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project
+         *     repeats, or `jira_projects` is empty while sign-in is with Jira.
+         */
+        SpaceSettingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            /** Claim Timeout S */
+            claim_timeout_s: number;
+            /** Default Repo */
+            default_repo: string | null;
+            /** Jira Projects */
+            jira_projects: string[];
+            /** Key Prefix */
+            key_prefix: string;
+            /** Name */
+            name: string;
         };
         /** Stage */
         Stage: {
@@ -2117,6 +2361,288 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Manifest"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_intake_api_settings_intake_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_intake_api_settings_intake_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntakeSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    preview_intake_api_settings_intake_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntakePreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakePreview"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_repos_api_settings_repos_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_repos_api_settings_repos_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_space_api_settings_space_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_space_api_settings_space_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceSettings"];
                 };
             };
             /** @description Client error */

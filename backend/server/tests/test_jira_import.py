@@ -17,6 +17,7 @@ from agentos.context import AppContext
 from agentos.models import ImportRequest, ImportResult, Me
 from agentos.sources.jira import JiraClient, JiraNotFound, JiraSource
 from agentos.tickets import service
+from tests.settings_support import set_space
 
 CSRF = {"X-AgentOS": "1"}
 JIRA = "https://jira.example.com"
@@ -76,7 +77,6 @@ def settings(settings: Settings) -> Settings:
     return settings.model_copy(
         update={
             "jira_url": JIRA,
-            "jira_projects": ["SCRUM"],
             "jira_service_email": SERVICE_EMAIL,
             "jira_service_token": SecretStr(SERVICE_TOKEN),
         }
@@ -85,6 +85,7 @@ def settings(settings: Settings) -> Settings:
 
 @pytest.fixture
 def jira(ctx: AppContext) -> FakeJira:
+    set_space(ctx, jira_projects=("SCRUM",))
     fake = FakeJira()
     ctx.jira = fake.client()
     return fake
@@ -247,7 +248,7 @@ def test_concurrent_imports_end_with_one_ticket(
 
     def import_meanwhile() -> None:
         body = ImportRequest(ref="SCRUM-6")
-        inner = service.import_ticket(ctx.db, ctx.settings, ctx.space, ctx.jira_source, me, body)
+        inner = service.import_ticket(ctx.db, ctx.space, ctx.jira_source, me, body)
         assert inner.created
 
     jira.on_fetch = import_meanwhile

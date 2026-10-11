@@ -15,6 +15,7 @@ from agentos.context import AppContext
 from agentos.models import TicketDetail
 from agentos.runs.reaper import Reaper
 from tests.run_support import CSRF, RunDriver, Worker
+from tests.settings_support import set_space
 
 CreateTicket = Callable[..., TicketDetail]
 
@@ -68,7 +69,7 @@ def test_a_long_gap_is_a_grace_tick(
 def test_never_connected(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reaper: Reaper
 ) -> None:
-    timeout = runs.ctx.settings.claim_timeout_s
+    timeout = runs.ctx.space.claim_timeout_s
     old = runs.queue(create_ticket("old", repo=None).key).id
     young = runs.queue(create_ticket("young", repo=None).key).id
     runs.tick()
@@ -82,6 +83,19 @@ def test_never_connected(
     assert (detail.status, detail.error) == ("failed", "worker never connected")
     assert [s.status for s in detail.stage_runs] == ["cancelled"]
     assert runs.db_run(young)["status"] == "dispatched"
+
+
+def test_the_claim_timeout_is_the_saved_space_setting(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reaper: Reaper
+) -> None:
+    set_space(runs.ctx, claim_timeout_s=60)  # Settings > Space: the next tick uses it
+    old = runs.queue(create_ticket("old", repo=None).key).id
+    young = runs.queue(create_ticket("young", repo=None).key).id
+    runs.tick()
+    now = utcnow()
+    runs.set_run(old, dispatched_at=to_db(now - timedelta(seconds=61)))
+    runs.set_run(young, dispatched_at=to_db(now - timedelta(seconds=59)))
+    assert [r.run_id for r in armed(reaper, now).tick(now)] == [old]
 
 
 def test_worker_lost(

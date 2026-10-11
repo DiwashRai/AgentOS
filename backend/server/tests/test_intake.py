@@ -22,6 +22,7 @@ from agentos.models import IntakeQuery, Me
 from agentos.pipeline.space import IntakeQuerySpec, IntakeSection
 from agentos.sources.jira import JiraBadQuery, JiraClient, JiraCredentials, JiraSource
 from agentos.ttlcache import TtlCache
+from tests.settings_support import set_queries, set_space
 
 CSRF = {"X-AgentOS": "1"}
 JIRA = "https://jira.example.com"
@@ -109,7 +110,6 @@ def settings(settings: Settings) -> Settings:
     return settings.model_copy(
         update={
             "jira_url": JIRA,
-            "jira_projects": ["SCRUM"],
             "jira_service_email": SERVICE_EMAIL,
             "jira_service_token": SecretStr(SERVICE_TOKEN),
         }
@@ -126,6 +126,7 @@ def clock(ctx: AppContext) -> Clock:
 @pytest.fixture
 def jira(ctx: AppContext, clock: Clock) -> FakeJira:
     del clock  # every test gets a fake-clock cache
+    set_space(ctx, jira_projects=("SCRUM",))
     fake = FakeJira()
     ctx.jira = fake.client()
     return fake
@@ -133,8 +134,7 @@ def jira(ctx: AppContext, clock: Clock) -> FakeJira:
 
 def configure(ctx: AppContext, *queries: tuple[str, str]) -> None:
     """Set the Space's intake queries: (id, jql) pairs, named after their id."""
-    specs = tuple(IntakeQuerySpec(id=i, name=f"Query {i}", jql=jql) for i, jql in queries)
-    ctx.space = ctx.space.model_copy(update={"intake": IntakeSection(queries=specs)})
+    set_queries(ctx, [IntakeQuerySpec(id=i, name=f"Query {i}", jql=jql) for i, jql in queries])
 
 
 def get_intake(client: TestClient) -> list[IntakeQuery]:

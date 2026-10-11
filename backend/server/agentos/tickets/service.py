@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
-from agentos.config import Settings
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
 from agentos.files.service import write_version
@@ -409,9 +408,7 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
 # ------------------------------------------------------------------ create
 
 
-def create_ticket(
-    db: Database, settings: Settings, space: SpaceConfig, user: Me, body: TicketCreate
-) -> TicketDetail:
+def create_ticket(db: Database, space: SpaceConfig, user: Me, body: TicketCreate) -> TicketDetail:
     """Allocate the key, copy the current template's pipeline, render its scaffold and write it as
     bundle v1, all in one transaction (a render error leaves no ticket and no used key).
 
@@ -428,7 +425,7 @@ def create_ticket(
     with db.tx() as conn:
         if body.owner_id is not None:
             _check_owner(conn, body.owner_id)
-        key = _allocate_key(conn, settings.key_prefix)
+        key = _allocate_key(conn, space.key_prefix)
         _insert_ticket(
             conn,
             space,
@@ -529,7 +526,6 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
 
 def import_ticket(
     db: Database,
-    settings: Settings,
     space: SpaceConfig,
     source: TicketSource | None,
     user: Me,
@@ -537,7 +533,7 @@ def import_ticket(
 ) -> ImportResult:
     """Take in a source ticket by key or link (manual take-in: the importer owns it).
 
-    Not configured → 501; an unparseable ref, a project outside AGENTOS_JIRA_PROJECTS or a key
+    Not configured → 501; an unparseable ref, a project outside the Space's Jira projects or a key
     AgentOS can't use → 422; imported before → that ticket, `created: false`, without a source
     call. The source can't see it → 404 `ticket_not_found`; the source rejects the service
     account or is down → 502 `upstream_error`. Another ticket already has the key → 409
@@ -559,7 +555,7 @@ def import_ticket(
             422, "validation_error", f"ref: not a {source.name} issue key or link to one"
         )
     if source.name == "jira":  # the external id is the issue key: check it before any Jira call
-        _check_import_key(settings, external_id)
+        _check_import_key(space.jira_projects, external_id)
     with db.read() as conn:
         if (key := _imported_key(conn, source.name, external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
@@ -577,7 +573,7 @@ def import_ticket(
         raise ApiError(
             502, "upstream_error", f"{source.name} didn't answer; try again shortly"
         ) from None
-    _check_import_key(settings, fetched.key)  # a moved issue answers with its new key
+    _check_import_key(space.jira_projects, fetched.key)  # a moved issue answers with its new key
     new = _NewTicket(
         key=fetched.key,
         title=fetched.title[:MAX_TITLE_CHARS].strip() or fetched.key,
@@ -599,15 +595,16 @@ def import_ticket(
         return ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
 
 
-def _check_import_key(settings: Settings, key: str) -> None:
+def _check_import_key(projects: Sequence[str], key: str) -> None:
     """The key must be a valid ticket key, in one of the Space's Jira projects when those are set
     (the Space is the trust boundary)."""
     validate_key(key)
     project = key.rsplit("-", 1)[0]
-    if settings.jira_projects and project not in settings.jira_projects:
-        projects = ", ".join(settings.jira_projects)
+    if projects and project not in projects:
         raise ApiError(
-            422, "validation_error", f"ref: {key} is not in this Space's Jira projects ({projects})"
+            422,
+            "validation_error",
+            f"ref: {key} is not in this Space's Jira projects ({', '.join(projects)})",
         )
 
 
@@ -860,7 +857,7 @@ def backfill_repos(db: Database, space: SpaceConfig) -> list[str]:
             )
     if unmatched:
         log.warning(
-            "Tickets whose repo_url matches no [[repos]] entry in agentos.toml (they act as "
+            "Tickets whose repo_url matches no repo in the Space's catalog (they act as "
             "no-repo tickets until it does, or until their repo is set): %s",
             ", ".join(unmatched),
         )

@@ -21,6 +21,7 @@ from agentos.main import create_app
 from agentos.models import Me
 from agentos.sources.jira import JiraClient, JiraCredentials
 from tests.run_support import FakeLauncher
+from tests.settings_support import set_space
 
 CSRF = {"X-AgentOS": "1"}
 BASE_URL = "http://127.0.0.1:8000"
@@ -90,7 +91,6 @@ def jira_settings(settings: Settings) -> Settings:
         update={
             "dev_auth": False,
             "jira_url": JIRA,
-            "jira_projects": ["SCRUM", "OPS"],
             "admins": ["acc-boss", "Chief@Example.com"],
         }
     )
@@ -108,6 +108,7 @@ def jira_app(
         ctx.jira = JiraClient(
             JIRA, jira_settings.jira_deployment, transport=httpx.MockTransport(fake_jira.handler)
         )
+        set_space(ctx, jira_projects=("SCRUM", "OPS"))
         yield client, ctx
 
 
@@ -194,7 +195,43 @@ def test_no_project_access(client: TestClient, ctx: AppContext, fake_jira: FakeJ
     fake_jira.accounts[basic("ana@example.com")].projects = {"OTHER"}
     response = ana(client)
     assert (response.status_code, code(response)) == (403, "no_project_access")
+    assert "SCRUM, OPS" in response.json()["error"]["message"]
     assert rows(ctx, "SELECT * FROM users") == []
+
+
+def test_the_project_check_uses_the_saved_projects(
+    client: TestClient, ctx: AppContext, fake_jira: FakeJira
+) -> None:
+    """Settings > Space applies at once: the next login checks the new projects."""
+    fake_jira.accounts[basic("ana@example.com")].projects = {"OTHER"}
+    assert ana(client).status_code == 403
+    set_space(ctx, jira_projects=("OTHER",))
+    assert ana(client).status_code == 200
+    assert [r.url.path for r in fake_jira.calls][-1] == "/rest/api/2/project/OTHER"
+
+
+def test_no_projects_yet_refuses_everyone_but_env_admins(
+    client: TestClient, ctx: AppContext, fake_jira: FakeJira
+) -> None:
+    set_space(ctx, jira_projects=())
+    response = ana(client)
+    assert (response.status_code, code(response)) == (403, "no_project_access")
+    assert "no Jira projects" in response.json()["error"]["message"]
+    fake_jira.add(basic("boss@example.com"), "acc-boss", email="boss@example.com")
+    assert login(client, {"email": "boss@example.com", "token": TOKEN}).json()["role"] == "admin"
+
+
+def test_env_admins_skip_the_project_check(
+    client: TestClient, ctx: AppContext, fake_jira: FakeJira
+) -> None:
+    """A bad `jira_projects` save can't lock the AGENTOS_ADMINS people out: a valid token is
+    enough (no project call at all)."""
+    fake_jira.add(basic("boss@example.com"), "acc-boss", email="boss@example.com", projects=set())
+    response = login(client, {"email": "boss@example.com", "token": TOKEN})
+    assert (response.status_code, response.json()["role"]) == (200, "admin")
+    assert [r.url.path for r in fake_jira.calls] == ["/rest/api/2/myself"]
+    bad = login(client, {"email": "boss@example.com", "token": "wrong-token"})
+    assert (bad.status_code, code(bad)) == (401, "invalid_credentials")
 
 
 @pytest.mark.parametrize(
@@ -338,6 +375,7 @@ def test_datacenter_uses_a_bearer_pat_and_the_user_key(
     with TestClient(app, base_url=BASE_URL) as client:
         ctx = app.state.ctx
         ctx.jira = JiraClient(JIRA, "datacenter", transport=httpx.MockTransport(fake_jira.handler))
+        set_space(ctx, jira_projects=("SCRUM",))
         assert (r := login(client, {"email": "ignored", "token": TOKEN})).status_code == 200, r.text
         assert login(client, {}).status_code == 400
         assert rows(ctx, "SELECT subject FROM user_identities") == [{"subject": "jsmith"}]

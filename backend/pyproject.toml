@@ -79,6 +79,7 @@ type = "layers"
 containers = [
     "agentos.auth", "agentos.tickets", "agentos.files", "agentos.runs",
     "agentos.social", "agentos.templates", "agentos.worker_api", "agentos.intake",
+    "agentos.settings",
 ]
 layers = [
     "(routes)",
