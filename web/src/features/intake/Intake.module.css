@@ -1,0 +1,562 @@
+/* Intake (design/intake-mock.html). The row, column head, group and footer follow Compact
+   (src/features/compact/Compact.module.css); the overflow strip is kit `.ao-overflow`. Every
+   colour is a token. */
+
+/* ---------- the page: top bar + a surface that fills the rest; only the list scrolls ---------- */
+.page {
+  container: intake / inline-size;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* the shell's main column keeps 24px below */
+  height: calc(100dvh - 24px);
+}
+
+/* top-bar counters (TopBar's own counters read board counts; these are the view's) */
+.counters {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: 8px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.counters > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.counters b {
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.counters > .sep {
+  width: 1px;
+  height: 14px;
+  background: var(--rule);
+}
+
+.surface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* key · type · title · Jira status · assignee · upd · action */
+  --ix-cols: 122px 124px minmax(0, 1fr) 150px 150px 48px 112px;
+}
+.colhead {
+  flex: none;
+  position: relative;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: var(--ix-cols);
+  column-gap: 14px;
+  align-items: center;
+  height: 32px;
+  margin: 0 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.colhead > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.colhead > span:nth-child(6) {
+  text-align: right;
+}
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 6px 8px 24px;
+  scrollbar-width: thin;
+}
+.group + .group {
+  margin-top: 10px;
+}
+.group [hidden] {
+  display: none;
+}
+
+/* the query's JQL, under its group head */
+.jql {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 20px;
+  margin: -3px 0 4px;
+  padding: 0 10px 0 29px;
+  min-width: 0;
+}
+.jql > code {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.out {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-3);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.out:hover {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--rule-strong);
+}
+.out:focus-visible,
+.key:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---------- the row: one 36px line; not a click target, so hover tints, it doesn't lift ---------- */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.row {
+  display: grid;
+  grid-template-columns: var(--ix-cols);
+  column-gap: 14px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  transition: background-color var(--t-fast) ease;
+}
+.row:hover {
+  background: var(--surface);
+}
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  justify-self: start;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.key > b {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.key > svg {
+  flex: none;
+}
+.key:hover > b {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--rule-strong);
+}
+.type {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.type > em {
+  font-style: normal;
+  color: var(--blocked);
+}
+.ti {
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.as {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.as > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.as.isNone {
+  color: var(--ink-3);
+}
+.nobody {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+  opacity: 0.8;
+}
+.upd {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.act {
+  justify-self: end;
+}
+.act > button {
+  min-width: 84px;
+}
+/* taken in: the state takes the right-hand columns until the refetch drops the row */
+.isTaken .ti {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.taken {
+  grid-column: 4 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.where {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.taken > a {
+  flex: none;
+}
+/* a failed Take in: one quiet line under the row */
+.rowErr {
+  grid-column: 1 / -1;
+  justify-self: end;
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--blocked);
+  overflow-wrap: anywhere;
+}
+
+/* quiet lines for a failing or empty query */
+.err {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 4px 10px 8px 29px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.errK {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--blocked);
+  white-space: nowrap;
+}
+.msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hint {
+  color: var(--ink-3);
+}
+.errRetry {
+  margin-left: auto;
+}
+.empty {
+  margin: 0;
+  padding: 4px 10px 8px 29px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.none {
+  margin: 0;
+  padding: 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.none > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink-1);
+}
+
+/* the overflow strip (kit .ao-overflow): "+42 more · 73 match in Jira, newest 50 listed · Show all 50" */
+.more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.more > b {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.moreEnd {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  white-space: nowrap;
+  min-width: 0;
+}
+.cap {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* footer: its own row inside the surface */
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 40px;
+  margin: 0 8px;
+  padding: 0 10px;
+  border-top: 1px solid var(--rule);
+}
+.keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.grow {
+  flex: 1;
+}
+.note {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- medium widths: narrower fixed columns, so the title keeps room ---------- */
+@container intake (max-width: 1100px) {
+  .surface {
+    --ix-cols: 116px 96px minmax(0, 1fr) 104px 120px 44px 96px;
+  }
+}
+
+/* ---------- narrow (~390px): the same parts, stacked. Rows become three-line sheets. ---------- */
+@container intake (max-width: 760px) {
+  /* The top bar (TopBar.tsx) wraps: the Space name and the query count go, the search drops
+     to its own line. Reached by element, since TopBar has no narrow mode of its own. */
+  .page > header {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 12px 0;
+    gap: 10px 12px;
+  }
+  .page > header > h1 + span,
+  .counters > .wide {
+    display: none;
+  }
+  .page > header > label {
+    order: 4;
+    flex: 1 1 100%;
+    width: auto;
+    min-width: 0;
+  }
+  .surface {
+    flex: none;
+    overflow: visible;
+  }
+  .list {
+    overflow: visible;
+    padding: 8px 6px 12px;
+  }
+  .colhead {
+    display: none;
+  }
+  .jql {
+    padding-left: 10px;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    margin-bottom: 6px;
+  }
+  .jql > code {
+    flex: 1 1 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.45;
+  }
+  .out {
+    margin-left: 0;
+  }
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  /* three lines: key · type · age / title / Jira status · assignee · action */
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 9px 10px 9px 12px;
+    background: var(--surface);
+    border-color: var(--rule);
+    box-shadow: var(--row-edge);
+  }
+  .key {
+    order: 1;
+  }
+  .type {
+    order: 2;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .upd {
+    order: 3;
+  }
+  .ti {
+    order: 4;
+    flex: 1 1 100%;
+  }
+  .st {
+    order: 5;
+    flex: 0 1 auto;
+    max-width: 40%;
+  }
+  .as {
+    order: 6;
+    flex: 1 1 0;
+  }
+  .act {
+    order: 7;
+  }
+  .taken {
+    order: 5;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .rowErr {
+    order: 8;
+    flex: 1 1 100%;
+    margin: 0;
+  }
+  .err,
+  .empty {
+    padding-left: 10px;
+  }
+  .errRetry {
+    margin-left: 0;
+  }
+  .more {
+    padding: 0 2px 0 10px;
+    height: auto;
+    min-height: 32px;
+    flex-wrap: wrap;
+  }
+  .cap {
+    display: none;
+  }
+  .foot {
+    gap: 12px;
+    margin: 0 6px;
+  }
+  .foot > .keys {
+    display: none;
+  }
+}
+
+/* The page itself (a container can't be styled by its own container query). At the narrow
+   layout's widths (60px rail + 760px), it grows with its content and takes the mock's 12px gutters
+   by reaching into the shell's 24px side padding. */
+@media (max-width: 844px) {
+  .page {
+    height: auto;
+    min-height: calc(100dvh - 24px);
+    margin: 0 -12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    transition: none;
+  }
+}

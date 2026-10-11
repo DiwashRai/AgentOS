@@ -1,11 +1,11 @@
-// The left rail (DESIGN §4, kit.js Kit.rail). Order: logo · All teams · My queue · Compact · spacer
+// The left rail (DESIGN §4, kit.js Kit.rail). Order: logo · All teams · My queue · Compact · Intake · spacer
 // · Theme · Settings · avatar. Sources is omitted (no sources yet). Labels are native titles plus
 // aria-label; nothing is revealed on hover.
 import type { ReactNode } from "react";
 import { NavLink } from "react-router";
 
 import { avatarTone, initials } from "../domain/format";
-import { CompactIcon, LogoIcon, QueueIcon, SettingsIcon, TeamsIcon } from "./icons";
+import { CompactIcon, IntakeIcon, LogoIcon, QueueIcon, SettingsIcon, TeamsIcon } from "./icons";
 import s from "./Rail.module.css";
 import { ThemeMenu } from "./ThemeMenu";
 import { useBoard } from "./useBoard";
@@ -47,6 +47,10 @@ export function Rail() {
       </RailLink>
       <RailLink to="/compact" label="Compact">
         <CompactIcon />
+      </RailLink>
+      {/* No badge: new candidates aren't "Needs you". */}
+      <RailLink to="/intake" label="Intake">
+        <IntakeIcon />
       </RailLink>
       <div className={s.spacer} />
       <ThemeMenu />

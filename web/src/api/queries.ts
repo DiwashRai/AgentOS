@@ -23,6 +23,7 @@ export const keys = {
   run: (id: number) => [...keys.all, "run", id] as const,
   runEvents: (id: number) => [...keys.run(id), "events"] as const,
   manifest: (id: number) => [...keys.run(id), "manifest"] as const,
+  intake: () => [...keys.all, "intake"] as const,
 };
 
 /** Public app config (auth mode, key prefix, defaults). Static for the life of the server. */
@@ -129,6 +130,8 @@ export function useSaveTemplate() {
     mutationFn: (body: Schemas["TemplateUpdate"]) => unwrap(api.PUT("/api/template", { body })),
     onSuccess: (t) => {
       queryClient.setQueryData(keys.template(), t);
+      // /api/config carries the effective Space defaults (default_runtime, default_model).
+      void queryClient.invalidateQueries({ queryKey: keys.config() });
     },
   });
 }
@@ -384,6 +387,30 @@ export function useImportTicket() {
       Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.tickets(), exact: true }),
         queryClient.invalidateQueries({ queryKey: keys.ticket(r.ticket.key) }),
+        // Stale but not refetched now: the Intake view shows "Taken in" for a moment and then
+        // refetches itself; anywhere else, the next visit to Intake refetches.
+        queryClient.invalidateQueries({ queryKey: keys.intake(), refetchType: "none" }),
       ]),
+  });
+}
+
+/** The Space's intake queries with their Jira candidates (issues not taken in yet). The server
+ *  caches each query for ~45 s, so polling faster than a minute gains nothing. */
+export function useIntake() {
+  return useQuery({
+    queryKey: keys.intake(),
+    queryFn: () => unwrap(api.GET("/api/intake")),
+    refetchInterval: 60_000,
+  });
+}
+
+/** Close a ticket as completed (state done) or abandoned (state closed), with an optional note.
+ *  409 `run_active` while a run is active. Reopen = PATCH `state: open` (clears the resolution). */
+export function useResolveTicket(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: (body: Schemas["ResolveRequest"]) =>
+      unwrap(api.POST("/api/tickets/{key}/resolve", { params: { path: { key } }, body })),
+    onSuccess: () => invalidate(key),
   });
 }

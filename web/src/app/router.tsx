@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 
 import { LoginPage } from "../features/auth/LoginPage";
 import { CompactView } from "../features/compact/CompactView";
+import { IntakeView } from "../features/intake/IntakeView";
 import { QueueView } from "../features/queue/QueueView";
 import { TicketPage } from "../features/ticket/TicketPage";
 import { Shell } from "./Shell";
@@ -18,6 +19,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <QueueView /> },
       { path: "compact", element: <CompactView /> },
+      { path: "intake", element: <IntakeView /> },
       { path: "teams", element: <TeamsView /> },
       { path: "t/:key/:tab?", element: <TicketPage /> },
       // The rail's Settings link points at /settings, so it stays current on every section.

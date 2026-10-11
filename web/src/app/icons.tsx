@@ -56,6 +56,32 @@ export function CompactIcon() {
   );
 }
 
+/** A tray (the pack's "sources" icon): Intake. */
+export function IntakeIcon() {
+  return (
+    <svg {...stroke18}>
+      <path d="M3 11.5l2.5-7h7l2.5 7M3 11.5v3h12v-3M3 11.5h3.5l1 1.5h3l1-1.5H15" />
+    </svg>
+  );
+}
+
+/** "Opens elsewhere" (↗), 10px: links out to Jira. */
+export function OpenIcon() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+    >
+      <path d="M5 2.5H2.5v7h7V7M7 2.5h2.5V5M9.5 2.5L5.5 6.5" />
+    </svg>
+  );
+}
+
 export function SettingsIcon() {
   return (
     <svg {...stroke18}>
