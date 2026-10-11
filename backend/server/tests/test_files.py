@@ -153,7 +153,8 @@ def test_writes_bump_updated_at(authed: TestClient, ticket: TicketDetail) -> Non
     put(authed, ticket.key, "a.md", "a", 0)
     after = detail(authed, ticket.key)
     assert after.updated_at > ticket.updated_at
-    assert after.attention == "up_next"  # board fields still derive from runs, not files
+    # board fields still derive from runs, not files
+    assert (after.attention, after.attention_since) == ("inbox", ticket.created_at)
 
 
 def test_delete(authed: TestClient, ticket: TicketDetail) -> None:

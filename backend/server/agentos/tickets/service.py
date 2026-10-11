@@ -3,8 +3,9 @@ list and detail, patch and pipeline edits.
 
 The board is batch-loaded: a fixed number of queries for any number of tickets (tickets + owners,
 latest runs + creators, their stage_runs, the ever-succeeded GROUP BY, TASKS.md of running
-tickets, chat counts). Ticket id lists are bound as one JSON array (`json_each(?)`), so the SQL
-stays constant. Facts go through the pure `board.derive`, then `board.for_viewer`.
+tickets (of the ticket, for the detail), chat counts). Ticket id lists are bound as one JSON array
+(`json_each(?)`), so the SQL stays constant. Facts go through the pure `board.derive`, then
+`board.for_viewer`.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from agentos.models import (
     TicketType,
 )
 from agentos.pipeline.manifest import render_stages
-from agentos.pipeline.plan import parse_plan
+from agentos.pipeline.plan import Plan, parse_plan
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.scaffold import names, repo_name, slugify
@@ -80,7 +81,7 @@ _SQL_EVER_SUCCEEDED = (
 _SQL_CURRENT_CONTENT = (
     "SELECT fv.owner_id, fv.content FROM file_versions fv "
     "JOIN json_each(?) j ON fv.owner_id = json_extract(j.value, '$[0]') "
-    "  AND fv.path = json_extract(j.value, '$[1]') "
+    "  AND lower(fv.path) = lower(json_extract(j.value, '$[1]')) "  # = path_key (ASCII paths)
     "WHERE fv.owner_type = 'ticket' AND fv.version = ("
     "  SELECT MAX(x.version) FROM file_versions x "
     "  WHERE x.owner_type = 'ticket' AND x.owner_id = fv.owner_id AND x.path = fv.path)"
@@ -174,11 +175,13 @@ class _Facts:
     latest: dict[int, Row] = field(default_factory=dict)
     stage_runs: dict[int, list[StageRunFact]] = field(default_factory=lambda: defaultdict(list))
     ever: dict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
-    tasks_md: dict[int, str] = field(default_factory=dict)
+    plans: dict[int, Plan] = field(default_factory=dict)  # parsed current TASKS.md
     chat: dict[int, int] = field(default_factory=dict)
 
 
-def _load_facts(conn: Conn, rows: Sequence[Row]) -> _Facts:
+def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> _Facts:
+    """`plans` holds TASKS.md of running tickets only (the "now" line's next task), or of every
+    row with `with_plan` (the detail's `plan`)."""
     facts = _Facts()
     if not rows:
         return facts
@@ -198,16 +201,17 @@ def _load_facts(conn: Conn, rows: Sequence[Row]) -> _Facts:
         )
     for ev in conn.execute(_SQL_EVER_SUCCEEDED, (ids,)).fetchall():
         facts.ever[ev["ticket_id"]].add(ev["stage_id"])
-    # TASKS.md content is only read by the "now" line of a running ticket (its next task).
-    running = [
+    # TASKS.md content is only read by the "now" line of a running ticket (its next task), and by
+    # the detail.
+    wanted = [
         [r["id"], names(r["key"], r["slug"], r["workspace_mode"]).tasks_md]
         for r in rows
-        if r["id"] in facts.latest and facts.latest[r["id"]]["status"] == "running"
+        if with_plan or (r["id"] in facts.latest and facts.latest[r["id"]]["status"] == "running")
     ]
-    if running:
-        for f in conn.execute(_SQL_CURRENT_CONTENT, (json.dumps(running),)).fetchall():
+    if wanted:
+        for f in conn.execute(_SQL_CURRENT_CONTENT, (json.dumps(wanted),)).fetchall():
             if f["content"] is not None:
-                facts.tasks_md[f["owner_id"]] = f["content"]
+                facts.plans[f["owner_id"]] = parse_plan(f["content"])
     for c in conn.execute(_SQL_CHAT_COUNTS, (ids,)).fetchall():
         facts.chat[c["ticket_id"]] = c["n"]
     return facts
@@ -270,7 +274,7 @@ def _summary_fields(
     run = facts.latest.get(row["id"])
     latest = _run_fact(run, facts.stage_runs.get(run["id"], [])) if run is not None else None
     tasks = _tasks(row)
-    tasks_md = facts.tasks_md.get(row["id"])
+    plan = facts.plans.get(row["id"])
     owner = _person(row["owner_id"], row["owner_name"], row["owner_avatar"])
     board = derive(
         TicketFacts(
@@ -282,7 +286,7 @@ def _summary_fields(
             latest_run=latest,
             ever_succeeded=frozenset(facts.ever.get(row["id"], ())),
             tasks=tasks,
-            next_task=parse_plan(tasks_md).next_item if tasks_md is not None else None,
+            next_task=plan.next_item if plan is not None else None,
         )
     )
     view = for_viewer(board, viewer_id)
@@ -295,10 +299,10 @@ def _summary_fields(
         "state": row["state"],
         "owner": owner,
         "attention": view.attention,
+        "attention_since": board.attention_since,
         "phase": board.phase,
-        "phase_since": board.phase_since,
         "phase_track": board.phase_track,
-        "rail": board.rail,
+        "rail": view.rail,
         "now": view.now,
         "tasks": tasks,
         "chat_count": facts.chat.get(row["id"], 0),
@@ -313,7 +317,9 @@ def _summary_fields(
 
 def _detail(conn: Conn, key: str, viewer_id: int) -> TicketDetail:
     row = get_ticket_row(conn, key)
-    fields, next_stage, active = _summary_fields(row, _load_facts(conn, [row]), viewer_id)
+    facts = _load_facts(conn, [row], with_plan=True)
+    fields, next_stage, active = _summary_fields(row, facts, viewer_id)
+    plan = facts.plans.get(row["id"])
     n = names(row["key"], row["slug"], row["workspace_mode"])
     return TicketDetail(
         **fields,
@@ -329,6 +335,7 @@ def _detail(conn: Conn, key: str, viewer_id: int) -> TicketDetail:
         next_stage=next_stage,
         active_run_id=active,
         created_at=from_db(row["created_at"]),
+        plan=list(plan.items) if plan is not None else None,
     )
 
 

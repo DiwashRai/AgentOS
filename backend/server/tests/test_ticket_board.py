@@ -7,6 +7,7 @@ The derivation rules themselves are table-tested in test_board.py; this checks t
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import get_args
 
 import pytest
@@ -16,10 +17,12 @@ from agentos.context import AppContext
 from agentos.db import Conn
 from agentos.models import (
     Attention,
+    GateState,
     Me,
     Person,
     Phase,
     PhaseState,
+    PlanItem,
     RailState,
     TaskProgress,
     TicketDetail,
@@ -68,8 +71,8 @@ def test_a_running_ticket(authed: TestClient, create_ticket: CreateTicket, add_r
         t.key, "running", [("implement", "running"), ("review", "pending")], created_by=me.id
     )
     s = board(authed)[t.key]
-    assert (s.attention, s.phase) == ("moving", "build")
-    assert rail(s) == "done current pending pending"
+    assert (s.attention, s.phase) == ("running", "build")
+    assert rail(s) == "done current skipped pending pending"
     assert s.now.actor == "Implement"
     assert s.now.text == "Run tests"
     assert s.now.run_id == run_id
@@ -127,7 +130,7 @@ def test_ever_succeeded_spans_runs(
     )
     add_run(t.key, "gated", [("plan", "succeeded")])
     s = board(authed)[t.key]
-    assert rail(s) == "current stale stale pending"
+    assert rail(s) == "current stale skipped stale pending"
     assert track(s) == "done current stale skipped stale pending"
     assert detail(authed, t.key).next_stage == "implement"
 
@@ -138,9 +141,11 @@ def test_board_covers_every_attention_group_and_state(
     """Real tickets reach every attention group, phase and rail state the UI renders."""
     sam = login("sam")
     login("dev")
-    create_ticket("Up next")
-    moving = create_ticket("Moving")
-    add_run(moving.key, "running", [("plan", "running")])
+    create_ticket("Inbox")
+    running = create_ticket("Running")
+    add_run(running.key, "running", [("plan", "running")])
+    queued = create_ticket("Queued")
+    add_run(queued.key, "queued", [("plan", "pending")])
     needs = create_ticket("Needs you")
     add_run(needs.key, "gated", [("plan", "succeeded")])
     waiting = create_ticket("Waiting", owner_id=sam.id)
@@ -150,16 +155,52 @@ def test_board_covers_every_attention_group_and_state(
         [("plan", "succeeded"), ("implement", "succeeded"), ("review", "succeeded")],
     )
     add_run(waiting.key, "gated", [("plan", "succeeded")])
-    stuck = create_ticket("Stuck")
-    add_run(stuck.key, "gated", [("plan", "succeeded")])
-    add_run(stuck.key, "failed", [("implement", "succeeded"), ("review", "failed")])
+    blocked = create_ticket("Blocked")
+    add_run(blocked.key, "gated", [("plan", "succeeded")])
+    add_run(blocked.key, "failed", [("implement", "succeeded"), ("review", "failed")])
     done = create_ticket("Done")
     assert client.patch(f"/api/tickets/{done.key}", json={"state": "done"}, headers=CSRF).is_success
     tickets = list(board(client).values())
     assert {t.attention for t in tickets} == set(get_args(Attention))
     assert {s.state for t in tickets for s in t.phase_track} == set(get_args(PhaseState))
     assert {s.state for t in tickets for s in t.rail} == set(get_args(RailState))
+    gates = {s.gate.state for t in tickets for s in t.rail if s.gate is not None}
+    assert gates == set(get_args(GateState))
     assert all([p.phase for p in t.phase_track] == list(get_args(Phase)) for t in tickets)
+
+
+def test_attention_since_follows_the_latest_run(
+    authed: TestClient, create_ticket: CreateTicket, add_run: AddRun
+) -> None:
+    t = create_ticket()
+    assert board(authed)[t.key].attention_since == t.created_at
+    start = datetime(2026, 10, 10, 9, 0, tzinfo=UTC)
+    add_run(t.key, "gated", [("plan", "succeeded")], start=start)
+    s = board(authed)[t.key]
+    assert (s.attention, s.attention_since) == ("needs_you", start + timedelta(minutes=4))
+    add_run(t.key, "running", [("implement", "running")], start=start + timedelta(hours=1))
+    s = board(authed)[t.key]
+    assert (s.attention, s.attention_since) == ("running", start + timedelta(hours=1))
+
+
+def test_detail_plan_is_the_current_tasks_md(
+    authed: TestClient, create_ticket: CreateTicket
+) -> None:
+    t = create_ticket()
+    assert detail(authed, t.key).plan == []  # the scaffold's "# Tasks\n"
+    put_tasks(authed, t, "# Tasks\n- [x] Reproduce\n- [ ] Run tests\n  - [X]  Nested  \n")
+    d = detail(authed, t.key)
+    assert d.plan == [
+        PlanItem(text="Reproduce", done=True),
+        PlanItem(text="Run tests", done=False),
+        PlanItem(text="Nested", done=True),
+    ]
+    assert d.tasks == TaskProgress(done=2, total=3)
+    assert "plan" not in authed.get("/api/tickets").json()[0]  # detail only
+    path = f".claude/skills/{t.skill_name}/TASKS.md"
+    response = authed.delete(f"/api/tickets/{t.key}/files/{path}?base_version=2", headers=CSRF)
+    assert response.status_code == 204, response.text
+    assert detail(authed, t.key).plan is None
 
 
 def test_the_board_is_batch_loaded(

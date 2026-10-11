@@ -672,6 +672,22 @@ export interface components {
              */
             mode: "replace" | "block";
         };
+        /**
+         * GateInfo
+         * @description The human gate after a stage (`gate_after`). `person` is who it waits on (`waiting` only).
+         */
+        GateInfo: {
+            /** Label */
+            label: string;
+            person: components["schemas"]["Person"] | null;
+            /** Short */
+            short: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "passed" | "waiting" | "you";
+        };
         /** Health */
         Health: {
             /**
@@ -831,9 +847,13 @@ export interface components {
          *
          *     `actor` is a non-human label only (the running stage, later "CI" or "Queue"). `person` is who
          *     the ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.
-         *     e.g. actor="Implement", run_id=42, text="Run API test suite" → "Implement · run #42 · …"
-         *          person=None (needs_you), text="review plan and continue" → "Waiting on you · …"
-         *          person=Sam (waiting), text="review plan and continue"   → "Waiting on Sam Lee · …"
+         *     e.g. running:   actor="Implement", run_id=42, text="Run API test suite"
+         *                     → "Implement · run #42 · …"
+         *          queued:    run_id=42, text="queued for a runner"
+         *          blocked:   run_id=42, text="Review failed: retry or adjust"
+         *          needs_you: person=None, text="review plan and continue" → "Waiting on you · …"
+         *          waiting:   person=Sam, text="review plan and continue"  → "Waiting on Sam Lee · …"
+         *          inbox:     run_id=None, text="add context, then dispatch"
          */
         NowInfo: {
             /** Actor */
@@ -884,10 +904,22 @@ export interface components {
             pipeline: components["schemas"]["Pipeline"];
         };
         /**
+         * PlanItem
+         * @description One checklist line of TASKS.md (`- [ ] text` / `- [x] text`), text stripped.
+         */
+        PlanItem: {
+            /** Done */
+            done: boolean;
+            /** Text */
+            text: string;
+        };
+        /**
          * RailStep
-         * @description Stage-level progress (ticket detail views).
+         * @description Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones
+         *     `skipped`). `gate` is set on every enabled stage with `gate_after`.
          */
         RailStep: {
+            gate: components["schemas"]["GateInfo"] | null;
             /** Name */
             name: string;
             /**
@@ -901,7 +933,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "pending" | "done" | "current" | "failed" | "stale";
+            state: "pending" | "done" | "current" | "failed" | "stale" | "skipped";
         };
         /** RunDetail */
         RunDetail: {
@@ -1215,7 +1247,12 @@ export interface components {
              * Attention
              * @enum {string}
              */
-            attention: "needs_you" | "stuck" | "moving" | "waiting" | "up_next" | "done";
+            attention: "needs_you" | "waiting" | "running" | "queued" | "blocked" | "inbox" | "done";
+            /**
+             * Attention Since
+             * Format: date-time
+             */
+            attention_since: string;
             /** Base Branch */
             base_branch: string | null;
             /** Branch */
@@ -1243,13 +1280,13 @@ export interface components {
              * @enum {string}
              */
             phase: "inbox" | "plan" | "build" | "verify" | "review" | "done";
-            /** Phase Since */
-            phase_since: string | null;
             /** Phase Track */
             phase_track: components["schemas"]["PhaseStep"][];
             pipeline: components["schemas"]["Pipeline"];
             /** Pipeline Version */
             pipeline_version: number;
+            /** Plan */
+            plan: components["schemas"]["PlanItem"][] | null;
             /**
              * Priority
              * @enum {string}
@@ -1329,7 +1366,12 @@ export interface components {
              * Attention
              * @enum {string}
              */
-            attention: "needs_you" | "stuck" | "moving" | "waiting" | "up_next" | "done";
+            attention: "needs_you" | "waiting" | "running" | "queued" | "blocked" | "inbox" | "done";
+            /**
+             * Attention Since
+             * Format: date-time
+             */
+            attention_since: string;
             /** Chat Count */
             chat_count: number;
             /** Key */
@@ -1344,8 +1386,6 @@ export interface components {
              * @enum {string}
              */
             phase: "inbox" | "plan" | "build" | "verify" | "review" | "done";
-            /** Phase Since */
-            phase_since: string | null;
             /** Phase Track */
             phase_track: components["schemas"]["PhaseStep"][];
             /**

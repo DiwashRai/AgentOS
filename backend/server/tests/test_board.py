@@ -68,13 +68,6 @@ REVIEW_DISABLED = pipe(
 OPEN_PR_DISABLED = pipe(
     *(s.model_copy(update={"enabled": False}) if s.id == "open-pr" else s for s in DEFAULT.stages)
 )
-# Two build stages in a row, for the phase_since streak.
-TWO_BUILDS = pipe(
-    stage("plan", "plan"),
-    stage("implement", "build"),
-    stage("fix", "build"),
-    stage("review", "review"),
-)
 
 
 def run(
@@ -169,16 +162,17 @@ NEVER_CONNECTED = run("failed", REST, unstarted={"implement", "review", "open-pr
 @pytest.mark.parametrize(
     ("state", "status", "owner", "attention", "person"),
     [
-        pytest.param("open", None, None, "up_next", None, id="open-no-runs"),
-        pytest.param("open", None, SAM, "up_next", None, id="open-no-runs-owned"),
+        pytest.param("open", None, None, "inbox", None, id="open-no-runs"),
+        pytest.param("open", None, SAM, "inbox", None, id="open-no-runs-owned"),
+        pytest.param("open", None, ME, "inbox", None, id="open-no-runs-viewer-owns"),
         pytest.param("done", None, ME, "done", None, id="done-no-runs"),
         pytest.param("done", "running", None, "done", None, id="done-beats-active-run"),
         pytest.param("closed", "failed", None, "done", None, id="closed"),
-        pytest.param("open", "queued", SAM, "moving", None, id="queued"),
-        pytest.param("open", "dispatched", None, "moving", None, id="dispatched"),
-        pytest.param("open", "running", SAM, "moving", None, id="running"),
-        pytest.param("open", "failed", SAM, "stuck", None, id="failed"),
-        pytest.param("open", "cancelled", ME, "stuck", None, id="cancelled"),
+        pytest.param("open", "queued", SAM, "queued", None, id="queued"),
+        pytest.param("open", "dispatched", None, "queued", None, id="dispatched"),
+        pytest.param("open", "running", SAM, "running", None, id="running"),
+        pytest.param("open", "failed", SAM, "blocked", None, id="failed"),
+        pytest.param("open", "cancelled", ME, "blocked", None, id="cancelled"),
         pytest.param("open", "gated", None, "needs_you", None, id="gated-unowned"),
         pytest.param("open", "gated", ME, "needs_you", None, id="gated-viewer-owns"),
         pytest.param("open", "gated", SAM, "waiting", SAM, id="gated-someone-else-owns"),
@@ -216,31 +210,31 @@ PLAN_OK = {"plan"}
 @pytest.mark.parametrize(
     ("f", "expected"),
     [
-        pytest.param(facts(), "pending pending pending pending", id="no-runs"),
+        pytest.param(facts(), "pending pending skipped pending pending", id="no-runs"),
         pytest.param(
             facts(run("queued", [("plan", "pending")])),
-            "current pending pending pending",
+            "current pending skipped pending pending",
             id="queued-first-stage-current",
         ),
         pytest.param(
             facts(
                 run("dispatched", [("implement", "pending"), ("review", "pending")]), ever=PLAN_OK
             ),
-            "done current pending pending",
+            "done current skipped pending pending",
             id="dispatched",
         ),
         pytest.param(
             facts(
                 run("running", [("implement", "succeeded"), ("review", "running")]), ever=PLAN_OK
             ),
-            "done done current pending",
+            "done done skipped current pending",
             id="running-second-stage",
         ),
         pytest.param(
             facts(
                 run("running", [("implement", "succeeded"), ("review", "pending")]), ever=PLAN_OK
             ),
-            "done done current pending",
+            "done done skipped current pending",
             id="running-between-stages",
         ),
         pytest.param(
@@ -248,17 +242,21 @@ PLAN_OK = {"plan"}
                 run("running", [("implement", "running"), ("review", "pending")]),
                 ever={"plan", "implement", "review"},
             ),
-            "done current pending pending",
+            "done current skipped pending pending",
             id="segment-stages-not-yet-rerun-are-pending",
         ),
-        pytest.param(facts(GATED_PLAN), "current pending pending pending", id="gated-awaits"),
+        pytest.param(
+            facts(GATED_PLAN), "current pending skipped pending pending", id="gated-awaits"
+        ),
         pytest.param(
             facts(GATED_PLAN, ever={"plan", "implement", "review"}),
-            "current stale stale pending",
+            "current stale skipped stale pending",
             id="stale-after-rerunning-an-earlier-stage",
         ),
         pytest.param(
-            facts(FAILED_REVIEW, ever=PLAN_OK), "done done failed pending", id="failed-stage"
+            facts(FAILED_REVIEW, ever=PLAN_OK),
+            "done done skipped failed pending",
+            id="failed-stage",
         ),
         pytest.param(
             facts(
@@ -269,27 +267,27 @@ PLAN_OK = {"plan"}
                 ),
                 ever=PLAN_OK,
             ),
-            "done done failed pending",
+            "done done skipped failed pending",
             id="unstarted-stages-cancelled-by-terminal-side-effect",
         ),
         pytest.param(
             facts(run("cancelled", REST, unstarted={"review", "open-pr"}), ever=PLAN_OK),
-            "done failed pending pending",
+            "done failed skipped pending pending",
             id="cancelled-mid-stage",
         ),
         pytest.param(
             facts(run("cancelled", [("plan", "cancelled")], unstarted={"plan"})),
-            "failed pending pending pending",
+            "failed pending skipped pending pending",
             id="cancelled-while-queued",
         ),
         pytest.param(
             facts(NEVER_CONNECTED, ever=PLAN_OK),
-            "done failed pending pending",
+            "done failed skipped pending pending",
             id="worker-never-connected",
         ),
         pytest.param(
             facts(replace(NEVER_CONNECTED, stage_runs=()), ever=PLAN_OK),
-            "done failed pending pending",
+            "done failed skipped pending pending",
             id="no-stage-runs",
         ),
         pytest.param(
@@ -297,27 +295,27 @@ PLAN_OK = {"plan"}
                 run("succeeded", [("implement", "succeeded"), ("review", "succeeded")]),
                 ever=PLAN_OK,
             ),
-            "done done done pending",
+            "done done skipped done pending",
             id="succeeded",
         ),
         pytest.param(
             facts(run("succeeded", [("implement", "succeeded"), ("review", "succeeded")])),
-            "pending done done pending",
+            "pending done skipped done pending",
             id="earlier-stage-never-run",
         ),
         pytest.param(
             facts(run("running", [("open-pr", "running")]), ever={"plan", "implement"}),
-            "done done pending current",
+            "done done skipped pending current",
             id="earlier-stage-never-succeeded",
         ),
         pytest.param(
             facts(GATED_PLAN, state="done", ever={"implement"}),
-            "done done pending pending",
+            "done done skipped pending pending",
             id="done-ticket",
         ),
         pytest.param(
             facts(FAILED_REVIEW, state="done", ever=PLAN_OK),
-            "done done pending pending",
+            "done done skipped pending pending",
             id="done-ticket-with-failed-run",
         ),
         pytest.param(
@@ -329,12 +327,12 @@ PLAN_OK = {"plan"}
                 state="done",
                 ever=PLAN_OK,
             ),
-            "done done done done",
+            "done done skipped done done",
             id="done-ticket-every-stage-run",
         ),
         pytest.param(
             facts(GATED_PLAN, state="closed"),
-            "current pending pending pending",
+            "current pending skipped pending pending",
             id="closed-ticket-like-open",
         ),
     ],
@@ -343,8 +341,9 @@ def test_rail(f: TicketFacts, expected: str) -> None:
     assert rail_states(f) == expected
 
 
-def test_rail_lists_enabled_stages_of_the_current_pipeline() -> None:
-    board = derive(facts(pipeline=WITH_LINT))
+@pytest.mark.parametrize("pipeline", [DEFAULT, WITH_LINT], ids=["lint-disabled", "lint-enabled"])
+def test_rail_lists_every_stage_of_the_current_pipeline(pipeline: Pipeline) -> None:
+    board = derive(facts(pipeline=pipeline))
     assert [(r.stage_id, r.name, r.phase) for r in board.rail] == [
         ("plan", "Plan", "plan"),
         ("implement", "Implement", "build"),
@@ -359,19 +358,26 @@ def test_rail_lists_enabled_stages_of_the_current_pipeline() -> None:
     [
         pytest.param(
             facts(FAILED_REVIEW, pipeline=WITHOUT_REVIEW, ever=PLAN_OK),
-            [("plan", "done"), ("implement", "done"), ("open-pr", "pending")],
-            id="removed",
+            [("plan", "done"), ("implement", "done"), ("lint", "skipped"), ("open-pr", "pending")],
+            id="removed-disappears",
         ),
         pytest.param(
             facts(FAILED_REVIEW, pipeline=REVIEW_DISABLED, ever=PLAN_OK),
-            [("plan", "done"), ("implement", "done"), ("open-pr", "pending")],
-            id="disabled",
+            [
+                ("plan", "done"),
+                ("implement", "done"),
+                ("lint", "skipped"),
+                ("review", "skipped"),
+                ("open-pr", "pending"),
+            ],
+            id="disabled-focus-is-skipped",
         ),
         pytest.param(
             facts(run("failed", [("gone", "failed")]), ever=PLAN_OK),
             [
                 ("plan", "done"),
                 ("implement", "pending"),
+                ("lint", "skipped"),
                 ("review", "pending"),
                 ("open-pr", "pending"),
             ],
@@ -379,7 +385,7 @@ def test_rail_lists_enabled_stages_of_the_current_pipeline() -> None:
         ),
     ],
 )
-def test_run_stages_no_longer_in_the_pipeline_disappear(
+def test_run_stages_no_longer_in_the_pipeline(
     f: TicketFacts, expected: list[tuple[str, str]]
 ) -> None:
     assert [(r.stage_id, r.state) for r in derive(f).rail] == expected
@@ -391,9 +397,136 @@ def test_rail_follows_the_current_order() -> None:
     assert [(r.stage_id, r.state) for r in derive(f).rail] == [
         ("implement", "done"),
         ("plan", "current"),
+        ("lint", "skipped"),
         ("review", "stale"),
         ("open-pr", "pending"),
     ]
+
+
+# ------------------------------------------------------------------ gates and skipped stages
+
+# implement (gate) → review (gate, last enabled) → open-pr (disabled, gate ignored).
+GATES = pipe(
+    stage("implement", "build", gate=True),
+    stage("review", "review", gate=True),
+    stage("open-pr", "review", enabled=False, gate=True, name="Open PR"),
+)
+IMPL_GATED = run("gated", [("implement", "succeeded")])
+REVIEW_SUCCEEDED = run("succeeded", [("review", "succeeded")])
+
+
+def gates(f: TicketFacts, viewer: Person = ME) -> list[tuple[str, str | None, Person | None]]:
+    """(stage, gate state, gate person) per rail step, as the viewer sees it."""
+    return [
+        (r.stage_id, r.gate.state if r.gate else None, r.gate.person if r.gate else None)
+        for r in for_viewer(derive(f), viewer.id).rail
+    ]
+
+
+@pytest.mark.parametrize(
+    ("f", "expected"),
+    [
+        pytest.param(
+            facts(pipeline=GATES),
+            [("implement", "pending", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="no-runs-pending",
+        ),
+        pytest.param(
+            facts(run("running", [("implement", "running")]), pipeline=GATES),
+            [("implement", "pending", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="running-into-a-gate-pending",
+        ),
+        pytest.param(
+            facts(IMPL_GATED, pipeline=GATES),
+            [("implement", "you", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="parked-unowned-you",
+        ),
+        pytest.param(
+            facts(IMPL_GATED, pipeline=GATES, owner=ME),
+            [("implement", "you", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="parked-viewer-owns-you",
+        ),
+        pytest.param(
+            facts(IMPL_GATED, pipeline=GATES, owner=SAM),
+            [("implement", "waiting", SAM), ("review", "pending", None), ("open-pr", None, None)],
+            id="parked-someone-else-waiting",
+        ),
+        pytest.param(
+            facts(run("running", [("review", "running")]), pipeline=GATES, ever={"implement"}),
+            [("implement", "passed", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="continued-passed",
+        ),
+        pytest.param(
+            facts(REVIEW_SUCCEEDED, pipeline=GATES, ever={"implement"}, owner=SAM),
+            [("implement", "passed", None), ("review", "waiting", SAM), ("open-pr", None, None)],
+            id="final-gate-parks-a-succeeded-run",
+        ),
+        pytest.param(
+            facts(REVIEW_SUCCEEDED, pipeline=GATES, ever={"implement"}, state="done"),
+            [("implement", "passed", None), ("review", "passed", None), ("open-pr", None, None)],
+            id="final-gate-passed-once-done",
+        ),
+        pytest.param(
+            facts(
+                run("failed", [("review", "failed")]), pipeline=GATES, ever={"implement", "review"}
+            ),
+            [("implement", "passed", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="failed-at-a-gated-stage-pending",
+        ),
+        pytest.param(
+            facts(IMPL_GATED, pipeline=GATES, state="closed"),
+            [("implement", "pending", None), ("review", "pending", None), ("open-pr", None, None)],
+            id="closed-never-parks",
+        ),
+    ],
+)
+def test_gates(f: TicketFacts, expected: list[tuple[str, str | None, Person | None]]) -> None:
+    assert gates(f) == expected
+
+
+def test_gate_names() -> None:
+    gate = derive(facts(pipeline=GATES)).rail[0].gate
+    assert gate is not None
+    assert (gate.label, gate.short) == ("Implement sign-off", "Sign-off")
+
+
+def test_the_viewer_independent_rail_leaves_the_parked_gate_pending() -> None:
+    board = derive(facts(IMPL_GATED, pipeline=GATES, owner=SAM))
+    assert board.parked == "implement"
+    assert [r.gate.state for r in board.rail if r.gate] == ["pending", "pending"]
+    assert gates(facts(IMPL_GATED, pipeline=GATES, owner=SAM), SAM)[0] == ("implement", "you", None)
+
+
+@pytest.mark.parametrize(
+    "f",
+    [
+        pytest.param(facts(GATED_PLAN, pipeline=OPEN_PR_DISABLED), id="open"),
+        pytest.param(facts(GATED_PLAN, pipeline=REVIEW_DISABLED, state="done"), id="done"),
+    ],
+)
+def test_disabled_stages_are_skipped_without_a_gate(f: TicketFacts) -> None:
+    disabled = {s.id for s in f.pipeline.stages if not s.enabled}
+    skipped = [r for r in derive(f).rail if r.stage_id in disabled]
+    assert [(r.state, r.gate) for r in skipped] == [("skipped", None)] * len(disabled)
+
+
+@pytest.mark.parametrize(
+    "latest",
+    [
+        pytest.param(None, id="no-runs"),
+        pytest.param(GATED_PLAN, id="gated"),
+        pytest.param(FAILED_REVIEW, id="failed"),
+        pytest.param(run("running", [("implement", "running")]), id="running"),
+    ],
+)
+def test_skipped_stages_never_change_phase_or_phase_track(latest: RunFact | None) -> None:
+    """A disabled stage counts like a removed one for phase and phase_track."""
+    with_lint_disabled = derive(facts(latest, pipeline=DEFAULT, ever=PLAN_OK))
+    lint_removed = derive(
+        facts(latest, pipeline=pipe(*(s for s in DEFAULT.stages if s.id != "lint")), ever=PLAN_OK)
+    )
+    assert with_lint_disabled.phase == lint_removed.phase
+    assert with_lint_disabled.phase_track == lint_removed.phase_track
 
 
 # ------------------------------------------------------------------ phase and phase_track
@@ -499,61 +632,56 @@ def test_phase_and_phase_track(f: TicketFacts, phase: str, track: str) -> None:
     assert track_states(f) == track
 
 
-# ------------------------------------------------------------------ phase_since
+# ------------------------------------------------------------------ attention_since
+
+PLAN_THEN_IMPLEMENT: list[tuple[str, StageRunStatus]] = [
+    ("plan", "succeeded"),
+    ("implement", "running"),
+]
 
 
 @pytest.mark.parametrize(
     ("f", "since"),
     [
-        pytest.param(facts(), CREATED, id="no-runs-created"),
+        pytest.param(facts(), CREATED, id="inbox-ticket-created"),
+        pytest.param(facts(owner=ME), CREATED, id="inbox-owned-ticket-created"),
         pytest.param(facts(GATED_PLAN, state="done"), UPDATED, id="done-updated"),
+        pytest.param(facts(GATED_PLAN, state="closed"), UPDATED, id="closed-updated"),
         pytest.param(facts(run("queued", [("plan", "pending")], start=30)), at(29), id="queued"),
         pytest.param(
             facts(run("dispatched", [("plan", "pending")], start=30)), at(29), id="dispatched"
         ),
         pytest.param(
-            facts(run("running", [("implement", "running")], start=30)),
+            facts(run("running", PLAN_THEN_IMPLEMENT, start=30)),
             at(30),
-            id="running-stage-start",
+            id="running-run-start-not-stage-start",
         ),
         pytest.param(
-            facts(
-                run("running", [("plan", "succeeded"), ("implement", "running")], start=30),
-                pipeline=TWO_BUILDS,
-            ),
-            at(34),
-            id="running-after-another-phase",
-        ),
-        pytest.param(
-            facts(
-                run(
-                    "running",
-                    [("plan", "succeeded"), ("implement", "succeeded"), ("fix", "running")],
-                    start=30,
-                ),
-                pipeline=TWO_BUILDS,
-            ),
-            at(34),
-            id="running-same-phase-streak",
-        ),
-        pytest.param(
-            facts(
-                run("running", [("plan", "succeeded"), ("implement", "pending")], start=30),
-                pipeline=TWO_BUILDS,
-            ),
-            at(30),
-            id="between-stages-run-start",
+            facts(replace(run("running", PLAN_THEN_IMPLEMENT, start=30), started_at=None)),
+            at(29),
+            id="running-without-start-falls-back-to-created",
         ),
         pytest.param(facts(run("gated", [("plan", "succeeded")], start=30)), at(34), id="gated"),
+        pytest.param(
+            facts(run("succeeded", [("review", "succeeded")], start=30)), at(34), id="succeeded"
+        ),
         pytest.param(
             facts(run("failed", [("implement", "succeeded"), ("review", "failed")], start=30)),
             at(38),
             id="failed",
         ),
+        pytest.param(
+            facts(run("cancelled", [("plan", "cancelled")], start=30)), at(34), id="cancelled"
+        ),
+        pytest.param(
+            facts(replace(run("failed", [("plan", "failed")], start=30), finished_at=None)),
+            at(29),
+            id="finished-without-timestamp-falls-back-to-created",
+        ),
     ],
 )
-def test_phase_since(f: TicketFacts, since: datetime) -> None:
-    assert derive(f).phase_since == since
+def test_attention_since(f: TicketFacts, since: datetime) -> None:
+    assert derive(f).attention_since == since
 
 
 # ------------------------------------------------------------------ next_stage
@@ -681,7 +809,7 @@ def test_succeeded_run_with_a_stage_following_is_not_complete() -> None:
     assert board.now.text == "review review and continue"
     assert board.phase == "review"
     assert track_states(f) == "done done done skipped current pending"
-    assert rail_states(f) == "done done done pending"
+    assert rail_states(f) == "done done skipped done pending"
 
 
 # ------------------------------------------------------------------ now
@@ -754,33 +882,33 @@ TASKS = TaskProgress(done=2, total=5)
         pytest.param(
             facts(FAILED_REVIEW, tasks=TASKS),
             now("Review failed: retry or adjust"),
-            id="stuck-failed-stage",
+            id="blocked-failed-stage",
         ),
         pytest.param(
             facts(run("cancelled", REST, unstarted={"review", "open-pr"})),
             now("Implement cancelled: retry or adjust"),
-            id="stuck-cancelled-stage",
+            id="blocked-cancelled-stage",
         ),
         pytest.param(
             facts(run("failed", REST, unstarted={"review", "open-pr"})),
             now("Implement failed: retry or adjust"),
-            id="stuck-worker-lost-mid-stage",
+            id="blocked-worker-lost-mid-stage",
         ),
         pytest.param(
-            facts(NEVER_CONNECTED), now("run failed: retry or adjust"), id="stuck-no-stage"
+            facts(NEVER_CONNECTED), now("run failed: retry or adjust"), id="blocked-no-stage"
         ),
         pytest.param(
             facts(run("cancelled", [("plan", "cancelled")], unstarted={"plan"})),
             now("run cancelled: retry or adjust"),
-            id="stuck-cancelled-while-queued",
+            id="blocked-cancelled-while-queued",
         ),
         pytest.param(
             facts(run("failed", [("gone", "failed")])),
             now("gone failed: retry or adjust"),
-            id="stuck-stage-removed-uses-id",
+            id="blocked-stage-removed-uses-id",
         ),
         pytest.param(
-            facts(tasks=TASKS), now("add context, then dispatch", run_id=None), id="up-next"
+            facts(tasks=TASKS), now("add context, then dispatch", run_id=None), id="inbox"
         ),
         pytest.param(
             facts(FAILED_REVIEW, state="done", tasks=TASKS),

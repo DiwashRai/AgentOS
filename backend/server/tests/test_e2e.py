@@ -334,7 +334,12 @@ def _settle(env: E2E) -> None:
 
 
 def rail(t: TicketDetail) -> dict[str, str]:
-    return {step.stage_id: step.state for step in t.rail}
+    """Rail states of the enabled stages (lint and open-pr are `skipped` throughout)."""
+    return {step.stage_id: step.state for step in t.rail if step.state != "skipped"}
+
+
+def gates(t: TicketDetail) -> dict[str, str]:
+    return {step.stage_id: step.gate.state for step in t.rail if step.gate is not None}
 
 
 def track(t: TicketDetail) -> dict[str, str]:
@@ -393,6 +398,7 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
     assert t.attention == "needs_you"
     assert t.phase == "plan"
     assert rail(t) == {"plan": "current", "implement": "pending", "review": "pending"}
+    assert gates(t) == {"plan": "you"}
     assert track(t) == {
         "inbox": "done",
         "plan": "current",
@@ -442,6 +448,7 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
     t = e2e.ticket(key)
     assert t.attention == "needs_you"
     assert rail(t) == {"plan": "done", "implement": "done", "review": "done"}
+    assert gates(t) == {"plan": "passed"}
     assert t.phase == "review"
     assert track(t) == {
         "inbox": "done",
@@ -485,7 +492,7 @@ def test_failed_stage_then_retry_succeeds(e2e: E2E) -> None:
     ], e2e.diag(run1.id)
 
     t = e2e.ticket(key)
-    assert t.attention == "stuck"
+    assert t.attention == "blocked"
     assert rail(t) == {"plan": "pending", "implement": "failed", "review": "pending"}
     assert t.phase == "build"
     assert track(t)["build"] == "failed"
@@ -535,7 +542,7 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
     assert detail.stage_runs[0].started_at is not None
 
     t = e2e.ticket(key)
-    assert t.attention == "stuck"
+    assert t.attention == "blocked"
     assert rail(t)["implement"] == "failed"
     assert t.next_stage == "implement"
     assert t.now.run_id == run.id

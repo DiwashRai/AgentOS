@@ -78,7 +78,7 @@ def test_create_returns_a_fresh_ticket(authed: TestClient) -> None:
     assert t.owner is None
     assert t.labels == []
     assert (t.attention, t.phase, t.next_stage, t.active_run_id) == (
-        "up_next",
+        "inbox",
         "inbox",
         "plan",
         None,
@@ -91,13 +91,13 @@ def test_create_returns_a_fresh_ticket(authed: TestClient) -> None:
         "pending",
         "pending",
     ]
-    assert [r.state for r in t.rail] == ["pending"] * 4
+    assert [r.state for r in t.rail] == ["pending", "pending", "skipped", "pending", "pending"]
     assert (t.now.actor, t.now.person, t.now.run_id) == (None, None, None)
     assert t.tasks is None
     assert t.latest_run is None
     assert t.chat_count == 0
     assert t.source is None
-    assert t.phase_since == t.created_at
+    assert t.attention_since == t.created_at
     assert t.updated_at >= t.created_at
     assert me.id > 0
 
@@ -172,7 +172,13 @@ def test_no_repo_ticket(authed: TestClient) -> None:
     assert not stages["open-pr"].enabled  # requires_repo stages are disabled
     assert stages["plan"].enabled
     assert stages["review"].enabled
-    assert [r.stage_id for r in t.rail] == ["plan", "implement", "review"]
+    assert [(r.stage_id, r.state) for r in t.rail] == [
+        ("plan", "pending"),
+        ("implement", "pending"),
+        ("lint", "skipped"),
+        ("review", "pending"),
+        ("open-pr", "skipped"),
+    ]
     agents = authed.get(f"/api/tickets/{t.key}/files/AGENTS.md").json()["content"]
     assert agents.endswith(f"Put deliverables in .claude/skills/{t.skill_name}/out/.")
 
@@ -380,7 +386,7 @@ def test_put_pipeline(authed: TestClient, create_ticket: CreateTicket) -> None:
     p = TicketDetail.model_validate(response.json())
     assert p.pipeline_version == 2
     assert [s.id for s in p.pipeline.stages] == ["implement", "lint", "review", "open-pr"]
-    assert [r.stage_id for r in p.rail] == ["implement", "review", "open-pr"]
+    assert [r.stage_id for r in p.rail] == ["implement", "lint", "review", "open-pr"]
     assert p.next_stage == "implement"
     assert p.updated_at > t.updated_at
     stale = put_pipeline(authed, t.key, t.pipeline, 1)

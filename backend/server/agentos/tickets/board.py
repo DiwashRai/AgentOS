@@ -5,8 +5,8 @@ Pure: plain facts in, plain values out (import-linter keeps db, web and config o
 Two steps, so a list endpoint batch-loads facts once (a few queries, never per ticket) and only
 the cheap part depends on who is looking:
 
-    board = derive(facts)                  # phase, phase_since, phase_track, rail, next_stage, now
-    view = for_viewer(board, viewer_id)    # attention (needs_you vs waiting) and now.person
+    board = derive(facts)                  # phase, phase_track, attention_since, next_stage, ...
+    view = for_viewer(board, viewer_id)    # attention, rail (gate you/waiting) and now.person
 
 Position is computed from run history, never stored (SPEC §16). The latest run plus the set of
 stages that ever succeeded in any run of the ticket is enough for every field.
@@ -20,6 +20,8 @@ from typing import Literal, get_args
 
 from agentos.models import (
     Attention,
+    GateInfo,
+    GateState,
     NowInfo,
     Person,
     Phase,
@@ -29,6 +31,7 @@ from agentos.models import (
     RailState,
     RailStep,
     RunStatus,
+    Stage,
     StageRunStatus,
     TaskProgress,
     TicketState,
@@ -37,10 +40,12 @@ from agentos.models import (
 PHASES: tuple[Phase, ...] = get_args(Phase)
 ACTIVE: frozenset[RunStatus] = frozenset({"queued", "dispatched", "running"})
 FAILED: frozenset[RunStatus] = frozenset({"failed", "cancelled"})
+# Run statuses that leave the ticket with a human (`awaiting`).
+PARKED: frozenset[RunStatus] = frozenset({"gated", "succeeded"})
 
 # Viewer-independent attention. `for_viewer` turns `awaiting` (the latest run is gated or
 # succeeded, so a human decides what happens next) into `needs_you` or `waiting`.
-Standing = Literal["done", "moving", "stuck", "awaiting", "up_next"]
+Standing = Literal["done", "running", "queued", "blocked", "awaiting", "inbox"]
 
 
 # ------------------------------------------------------------------ facts: the inputs
@@ -94,14 +99,20 @@ class TicketFacts:
 
 @dataclass(frozen=True, slots=True)
 class TicketBoard:
-    """The viewer-independent board fields. `now.person` is always None here."""
+    """The viewer-independent board fields. `now.person` is always None here.
+
+    `parked`: the stage whose gate holds the ticket (an open ticket whose latest run is gated or
+    succeeded and ended on an enabled `gate_after` stage), else None. Its gate reads `pending` in
+    `rail` until `for_viewer` resolves it to `you`/`waiting`: render `ViewerBoard.rail`.
+    """
 
     standing: Standing
     owner: Person | None
     phase: Phase
-    phase_since: datetime
     phase_track: list[PhaseStep]
     rail: list[RailStep]
+    parked: str | None
+    attention_since: datetime
     next_stage: str | None
     now: NowInfo
 
@@ -109,6 +120,7 @@ class TicketBoard:
 @dataclass(frozen=True, slots=True)
 class ViewerBoard:
     attention: Attention
+    rail: list[RailStep]
     now: NowInfo
 
 
@@ -118,7 +130,8 @@ class ViewerBoard:
 def derive(facts: TicketFacts) -> TicketBoard:
     run = facts.latest_run
     ever = facts.ever_succeeded | _succeeded_in(run)
-    rail = _rail(facts.state, facts.pipeline, run, ever)
+    parked = _parked(facts.state, facts.pipeline, run)
+    rail = _rail(facts.state, facts.pipeline, run, ever, parked)
     phase = _phase(facts.state, run, rail)
     nxt = next_stage(facts.pipeline, run)
     standing = _standing(facts.state, run)
@@ -126,11 +139,12 @@ def derive(facts: TicketFacts) -> TicketBoard:
         standing=standing,
         owner=facts.owner,
         phase=phase,
-        phase_since=_phase_since(facts, phase),
         phase_track=[
             PhaseStep(phase=p, state=_phase_state(p, facts.state, run, rail, phase)) for p in PHASES
         ],
         rail=rail,
+        parked=parked,
+        attention_since=_attention_since(standing, facts),
         next_stage=nxt,
         now=_now(standing, facts, nxt),
     )
@@ -138,13 +152,25 @@ def derive(facts: TicketFacts) -> TicketBoard:
 
 def for_viewer(board: TicketBoard, viewer_id: int) -> ViewerBoard:
     """`awaiting` → `needs_you` if the ticket is unowned or the viewer owns it, else `waiting`
-    (then `now.person` is the owner: who the ticket waits on)."""
+    (then `now.person` is the owner: who the ticket waits on). The parked gate follows the same
+    rule: `you`, or `waiting` with `person` = the owner."""
     if board.standing != "awaiting":
-        return ViewerBoard(attention=board.standing, now=board.now)
-    if board.owner is None or board.owner.id == viewer_id:
-        return ViewerBoard(attention="needs_you", now=board.now)
+        return ViewerBoard(attention=board.standing, rail=board.rail, now=board.now)
+    mine = board.owner is None or board.owner.id == viewer_id
+    person = None if mine else board.owner
+    gate_state: GateState = "you" if mine else "waiting"
+    rail = [
+        step.model_copy(
+            update={"gate": step.gate.model_copy(update={"state": gate_state, "person": person})}
+        )
+        if step.stage_id == board.parked and step.gate is not None
+        else step
+        for step in board.rail
+    ]
+    if mine:
+        return ViewerBoard(attention="needs_you", rail=rail, now=board.now)
     return ViewerBoard(
-        attention="waiting", now=board.now.model_copy(update={"person": board.owner})
+        attention="waiting", rail=rail, now=board.now.model_copy(update={"person": board.owner})
     )
 
 
@@ -241,38 +267,85 @@ def _standing(state: TicketState, run: RunFact | None) -> Standing:
     if state in ("done", "closed"):
         return "done"
     if run is None:
-        return "up_next"
+        return "inbox"
+    if run.status == "running":
+        return "running"
     if run.status in ACTIVE:
-        return "moving"
+        return "queued"
     if run.status in FAILED:
-        return "stuck"
+        return "blocked"
     return "awaiting"
 
 
+def _attention_since(standing: Standing, facts: TicketFacts) -> datetime:
+    """When the ticket entered its current attention (the board's age column).
+
+    done → `updated_at`; no runs → the ticket's `created_at`; running → the run's `started_at`;
+    queued/dispatched → the run's `created_at`; gated/succeeded/failed/cancelled → the run's
+    `finished_at` (how long it has waited for a human, or been blocked). Missing timestamps fall
+    back to the run's `created_at`.
+    """
+    run = facts.latest_run
+    if standing == "done":
+        return facts.updated_at
+    if run is None:
+        return facts.created_at
+    if run.status == "running":
+        return run.started_at or run.created_at
+    if run.status in ACTIVE:
+        return run.created_at
+    return run.finished_at or run.created_at
+
+
+def _parked(state: TicketState, pipeline: Pipeline, run: RunFact | None) -> str | None:
+    """The stage whose gate holds the ticket: an open ticket whose latest run is gated or
+    succeeded parks at the run's last stage if that stage is enabled and has `gate_after`. A gate
+    on the final enabled stage parks a succeeded run until "mark done"."""
+    if state != "open" or run is None or run.status not in PARKED:
+        return None
+    last = _last_stage(run)
+    stage = next((s for s in pipeline.stages if s.id == last), None)
+    if stage is None or not stage.enabled or not stage.gate_after:
+        return None
+    return stage.id
+
+
+def _step(stage: Stage, state: RailState, parked: str | None) -> RailStep:
+    """A disabled stage is `skipped` with no gate. A `gate_after` gate is `passed` once its stage
+    is done and the ticket is not parked at it; otherwise `pending` (a parked gate is resolved per
+    viewer by `for_viewer`)."""
+    if not stage.enabled:
+        return RailStep(
+            stage_id=stage.id, name=stage.name, phase=stage.phase, state="skipped", gate=None
+        )
+    gate: GateInfo | None = None
+    if stage.gate_after:
+        gate_state: GateState = "passed" if state == "done" and stage.id != parked else "pending"
+        gate = GateInfo(
+            label=f"{stage.name} sign-off", short="Sign-off", state=gate_state, person=None
+        )
+    return RailStep(stage_id=stage.id, name=stage.name, phase=stage.phase, state=state, gate=gate)
+
+
 def _rail(
-    state: TicketState, pipeline: Pipeline, run: RunFact | None, ever: frozenset[str]
+    state: TicketState,
+    pipeline: Pipeline,
+    run: RunFact | None,
+    ever: frozenset[str],
+    parked: str | None,
 ) -> list[RailStep]:
-    """One step per enabled stage of the current pipeline, in order.
+    """One step per stage of the current pipeline, in order; disabled stages are `skipped`.
 
     - A done ticket: `done` if the stage ever succeeded, else `pending` (nothing is in progress).
     - Stages in the latest segment: the focus stage is `current`/`failed`; the others are `done`
       if their stage_run succeeded, else `pending` (incl. stages cancelled before they started).
     - Stages before the segment (by current position): `done` if they ever succeeded, else
       `pending`. Stages after it: `stale` if they ever succeeded, else `pending`.
-    - Run stages that are no longer in the pipeline (or disabled) don't appear. If none of the
-      segment's stages exist any more, every other stage counts as "before".
+    - Run stages that are no longer in the pipeline don't appear. If none of the segment's stages
+      exist any more, every other stage counts as "before".
     """
-    enabled = [s for s in pipeline.stages if s.enabled]
     if state == "done":
-        return [
-            RailStep(
-                stage_id=s.id,
-                name=s.name,
-                phase=s.phase,
-                state="done" if s.id in ever else "pending",
-            )
-            for s in enabled
-        ]
+        return [_step(s, "done" if s.id in ever else "pending", parked) for s in pipeline.stages]
     status: dict[str, StageRunStatus] = {}
     if run is not None:
         for sr in _segment(run):
@@ -281,7 +354,7 @@ def _rail(
     pos = {s.id: i for i, s in enumerate(pipeline.stages)}
     first = min((pos[sid] for sid in status if sid in pos), default=len(pipeline.stages))
     steps: list[RailStep] = []
-    for s in enabled:
+    for s in pipeline.stages:
         st: RailState
         if s.id == focus:
             st = focus_state
@@ -291,11 +364,12 @@ def _rail(
             st = "done" if s.id in ever else "pending"
         else:
             st = "stale" if s.id in ever else "pending"
-        steps.append(RailStep(stage_id=s.id, name=s.name, phase=s.phase, state=st))
+        steps.append(_step(s, st, parked))
     return steps
 
 
 def _phase(state: TicketState, run: RunFact | None, rail: list[RailStep]) -> Phase:
+    """Skipped steps never count: they are neither `current`/`failed` nor `done`."""
     if state == "done":
         return "done"
     if run is None:
@@ -307,40 +381,6 @@ def _phase(state: TicketState, run: RunFact | None, rail: list[RailStep]) -> Pha
     return done[-1].phase if done else "inbox"
 
 
-def _phase_since(facts: TicketFacts, phase: Phase) -> datetime:
-    """When the ticket entered its current phase (the board's "in stage" column).
-
-    - done ticket → `updated_at`; no runs → `created_at`.
-    - active run: while a stage is running, the `started_at` of the first stage in the run's
-      contiguous streak of stages in that same phase (e.g. implement → fix, both build); else
-      (queued, dispatched, between stages) the run's `started_at`, falling back to `created_at`.
-    - finished run → its `finished_at` (gated/succeeded: how long it has waited for a human;
-      failed/cancelled: how long it has been stuck), falling back to `created_at`.
-    """
-    run = facts.latest_run
-    if facts.state == "done":
-        return facts.updated_at
-    if run is None:
-        return facts.created_at
-    if run.status in ACTIVE:
-        return _streak_start(facts.pipeline, run, phase) or run.started_at or run.created_at
-    return run.finished_at or run.created_at
-
-
-def _streak_start(pipeline: Pipeline, run: RunFact, phase: Phase) -> datetime | None:
-    srs = _segment(run)
-    k = next((i for i, sr in enumerate(srs) if sr.status == "running"), None)
-    phases = {s.id: s.phase for s in pipeline.stages}
-    if k is None or phases.get(srs[k].stage_id) != phase:
-        return None
-    start = srs[k].started_at
-    for sr in reversed(srs[:k]):
-        if phases.get(sr.stage_id) != phase or sr.started_at is None:
-            break
-        start = sr.started_at
-    return start
-
-
 def _phase_state(
     p: Phase, state: TicketState, run: RunFact | None, rail: list[RailStep], phase: Phase
 ) -> PhaseState:
@@ -348,7 +388,7 @@ def _phase_state(
         return "current" if run is None and state == "open" else "done"
     if p == "done":
         return "done" if state == "done" else "pending"
-    states = [r.state for r in rail if r.phase == p]
+    states = [r.state for r in rail if r.phase == p and r.state != "skipped"]
     if not states:
         return "skipped"
     if state == "done" or all(s == "done" for s in states):
@@ -378,20 +418,20 @@ def _now(standing: Standing, facts: TicketFacts, nxt: str | None) -> NowInfo:
 
     if standing == "done":
         return info("done", progress=facts.tasks)
-    if standing == "up_next" or run is None:
+    if standing == "inbox" or run is None:
         return NowInfo(
             actor=None, person=None, text="add context, then dispatch", run_id=None, progress=None
         )
-    if standing == "moving":
-        if run.status != "running":
-            return info("queued for a runner")
+    if standing == "queued":
+        return info("queued for a runner")
+    if standing == "running":
         sr = next((sr for sr in _segment(run) if sr.status == "running"), None)
         return info(
             facts.next_task or "working",
             actor=name(sr.stage_id) if sr else None,
             progress=facts.tasks,
         )
-    if standing == "stuck":
+    if standing == "blocked":
         culprit = _failure_anchor(run)[1]
         what = f"{name(culprit.stage_id)} {run.status}" if culprit else f"run {run.status}"
         return info(f"{what}: retry or adjust")

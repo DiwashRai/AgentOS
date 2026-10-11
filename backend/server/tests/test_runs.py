@@ -378,18 +378,18 @@ def test_board_through_plan_gate_continue_succeed(
 ) -> None:
     t = create_ticket(workspace_mode="none")  # plan(gate) → implement → review (open-pr off)
     assert board(authed, t.key) == (
-        "up_next",
+        "inbox",
         "inbox",
         "current pending pending skipped pending pending",
-        "pending pending pending",
+        "pending pending skipped pending skipped",
         "plan",
     )
     run = runs.queue(t.key)
     assert board(authed, t.key) == (
-        "moving",
+        "queued",
         "plan",
         "done current pending skipped pending pending",
-        "current pending pending",
+        "current pending skipped pending skipped",
         None,
     )
     worker = runs.launch_and_claim(run.id)
@@ -397,10 +397,10 @@ def test_board_through_plan_gate_continue_succeed(
     summary = next(s for s in authed.get("/api/tickets").json() if s["key"] == t.key)
     assert summary["now"]["actor"] == "Plan"
     assert board(authed, t.key)[:4] == (
-        "moving",
+        "running",
         "plan",
         "done current pending skipped pending pending",
-        "current pending pending",
+        "current pending skipped pending skipped",
     )
     worker.events(
         event(
@@ -418,7 +418,7 @@ def test_board_through_plan_gate_continue_succeed(
         "needs_you",
         "plan",
         "done current pending skipped pending pending",
-        "current pending pending",
+        "current pending skipped pending skipped",
         "implement",
     )
     cont = runs.queue(t.key)  # Continue = dispatch with the default from_stage
@@ -426,10 +426,10 @@ def test_board_through_plan_gate_continue_succeed(
     w2 = runs.launch_and_claim(cont.id)
     w2.run_stage("implement")
     assert board(authed, t.key)[:4] == (
-        "moving",
+        "running",
         "review",
         "done done done skipped current pending",
-        "done done current",
+        "done done skipped current skipped",
     )
     w2.run_stage("review")
     assert w2.complete().status_code == 204
@@ -438,7 +438,7 @@ def test_board_through_plan_gate_continue_succeed(
         "needs_you",
         "review",
         "done done done skipped done pending",
-        "done done done",
+        "done done skipped done skipped",
         None,
     )
 
@@ -455,7 +455,12 @@ def test_retry_after_a_failure_starts_at_the_failed_stage(
     assert detail.status == "failed"
     assert detail.error == "stage review failed"
     attention, phase, _, rail, nxt = board(authed, t.key)
-    assert (attention, phase, rail, nxt) == ("stuck", "review", "pending done failed", "review")
+    assert (attention, phase, rail, nxt) == (
+        "blocked",
+        "review",
+        "pending done skipped failed skipped",
+        "review",
+    )
     ticket = TicketDetail.model_validate(authed.get(f"/api/tickets/{t.key}").json())
     assert (ticket.now.run_id, ticket.active_run_id) == (worker.run_id, None)
     retry = runs.queue(t.key)

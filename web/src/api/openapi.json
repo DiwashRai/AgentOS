@@ -581,6 +581,48 @@
         "title": "FileWrite",
         "type": "object"
       },
+      "GateInfo": {
+        "additionalProperties": false,
+        "description": "The human gate after a stage (`gate_after`). `person` is who it waits on (`waiting` only).",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "person": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "short": {
+            "title": "Short",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "passed",
+              "waiting",
+              "you"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "short",
+          "state",
+          "person"
+        ],
+        "title": "GateInfo",
+        "type": "object"
+      },
       "Health": {
         "additionalProperties": false,
         "properties": {
@@ -1019,7 +1061,7 @@
       },
       "NowInfo": {
         "additionalProperties": false,
-        "description": "Server-written \"Now / Next\" line. The UI renders it; it never derives it.\n\n`actor` is a non-human label only (the running stage, later \"CI\" or \"Queue\"). `person` is who\nthe ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.\ne.g. actor=\"Implement\", run_id=42, text=\"Run API test suite\" \u2192 \"Implement \u00b7 run #42 \u00b7 \u2026\"\n     person=None (needs_you), text=\"review plan and continue\" \u2192 \"Waiting on you \u00b7 \u2026\"\n     person=Sam (waiting), text=\"review plan and continue\"   \u2192 \"Waiting on Sam Lee \u00b7 \u2026\"",
+        "description": "Server-written \"Now / Next\" line. The UI renders it; it never derives it.\n\n`actor` is a non-human label only (the running stage, later \"CI\" or \"Queue\"). `person` is who\nthe ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.\ne.g. running:   actor=\"Implement\", run_id=42, text=\"Run API test suite\"\n                \u2192 \"Implement \u00b7 run #42 \u00b7 \u2026\"\n     queued:    run_id=42, text=\"queued for a runner\"\n     blocked:   run_id=42, text=\"Review failed: retry or adjust\"\n     needs_you: person=None, text=\"review plan and continue\" \u2192 \"Waiting on you \u00b7 \u2026\"\n     waiting:   person=Sam, text=\"review plan and continue\"  \u2192 \"Waiting on Sam Lee \u00b7 \u2026\"\n     inbox:     run_id=None, text=\"add context, then dispatch\"",
         "properties": {
           "actor": {
             "anyOf": [
@@ -1189,10 +1231,40 @@
         "title": "PipelineUpdate",
         "type": "object"
       },
+      "PlanItem": {
+        "additionalProperties": false,
+        "description": "One checklist line of TASKS.md (`- [ ] text` / `- [x] text`), text stripped.",
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "done"
+        ],
+        "title": "PlanItem",
+        "type": "object"
+      },
       "RailStep": {
         "additionalProperties": false,
-        "description": "Stage-level progress (ticket detail views).",
+        "description": "Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones\n`skipped`). `gate` is set on every enabled stage with `gate_after`.",
         "properties": {
+          "gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1217,7 +1289,8 @@
               "done",
               "current",
               "failed",
-              "stale"
+              "stale",
+              "skipped"
             ],
             "title": "State",
             "type": "string"
@@ -1227,7 +1300,8 @@
           "stage_id",
           "name",
           "phase",
-          "state"
+          "state",
+          "gate"
         ],
         "title": "RailStep",
         "type": "object"
@@ -2136,13 +2210,19 @@
           "attention": {
             "enum": [
               "needs_you",
-              "stuck",
-              "moving",
               "waiting",
-              "up_next",
+              "running",
+              "queued",
+              "blocked",
+              "inbox",
               "done"
             ],
             "title": "Attention",
+            "type": "string"
+          },
+          "attention_since": {
+            "format": "date-time",
+            "title": "Attention Since",
             "type": "string"
           },
           "base_branch": {
@@ -2237,18 +2317,6 @@
             "title": "Phase",
             "type": "string"
           },
-          "phase_since": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phase Since"
-          },
           "phase_track": {
             "items": {
               "$ref": "#/components/schemas/PhaseStep"
@@ -2262,6 +2330,20 @@
           "pipeline_version": {
             "title": "Pipeline Version",
             "type": "integer"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PlanItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
           },
           "priority": {
             "enum": [
@@ -2375,8 +2457,8 @@
           "state",
           "owner",
           "attention",
+          "attention_since",
           "phase",
-          "phase_since",
           "phase_track",
           "rail",
           "now",
@@ -2397,7 +2479,8 @@
           "pipeline_version",
           "next_stage",
           "active_run_id",
-          "created_at"
+          "created_at",
+          "plan"
         ],
         "title": "TicketDetail",
         "type": "object"
@@ -2494,13 +2577,19 @@
           "attention": {
             "enum": [
               "needs_you",
-              "stuck",
-              "moving",
               "waiting",
-              "up_next",
+              "running",
+              "queued",
+              "blocked",
+              "inbox",
               "done"
             ],
             "title": "Attention",
+            "type": "string"
+          },
+          "attention_since": {
+            "format": "date-time",
+            "title": "Attention Since",
             "type": "string"
           },
           "chat_count": {
@@ -2552,18 +2641,6 @@
             ],
             "title": "Phase",
             "type": "string"
-          },
-          "phase_since": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phase Since"
           },
           "phase_track": {
             "items": {
@@ -2657,8 +2734,8 @@
           "state",
           "owner",
           "attention",
+          "attention_since",
           "phase",
-          "phase_since",
           "phase_track",
           "rail",
           "now",

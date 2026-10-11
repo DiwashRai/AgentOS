@@ -20,12 +20,19 @@ WorkspaceMode = Literal["repo", "none"]
 # Board columns. Stages map to the four work phases; inbox/done are ticket-level.
 Phase = Literal["inbox", "plan", "build", "verify", "review", "done"]
 StagePhase = Literal["plan", "build", "verify", "review"]
-# Board row groups, derived per viewer (SPEC §13).
-Attention = Literal["needs_you", "stuck", "moving", "waiting", "up_next", "done"]
+# Board row groups, derived per viewer (SPEC §13). `needs_you`/`waiting`: the latest run is gated
+# or succeeded and a human decides what's next (the viewer, or someone else). `running`: the latest
+# run is running; `queued`: queued or dispatched; `blocked`: failed or cancelled; `inbox`: never
+# dispatched; `done`: the ticket is done or closed.
+Attention = Literal["needs_you", "waiting", "running", "queued", "blocked", "inbox", "done"]
 RunStatus = Literal["queued", "dispatched", "running", "succeeded", "gated", "failed", "cancelled"]
 StageRunStatus = Literal["pending", "running", "succeeded", "failed", "cancelled"]
 StageOutcome = Literal["succeeded", "failed", "cancelled"]
-RailState = Literal["pending", "done", "current", "failed", "stale"]
+# `skipped` = the stage is disabled on this ticket (it still shows, so enable/disable is visible).
+RailState = Literal["pending", "done", "current", "failed", "stale", "skipped"]
+# Per viewer, like Attention: `you`/`waiting` = the ticket is parked at this gate and it's on the
+# viewer / on someone else; `passed` = the ticket is past it; `pending` = not reached yet.
+GateState = Literal["pending", "passed", "waiting", "you"]
 PhaseState = Literal["pending", "done", "current", "failed", "stale", "skipped"]
 Mode = Literal["replace", "block"]
 StageKind = Literal["agent", "shell"]
@@ -211,13 +218,24 @@ class Person(ApiModel):
     avatar_url: str | None
 
 
+class GateInfo(ApiModel):
+    """The human gate after a stage (`gate_after`). `person` is who it waits on (`waiting` only)."""
+
+    label: str  # e.g. "Plan sign-off"
+    short: str  # e.g. "Sign-off": the stage label while parked here
+    state: GateState
+    person: Person | None
+
+
 class RailStep(ApiModel):
-    """Stage-level progress (ticket detail views)."""
+    """Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones
+    `skipped`). `gate` is set on every enabled stage with `gate_after`."""
 
     stage_id: str
     name: str
     phase: StagePhase
     state: RailState
+    gate: GateInfo | None
 
 
 class PhaseStep(ApiModel):
@@ -232,14 +250,25 @@ class TaskProgress(ApiModel):
     total: int
 
 
+class PlanItem(ApiModel):
+    """One checklist line of TASKS.md (`- [ ] text` / `- [x] text`), text stripped."""
+
+    text: str
+    done: bool
+
+
 class NowInfo(ApiModel):
     """Server-written "Now / Next" line. The UI renders it; it never derives it.
 
     `actor` is a non-human label only (the running stage, later "CI" or "Queue"). `person` is who
     the ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.
-    e.g. actor="Implement", run_id=42, text="Run API test suite" → "Implement · run #42 · …"
-         person=None (needs_you), text="review plan and continue" → "Waiting on you · …"
-         person=Sam (waiting), text="review plan and continue"   → "Waiting on Sam Lee · …"
+    e.g. running:   actor="Implement", run_id=42, text="Run API test suite"
+                    → "Implement · run #42 · …"
+         queued:    run_id=42, text="queued for a runner"
+         blocked:   run_id=42, text="Review failed: retry or adjust"
+         needs_you: person=None, text="review plan and continue" → "Waiting on you · …"
+         waiting:   person=Sam, text="review plan and continue"  → "Waiting on Sam Lee · …"
+         inbox:     run_id=None, text="add context, then dispatch"
     """
 
     actor: str | None
@@ -273,10 +302,11 @@ class TicketSummary(ApiModel):
     labels: list[str]
     state: TicketState
     owner: Person | None
-    # Derived by the server (SPEC §13). `attention` depends on the viewer (owner vs not).
+    # Derived by the server (SPEC §13). `attention` and the rail's gate states depend on the viewer
+    # (owner vs not). `attention_since`: when the ticket entered its current attention.
     attention: Attention
+    attention_since: AwareDatetime
     phase: Phase
-    phase_since: AwareDatetime | None
     phase_track: list[PhaseStep]
     rail: list[RailStep]
     now: NowInfo
@@ -301,6 +331,8 @@ class TicketDetail(TicketSummary):
     next_stage: str | None
     active_run_id: int | None
     created_at: AwareDatetime
+    # The current TASKS.md checklist (the same parser as `tasks`); None if the file is absent.
+    plan: list[PlanItem] | None
 
 
 class TicketCreate(ApiModel):
