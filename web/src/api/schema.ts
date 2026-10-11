@@ -79,7 +79,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Me */
+        /**
+         * Me
+         * @description Works for a `pending` user too, so the UI can show the waiting-for-approval page.
+         */
         get: operations["me_api_me_get"];
         put?: never;
         post?: never;
@@ -496,6 +499,8 @@ export interface components {
             default_runtime: string;
             /** Jira Deployment */
             jira_deployment: ("cloud" | "datacenter") | null;
+            /** Jira Url */
+            jira_url: string | null;
             /** Key Prefix */
             key_prefix: string;
             /** Repos */
@@ -565,7 +570,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_board_access" | "user_disabled" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
+            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
             /** Message */
             message: string;
         };
@@ -843,7 +848,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "viewer" | "writer" | "admin";
+            role: "pending" | "viewer" | "writer" | "admin";
         };
         /**
          * NowInfo
@@ -1447,6 +1452,8 @@ export interface components {
             display_name: string;
             /** Email */
             email: string | null;
+            /** Env Admin */
+            env_admin: boolean;
             /** Id */
             id: number;
             /** Last Login At */
@@ -1455,7 +1462,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "viewer" | "writer" | "admin";
+            role: "pending" | "viewer" | "writer" | "admin";
         };
         /** UserPatch */
         UserPatch: {
@@ -1465,7 +1472,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role?: "viewer" | "writer" | "admin";
+            role?: "pending" | "viewer" | "writer" | "admin";
         };
         /** WarningData */
         WarningData: {

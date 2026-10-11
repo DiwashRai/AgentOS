@@ -22,6 +22,7 @@ def app_config(ctx: Ctx) -> AppConfig:
     return AppConfig(
         auth_mode="dev" if settings.dev_auth else "jira",
         jira_deployment=None if settings.dev_auth else settings.jira_deployment,
+        jira_url=None if settings.dev_auth else settings.jira_url,
         key_prefix=settings.key_prefix,
         space_name=space.name,
         repos=[repo.info() for repo in space.repos],

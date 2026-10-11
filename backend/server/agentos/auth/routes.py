@@ -5,12 +5,24 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Response
 
 from agentos.auth import service
-from agentos.auth.deps import SESSION_COOKIE, Admin, CurrentUser
+from agentos.auth.deps import SESSION_COOKIE, Admin, CurrentUser, SignedIn
 from agentos.errors import ERROR_RESPONSES
 from agentos.http_deps import Ctx
 from agentos.models import LoginRequest, Me, Person, User, UserPatch
 
 router = APIRouter(prefix="/api", tags=["auth"], responses=ERROR_RESPONSES)
+
+
+def _client_ip(request: Request, trust_proxy: bool) -> str:
+    """The address to rate-limit by. Proxy headers count only with AGENTOS_TRUST_PROXY=1:
+    `CF-Connecting-IP`, else the last `X-Forwarded-For` hop (the one our proxy appended)."""
+    if trust_proxy:
+        if cf := request.headers.get("cf-connecting-ip", "").strip():
+            return cf
+        hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",")]
+        if hops[-1]:
+            return hops[-1]
+    return request.client.host if request.client else ""
 
 
 @router.post("/auth/login")
@@ -21,6 +33,9 @@ def login(body: LoginRequest, request: Request, response: Response, ctx: Ctx) ->
         body,
         host=request.headers.get("host"),
         proxied=any(h in request.headers for h in service.PROXY_HEADERS),
+        client_ip=_client_ip(request, ctx.settings.trust_proxy),
+        jira=ctx.jira,
+        limiter=ctx.login_limiter,
     )
     response.set_cookie(
         SESSION_COOKIE,
@@ -47,7 +62,8 @@ def logout(request: Request, response: Response, ctx: Ctx) -> None:
 
 
 @router.get("/me")
-def me(user: CurrentUser) -> Me:
+def me(user: SignedIn) -> Me:
+    """Works for a `pending` user too, so the UI can show the waiting-for-approval page."""
     return user
 
 
@@ -59,7 +75,7 @@ def list_people(_: CurrentUser, ctx: Ctx) -> list[Person]:
 
 @router.get("/users")
 def list_users(_: Admin, ctx: Ctx) -> list[User]:
-    return service.list_users(ctx.db)
+    return service.list_users(ctx.db, ctx.settings)
 
 
 @router.patch("/users/{user_id}")

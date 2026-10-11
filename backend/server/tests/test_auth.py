@@ -170,17 +170,6 @@ def test_dev_login_refuses_proxied_requests(client: TestClient, header: str) -> 
     assert error_code(response) == "forbidden"
 
 
-def test_jira_mode_login_is_not_implemented(settings: Settings) -> None:
-    jira = settings.model_copy(
-        update={"dev_auth": False, "jira_url": "https://jira.example.com", "jira_board_ids": [1]}
-    )
-    with started(jira) as (client, ctx):
-        response = client.post("/api/auth/login", json={"token": "t"}, headers=CSRF)
-        assert response.status_code == 501
-        assert error_code(response) == "not_implemented"
-        assert rows(ctx, "SELECT * FROM users") == []
-
-
 # ------------------------------------------------------------------ sessions
 
 
@@ -268,7 +257,9 @@ def test_patch_user_rejects_bad_bodies(
     assert patch_user(client, bob.id, body).status_code == 422
 
 
-@pytest.mark.parametrize("body", [{"role": "writer"}, {"role": "viewer"}, {"disabled": True}])
+@pytest.mark.parametrize(
+    "body", [{"role": "writer"}, {"role": "viewer"}, {"role": "pending"}, {"disabled": True}]
+)
 def test_admin_cannot_demote_or_disable_self(
     login: LoginFn, client: TestClient, body: dict[str, object]
 ) -> None:
@@ -284,11 +275,16 @@ def test_env_admin_cannot_be_demoted(settings: Settings, entry: str) -> None:
     with started(settings.model_copy(update={"admins": [entry]})) as (client, ctx):
         boss = Me.model_validate(post_login(client, "boss").json())
         execute(ctx, "UPDATE users SET email = 'boss@example.com' WHERE id = ?", boss.id)
-        post_login(client, "admin")
-        response = patch_user(client, boss.id, {"role": "writer"})
-        assert response.status_code == 422
-        assert error_code(response) == "validation_error"
-        assert patch_user(client, boss.id, {"role": "admin"}).status_code == 200
+        admin = Me.model_validate(post_login(client, "admin").json())
+        users = {u["id"]: u["env_admin"] for u in client.get("/api/users").json()}
+        assert users == {boss.id: True, admin.id: False}
+        for role in ("writer", "pending"):
+            response = patch_user(client, boss.id, {"role": role})
+            assert response.status_code == 422
+            assert error_code(response) == "validation_error"
+        response = patch_user(client, boss.id, {"role": "admin"})
+        assert response.status_code == 200
+        assert User.model_validate(response.json()).env_admin is True
         # Not demoting: disabling an env admin is allowed.
         assert patch_user(client, boss.id, {"disabled": True}).status_code == 200
 
@@ -317,11 +313,12 @@ def test_disabling_a_user_deletes_their_sessions(
     assert post_login(client, "bob").status_code == 200
 
 
-def test_people_lists_enabled_users_by_name(
+def test_people_lists_enabled_approved_users_by_name(
     login: LoginFn, client: TestClient, ctx: AppContext
 ) -> None:
     zed = login("Zed")
     login("carol")
+    login("newbie", "pending")
     amy = login("amy")
     execute(ctx, "UPDATE users SET disabled = 1 WHERE id = ?", zed.id)
     people = [Person.model_validate(p) for p in client.get("/api/people").json()]

@@ -12,7 +12,9 @@ from typing import Annotated, Any, ClassVar, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
-Role = Literal["viewer", "writer", "admin"]
+# `pending` = signed in but not approved by an admin yet: only GET /api/me, logout and the public
+# routes work (403 `pending_approval` everywhere else). Ranks below viewer.
+Role = Literal["pending", "viewer", "writer", "admin"]
 TicketType = Literal["feature", "bug", "improvement", "task"]
 Priority = Literal["high", "normal", "low"]
 TicketState = Literal["open", "done", "closed"]
@@ -58,8 +60,9 @@ ErrorCode = Literal[
     # auth
     "missing_credentials",
     "invalid_credentials",
-    "no_board_access",
+    "no_project_access",
     "user_disabled",
+    "pending_approval",
     # lookups
     "ticket_not_found",
     "file_not_found",
@@ -126,6 +129,8 @@ class AppConfig(ApiModel):
 
     auth_mode: Literal["dev", "jira"]
     jira_deployment: Literal["cloud", "datacenter"] | None
+    # Where the login token comes from (Jira auth); null with dev auth.
+    jira_url: str | None
     key_prefix: str
     space_name: str
     repos: list[RepoInfo]
@@ -152,6 +157,9 @@ class Me(ApiModel):
 
 class User(Me):
     disabled: bool
+    # AGENTOS_ADMINS lists one of the user's identity subjects or their email: always admin,
+    # can't be demoted from the UI.
+    env_admin: bool
     created_at: AwareDatetime
     last_login_at: AwareDatetime | None
 

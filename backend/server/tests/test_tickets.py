@@ -213,11 +213,14 @@ def test_owner(authed: TestClient, login: LoginFn, ctx: AppContext) -> None:
     response = post(authed, owner_id=999)
     assert response.status_code == 422
     assert code(response) == "user_not_found"
-    with ctx.db.tx() as conn:
-        conn.execute("UPDATE users SET disabled = 1 WHERE id = ?", (sam.id,))
-    response = post(authed, owner_id=sam.id)
-    assert response.status_code == 422
-    assert code(response) == "user_not_found"
+    for role, disabled in (("pending", 0), ("viewer", 1)):
+        with ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE users SET role = ?, disabled = ? WHERE id = ?", (role, disabled, sam.id)
+            )
+        response = post(authed, owner_id=sam.id)
+        assert response.status_code == 422
+        assert code(response) == "user_not_found"
 
 
 def test_scaffold_is_bundle_v1(authed: TestClient) -> None:

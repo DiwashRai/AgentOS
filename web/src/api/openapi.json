@@ -43,6 +43,17 @@
             ],
             "title": "Jira Deployment"
           },
+          "jira_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Url"
+          },
           "key_prefix": {
             "title": "Key Prefix",
             "type": "string"
@@ -69,6 +80,7 @@
         "required": [
           "auth_mode",
           "jira_deployment",
+          "jira_url",
           "key_prefix",
           "space_name",
           "repos",
@@ -267,8 +279,9 @@
               "too_large",
               "missing_credentials",
               "invalid_credentials",
-              "no_board_access",
+              "no_project_access",
               "user_disabled",
+              "pending_approval",
               "ticket_not_found",
               "file_not_found",
               "version_not_found",
@@ -1061,6 +1074,7 @@
           },
           "role": {
             "enum": [
+              "pending",
               "viewer",
               "writer",
               "admin"
@@ -2847,6 +2861,10 @@
             ],
             "title": "Email"
           },
+          "env_admin": {
+            "title": "Env Admin",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -2865,6 +2883,7 @@
           },
           "role": {
             "enum": [
+              "pending",
               "viewer",
               "writer",
               "admin"
@@ -2880,6 +2899,7 @@
           "avatar_url",
           "role",
           "disabled",
+          "env_admin",
           "created_at",
           "last_login_at"
         ],
@@ -2895,6 +2915,7 @@
           },
           "role": {
             "enum": [
+              "pending",
               "viewer",
               "writer",
               "admin"
@@ -3140,6 +3161,7 @@
     },
     "/api/me": {
       "get": {
+        "description": "Works for a `pending` user too, so the UI can show the waiting-for-approval page.",
         "operationId": "me_api_me_get",
         "responses": {
           "200": {

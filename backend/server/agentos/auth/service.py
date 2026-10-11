@@ -2,6 +2,8 @@
 models out, `ApiError` for failures. Every write runs in one `db.tx()`.
 
 Session tokens are random (`secrets.token_urlsafe(32)`); only their sha256 hex is stored.
+A person's Jira token is used for the login's Jira calls and then dropped: never stored, logged
+or echoed in an error.
 """
 
 from __future__ import annotations
@@ -18,13 +20,17 @@ from agentos.config import Settings, is_loopback_host
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
 from agentos.models import LoginRequest, Me, Person, Role, User, UserPatch
+from agentos.ratelimit import RateLimiter
+from agentos.sources.jira import JiraClient, JiraProfile, JiraUnauthorized, JiraUnavailable
 
 SESSION_TTL = timedelta(days=14)
 # Dev auth refuses requests that came through a proxy (SPEC §11).
 PROXY_HEADERS = ("x-forwarded-for", "cf-connecting-ip")
 MAX_USERNAME_LEN = 64
+MAX_EMAIL_LEN = 254
+MAX_TOKEN_LEN = 1024  # Atlassian API tokens are ~200 chars, DC PATs ~44
 
-_ROLE_RANK: dict[Role, int] = {"viewer": 0, "writer": 1, "admin": 2}
+_ROLE_RANK: dict[Role, int] = {"pending": -1, "viewer": 0, "writer": 1, "admin": 2}
 _SELECT_USER = (
     "SELECT id, display_name, email, avatar_url, role, disabled, created_at, last_login_at "
     "FROM users"
@@ -57,14 +63,106 @@ def cookie_secure(settings: Settings) -> bool:
 
 
 def login(
-    db: Database, settings: Settings, body: LoginRequest, *, host: str | None, proxied: bool
+    db: Database,
+    settings: Settings,
+    body: LoginRequest,
+    *,
+    host: str | None,
+    proxied: bool,
+    client_ip: str,
+    jira: JiraClient | None,
+    limiter: RateLimiter,
 ) -> Session:
-    """Authenticate, upsert the user and create a session.
+    """Authenticate, upsert the user and create a session: dev auth or Jira (SPEC §11).
 
-    `host` is the request's Host header; `proxied` is True when it carried any PROXY_HEADERS.
+    `host` is the request's Host header; `proxied` is True when it carried any PROXY_HEADERS;
+    `client_ip` is the address Jira logins are rate-limited by.
     """
-    if not settings.dev_auth:
-        raise ApiError(501, "not_implemented", "Jira login is not implemented yet")
+    if settings.dev_auth:
+        return _dev_login(db, body, host=host, proxied=proxied)
+    if jira is None:  # pragma: no cover - startup checks require AGENTOS_JIRA_URL
+        raise ApiError(500, "internal_error", "Jira is not configured")
+    return _jira_login(db, settings, jira, limiter, body, client_ip=client_ip)
+
+
+def _jira_login(
+    db: Database,
+    settings: Settings,
+    jira: JiraClient,
+    limiter: RateLimiter,
+    body: LoginRequest,
+    *,
+    client_ip: str,
+) -> Session:
+    """`/myself` checks the credentials, project access gates the Space, a first login waits for
+    an admin (`pending`) unless ADMINS lists the person."""
+    email = (body.email or "").strip()
+    who = (email or body.username or "").strip().casefold()
+    if not limiter.hit((client_ip, who)):
+        raise ApiError(429, "rate_limited", "Too many sign-in attempts; wait a minute")
+    token = (body.token or "").strip()
+    cloud = jira.deployment == "cloud"
+    if not token or (cloud and not email):
+        need = "your email and a Jira API token" if cloud else "a Jira personal access token"
+        raise ApiError(400, "missing_credentials", f"Provide {need}")
+    if not _plausible_token(token) or len(email) > MAX_EMAIL_LEN or not email.isprintable():
+        raise ApiError(401, "invalid_credentials", "Jira rejected these credentials")
+    creds = jira.credentials(token=token, email=email or None)
+    try:
+        profile = jira.myself(creds)
+        allowed = any(jira.can_browse_project(creds, key) for key in settings.jira_projects)
+    except JiraUnauthorized:
+        raise ApiError(401, "invalid_credentials", "Jira rejected these credentials") from None
+    except JiraUnavailable:
+        raise ApiError(502, "upstream_error", "Jira didn't answer; try again shortly") from None
+    if not allowed:
+        projects = ", ".join(settings.jira_projects)
+        raise ApiError(
+            403,
+            "no_project_access",
+            f"Your Jira account can't see this Space's projects: {projects}",
+        )
+    env_admin = _profile_is_admin(settings, profile)
+    now = utcnow()
+    with db.tx() as conn:
+        user_id = _upsert_identity(
+            conn,
+            "jira",
+            profile.subject,
+            display_name=profile.display_name,
+            email=profile.email,
+            now=now,
+            role="admin" if env_admin else "pending",
+        )
+        if _user_row(conn, user_id)["disabled"]:
+            raise ApiError(403, "user_disabled", "This account is disabled")
+        conn.execute(
+            "UPDATE users SET display_name = ?, email = ?, avatar_url = ?, last_login_at = ? "
+            "WHERE id = ?",
+            (profile.display_name, profile.email, profile.avatar_url, to_db(now), user_id),
+        )
+        if env_admin:  # re-applied on every login; an existing user otherwise keeps their role
+            conn.execute("UPDATE users SET role = 'admin' WHERE id = ?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (to_db(now),))
+        token_out, expires_at = _create_session(conn, user_id, now)
+        user = _me(_user_row(conn, user_id))
+    return Session(user=user, token=token_out, expires_at=expires_at)
+
+
+def _plausible_token(token: str) -> bool:
+    """Printable ASCII without spaces (what HTTP headers carry); anything else can't be valid."""
+    return (
+        len(token) <= MAX_TOKEN_LEN and token.isascii() and token.isprintable() and " " not in token
+    )
+
+
+def _profile_is_admin(settings: Settings, profile: JiraProfile) -> bool:
+    """ADMINS matched against what Jira says (`/myself`), never against request input."""
+    admins = {a.casefold() for a in settings.admins}
+    return any(c is not None and c.casefold() in admins for c in (profile.subject, profile.email))
+
+
+def _dev_login(db: Database, body: LoginRequest, *, host: str | None, proxied: bool) -> Session:
     if proxied or not is_loopback_host(_host_name(host)):
         raise ApiError(403, "forbidden", "Dev auth only accepts direct loopback requests")
     username = (body.username or "").strip()
@@ -133,23 +231,26 @@ def user_for_session(db: Database, token: str | None) -> Me:
 
 
 def list_people(db: Database) -> list[Person]:
-    """Non-disabled users, for owner pickers."""
+    """Enabled, approved users (not `pending`), for owner pickers."""
     with db.read() as conn:
         rows = conn.execute(
-            "SELECT id, display_name, avatar_url FROM users WHERE disabled = 0 "
+            "SELECT id, display_name, avatar_url FROM users "
+            "WHERE disabled = 0 AND role != 'pending' "
             "ORDER BY display_name COLLATE NOCASE, id"
         ).fetchall()
     return [Person.model_validate(dict(r)) for r in rows]
 
 
-def list_users(db: Database) -> list[User]:
+def list_users(db: Database, settings: Settings) -> list[User]:
     with db.read() as conn:
         rows = conn.execute(_SELECT_USER + " ORDER BY display_name COLLATE NOCASE, id").fetchall()
-    return [_user(r) for r in rows]
+        env_admins = env_admin_ids(conn, settings)
+    return [_user(r, env_admin=r["id"] in env_admins) for r in rows]
 
 
 def patch_user(db: Database, settings: Settings, actor: Me, user_id: int, patch: UserPatch) -> User:
-    """Admin edit of `role` / `disabled`. Disabling deletes the user's sessions.
+    """Admin edit of `role` / `disabled`. Disabling deletes the user's sessions. Approving a
+    `pending` user (or sending someone back to pending) takes effect on their next request.
 
     422 when an admin would disable or demote themselves, or demote an env admin (ADMINS).
     """
@@ -163,7 +264,8 @@ def patch_user(db: Database, settings: Settings, actor: Me, user_id: int, patch:
                 raise ApiError(422, "validation_error", "You can't disable yourself")
             if demote:
                 raise ApiError(422, "validation_error", "You can't demote yourself")
-        if demote and is_env_admin(conn, settings, user_id):
+        env_admin = is_env_admin(conn, settings, user_id)
+        if demote and env_admin:
             raise ApiError(
                 422,
                 "validation_error",
@@ -177,22 +279,28 @@ def patch_user(db: Database, settings: Settings, actor: Me, user_id: int, patch:
             )
             if patch.disabled:
                 conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-        return _user(_user_row(conn, user_id))
+        return _user(_user_row(conn, user_id), env_admin=env_admin)
 
 
 def is_env_admin(conn: Conn, settings: Settings, user_id: int) -> bool:
     """True when ADMINS lists one of the user's identity subjects or their email (ignoring case)."""
+    return user_id in env_admin_ids(conn, settings, user_id)
+
+
+def env_admin_ids(conn: Conn, settings: Settings, user_id: int | None = None) -> set[int]:
+    """The ids of users ADMINS lists (by identity subject or email, ignoring case); one query.
+    `user_id` narrows it to that user."""
     admins = {a.casefold() for a in settings.admins}
     if not admins:
-        return False
-    subjects = conn.execute(
-        "SELECT subject FROM user_identities WHERE user_id = ?", (user_id,)
+        return set()
+    rows = conn.execute(
+        "SELECT user_id, subject AS name FROM user_identities "
+        "WHERE :uid IS NULL OR user_id = :uid "
+        "UNION ALL SELECT id, email FROM users "
+        "WHERE email IS NOT NULL AND (:uid IS NULL OR id = :uid)",
+        {"uid": user_id},
     ).fetchall()
-    email = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
-    candidates = [r["subject"] for r in subjects]
-    if email is not None and email["email"]:
-        candidates.append(email["email"])
-    return any(c.casefold() in admins for c in candidates)
+    return {r["user_id"] for r in rows if r["name"].casefold() in admins}
 
 
 # ------------------------------------------------------------------ helpers
@@ -265,7 +373,7 @@ def _me(row: Row) -> Me:
     return Me.model_validate(_fields(row, ("id", "display_name", "email", "avatar_url", "role")))
 
 
-def _user(row: Row) -> User:
+def _user(row: Row, *, env_admin: bool) -> User:
     data = _fields(
         row,
         (
@@ -279,4 +387,5 @@ def _user(row: Row) -> User:
         ),
     )
     data["disabled"] = bool(row["disabled"])
+    data["env_admin"] = env_admin
     return User.model_validate(data)

@@ -64,21 +64,28 @@ def test_env_prefix_and_types(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 def test_env_comma_lists(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_JIRA_BOARD_IDS", "12, 34,,56")
+    monkeypatch.setenv("AGENTOS_JIRA_PROJECTS", "SCRUM, OPS_2,,AB")
     monkeypatch.setenv("AGENTOS_ADMINS", "abc123 , ana@example.com")
     settings = Settings(_env_file=None)
-    assert settings.jira_board_ids == [12, 34, 56]
+    assert settings.jira_projects == ["SCRUM", "OPS_2", "AB"]
     assert settings.admins == ["abc123", "ana@example.com"]
 
 
 def test_empty_env_values_mean_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("WORKER_ENV_FILE", "JIRA_URL", "JIRA_BOARD_IDS", "ADMINS"):
+    for name in ("WORKER_ENV_FILE", "JIRA_URL", "JIRA_PROJECTS", "ADMINS"):
         monkeypatch.setenv(f"AGENTOS_{name}", "")
     settings = Settings(_env_file=None)
     assert settings.worker_env_file is None
     assert settings.jira_url is None
-    assert settings.jira_board_ids == []
+    assert settings.jira_projects == []
     assert settings.admins == []
+
+
+@pytest.mark.parametrize("projects", ["scrum", "S", "SC-1", "1AB", "OK,bad"])
+def test_jira_projects_must_be_project_keys(monkeypatch: pytest.MonkeyPatch, projects: str) -> None:
+    monkeypatch.setenv("AGENTOS_JIRA_PROJECTS", projects)
+    with pytest.raises(ConfigError, match="AGENTOS_JIRA_PROJECTS"):
+        load_settings(_env_file=None)
 
 
 def test_defaults() -> None:
@@ -231,8 +238,8 @@ def test_dev_auth_accepts_localhost(tmp_path: Path, runtimes: RuntimesConfig) ->
 def test_jira_required_without_dev_auth(tmp_path: Path, runtimes: RuntimesConfig) -> None:
     found = problems(make(tmp_path, dev_auth=False))
     assert any("AGENTOS_JIRA_URL" in p for p in found)
-    assert any("AGENTOS_JIRA_BOARD_IDS" in p for p in found)
-    ok = make(tmp_path, dev_auth=False, jira_url="https://x.atlassian.net", jira_board_ids=[1])
+    assert any("AGENTOS_JIRA_PROJECTS" in p for p in found)
+    ok = make(tmp_path, dev_auth=False, jira_url="https://x.atlassian.net", jira_projects=["XY"])
     startup_checks(ok, runtimes)
 
 
@@ -296,6 +303,7 @@ def test_api_config_reflects_dev_settings(tmp_path: Path) -> None:
     assert config == AppConfig(
         auth_mode="dev",
         jira_deployment=None,
+        jira_url=None,
         key_prefix="XYZ",
         space_name="Test Space",
         repos=[
@@ -313,13 +321,14 @@ def test_api_config_reflects_jira_settings(tmp_path: Path) -> None:
         tmp_path,
         dev_auth=False,
         jira_url="https://jira.example.com",
-        jira_board_ids=[7],
+        jira_projects=["SCRUM"],
         jira_deployment="datacenter",
     )
     with TestClient(create_app(settings)) as client:
         config = client.get("/api/config").json()
     assert config["auth_mode"] == "jira"
     assert config["jira_deployment"] == "datacenter"
+    assert config["jira_url"] == "https://jira.example.com"
 
 
 def test_api_config_without_a_space(tmp_path: Path) -> None:

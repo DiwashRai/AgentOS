@@ -21,6 +21,7 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.space import SpaceConfig
 
 KEY_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9]*$")
+JIRA_PROJECT_RE = re.compile(r"^[A-Z][A-Z0-9_]+$")
 
 
 class ConfigError(Exception):
@@ -65,7 +66,8 @@ class Settings(BaseSettings):
     trust_proxy: bool = False
     jira_url: str | None = None
     jira_deployment: Literal["cloud", "datacenter"] = "cloud"
-    jira_board_ids: Annotated[list[int], NoDecode] = []
+    # The Space's Jira projects: signing in needs browse access to at least one of them.
+    jira_projects: Annotated[list[str], NoDecode] = []
     admins: Annotated[list[str], NoDecode] = []
 
     @field_validator("data_dir", "workspaces_dir", "config", "worker_env_file", "web_dir")
@@ -78,10 +80,18 @@ class Settings(BaseSettings):
     def _strip_slash(cls, value: str | None) -> str | None:
         return None if value is None else value.rstrip("/")
 
-    @field_validator("jira_board_ids", "admins", mode="before")
+    @field_validator("jira_projects", "admins", mode="before")
     @classmethod
     def _csv(cls, value: object) -> object:
         return _split_csv(value)
+
+    @field_validator("jira_projects")
+    @classmethod
+    def _project_keys(cls, value: list[str]) -> list[str]:
+        bad = [key for key in value if not JIRA_PROJECT_RE.match(key)]
+        if bad:
+            raise ValueError(f"not Jira project keys ({JIRA_PROJECT_RE.pattern}): {bad}")
+        return value
 
     @field_validator("local_max_concurrency", mode="before")
     @classmethod
@@ -216,8 +226,8 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
             problems.append("AGENTOS_JIRA_URL is required unless AGENTOS_DEV_AUTH=1")
         elif problem := _url_problem("AGENTOS_JIRA_URL", settings.jira_url):
             problems.append(problem)
-        if not settings.jira_board_ids:
-            problems.append("AGENTOS_JIRA_BOARD_IDS is required unless AGENTOS_DEV_AUTH=1")
+        if not settings.jira_projects:
+            problems.append("AGENTOS_JIRA_PROJECTS is required unless AGENTOS_DEV_AUTH=1")
 
     if settings.launcher == "github":
         problems.append("AGENTOS_LAUNCHER=github is not available until M1; use 'local'")

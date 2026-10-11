@@ -123,6 +123,24 @@ def test_gets_require_a_session_unless_public(app: FastAPI, client: TestClient) 
         assert response.status_code == expected, f"GET {path}: {response.text}"
 
 
+def test_pending_user_reaches_only_me_and_logout(
+    app: FastAPI, client: TestClient, login: LoginFn
+) -> None:
+    """Approval is enforced by the API: every session route but GET /api/me (and logout) answers
+    403 `pending_approval`, so a new route can't slip through. Worker routes use run tokens."""
+    login("newcomer", "pending")
+    for method, path in sorted(api_routes(app)):
+        if path.startswith(("/api/worker/", "/api/auth/")) or path in PUBLIC_GETS:
+            continue
+        response = client.request(method, url(path), headers=CSRF)
+        if (method, path) == ("GET", "/api/me"):
+            assert response.json()["role"] == "pending"
+            continue
+        assert response.status_code == 403, f"{method} {path}: {response.text}"
+        assert response.json()["error"]["code"] == "pending_approval", f"{method} {path}"
+    assert client.post("/api/auth/logout", headers=CSRF).status_code == 204
+
+
 @pytest.mark.parametrize("role", ["viewer", "writer"])
 def test_admin_gets_are_forbidden_below_admin(
     login: LoginFn, client: TestClient, role: Role

@@ -493,8 +493,9 @@ def _labels(labels: Sequence[str]) -> list[str]:
 
 
 def _check_owner(conn: Conn, owner_id: int) -> None:
-    row = conn.execute("SELECT disabled FROM users WHERE id = ?", (owner_id,)).fetchone()
-    if row is None or row["disabled"]:
+    """An owner must be an enabled, approved user (a `pending` one can't see the ticket)."""
+    row = conn.execute("SELECT disabled, role FROM users WHERE id = ?", (owner_id,)).fetchone()
+    if row is None or row["disabled"] or row["role"] == "pending":
         raise ApiError(422, "user_not_found", f"owner_id: no active user {owner_id}")
 
 
