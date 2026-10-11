@@ -18,13 +18,13 @@ from agentos.pipeline.render import (
     render_scaffold,
     yaml_safe_json,
 )
-from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, PROMPTS, slugify
+from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, LEGACY_SKILL_MD_V1, PROMPTS
 
-D = ".claude/skills/context-aos-42-fix-login-bug"
+D = ".claude/skills/context-aos-42"
 
 TICKET = TicketRef(
     key="AOS-42",
-    slug="fix-login-bug",
+    slug="",
     title="Fix login bug: session expires early",
     description="Sessions expire after 5 minutes instead of 14 days.",
     type="bug",
@@ -56,7 +56,7 @@ def test_render_context_shape() -> None:
             "base_branch": "main",
             "branch": "agent/AOS-42",
         },
-        "skill": {"name": "context-aos-42-fix-login-bug"},
+        "skill": {"name": "context-aos-42"},
         "paths": {
             "skill_dir": D,
             "skill_md": f"{D}/SKILL.md",
@@ -188,9 +188,8 @@ def test_render_default_scaffold_repo_mode() -> None:
     ]
     skill = by_path[f"{D}/SKILL.md"].content
     assert _frontmatter(skill) == {
-        "name": "context-aos-42-fix-login-bug",
-        "description": "Objective and working context for AOS-42 (Fix login bug: session expires "
-        "early). Use when working on AOS-42.",
+        "name": "context-aos-42",
+        "description": "Objective and working context for AOS-42. Use when working on AOS-42.",
     }
     assert skill.endswith(
         "---\n# AOS-42: Fix login bug: session expires early\n\n## Objective\n"
@@ -230,9 +229,16 @@ def test_render_default_scaffold_no_repo_and_source_link() -> None:
     ],
 )
 def test_skill_md_frontmatter_valid_for_awkward_titles(title: str) -> None:
-    t = replace(TICKET, title=title, slug=slugify(title, TICKET.key))
+    t = replace(TICKET, title=title)
     skill = render_scaffold(DEFAULT_SCAFFOLD, t)[0]
     fm = _frontmatter(skill.content)
+    assert (
+        fm["description"] == "Objective and working context for AOS-42. Use when working on AOS-42."
+    )
+    assert f"\n---\n# AOS-42: {title}\n" in skill.content  # the title lives in the body
+    # A stored template may still carry the old SKILL.md (title in the description): still valid.
+    legacy = render_scaffold([FileEntry(path="{{paths.skill_md}}", content=LEGACY_SKILL_MD_V1)], t)
+    fm = _frontmatter(legacy[0].content)
     assert title in fm["description"]
     assert len(fm["description"]) <= 1024
 

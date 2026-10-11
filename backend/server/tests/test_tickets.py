@@ -68,8 +68,8 @@ def test_create_returns_a_fresh_ticket(authed: TestClient) -> None:
     t = TicketDetail.model_validate(response.json())
     me = Me.model_validate(authed.get("/api/me").json())
     assert t.key == "AOS-1"
-    assert t.slug == "fix-login-bug"
-    assert t.skill_name == "context-aos-1-fix-login-bug"
+    assert t.slug == ""  # the skill is named by the key alone
+    assert t.skill_name == "context-aos-1"
     assert (t.title, t.description, t.type, t.priority) == (
         "Fix login bug",
         "It expires early.",
@@ -227,9 +227,8 @@ def test_scaffold_is_bundle_v1(authed: TestClient) -> None:
     title = 'Fix: "quoted" #title & <tags>'  # awkward titles are covered in test_render
     t = TicketDetail.model_validate(post(authed, title=title, description="Desc.").json())
     me = Me.model_validate(authed.get("/api/me").json())
-    assert t.slug == "fix-quoted-title-tags"
-    assert len(t.skill_name) <= 64
-    d = f".claude/skills/{t.skill_name}"
+    assert t.skill_name == "context-aos-1"
+    d = ".claude/skills/context-aos-1"
     files = authed.get(f"/api/tickets/{t.key}/files").json()
     assert sorted(f["path"] for f in files) == sorted(
         [
@@ -253,10 +252,36 @@ def test_scaffold_is_bundle_v1(authed: TestClient) -> None:
     assert lines[1] == f"name: {t.skill_name}"
     assert lines[2].startswith("description: ")
     description = json.loads(lines[2].removeprefix("description: "))
-    assert title in description  # the title survives the YAML-safe JSON escaping intact
+    assert description == f"Objective and working context for {t.key}. Use when working on {t.key}."
     assert lines[3] == "---"
     assert f"# {t.key}: {title}" in skill
     assert skill.endswith("## Objective\nDesc.\n")
+
+
+def test_a_ticket_created_with_a_title_slug_keeps_its_skill_dir(
+    authed: TestClient, ctx: AppContext
+) -> None:
+    # Tickets created before the skill was named by the key alone stored a title slug; their
+    # bundle lives under that dir, so the name must not change under them.
+    with ctx.db.tx() as conn:
+        conn.execute(
+            "INSERT INTO tickets(key, slug, title, workspace_mode, pipeline, created_at, "
+            "updated_at) VALUES ('AOS-7', 'old-title', 'Old title', 'none', ?, "
+            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
+            (default_pipeline().model_dump_json(),),
+        )
+    t = TicketDetail.model_validate(authed.get("/api/tickets/AOS-7").json())
+    assert (t.slug, t.skill_name) == ("old-title", "context-aos-7-old-title")
+    tasks = ".claude/skills/context-aos-7-old-title/TASKS.md"
+    response = authed.put(
+        f"/api/tickets/AOS-7/files/{tasks}",
+        json={"content": "- [x] a\n- [ ] b\n", "mode": "replace", "base_version": 0},
+        headers=CSRF,
+    )
+    assert response.status_code == 200, response.text
+    t = TicketDetail.model_validate(authed.get("/api/tickets/AOS-7").json())
+    assert t.tasks is not None
+    assert (t.tasks.done, t.tasks.total) == (1, 2)  # the legacy TASKS.md is still the plan
 
 
 def test_a_failed_scaffold_render_leaves_no_ticket_and_no_used_key(authed: TestClient) -> None:
@@ -338,7 +363,7 @@ def test_patch_fields(authed: TestClient, create_ticket: CreateTicket, login: Lo
         "low",
         ["a", "b"],
     )
-    assert p.slug == t.slug  # the slug is immutable
+    assert (p.slug, p.skill_name) == (t.slug, t.skill_name)  # a title edit never renames it
     assert p.owner is not None
     assert p.owner.id == sam.id
     assert p.base_branch == "develop"

@@ -5,15 +5,12 @@ Pure: no web, db or http imports (enforced by import-linter).
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass
 
 from agentos.models import FileEntry, Pipeline, Stage, WorkspaceMode
 
 MAX_SKILL_NAME = 64  # Agent Skills limit on `name` (must also match the directory name)
 SKILL_PREFIX = "context-"
-FALLBACK_SLUG = "ticket"
 
 PROMPTS = {
     "plan": (
@@ -85,19 +82,30 @@ def default_pipeline(*, lint: bool = False) -> Pipeline:
     )
 
 
-# `tojson` is agentos' YAML-safe variant (see render.py), so any title keeps the frontmatter
-# valid. A title is ≤ 200 chars, so the description stays under the 1024-char skill limit.
+SKILL_MD_PATH = "{{paths.skill_md}}"
+
+# The description names the ticket by key only (a long title would crowd it); the body keeps the
+# title. `tojson` is agentos' YAML-safe variant (see render.py), so the frontmatter stays valid.
+SKILL_MD = (
+    "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
+    "ticket.key ~ '. Use when working on ' ~ ticket.key ~ '.') | tojson }}\n---\n"
+    "# {{ticket.key}}: {{ticket.title}}\n\n"
+    "{% if ticket.source_url %}Source: {{ticket.source_url}}\n\n{% endif %}"
+    "## Objective\n{{ticket.description}}\n"
+)
+
+# The SKILL.md seeded before the description dropped the title. A stored template whose SKILL.md
+# still equals this exactly is upgraded to `SKILL_MD` at startup (templates.service.seed_default).
+LEGACY_SKILL_MD_V1 = (
+    "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
+    "ticket.key ~ ' (' ~ ticket.title ~ '). Use when working on ' ~ ticket.key ~ '.') "
+    "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n"
+    "{% if ticket.source_url %}Source: {{ticket.source_url}}\n\n{% endif %}"
+    "## Objective\n{{ticket.description}}\n"
+)
+
 DEFAULT_SCAFFOLD = [
-    FileEntry(
-        path="{{paths.skill_md}}",
-        content=(
-            "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
-            "ticket.key ~ ' (' ~ ticket.title ~ '). Use when working on ' ~ ticket.key ~ '.') "
-            "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n"
-            "{% if ticket.source_url %}Source: {{ticket.source_url}}\n\n{% endif %}"
-            "## Objective\n{{ticket.description}}\n"
-        ),
-    ),
+    FileEntry(path=SKILL_MD_PATH, content=SKILL_MD),
     FileEntry(path="{{paths.tasks_md}}", content="# Tasks\n"),
     FileEntry(path="{{paths.learnings}}", content=""),
     FileEntry(path="{{paths.swarm}}", content=""),
@@ -115,17 +123,12 @@ DEFAULT_SCAFFOLD = [
 ]
 
 
-def slugify(title: str, key: str) -> str:
-    """SPEC §4: NFKD → ASCII, lowercase, runs of non-[a-z0-9] → '-', trim, truncate so
-    `skill_name(key, slug)` ≤ 64, trim again, empty → 'ticket'."""
-    ascii_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
-    budget = MAX_SKILL_NAME - len(f"{SKILL_PREFIX}{key.lower()}-")
-    return slug[: max(budget, 0)].strip("-") or FALLBACK_SLUG
-
-
 def skill_name(key: str, slug: str) -> str:
-    return f"{SKILL_PREFIX}{key.lower()}-{slug}"
+    """`context-{key}` (≤ 64: keys are ≤ MAX_KEY_CHARS). New tickets store an empty slug; tickets
+    created while the name carried a title slug keep `context-{key}-{slug}`, because their bundle
+    files are stored under that directory."""
+    name = f"{SKILL_PREFIX}{key.lower()}"
+    return f"{name}-{slug}" if slug else name
 
 
 def skill_dir(key: str, slug: str) -> str:

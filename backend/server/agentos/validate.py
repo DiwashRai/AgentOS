@@ -19,7 +19,7 @@ MAX_FILE_BYTES = 1024 * 1024  # one file, UTF-8
 MAX_BUNDLE_BYTES = 20 * 1024 * 1024  # all of a ticket's current files
 MAX_AGENT_LINE_BYTES = 256 * 1024  # manifest limits.max_line_bytes (Claude stream-json lines)
 MAX_PATH_CHARS = 255
-MAX_KEY_CHARS = 40  # keeps skill.name (context-{key}-{slug}) within 64 chars (see scaffold.py)
+MAX_KEY_CHARS = 40  # keeps skill.name (context-{key}) within 64 chars (see scaffold.py)
 MAX_REPO_URL_CHARS = 2048
 MAX_PR_URL_CHARS = 500  # CompleteRequest.pr_url max_length
 

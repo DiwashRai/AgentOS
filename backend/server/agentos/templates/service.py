@@ -7,6 +7,7 @@ linked afterwards, so a template edit only affects tickets created after it.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Collection
 from dataclasses import dataclass
 
@@ -17,8 +18,16 @@ from agentos.db import Conn, Database
 from agentos.errors import ApiError
 from agentos.models import FileEntry, Me, Pipeline, Template, TemplateUpdate
 from agentos.pipeline.render import check_scaffold
-from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, default_pipeline
+from agentos.pipeline.scaffold import (
+    DEFAULT_SCAFFOLD,
+    LEGACY_SKILL_MD_V1,
+    SKILL_MD,
+    SKILL_MD_PATH,
+    default_pipeline,
+)
 from agentos.pipeline.segment import validate_pipeline
+
+log = logging.getLogger(__name__)
 
 DEFAULT_NAME = "default"
 _SCAFFOLD = TypeAdapter(list[FileEntry])
@@ -35,7 +44,8 @@ def _scaffold_json(entries: list[FileEntry]) -> str:
 
 
 def seed_default(db: Database) -> None:
-    """Startup: insert version 1 of the default template unless it exists. Idempotent."""
+    """Startup: insert version 1 of the default template unless it exists, then upgrade a
+    legacy default SKILL.md (`_upgrade_skill_md`). Idempotent."""
     with db.tx() as conn:
         conn.execute(
             "INSERT INTO templates(name, version, pipeline, scaffold, created_at, created_by) "
@@ -47,6 +57,43 @@ def seed_default(db: Database) -> None:
                 to_db(utcnow()),
             ),
         )
+        _upgrade_skill_md(conn)
+
+
+def _upgrade_skill_md(conn: Conn) -> None:
+    """If the current version's SKILL.md entry is still exactly `LEGACY_SKILL_MD_V1` (the seed
+    whose description carried the title), append version+1 with `SKILL_MD` in its place and
+    everything else unchanged. A customised SKILL.md is left alone; once upgraded, the current
+    version no longer matches, so this runs at most once. Existing tickets are unaffected: their
+    scaffold was rendered into their bundle at creation."""
+    row = conn.execute(
+        "SELECT version, pipeline, scaffold FROM templates WHERE name = ? "
+        "ORDER BY version DESC LIMIT 1",
+        (DEFAULT_NAME,),
+    ).fetchone()
+    if row is None:  # pragma: no cover - seeded just above
+        return
+    scaffold = _SCAFFOLD.validate_json(row["scaffold"])
+    upgraded = [
+        e.model_copy(update={"content": SKILL_MD})
+        if e.path == SKILL_MD_PATH and e.content == LEGACY_SKILL_MD_V1
+        else e
+        for e in scaffold
+    ]
+    if upgraded == scaffold:
+        return
+    conn.execute(
+        "INSERT INTO templates(name, version, pipeline, scaffold, created_at, created_by) "
+        "VALUES (?, ?, ?, ?, ?, NULL)",
+        (
+            DEFAULT_NAME,
+            row["version"] + 1,
+            row["pipeline"],
+            _scaffold_json(upgraded),
+            to_db(utcnow()),
+        ),
+    )
+    log.info("Upgraded the default template's SKILL.md to v%d (key-only)", row["version"] + 1)
 
 
 def current(conn: Conn) -> TemplateRow:

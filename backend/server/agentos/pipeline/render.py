@@ -152,7 +152,7 @@ def render_scaffold(entries: Sequence[FileEntry], ticket: TicketRef) -> list[Fil
 DUMMY_TICKETS = (
     TicketRef(
         key="AOS-1",
-        slug="example",
+        slug="",
         title='Example: "quoted" #title',
         description="Example description.",
         type="task",
@@ -163,7 +163,7 @@ DUMMY_TICKETS = (
     ),
     TicketRef(
         key="AOS-1",
-        slug="example",
+        slug="",
         title="Example",
         description="",
         type="task",

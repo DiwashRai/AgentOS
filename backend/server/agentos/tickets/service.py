@@ -44,7 +44,7 @@ from agentos.pipeline.manifest import render_stages
 from agentos.pipeline.plan import Plan, parse_plan
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig
-from agentos.pipeline.scaffold import names, slugify
+from agentos.pipeline.scaffold import names
 from agentos.pipeline.segment import validate_pipeline
 from agentos.pipeline.space import SpaceConfig
 from agentos.sources.base import (
@@ -443,7 +443,7 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     as bundle v1 (inside the caller's transaction, so a render error leaves nothing behind)."""
     resolved = space.resolve(new.repo, new.base_branch)
     now = utcnow()
-    slug = slugify(new.title, new.key)
+    slug = ""  # the skill dir is named by the key alone; older tickets keep their title slug
     template = templates.current(conn)
     pipeline = template.template.pipeline
     if resolved.mode == "none":

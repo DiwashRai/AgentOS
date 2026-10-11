@@ -220,7 +220,9 @@ def test_import_creates_a_ticket_the_importer_owns(
     assert t.owner.id == me.id
     assert (t.repo_name, t.base_branch, t.attention) == ("r", "main", "inbox")
     assert t.plan is not None  # the template's scaffold is bundle v1, as for a native ticket
-    assert client.get("/api/tickets/SCRUM-6/files").json()
+    assert t.skill_name == "context-scrum-6"  # the key alone, however long the Jira title
+    paths = {f["path"] for f in client.get("/api/tickets/SCRUM-6/files").json()}
+    assert ".claude/skills/context-scrum-6/SKILL.md" in paths
 
 
 def test_reimport_returns_the_ticket_without_calling_jira(

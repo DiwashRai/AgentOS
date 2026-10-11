@@ -1,4 +1,4 @@
-"""Slugs, derived names and the default seed (SPEC §4, §15)."""
+"""Derived names and the default seed (SPEC §4, §15)."""
 
 from __future__ import annotations
 
@@ -7,57 +7,41 @@ import re
 import pytest
 
 from agentos.pipeline.scaffold import (
+    MAX_SKILL_NAME,
     default_pipeline,
     names,
     skill_dir,
     skill_name,
-    slugify,
 )
+from agentos.validate import MAX_KEY_CHARS
 
 SKILL_NAME_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 
 
 @pytest.mark.parametrize(
-    ("title", "slug"),
+    ("key", "name"),
     [
-        ("Fix login bug", "fix-login-bug"),
-        ("Fix login bug: session expires early", "fix-login-bug-session-expires-early"),
-        ("#42 -- Crash on save!", "42-crash-on-save"),
-        ("Café déjà vu", "cafe-deja-vu"),
-        ("ﬁle ①", "file-1"),  # NFKD compatibility forms
-        ("修复登录", "ticket"),  # CJK has no ASCII decomposition
-        ("🚀 Launch 🚀", "launch"),
-        ("😀", "ticket"),
-        ("", "ticket"),
-        ("---", "ticket"),
-        ("  Mixed   CASE\tand\nnewlines ", "mixed-case-and-newlines"),
+        ("AOS-1", "context-aos-1"),
+        ("SCRUM-123", "context-scrum-123"),
+        ("A" * (MAX_KEY_CHARS - 3) + "-99", "context-" + "a" * (MAX_KEY_CHARS - 3) + "-99"),
     ],
 )
-def test_slugify(title: str, slug: str) -> None:
-    assert slugify(title, "AOS-1") == slug
-
-
-@pytest.mark.parametrize("key", ["AOS-1", "AOS-123456", "PROJECTNAME-99999", "A" * 37 + "-99"])
-def test_long_title_keeps_skill_name_within_64(key: str) -> None:
-    slug = slugify("word " * 100, key)
-    name = skill_name(key, slug)
-    assert len(name) <= 64
+def test_skill_is_named_by_the_key(key: str, name: str) -> None:
+    assert skill_name(key, "") == name
+    assert len(name) <= MAX_SKILL_NAME
     assert SKILL_NAME_RE.match(name)
-    assert not slug.startswith("-")
-    assert not slug.endswith("-")
 
 
-def test_truncation_trims_trailing_dash() -> None:
-    # budget for AOS-1 is 64 - len("context-aos-1-") = 50; cut lands right after a word
-    title = "a" * 49 + " b"
-    assert slugify(title, "AOS-1") == "a" * 49
+def test_a_legacy_title_slug_is_kept() -> None:
+    # Tickets created before the key-only name stored a title slug: their dir must not move.
+    assert skill_name("AOS-42", "fix-login-bug") == "context-aos-42-fix-login-bug"
 
 
 def test_names_repo_mode() -> None:
-    n = names("AOS-42", "fix-login-bug", "repo")
-    d = ".claude/skills/context-aos-42-fix-login-bug"
-    assert n.skill_name == "context-aos-42-fix-login-bug"
-    assert n.skill_dir == d == skill_dir("AOS-42", "fix-login-bug")
+    n = names("AOS-42", "", "repo")
+    d = ".claude/skills/context-aos-42"
+    assert n.skill_name == "context-aos-42"
+    assert n.skill_dir == d == skill_dir("AOS-42", "")
     assert (n.skill_md, n.tasks_md, n.learnings, n.swarm, n.out) == (
         f"{d}/SKILL.md",
         f"{d}/TASKS.md",
@@ -69,7 +53,7 @@ def test_names_repo_mode() -> None:
 
 
 def test_names_no_repo_mode_has_no_branch() -> None:
-    assert names("AOS-42", "x", "none").branch is None
+    assert names("AOS-42", "", "none").branch is None
 
 
 def test_default_pipeline_seed() -> None:
