@@ -1,0 +1,101 @@
+// One run's log (SPEC §13 Runs): events polled every second while the run is active, summarised
+// for reading, pinned to the bottom unless the reader scrolls up.
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+
+import { useRunEvents } from "../../api/queries";
+import { cx } from "../../ui";
+import { buildLines } from "./log";
+import s from "./RunsTab.module.css";
+
+/** The hook keeps the newest this-many events (SPEC §13: last 5,000 lines). */
+const EVENT_CAP = 5000;
+/** Within this many px of the bottom counts as "at the bottom". */
+const STICK_PX = 32;
+
+const TIME = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+function timeOf(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? ts : TIME.format(d);
+}
+
+export interface RunLogProps {
+  runId: number;
+  active: boolean;
+  queued: boolean;
+  stageName: (id: string | null) => string;
+}
+
+/** Mount with `key={runId}` so scroll state starts fresh for each run. */
+export function RunLog({ runId, active, queued, stageName }: RunLogProps) {
+  const events = useRunEvents(runId, active);
+  const { refetch } = events;
+  const lines = useMemo(() => buildLines(events.data ?? [], stageName), [events.data, stageName]);
+
+  // The last events can land between the final poll and the status flip: fetch once more.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (wasActive.current && !active) void refetch();
+    wasActive.current = active;
+  }, [active, refetch]);
+
+  const box = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  const opened = useRef(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || lines.length === 0) return;
+    // Open at the newest line; then follow it while the run is live and the reader hasn't scrolled up.
+    if (!opened.current || (active && stick.current)) el.scrollTop = el.scrollHeight;
+    opened.current = true;
+  }, [lines, active]);
+
+  if (events.isPending) return <p className={s.quiet}>Loading log</p>;
+  if (events.isError) {
+    return (
+      <p className={s.quiet} data-error="" role="alert">
+        {`Can't load the log · ${events.error.message}`}
+      </p>
+    );
+  }
+  if (lines.length === 0) {
+    return (
+      <p className={s.quiet}>
+        {queued
+          ? "Queued. The log starts when a worker picks it up."
+          : active
+            ? "Waiting for output"
+            : "No output"}
+      </p>
+    );
+  }
+
+  return (
+    <>
+      {events.data.length >= EVENT_CAP ? (
+        <p className={s.quiet}>Showing the last 5,000 events</p>
+      ) : null}
+      <div
+        ref={box}
+        className={s.log}
+        role="log"
+        aria-label={`Run #${String(runId)} log`}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+        }}
+      >
+        {lines.map((l) => (
+          <div key={l.key} className={cx(s.line, s[l.kind])} title={timeOf(l.ts)}>
+            {l.text}
+            {l.truncated ? <span className={s.trunc}> (truncated)</span> : null}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}

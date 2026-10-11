@@ -1,0 +1,368 @@
+/* Runs tab. Not designed beyond the run-history rows (ticket.css `.tv-runs`: 44px rows,
+   `200px 1fr 64px`); the stage list and log are built in the same quiet language. */
+
+/* kit .ao-k */
+.k,
+.quiet {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+
+.quiet {
+  margin: 12px 0 0;
+}
+
+.quiet[data-error] {
+  color: var(--blocked);
+}
+
+/* ticket.css .tv-empty */
+.empty {
+  margin: 20px 0 0;
+  font-size: var(--fs-ui);
+  color: var(--ink-3);
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ellip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ellip b,
+.meta b {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------- run history */
+
+.runs {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  gap: 16px;
+  align-items: center;
+  height: 44px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+/* The whole row (minus the launch ref) is one button: mark · inline run. */
+.rowMain {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  height: 36px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+  min-width: 0;
+  transition:
+    transform var(--t-fast) ease,
+    background-color var(--t-fast) ease,
+    border-color var(--t-fast) ease;
+}
+
+.rowMain:hover {
+  transform: translateY(-2px);
+  background: var(--surface-raised);
+  border-color: var(--rule-strong);
+}
+
+.rowMain:focus-visible {
+  border-radius: 9px;
+}
+
+.selected > .rowMain {
+  border-color: var(--ink-1);
+}
+
+.rowMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+.ref {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* kit .ao-link, mono */
+.refLink {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
+}
+
+.refLink:hover {
+  text-decoration-color: var(--ink-1);
+}
+
+/* gated: the "you" glyph with a label in the waiting colour (no YOU pill: a run doesn't know who) */
+.gated {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--waiting);
+}
+
+.gated > b {
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------- selected run */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 30px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.panelWho {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.meta {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.err {
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+.runError {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+.stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: 14px minmax(90px, 160px) minmax(0, 1fr) 56px;
+  gap: 10px;
+  align-items: center;
+  height: 30px;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: var(--fs-meta);
+}
+
+.stageName {
+  color: var(--ink-1);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stageNote {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stageNote.bad {
+  color: var(--blocked);
+}
+
+.stage > .mono {
+  text-align: right;
+}
+
+/* ---------------------------------------------------------------- log */
+
+.log {
+  height: min(62vh, 640px);
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: var(--r-sheet);
+  background: var(--recess);
+  box-shadow: var(--recess-shadow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.55;
+  color: var(--ink-2);
+  scrollbar-width: thin;
+}
+
+.line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stdout {
+  color: var(--ink-2);
+}
+
+.stderr {
+  color: var(--blocked);
+}
+
+.system,
+.session {
+  color: var(--ink-3);
+}
+
+/* the agent's own words read as prose */
+.agent {
+  margin: 6px 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  color: var(--ink-1);
+}
+
+.tool {
+  color: var(--ink-3);
+}
+
+.tool::before {
+  content: "→ ";
+}
+
+.toolError {
+  color: var(--blocked);
+}
+
+.result,
+.resultError {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink-1);
+}
+
+.resultError {
+  color: var(--blocked);
+}
+
+.warning {
+  margin: 4px 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border-left: 2px solid var(--waiting);
+  background: var(--field);
+  color: var(--ink-1);
+}
+
+/* stage separators: mono caps over a hairline */
+.stageStart,
+.stageEnd,
+.stageFail {
+  margin: 10px 0 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.stageEnd {
+  color: var(--done);
+}
+
+.stageFail {
+  color: var(--blocked);
+}
+
+.log > .line:first-child {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.trunc {
+  color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rowMain {
+    transition: none;
+  }
+  .rowMain:hover {
+    transform: none;
+  }
+}

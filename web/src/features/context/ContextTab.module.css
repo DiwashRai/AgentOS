@@ -1,0 +1,295 @@
+/* Context tab. The pack designs only the chips ("The agent reads", "+ Add context"); the file list
+   and editor are built in the same quiet language from kit values. */
+
+/* kit .ao-k */
+.k,
+.quiet,
+.unsaved {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+
+.quiet {
+  margin: 12px 0 0;
+}
+
+.quiet[data-error] {
+  color: var(--blocked);
+}
+
+.unsaved {
+  flex: none;
+  color: var(--waiting);
+}
+
+.row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.tab {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  padding-top: 12px;
+}
+
+/* ---------------------------------------------------------------- file list */
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sideHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  height: 22px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.files {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+  min-width: 0;
+  transition:
+    transform var(--t-fast) ease,
+    background-color var(--t-fast) ease,
+    border-color var(--t-fast) ease;
+}
+
+.file:hover {
+  transform: translateY(-2px);
+  background: var(--surface-raised);
+  border-color: var(--rule-strong);
+}
+
+.file:focus-visible {
+  border-radius: 9px;
+}
+
+.selected {
+  border-color: var(--ink-1);
+}
+
+.fileTop {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.fileName {
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  color: var(--ink-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag {
+  flex: none;
+  padding: 1px 5px;
+}
+
+/* the directory (full path in the row's title) */
+.fileDir {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileMeta {
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyNote {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+.add {
+  align-self: flex-start;
+}
+
+.addForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* kit .ao-input */
+.input {
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+  min-width: 0;
+}
+
+.input:focus {
+  border-color: var(--focus);
+}
+
+.problem {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+/* ---------------------------------------------------------------- editor */
+
+.main {
+  min-width: 0;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.editorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+}
+
+.editorTitle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.editorName {
+  font-size: var(--fs-row-title);
+  font-weight: 600;
+  color: var(--ink-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.footHint {
+  flex: none;
+}
+
+/* a quiet notice line: lock, conflict, delete confirm */
+.banner {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--recess);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.bad {
+  color: var(--blocked);
+}
+
+.textarea {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  height: 58vh;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  background: var(--surface);
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+  resize: vertical;
+  outline: none;
+  scrollbar-width: thin;
+}
+
+.textarea:focus {
+  border-color: var(--focus);
+}
+
+.textarea[readonly] {
+  background: var(--field);
+  color: var(--ink-2);
+}
+
+.foot {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file {
+    transition: none;
+  }
+  .file:hover {
+    transform: none;
+  }
+}
