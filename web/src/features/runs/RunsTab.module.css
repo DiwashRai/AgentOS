@@ -49,8 +49,7 @@
   white-space: nowrap;
 }
 
-.ellip b,
-.meta b {
+.ellip b {
   font-weight: 500;
   color: var(--ink-2);
 }
@@ -63,9 +62,10 @@
   padding: 0;
 }
 
+/* mark · inline run | Cancel run (active runs only; empty otherwise) | launch ref */
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px;
+  grid-template-columns: minmax(0, 1fr) auto 64px;
   gap: 16px;
   align-items: center;
   height: 44px;
@@ -167,32 +167,6 @@
   min-width: 0;
 }
 
-.panelHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 30px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.panelWho {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  min-width: 0;
-}
-
-.meta {
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .cancel {
   display: inline-flex;
   align-items: center;
@@ -211,10 +185,12 @@
   color: var(--blocked);
 }
 
+/* the selected run's stages: a firmer rule on top sets them apart from the run history */
 .stages {
   list-style: none;
   margin: 0;
   padding: 0;
+  border-top: 1px solid var(--rule);
 }
 
 .stage {

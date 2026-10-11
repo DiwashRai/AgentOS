@@ -46,12 +46,44 @@ function startedText(run: RunSummary, now: number): string {
   return a === "now" ? "just now" : `${a} ago`;
 }
 
+function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary }) {
+  const cancel = useCancelRun(ticketKey);
+  if (run.cancel_requested_at !== null || cancel.isPending) {
+    return <span className={s.k}>Cancelling…</span>;
+  }
+  return (
+    <span className={s.cancel}>
+      {cancel.isError ? (
+        <span className={s.err} role="alert">
+          {cancel.error instanceof ApiError && cancel.error.code === "run_gone"
+            ? "This run already finished."
+            : cancel.error.message}
+        </span>
+      ) : null}
+      <Button
+        variant="quiet"
+        size="sm"
+        aria-label={`Cancel run #${String(run.id)}`}
+        onClick={() => {
+          cancel.mutate(run.id);
+        }}
+      >
+        Cancel run
+      </Button>
+    </span>
+  );
+}
+
+/** A run's row: the run's one summary line (the panel below doesn't repeat it), plus Cancel run
+ *  while the run is active. */
 function RunRow({
+  ticketKey,
   run,
   selected,
   now,
   onSelect,
 }: {
+  ticketKey: string;
   run: RunSummary;
   selected: boolean;
   now: number;
@@ -71,6 +103,7 @@ function RunRow({
           {secs !== null ? <span className={s.mono}>{duration(secs)}</span> : null}
         </span>
       </button>
+      {isActiveRun(run.status) ? <CancelControl ticketKey={ticketKey} run={run} /> : <span />}
       <span className={s.ref}>
         {ref?.href ? (
           <a className={s.refLink} href={ref.href} target="_blank" rel="noreferrer">
@@ -83,33 +116,6 @@ function RunRow({
         ) : null}
       </span>
     </li>
-  );
-}
-
-function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary | RunDetail }) {
-  const cancel = useCancelRun(ticketKey);
-  if (run.cancel_requested_at !== null || cancel.isPending) {
-    return <span className={s.k}>Cancelling…</span>;
-  }
-  return (
-    <span className={s.cancel}>
-      {cancel.isError ? (
-        <span className={s.err} role="alert">
-          {cancel.error instanceof ApiError && cancel.error.code === "run_gone"
-            ? "This run already finished."
-            : cancel.error.message}
-        </span>
-      ) : null}
-      <Button
-        variant="quiet"
-        size="sm"
-        onClick={() => {
-          cancel.mutate(run.id);
-        }}
-      >
-        Cancel run
-      </Button>
-    </span>
   );
 }
 
@@ -145,15 +151,7 @@ function StageList({ detail, now }: { detail: RunDetail; now: number }) {
   );
 }
 
-function RunPanel({
-  ticketKey,
-  summary,
-  now,
-}: {
-  ticketKey: string;
-  summary: RunSummary;
-  now: number;
-}) {
+function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
   const detailQ = useRun(summary.id, isActiveRun(summary.status));
   // The detail polls every second while active, so it is fresher than the 3 s list. If the list
   // sees the run finish first, polling stops: fetch the detail once more so it doesn't stay live.
@@ -172,21 +170,11 @@ function RunPanel({
     },
     [stageRuns],
   );
-  const secs = spanSeconds(run.started_at, run.finished_at, now);
 
+  // The selected row above is the run's header (mark, who, when, Cancel run): start at its error,
+  // stages and log.
   return (
     <section className={s.panel} aria-label={`Run #${String(run.id)}`}>
-      <div className={s.panelHead}>
-        <div className={s.panelWho}>
-          <RunMark id={run.id} mark={runMark(run.status)} />
-          <span className={s.meta}>
-            from <b>{run.from_stage}</b>
-            {run.created_by ? ` · ${run.created_by.display_name}` : ""} · {startedText(run, now)}
-            {secs !== null ? ` · ${duration(secs)}` : ""}
-          </span>
-        </div>
-        {active ? <CancelControl ticketKey={ticketKey} run={run} /> : null}
-      </div>
       {run.error ? (
         <p className={s.runError} role="note">
           {run.error}
@@ -248,6 +236,7 @@ export function RunsTab({ ticketKey }: { ticketKey: string }) {
         {runs.map((r) => (
           <RunRow
             key={r.id}
+            ticketKey={ticketKey}
             run={r}
             now={now}
             selected={r.id === selected?.id}
@@ -257,9 +246,7 @@ export function RunsTab({ ticketKey }: { ticketKey: string }) {
           />
         ))}
       </ul>
-      {selected ? (
-        <RunPanel key={selected.id} ticketKey={ticketKey} summary={selected} now={now} />
-      ) : null}
+      {selected ? <RunPanel key={selected.id} summary={selected} now={now} /> : null}
     </div>
   );
 }
