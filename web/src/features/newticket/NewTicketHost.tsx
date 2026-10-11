@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import type { Schemas } from "../../api/client";
-import { useConfig, useCreateTicket, useMe, usePeople } from "../../api/queries";
+import { useConfig, useCreateTicket, useImportTicket, useMe, usePeople } from "../../api/queries";
 import { words } from "../../domain/words";
 import { Button, CloseIcon, IconButton, cx } from "../../ui";
 import { Field, Select, fieldStyles as f } from "../pipeline/fields";
@@ -24,20 +24,82 @@ import {
   type Defaults,
   type NewTicketForm,
 } from "./form";
+import { importErrorText, offersJiraImport, toImportBody } from "./importForm";
 import s from "./NewTicket.module.css";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** "Import from Jira": a key or link → the ticket (new or imported before). Its own form, so
+ *  Enter in the field imports instead of creating. */
+function ImportRow({
+  focusFirst,
+  onImported,
+}: {
+  focusFirst: boolean;
+  onImported: (key: string) => void;
+}) {
+  const imp = useImportTicket();
+  const [ref, setRef] = useState("");
+  const body = toImportBody(ref);
+  return (
+    <form
+      className={s.import}
+      noValidate
+      aria-label="Import from Jira"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!body || imp.isPending) return;
+        imp.mutate(body, {
+          onSuccess: (r) => {
+            onImported(r.ticket.key);
+          },
+        });
+      }}
+    >
+      <label htmlFor="import-ref" className={f.label}>
+        Import from Jira
+      </label>
+      <div className={s.importRow}>
+        <input
+          id="import-ref"
+          className={cx(f.input, f.mono)}
+          value={ref}
+          placeholder="SCRUM-1 or a Jira link"
+          spellCheck={false}
+          autoComplete="off"
+          aria-describedby={imp.error ? "import-err" : undefined}
+          aria-invalid={imp.error ? true : undefined}
+          {...(focusFirst ? { "data-autofocus": "" } : {})}
+          onChange={(e) => {
+            setRef(e.target.value);
+            if (imp.error) imp.reset();
+          }}
+        />
+        <Button type="submit" disabled={!body || imp.isPending}>
+          {imp.isPending ? "Importing…" : "Import"}
+        </Button>
+      </div>
+      {imp.error ? (
+        <p id="import-err" className={s.err} role="alert">
+          {importErrorText(imp.error)}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 function TicketForm({
   defaults,
   repos,
   people,
+  focusFirst,
   onCreated,
 }: {
   defaults: Defaults;
   repos: readonly Schemas["RepoInfo"][];
   people: readonly Schemas["Person"][];
+  focusFirst: boolean;
   onCreated: (key: string) => void;
 }) {
   const create = useCreateTicket();
@@ -59,7 +121,7 @@ function TicketForm({
           // Send focus to the first field with a problem (the title, or the base branch).
           const errs = validate(form);
           e.currentTarget
-            .querySelector<HTMLElement>(errs.title ? "[data-autofocus]" : "[data-branch]")
+            .querySelector<HTMLElement>(errs.title ? "[data-title]" : "[data-branch]")
             ?.focus();
           return;
         }
@@ -81,7 +143,8 @@ function TicketForm({
             aria-invalid={invalid}
             aria-required="true"
             placeholder="What should change?"
-            data-autofocus=""
+            data-title=""
+            {...(focusFirst ? { "data-autofocus": "" } : {})}
             onChange={(e) => {
               set("title", e.target.value);
             }}
@@ -213,6 +276,10 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   const ready = !config.isPending && !me.isPending;
+  const canImport = offersJiraImport(config.data?.sources ?? []);
+  const open = (key: string) => {
+    void navigate(`/t/${encodeURIComponent(key)}`);
+  };
   useEffect(() => {
     if (!ready) return;
     panel.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
@@ -262,17 +329,26 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
           </IconButton>
         </div>
         {ready ? (
-          <TicketForm
-            defaults={{
-              repo: config.data?.default_repo,
-              meId: me.data?.id,
-            }}
-            repos={config.data?.repos ?? []}
-            people={people.data ?? (me.data ? [me.data] : [])}
-            onCreated={(key) => {
-              void navigate(`/t/${encodeURIComponent(key)}`);
-            }}
-          />
+          <>
+            {canImport ? (
+              <>
+                <ImportRow focusFirst onImported={open} />
+                <p className={s.or} aria-hidden="true">
+                  or create one here
+                </p>
+              </>
+            ) : null}
+            <TicketForm
+              defaults={{
+                repo: config.data?.default_repo,
+                meId: me.data?.id,
+              }}
+              repos={config.data?.repos ?? []}
+              people={people.data ?? (me.data ? [me.data] : [])}
+              focusFirst={!canImport}
+              onCreated={open}
+            />
+          </>
         ) : (
           <p className={s.note}>Loading</p>
         )}

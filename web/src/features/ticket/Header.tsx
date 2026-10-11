@@ -101,7 +101,19 @@ export function Header({ t }: { t: Detail }) {
     <header className={s.head}>
       <div className={s.top}>
         <div className={s.kicker}>
-          <Tag title={t.source?.url}>{srcLabel(t)}</Tag>
+          {t.source?.url ? (
+            <a
+              className={s.srcLink}
+              href={t.source.url}
+              target="_blank"
+              rel="noreferrer"
+              title={t.source.url}
+            >
+              <Tag>{`${srcLabel(t)} ↗`}</Tag>
+            </a>
+          ) : (
+            <Tag>{srcLabel(t)}</Tag>
+          )}
           <Tag>{t.type}</Tag>
           {t.priority === "high" ? <Tag prio>High</Tag> : null}
           {t.repo_name ? <Tag title={t.repo_url ?? undefined}>{repoShort(t.repo_name)}</Tag> : null}

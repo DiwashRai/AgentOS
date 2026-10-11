@@ -20,6 +20,20 @@
   min-height: 40px;
 }
 
+/* The source tag as a link to the issue (Jira browse link): the tag itself, no underline. */
+.srcLink {
+  display: inline-flex;
+  border-radius: 5px;
+  text-decoration: none;
+}
+.srcLink:hover > * {
+  color: var(--ink-1);
+}
+.srcLink:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .actsCol {
   display: flex;
   flex-direction: column;

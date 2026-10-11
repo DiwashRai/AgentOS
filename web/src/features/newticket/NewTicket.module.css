@@ -54,6 +54,44 @@
   padding: 18px 24px 20px;
 }
 
+/* Import from Jira: one compact row above the create form, then a quiet "or" rule. */
+.import {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 24px 0;
+}
+.importRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.importRow > input {
+  flex: 1;
+  min-width: 0;
+}
+.import > .err {
+  margin: 0;
+}
+
+.or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 24px 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--rule-soft);
+}
+.or + .form {
+  padding-top: 12px;
+}
+
 .desc {
   font-family: var(--font-sans);
   font-size: 13px;
