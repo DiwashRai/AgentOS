@@ -17,7 +17,6 @@ const STEP_CLASS: Record<StepState, string | undefined> = {
   upcoming: undefined,
   skipped: s.isSkip,
   failed: s.isFailed,
-  stale: s.isStale,
 };
 
 const GATE_CLASS: Record<GateState, string | undefined> = {

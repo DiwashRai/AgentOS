@@ -1,5 +1,5 @@
 /* Labelled stepper (ticket header, peek): DESIGN §13.3. Ported from kit.css `.ao-stepper`.
-   `isFailed` and `isStale` are ours. */
+   `isFailed` is ours. */
 .stepper {
   display: flex;
   align-items: flex-start;
@@ -79,11 +79,6 @@
 .stepper .isFailed .st {
   color: var(--blocked);
 }
-/* ours: stale = upcoming at reduced opacity */
-.stepper .isStale .bar {
-  opacity: 0.55;
-}
-
 /* gates */
 .stepper .g {
   flex: none;

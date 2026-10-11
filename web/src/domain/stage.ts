@@ -4,7 +4,7 @@
 // Gate diamonds arrive with RailStep.gate (CONTRACT_REQUESTS #1); until then `gate` stays unset.
 import type { Schemas } from "../api/client";
 
-export type StepState = "done" | "current" | "upcoming" | "skipped" | "failed" | "stale";
+export type StepState = "done" | "current" | "upcoming" | "skipped" | "failed";
 export type GateState = "pending" | "passed" | "waiting" | "you";
 
 export interface GlyphGate {
@@ -31,12 +31,14 @@ export interface GlyphModel {
 
 type Ticket = Pick<Schemas["TicketSummary"], "rail" | "phase_track" | "attention" | "latest_run">;
 
+// The server's `stale` (done before, but after the latest run's segment, so it will run again)
+// has no form in the design: it draws as upcoming.
 const RAIL: Record<Schemas["RailStep"]["state"], StepState> = {
   done: "done",
   current: "current",
   pending: "upcoming",
   failed: "failed",
-  stale: "stale",
+  stale: "upcoming",
 };
 
 const BOOKEND: Record<Schemas["PhaseStep"]["state"], StepState> = {
@@ -44,7 +46,7 @@ const BOOKEND: Record<Schemas["PhaseStep"]["state"], StepState> = {
   current: "current",
   pending: "upcoming",
   failed: "failed",
-  stale: "stale",
+  stale: "upcoming",
   skipped: "skipped",
 };
 

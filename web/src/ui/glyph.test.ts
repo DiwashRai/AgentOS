@@ -55,16 +55,15 @@ describe("glyphTitle", () => {
     );
   });
 
-  it("marks failed and stale stages too", () => {
+  it("marks failed stages too", () => {
     expect(
       glyphTitle({
         stages: [
-          { name: "Plan", state: "current" },
-          { name: "Build", state: "stale" },
+          { name: "Plan", state: "done" },
           { name: "Verify", state: "failed" },
         ],
       }),
-    ).toBe("Plan → Build (stale) → Verify (blocked)");
+    ).toBe("Plan → Verify (blocked)");
   });
 });
 
@@ -112,7 +111,7 @@ describe("gate collapsing", () => {
 });
 
 describe("stageCaption", () => {
-  it("captions current, skipped, added, failed and stale stages", () => {
+  it("captions current, skipped, added and failed stages", () => {
     expect(stageCaption({ name: "Build", state: "current" }, false, false)).toBe("Now");
     expect(stageCaption({ name: "Build", state: "current" }, false, true)).toBe("Live");
     expect(stageCaption({ name: "Done", state: "current" }, true, false)).toBe("");
@@ -121,7 +120,6 @@ describe("stageCaption", () => {
       "Added",
     );
     expect(stageCaption({ name: "Build", state: "failed" }, false, true)).toBe("Blocked");
-    expect(stageCaption({ name: "Build", state: "stale" }, false, false)).toBe("Stale");
     expect(stageCaption({ name: "Plan", state: "done" }, false, false)).toBe("");
   });
 });

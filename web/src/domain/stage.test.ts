@@ -44,7 +44,7 @@ describe("stageModel", () => {
       "current",
       "upcoming",
       "failed",
-      "stale",
+      "upcoming", // stale has no form in the design
     ]);
   });
 

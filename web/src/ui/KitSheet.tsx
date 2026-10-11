@@ -110,21 +110,7 @@ const CASES: { title: string; model: StepperModel }[] = [
       ],
     },
   },
-  {
-    title: "Stale stages",
-    model: {
-      live: true,
-      label: "Plan",
-      stages: [
-        { name: "Inbox", state: "done" },
-        { name: "Plan", state: "current" },
-        { name: "Build", state: "stale" },
-        { name: "Verify", state: "stale" },
-        { name: "Review", state: "upcoming" },
-        { name: "Done", state: "upcoming" },
-      ],
-    },
-  },
+
   {
     title: "Three gates, parked on you",
     model: {

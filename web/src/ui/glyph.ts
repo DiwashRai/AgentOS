@@ -33,7 +33,6 @@ export function parkedGate(model: Pick<GlyphModel, "stages">): GlyphGate | undef
 const STAGE_SUFFIX: Partial<Record<GlyphStage["state"], string>> = {
   skipped: " (skipped)",
   failed: " (blocked)",
-  stale: " (stale)",
 };
 
 /** The glyph's `title`: "Inbox → Plan → ◆ Plan sign-off → Build → … → Done", "(skipped)" on skipped stages. */
@@ -73,8 +72,6 @@ export function stageCaption(stage: StepperStage, isLast: boolean, live: boolean
       return "Skipped";
     case "failed":
       return "Blocked";
-    case "stale":
-      return "Stale";
     case "current":
       if (live) return "Live";
       return isLast ? "" : "Now";

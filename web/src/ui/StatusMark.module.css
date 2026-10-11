@@ -169,9 +169,9 @@
   color: var(--ink-3);
 }
 
-/* 7px glyph (counters, pills, group heads): kit's `.ao-counters .ao-mk>i`. The blocked bar keeps its
-   3×11 shape (the kit's rule turned it into a 7px square: "one blocked mark"). */
-.mark.s7:not(.blk) > i {
+/* 7px glyph (counters, pills, group heads): kit's `.ao-counters .ao-mk>i`. As in the kit, the blocked
+   bar becomes a 7px square here: counters work as a legend. */
+.mark.s7 > i {
   width: 7px;
   height: 7px;
 }

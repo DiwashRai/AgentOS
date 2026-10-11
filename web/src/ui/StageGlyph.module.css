@@ -1,5 +1,5 @@
 /* Stage glyph: one segment per stage of THIS ticket's pipeline, gates as diamonds between
-   (DESIGN §13.2). Ported from kit.css `.ao-stg`. `isFailed`, `isStale` and `isBlocked` are ours. */
+   (DESIGN §13.2). Ported from kit.css `.ao-stg`. `isFailed` and `isBlocked` are ours. */
 .stg {
   display: inline-flex;
   align-items: center;
@@ -32,11 +32,6 @@
 .stg > i.isFailed {
   background: var(--blocked);
 }
-/* ours: a stale stage is an upcoming one at reduced opacity */
-.stg > i.isStale {
-  opacity: 0.55;
-}
-
 /* gate notch: a small diamond between two segments */
 .stg > u {
   flex: none;
