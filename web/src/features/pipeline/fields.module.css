@@ -1,0 +1,149 @@
+/* Form controls in kit values: .ao-input, .ao-select, .ao-check, .ao-k. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* kit .ao-k */
+.label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+
+.note {
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.error {
+  color: var(--blocked);
+}
+
+/* kit .ao-input */
+.input,
+.textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink-1);
+  font-size: 13px;
+  outline: none;
+}
+.input {
+  height: 34px;
+  padding: 0 11px;
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--ink-3);
+}
+.input:focus,
+.textarea:focus {
+  border-color: var(--focus);
+}
+.input[aria-invalid="true"],
+.textarea[aria-invalid="true"] {
+  border-color: var(--blocked);
+}
+.input:read-only,
+.textarea:read-only {
+  background: var(--surface);
+  color: var(--ink-2);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* the prompt / command editor: monospace, grows by hand */
+.textarea {
+  display: block;
+  padding: 9px 11px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+  tab-size: 2;
+}
+
+/* kit .ao-select: a native select with the chevron drawn on top */
+.select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.select > select {
+  appearance: none;
+  width: 100%;
+  height: 34px;
+  padding: 0 28px 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-1);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.select > select:hover {
+  border-color: var(--rule-strong);
+}
+.select > select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.select > select:disabled {
+  cursor: default;
+  color: var(--ink-2);
+  background: transparent;
+}
+.select > select:disabled:hover {
+  border-color: var(--rule);
+}
+.select > svg {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: var(--ink-3);
+}
+.sm > select {
+  height: 28px;
+  border-radius: 7px;
+  font-size: 12px;
+  padding: 0 26px 0 10px;
+}
+.sm > svg {
+  right: 9px;
+}
+
+/* kit .ao-check */
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.check input {
+  accent-color: var(--ink-1);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+.isDisabled,
+.isDisabled input {
+  cursor: default;
+}
