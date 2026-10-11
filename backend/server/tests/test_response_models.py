@@ -19,6 +19,7 @@ from agentos.models import (
     FileContent,
     FileInfo,
     FileVersionInfo,
+    IntakeQuery,
     Manifest,
     Me,
     Person,
@@ -84,6 +85,8 @@ def test_every_get_matches_its_model(
     check(client, "/api/users", list[User])
     check(client, "/api/people", list[Person])
     check(client, "/api/template", Template)
+    # No intake queries in the test config; test_intake.py validates filled answers.
+    check(client, "/api/intake", list[IntakeQuery])
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
     assert len(summaries) == 3
     assert any(s.latest_run is not None for s in summaries)

@@ -720,6 +720,139 @@
         "title": "ImportResult",
         "type": "object"
       },
+      "IntakeAssignee": {
+        "additionalProperties": false,
+        "description": "A Jira assignee: a Jira account, not (necessarily) an AgentOS user.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "title": "IntakeAssignee",
+        "type": "object"
+      },
+      "IntakeItem": {
+        "additionalProperties": false,
+        "description": "A Jira issue that matches an intake query and isn't in AgentOS yet. `type` and `priority`\nuse the import's mapping, so they are what \"Take in\" (POST /api/tickets/import) creates;\n`status` is the Jira status name.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntakeAssignee"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "high",
+              "normal",
+              "low"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "feature",
+              "bug",
+              "improvement",
+              "task"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "type",
+          "priority",
+          "status",
+          "assignee",
+          "updated_at",
+          "url"
+        ],
+        "title": "IntakeItem",
+        "type": "object"
+      },
+      "IntakeQuery": {
+        "additionalProperties": false,
+        "description": "One `[[intake.queries]]` entry with its current candidates, newest-updated first, capped.\n`total` = how many candidates the JQL has (exact up to the fetch window, else estimated from\nJira's approximate count). A failing query has `error` (a short message) and no items.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "jql": {
+            "title": "Jql",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "jql",
+          "items",
+          "total",
+          "error"
+        ],
+        "title": "IntakeQuery",
+        "type": "object"
+      },
       "LogData": {
         "additionalProperties": false,
         "properties": {
@@ -3229,6 +3362,52 @@
         "summary": "Health",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/api/intake": {
+      "get": {
+        "description": "Each configured intake query with the Jira issues it matches that aren't in AgentOS yet\n(newest-updated first, capped). \"Take in\" one with POST /api/tickets/import.",
+        "operationId": "list_intake_api_intake_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IntakeQuery"
+                  },
+                  "title": "Response List Intake Api Intake Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "List Intake",
+        "tags": [
+          "intake"
         ]
       }
     },

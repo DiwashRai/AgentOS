@@ -411,6 +411,43 @@ class PipelineUpdate(ApiModel):
     base_version: int
 
 
+# ------------------------------------------------------------------ intake (request 14)
+
+
+class IntakeAssignee(ApiModel):
+    """A Jira assignee: a Jira account, not (necessarily) an AgentOS user."""
+
+    display_name: str
+
+
+class IntakeItem(ApiModel):
+    """A Jira issue that matches an intake query and isn't in AgentOS yet. `type` and `priority`
+    use the import's mapping, so they are what "Take in" (POST /api/tickets/import) creates;
+    `status` is the Jira status name."""
+
+    key: str
+    title: str
+    type: TicketType
+    priority: Priority
+    status: str
+    assignee: IntakeAssignee | None
+    updated_at: AwareDatetime
+    url: str
+
+
+class IntakeQuery(ApiModel):
+    """One `[[intake.queries]]` entry with its current candidates, newest-updated first, capped.
+    `total` = how many candidates the JQL has (exact up to the fetch window, else estimated from
+    Jira's approximate count). A failing query has `error` (a short message) and no items."""
+
+    id: str
+    name: str
+    jql: str
+    items: list[IntakeItem]
+    total: int
+    error: str | None
+
+
 # ------------------------------------------------------------------ files
 
 

@@ -16,6 +16,15 @@ default_runtime = "claude"
 #                                                     # (GitHub Actions runners: https)
 # default_branch = "main"    # default "main"
 
+# Intake: the Intake tab lists the Jira issues each query matches that aren't in AgentOS yet, with
+# "Take in" (= import). Fetched live with the Jira service account (AGENTOS_JIRA_SERVICE_*) and
+# cached ~45 s. "ORDER BY updated DESC" is appended unless the JQL has its own ORDER BY. Issues
+# outside AGENTOS_JIRA_PROJECTS are not offered. Zero queries is valid (the tab is empty).
+# [[intake.queries]]
+# id = "scrum-todo"          # ^[a-z0-9][a-z0-9_-]{0,63}$, unique
+# name = "SCRUM: to do"      # shown in the tab
+# jql = 'project = SCRUM AND statusCategory = "To Do"'
+
 # Placeholders replace whole argv elements; no shell is involved.
 [runtimes.claude]
 # Pinned on this machine: claude 2.1.296. Re-verify headless behaviour when upgrading.

@@ -142,14 +142,16 @@ def _describe(err: Any) -> str:
 
 @dataclass(frozen=True, slots=True)
 class FileConfig:
-    """`agentos.toml`: the agent runtimes (SPEC §7) and the Space with its repo catalog (§17)."""
+    """`agentos.toml`: the agent runtimes (SPEC §7) and the Space with its repo catalog and intake
+    queries (§17)."""
 
     runtimes: RuntimesConfig
     space: SpaceConfig
 
 
 _M = TypeVar("_M", bound=BaseModel)
-_SPACE_KEYS = ("space", "repos")  # top-level keys that belong to SpaceConfig; the rest: runtimes
+# Top-level keys that belong to SpaceConfig; the rest: runtimes.
+_SPACE_KEYS = ("space", "repos", "intake")
 
 
 def load_config(path: Path) -> FileConfig:

@@ -72,6 +72,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Intake
+         * @description Each configured intake query with the Jira issues it matches that aren't in AgentOS yet
+         *     (newest-updated first, capped). "Take in" one with POST /api/tickets/import.
+         */
+        get: operations["list_intake_api_intake_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me": {
         parameters: {
             query?: never;
@@ -744,6 +765,66 @@ export interface components {
             /** Created */
             created: boolean;
             ticket: components["schemas"]["TicketDetail"];
+        };
+        /**
+         * IntakeAssignee
+         * @description A Jira assignee: a Jira account, not (necessarily) an AgentOS user.
+         */
+        IntakeAssignee: {
+            /** Display Name */
+            display_name: string;
+        };
+        /**
+         * IntakeItem
+         * @description A Jira issue that matches an intake query and isn't in AgentOS yet. `type` and `priority`
+         *     use the import's mapping, so they are what "Take in" (POST /api/tickets/import) creates;
+         *     `status` is the Jira status name.
+         */
+        IntakeItem: {
+            assignee: components["schemas"]["IntakeAssignee"] | null;
+            /** Key */
+            key: string;
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "high" | "normal" | "low";
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "feature" | "bug" | "improvement" | "task";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Url */
+            url: string;
+        };
+        /**
+         * IntakeQuery
+         * @description One `[[intake.queries]]` entry with its current candidates, newest-updated first, capped.
+         *     `total` = how many candidates the JQL has (exact up to the fetch window, else estimated from
+         *     Jira's approximate count). A failing query has `error` (a short message) and no items.
+         */
+        IntakeQuery: {
+            /** Error */
+            error: string | null;
+            /** Id */
+            id: string;
+            /** Items */
+            items: components["schemas"]["IntakeItem"][];
+            /** Jql */
+            jql: string;
+            /** Name */
+            name: string;
+            /** Total */
+            total: number;
         };
         /** LogData */
         LogData: {
@@ -1682,6 +1763,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_intake_api_intake_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuery"][];
                 };
             };
             /** @description Client error */

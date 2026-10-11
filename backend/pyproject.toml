@@ -78,7 +78,7 @@ name = "Inside a feature: routes -> deps -> loops -> service -> board"
 type = "layers"
 containers = [
     "agentos.auth", "agentos.tickets", "agentos.files", "agentos.runs",
-    "agentos.social", "agentos.templates", "agentos.worker_api",
+    "agentos.social", "agentos.templates", "agentos.worker_api", "agentos.intake",
 ]
 layers = [
     "(routes)",

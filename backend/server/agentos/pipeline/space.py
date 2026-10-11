@@ -1,6 +1,7 @@
-"""The Space (SPEC §17): one AgentOS instance, its name and its repo catalog.
+"""The Space (SPEC §17): one AgentOS instance, its name, its repo catalog and its intake queries.
 
-`agentos.toml` holds `[space]` (name, default_repo) and `[[repos]]` (name, url, default_branch).
+`agentos.toml` holds `[space]` (name, default_repo), `[[repos]]` (name, url, default_branch) and
+`[[intake.queries]]` (id, name, jql: the Jira issues the Intake tab offers to take in).
 Tickets store a repo *name*; its URL and default branch are resolved from the catalog when they
 are read or dispatched, so moving a repo is a config change.
 
@@ -20,6 +21,7 @@ from agentos.models import RepoInfo, WorkspaceMode
 from agentos.validate import validate_base_branch, validate_repo_url
 
 REPO_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,63}$"
+INTAKE_QUERY_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 DEFAULT_SPACE_NAME = "AgentOS"
 DEFAULT_BRANCH = "main"
 
@@ -64,13 +66,40 @@ class SpaceSection(BaseModel):
     default_repo: str | None = None
 
 
+class IntakeQuerySpec(BaseModel):
+    """One `[[intake.queries]]` entry: a JQL whose matches the Intake tab lists (request 14)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(pattern=INTAKE_QUERY_ID_PATTERN)
+    name: str = Field(min_length=1, max_length=100)
+    jql: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("name", "jql")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value.strip()
+
+
+class IntakeSection(BaseModel):
+    """The `[intake]` table. Zero queries is valid (the Intake tab is empty)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    queries: tuple[IntakeQuerySpec, ...] = ()
+
+
 class SpaceConfig(BaseModel):
-    """`[space]` + `[[repos]]` of `agentos.toml`. Zero repos is valid (no-repo tickets only)."""
+    """`[space]` + `[[repos]]` + `[intake]` of `agentos.toml`. Zero repos is valid (no-repo
+    tickets only); zero intake queries too."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     space: SpaceSection = SpaceSection()
     repos: tuple[RepoSpec, ...] = ()
+    intake: IntakeSection = IntakeSection()
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -80,6 +109,11 @@ class SpaceConfig(BaseModel):
             if repo.name.casefold() in seen:
                 problems.append(f"repos: duplicate name {repo.name!r}")
             seen.add(repo.name.casefold())
+        query_ids: set[str] = set()
+        for query in self.intake.queries:
+            if query.id in query_ids:
+                problems.append(f"intake.queries: duplicate id {query.id!r}")
+            query_ids.add(query.id)
         default = self.space.default_repo
         if default is not None and self.repo(default) is None:
             problems.append(f"space.default_repo {default!r} is not in [[repos]]")

@@ -15,13 +15,22 @@ from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.space import SpaceConfig
 from agentos.ratelimit import RateLimiter
-from agentos.sources.jira import JiraClient, JiraSource
+from agentos.sources.jira import JiraClient, JiraSearch, JiraSource
+from agentos.ttlcache import TtlCache
 
 LOGIN_ATTEMPTS_PER_MINUTE = 10  # SPEC §11
+INTAKE_CACHE_TTL_S = 45.0  # request 14: how long an intake query's Jira answer is reused
+
+# An intake query's last Jira answer (or its error message), by query id.
+IntakeCache = TtlCache[str, JiraSearch | str]
 
 
 def _login_limiter() -> RateLimiter:
     return RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60.0)
+
+
+def _intake_cache() -> IntakeCache:
+    return TtlCache(INTAKE_CACHE_TTL_S)
 
 
 @dataclass
@@ -35,6 +44,7 @@ class AppContext:
     jira: JiraClient | None = None
     # Jira login attempts per (client IP, submitted email/username).
     login_limiter: RateLimiter = field(default_factory=_login_limiter)
+    intake_cache: IntakeCache = field(default_factory=_intake_cache)
     # Later: broker.
 
     @property

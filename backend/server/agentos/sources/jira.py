@@ -1,5 +1,5 @@
 """A small Jira REST client (SPEC §11, §12): login checks, and `JiraSource`, the ticket source
-that imports an issue by key or browse URL (request 11).
+that imports an issue by key or browse URL (request 11) and searches by JQL for intake (request 14).
 
 An adapter: plain values in, dataclasses out, its own exceptions for failures (the caller maps
 them to `ApiError`). No db, no services, no web framework.
@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -32,6 +33,9 @@ Deployment = Literal["cloud", "datacenter"]
 TIMEOUT_S = 10.0
 # What an import reads; Cloud and DC both serve `description` as a wiki-markup string (or null).
 ISSUE_FIELDS = ("summary", "description", "issuetype", "priority", "labels")
+# What an intake search reads (no description: Cloud's v3 search serves it as ADF).
+SEARCH_FIELDS = ("summary", "issuetype", "priority", "status", "assignee", "updated")
+MAX_ERROR_CHARS = 300
 
 
 class JiraError(SourceError):
@@ -48,6 +52,21 @@ class JiraNotFound(JiraError, SourceNotFound):
 
 class JiraUnavailable(JiraError, SourceUnavailable):
     """Network error, timeout, 5xx or an unexpected response."""
+
+
+class JiraBadQuery(JiraError):
+    """A search was rejected (400): the message is Jira's own (e.g. a JQL syntax error), which
+    names the query, never credentials."""
+
+
+@dataclass(frozen=True, slots=True)
+class JiraSearchPage:
+    """The first page of a search (raw issue JSON). `count` = how many issues match: exact when
+    `complete` (this page holds them all), else Jira's approximate count (Cloud)."""
+
+    issues: list[dict[str, Any]]
+    count: int
+    complete: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +164,53 @@ class JiraClient:
             raise JiraNotFound(f"GET {path}: {response.status_code}")
         return self._json(path, response)
 
+    def search(
+        self, creds: JiraCredentials, jql: str, fields: tuple[str, ...], limit: int
+    ) -> JiraSearchPage:
+        """The first `limit` issues matching `jql` (raw JSON), in the JQL's order.
+
+        Cloud: `POST /rest/api/3/search/jql` (`/rest/api/2/search` is removed there), which has
+        no total: `count` is exact when Jira says it was the last page, else Jira's approximate
+        count (`POST /rest/api/3/search/approximate-count`). Data Center: `POST
+        /rest/api/2/search`, whose `total` is exact. Both are read-only.
+
+        400 → JiraBadQuery (Jira's message, e.g. a JQL syntax error); 401/403 → JiraUnauthorized;
+        anything else but 200 → JiraUnavailable.
+        """
+        body: dict[str, Any] = {"jql": jql, "maxResults": limit, "fields": list(fields)}
+        if self.deployment == "cloud":
+            path = "/rest/api/3/search/jql"
+        else:
+            path = "/rest/api/2/search"
+            body["startAt"] = 0
+        data = self._search_json(path, self.post(creds, path, body))
+        raw = data.get("issues")
+        if not isinstance(raw, list):
+            raise JiraUnavailable(f"POST {path}: no issues in the response")
+        issues = [issue for issue in raw if isinstance(issue, dict)]
+        if self.deployment == "cloud":
+            if data.get("isLast") is True:
+                return JiraSearchPage(issues=issues, count=len(issues), complete=True)
+            return JiraSearchPage(
+                issues=issues,
+                count=max(self.approximate_count(creds, jql), len(issues)),
+                complete=False,
+            )
+        total = data.get("total")
+        if not isinstance(total, int) or isinstance(total, bool):
+            raise JiraUnavailable(f"POST {path}: no total in the response")
+        total = max(total, len(issues))
+        return JiraSearchPage(issues=issues, count=total, complete=total <= len(issues))
+
+    def approximate_count(self, creds: JiraCredentials, jql: str) -> int:
+        """Cloud only: `POST /rest/api/3/search/approximate-count` (may lag recent changes)."""
+        path = "/rest/api/3/search/approximate-count"
+        data = self._search_json(path, self.post(creds, path, {"jql": jql}))
+        count = data.get("count")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise JiraUnavailable(f"POST {path}: no count in the response")
+        return count
+
     # ------------------------------------------------------------------ plumbing
 
     def get(
@@ -152,28 +218,56 @@ class JiraClient:
     ) -> httpx.Response:
         """One authenticated GET. Network errors and timeouts → JiraUnavailable; 5xx too.
         Other statuses are returned for the caller to interpret."""
+        return self._request("GET", creds, path, params=params)
+
+    def post(self, creds: JiraCredentials, path: str, body: dict[str, Any]) -> httpx.Response:
+        """One authenticated POST of a JSON body (Jira's read-only search endpoints use POST).
+        Failures as for `get`."""
+        return self._request("POST", creds, path, json=body)
+
+    def _request(
+        self,
+        method: Literal["GET", "POST"],
+        creds: JiraCredentials,
+        path: str,
+        *,
+        params: dict[str, str] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> httpx.Response:
         headers = {"Authorization": creds.authorization(), "Accept": "application/json"}
         try:
             with httpx.Client(
                 transport=self._transport, timeout=self._timeout, follow_redirects=False
             ) as client:
-                response = client.get(self.base_url + path, params=params, headers=headers)
+                response = client.request(
+                    method, self.base_url + path, params=params, json=json, headers=headers
+                )
         except httpx.HTTPError as exc:
-            raise JiraUnavailable(f"GET {path}: {type(exc).__name__}") from None
+            raise JiraUnavailable(f"{method} {path}: {type(exc).__name__}") from None
         if response.status_code >= 500:
-            raise JiraUnavailable(f"GET {path}: {response.status_code}")
+            raise JiraUnavailable(f"{method} {path}: {response.status_code}")
         return response
 
     @staticmethod
-    def _json(path: str, response: httpx.Response) -> dict[str, Any]:
+    def _search_json(path: str, response: httpx.Response) -> dict[str, Any]:
+        """A search endpoint's JSON: 400 → JiraBadQuery, 401/403 → JiraUnauthorized."""
+        status = response.status_code
+        if status == 400:
+            raise JiraBadQuery(_jira_messages(response) or "Jira rejected the query")
+        if status in (401, 403):
+            raise JiraUnauthorized(f"POST {path}: {status}")
+        return JiraClient._json(path, response, method="POST")
+
+    @staticmethod
+    def _json(path: str, response: httpx.Response, method: str = "GET") -> dict[str, Any]:
         if response.status_code != 200:
-            raise JiraUnavailable(f"GET {path}: {response.status_code}")
+            raise JiraUnavailable(f"{method} {path}: {response.status_code}")
         try:
             data = response.json()
         except ValueError:
-            raise JiraUnavailable(f"GET {path}: not JSON") from None
+            raise JiraUnavailable(f"{method} {path}: not JSON") from None
         if not isinstance(data, dict):
-            raise JiraUnavailable(f"GET {path}: not a JSON object")
+            raise JiraUnavailable(f"{method} {path}: not a JSON object")
         return data
 
 
@@ -273,6 +367,104 @@ class JiraSource:
 
     def post_comment(self, external_id: str, body: str) -> str:
         raise NotImplementedError("Jira comment sync is not built yet (SPEC §11 M1)")
+
+    def search(self, jql: str, limit: int) -> JiraSearch:
+        """The first `limit` issues matching `jql`, mapped like an import (request 14).
+
+        `ORDER BY updated DESC` is appended when the JQL has no ORDER BY of its own, so the
+        window holds the newest-updated matches. Issues without a usable key or `updated` are
+        skipped (and not counted). JiraBadQuery / JiraUnauthorized / JiraUnavailable on failure.
+        """
+        if not _ORDER_BY_RE.search(jql):
+            jql = f"{jql} ORDER BY updated DESC"
+        page = self.client.search(self._creds, jql, SEARCH_FIELDS, limit)
+        found = [c for c in map(self._candidate, page.issues) if c is not None]
+        skipped = len(page.issues) - len(found)
+        return JiraSearch(
+            issues=tuple(found), count=max(page.count - skipped, len(found)), complete=page.complete
+        )
+
+    def _candidate(self, data: dict[str, Any]) -> JiraCandidate | None:
+        key = data.get("key")
+        fields = data.get("fields")
+        if not isinstance(key, str) or not _ISSUE_KEY_RE.fullmatch(key):
+            return None
+        if not isinstance(fields, dict):
+            return None
+        updated = _aware_datetime(fields.get("updated"))
+        if updated is None:
+            return None
+        key = key.upper()
+        status = fields.get("status")
+        assignee = fields.get("assignee")
+        return JiraCandidate(
+            key=key,
+            title=(_str_or_none(fields.get("summary")) or "").strip() or key,
+            type=_TYPES.get(_name(fields.get("issuetype")), "task"),
+            priority=_PRIORITIES.get(_name(fields.get("priority")), "normal"),
+            status=(_str_or_none(status.get("name")) or "") if isinstance(status, dict) else "",
+            assignee=(
+                _str_or_none(assignee.get("displayName")) if isinstance(assignee, dict) else None
+            ),
+            updated_at=updated,
+            url=self.browse_url(key),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class JiraCandidate:
+    """A search hit, mapped like an import (`type`, `priority`) plus what a list shows."""
+
+    key: str
+    title: str
+    type: TicketType
+    priority: Priority
+    status: str  # the Jira status name ("" if Jira sent none)
+    assignee: str | None  # the assignee's display name
+    updated_at: datetime
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class JiraSearch:
+    """`issues` in the JQL's order; `count` = how many issues match (exact when `complete`)."""
+
+    issues: tuple[JiraCandidate, ...]
+    count: int
+    complete: bool
+
+
+_ORDER_BY_RE = re.compile(r"\border\s+by\b", re.IGNORECASE)
+
+
+def _aware_datetime(value: object) -> datetime | None:
+    """Jira's `2026-10-11T17:21:17.475+0100` → an aware datetime; anything else → None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.utcoffset() is not None else None
+
+
+def _jira_messages(response: httpx.Response) -> str | None:
+    """Jira's `errorMessages` (+ field `errors`) joined and cut short, or None."""
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    messages = data.get("errorMessages")
+    parts = [m for m in messages if isinstance(m, str) and m] if isinstance(messages, list) else []
+    errors = data.get("errors")
+    if isinstance(errors, dict):
+        parts.extend(f"{k}: {v}" for k, v in errors.items() if isinstance(v, str) and v)
+    text = " ".join(" ".join(parts).split())
+    if len(text) > MAX_ERROR_CHARS:
+        text = text[: MAX_ERROR_CHARS - 1].rstrip() + "…"
+    return text or None
 
 
 def _name(value: object) -> str:

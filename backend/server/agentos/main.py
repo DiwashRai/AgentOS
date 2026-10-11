@@ -23,6 +23,7 @@ from agentos.csrf import install_csrf_check
 from agentos.db import MigrationError
 from agentos.files.routes import router as files_router
 from agentos.http_errors import install_error_handlers
+from agentos.intake.routes import router as intake_router
 from agentos.launchers.base import Launcher
 from agentos.meta import router as meta_router
 from agentos.models import StreamEvent
@@ -108,6 +109,7 @@ def create_app(
         meta_router,
         auth_router,
         tickets_router,
+        intake_router,
         files_router,
         chat_router,
         runs_router,
