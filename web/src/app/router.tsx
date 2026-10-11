@@ -2,10 +2,11 @@
 import { createBrowserRouter, Navigate } from "react-router";
 
 import { LoginPage } from "../features/auth/LoginPage";
+import { CompactView } from "../features/compact/CompactView";
 import { QueueView } from "../features/queue/QueueView";
 import { TicketPage } from "../features/ticket/TicketPage";
 import { Shell } from "./Shell";
-import { CompactView, TeamsView, TemplateView } from "./views/placeholders";
+import { TeamsView, TemplateView } from "./views/placeholders";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },

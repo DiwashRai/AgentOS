@@ -1,19 +1,10 @@
-// Placeholder views (Compact, All teams) and the Settings › Template page wrapper.
+// Placeholder views (All teams) and the Settings › Template page wrapper.
 import { useLogout } from "../../api/queries";
 import { TemplatePage } from "../../features/pipeline";
 import { Quiet } from "../Quiet";
 import { Surface } from "../Surface";
 import { TopBar } from "../TopBar";
 import s from "./views.module.css";
-
-export function CompactView() {
-  return (
-    <>
-      <TopBar title="Compact" context="Every ticket" search="Search or jump to a ticket" />
-      <Surface className={s.fill} />
-    </>
-  );
-}
 
 export function TeamsView() {
   return (

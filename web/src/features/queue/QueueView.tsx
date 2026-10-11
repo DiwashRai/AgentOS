@@ -26,7 +26,7 @@ function ShowAll({ group, total }: { group: keyof typeof SHOW_ALL_FILTER; total:
   );
 }
 
-function NewTicketPrompt() {
+export function NewTicketPrompt() {
   const [, setParams] = useSearchParams();
   return (
     <div className={s.nothing}>

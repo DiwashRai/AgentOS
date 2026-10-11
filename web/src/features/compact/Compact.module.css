@@ -1,0 +1,477 @@
+/* Compact (DESIGN §6). Layout from prototypes/compact/compact.css; the row, column head, pills
+   and expansion are ported from kit.css `.ao-crow*`, `.ao-colhead`, `.ao-pills`, `.ao-lab`,
+   `.ao-lead-s`, `.ao-sub-s`, `.ao-steps`, `.ao-runline`, `.ao-msg`, `.ao-bub`, `.ao-keys`. */
+
+/* ---------- the surface: column head / scrolling list / footer; only the list scrolls ---------- */
+.surface {
+  /* fills the viewport under the 58px top bar (the shell's main column keeps 24px below) */
+  height: calc(100dvh - 58px - 24px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* the view's column widths (KIT.md "Compact row"), shared by the column head and the rows */
+  --crow-cols: 14px 84px 162px minmax(0, 1fr) minmax(0, 1.3fr) 124px 64px 44px;
+}
+.colhead {
+  flex: none;
+  position: relative;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: var(--crow-cols);
+  column-gap: 14px;
+  align-items: center;
+  height: 32px;
+  margin: 0 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--recess);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.colhead > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.colhead > span:last-child {
+  text-align: right;
+}
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 6px 8px 24px;
+  scrollbar-width: thin;
+  scroll-padding: 12px 0 24px;
+}
+.group + .group {
+  margin-top: 8px;
+}
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rows[hidden] {
+  display: none;
+}
+.empty {
+  margin: 0;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* footer: its own row inside the surface, so the last row always clears it */
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 40px;
+  margin: 0 8px;
+  padding: 0 10px;
+  border-top: 1px solid var(--rule);
+}
+.keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.grow {
+  flex: 1;
+}
+.note {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- filter pills (kit .ao-pills) ---------- */
+.pills {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  background: var(--recess);
+  border-radius: 9px;
+}
+.pills > button {
+  border: 0;
+  background: transparent;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pills > button:hover {
+  color: var(--ink-1);
+}
+.pills > button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink-1);
+  box-shadow: var(--surface-shadow);
+}
+.pills > button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.pills em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.pillMark {
+  display: inline-flex;
+}
+
+/* ---------- compact row (kit .ao-crow) ---------- */
+.crow {
+  position: relative;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  scroll-margin: 12px 0 20px;
+  transition:
+    transform var(--t-fast) ease,
+    background-color var(--t-fast) ease,
+    border-color var(--t-fast) ease;
+}
+.crow:hover {
+  background: var(--surface);
+  transform: translateY(-2px);
+}
+.crow.isOpen {
+  background: var(--surface);
+  border-color: var(--rule);
+  box-shadow: var(--row-edge);
+  margin: 5px 0 7px;
+}
+.crow.isOpen:hover {
+  transform: none;
+}
+.line {
+  display: grid;
+  grid-template-columns: var(--crow-cols);
+  column-gap: 14px;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.line:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.mk {
+  display: inline-flex;
+}
+.ref,
+.repo,
+.upd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ref {
+  letter-spacing: 0.03em;
+}
+/* "10h 58m" is wider than the 44px column: let it run into the gap on its left, never clip */
+.upd {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow: visible;
+  justify-self: end;
+}
+/* KIT-GAP (part of the compact row): the stage label sits at one x past the longest glyph, so
+   stage names read as a column whatever the pipeline length. */
+.line > .stage {
+  position: relative;
+  align-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+}
+.line > .stage > b {
+  position: absolute;
+  left: 90px;
+  right: 0;
+  top: 50%;
+  margin: 0;
+  transform: translateY(-50%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ti {
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isDone .ti {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+.now {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}
+.now > * {
+  flex: none;
+}
+.now > span:last-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the live run inline (kit .ao-runline): AGENT · step · meter · k/n */
+.now > .runline {
+  flex: 1 1 auto;
+  overflow: visible;
+}
+.runline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.agent {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--live-text);
+}
+.step {
+  flex: 1 1 80px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.of {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- the expansion (kit .ao-crow__more / .ao-crow__grid) ---------- */
+.more {
+  animation: reveal 0.26s var(--ease-out) both;
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1.08fr 1fr;
+  gap: 32px;
+  margin: 0 10px;
+  padding: 14px 20px 16px 38px;
+  border-top: 1px solid var(--rule-soft);
+}
+.col {
+  min-width: 0;
+}
+.lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  min-width: 0;
+}
+.lab > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lab.isLive {
+  color: var(--live-text);
+}
+.lead {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ink-1);
+  overflow-wrap: anywhere;
+}
+.sub {
+  margin: 4px 0 12px;
+  font-size: var(--fs-control);
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+.acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.err {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.03em;
+  color: var(--blocked);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* plan items (kit .ao-steps) */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.steps > li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 19px;
+  font-size: var(--fs-control);
+  color: var(--ink-1);
+}
+.steps > li > span:last-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.steps > li.isDone {
+  color: var(--ink-3);
+}
+.tick {
+  justify-self: center;
+  font-size: var(--fs-mono);
+  line-height: 1;
+}
+.isDone > .tick {
+  color: var(--done);
+}
+.steps > li.more {
+  display: block;
+  min-height: 0;
+  padding-left: 22px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+}
+.stepper {
+  margin-top: 12px;
+}
+
+/* the last Talk message (kit .ao-msg / .ao-bub) */
+.msg {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 9px;
+}
+.who {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-control);
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.who > time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+}
+.bub {
+  max-width: 94%;
+  width: fit-content;
+  margin: 3px 0 0;
+  padding: 7px 12px;
+  border-radius: 4px 14px 14px 14px;
+  background: var(--bubble);
+  color: var(--bubble-ink);
+  font-size: var(--fs-ui);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crow {
+    transition: none;
+  }
+  .crow:hover {
+    transform: none;
+  }
+  .more {
+    animation: none;
+  }
+}
