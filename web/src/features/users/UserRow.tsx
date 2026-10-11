@@ -1,11 +1,22 @@
 // One user in the Users table: who, role, status, last sign-in, created. Changes apply at once
-// (no Save); disabling asks first, inline, because it signs the person out. Presentational: the
+// (no Save); disabling asks first, inline, because it signs the person out. A pending person gets
+// Approve (→ writer); the role picker can still approve straight to another role. Presentational: the
 // page wires `onPatch` to the mutation and passes its pending state and error back in.
 import { useState } from "react";
 
 import { Avatar, Button, Tag } from "../../ui";
 import { Select } from "../pipeline/fields";
-import { lastSignIn, type Locks, type Role, ROLES, roleHint, shortDate, type User } from "./model";
+import {
+  APPROVED_ROLE,
+  isWaiting,
+  lastSignIn,
+  type Locks,
+  type Role,
+  ROLES,
+  roleHint,
+  shortDate,
+  type User,
+} from "./model";
 import s from "./Users.module.css";
 
 export interface UserRowProps {
@@ -29,6 +40,11 @@ function isRole(v: string): v is Role {
   return ROLES.some((r) => r.value === v);
 }
 
+function stateWord(user: User): string {
+  if (user.disabled) return "Disabled";
+  return isWaiting(user) ? "Waiting for approval" : "Active";
+}
+
 export function UserRow({
   user,
   self,
@@ -42,9 +58,15 @@ export function UserRow({
   const [confirming, setConfirming] = useState(false);
   const role = pending && pendingRole ? pendingRole : user.role;
   const name = user.display_name;
+  const waiting = isWaiting(user);
 
   return (
-    <tbody className={s.user} data-disabled={user.disabled ? "" : undefined} aria-busy={pending}>
+    <tbody
+      className={s.user}
+      data-disabled={user.disabled ? "" : undefined}
+      data-waiting={waiting ? "" : undefined}
+      aria-busy={pending}
+    >
       <tr>
         <th scope="row">
           <span className={s.who}>
@@ -70,12 +92,30 @@ export function UserRow({
                 if (isRole(v) && v !== user.role) onPatch({ role: v });
               }}
             />
-            <span className={s.hint}>{roleHint(role)}</span>
+            {locks.note ? (
+              <span className={s.locked}>{locks.note}</span>
+            ) : (
+              <span className={s.hint}>{roleHint(role)}</span>
+            )}
           </span>
         </td>
         <td>
           <span className={s.status} title={locks.disabled}>
-            <span className={s.state}>{user.disabled ? "Disabled" : "Active"}</span>
+            <span className={s.state}>{stateWord(user)}</span>
+            {waiting ? (
+              <Button
+                size="sm"
+                variant="ink"
+                aria-label={`Approve ${name}`}
+                title={`Make ${name} a writer: they can create and dispatch tickets`}
+                disabled={pending || locks.role !== undefined}
+                onClick={() => {
+                  onPatch({ role: APPROVED_ROLE });
+                }}
+              >
+                Approve
+              </Button>
+            ) : null}
             {user.disabled ? (
               <Button
                 size="sm"

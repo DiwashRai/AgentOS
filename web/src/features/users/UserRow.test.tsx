@@ -73,6 +73,45 @@ describe("UserRow", () => {
     expect(selectTag(html)).toContain("disabled");
   });
 
+  it("offers Approve and says why on a pending row, with Pending in the picker", () => {
+    const html = render({ user: { ...maya, role: "pending" } });
+    expect(html).toContain("data-waiting");
+    expect(html).toContain("Waiting for approval");
+    expect(html).not.toContain(">Active<");
+    expect(html).toMatch(/<option value="pending" selected="">Pending<\/option>/);
+    expect(html).toContain("Sees nothing until approved");
+    expect(html).toMatch(/<button[^>]*aria-label="Approve Maya Chen"[^>]*>Approve<\/button>/);
+    expect(selectTag(html)).not.toContain("disabled");
+    expect(html).toContain(">Disable<");
+  });
+
+  it("has no Approve for an approved person or a disabled pending one", () => {
+    expect(render()).not.toContain(">Approve<");
+    const off = render({ user: { ...maya, role: "pending", disabled: true } });
+    expect(off).not.toContain(">Approve<");
+    expect(off).not.toContain("data-waiting");
+    expect(off).toContain("Disabled");
+  });
+
+  it("disables Approve while a change is in flight", () => {
+    const html = render({
+      user: { ...maya, role: "pending" },
+      pending: true,
+      pendingRole: "writer",
+    });
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve<\/button>/);
+  });
+
+  it("locks a config admin's role and Disable, saying so on the row", () => {
+    const admin: User = { ...maya, role: "admin", env_admin: true };
+    const html = render({ user: admin, locks: locksFor(admin, 1) });
+    expect(selectTag(html)).toContain("disabled");
+    expect(html).toContain(">Set in server config (AGENTOS_ADMINS)<");
+    expect(html).not.toContain("Also users and the template");
+    expect(html.match(/title="Set in server config \(AGENTOS_ADMINS\)"/g)).toHaveLength(2);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Disable<\/button>/);
+  });
+
   it("shows a failed change inline", () => {
     const html = render({ error: "You can't demote yourself" });
     expect(html).toContain('role="alert"');

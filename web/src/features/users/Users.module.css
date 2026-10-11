@@ -94,15 +94,27 @@
   flex: none;
 }
 
+/* the role hint and lock note may wrap, so a narrow page keeps every column in view */
 .hint {
   font-size: var(--fs-meta);
   color: var(--ink-3);
-  white-space: nowrap;
+}
+
+/* a config admin's lock, said out loud in place of the role hint */
+.locked {
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
 }
 
 .state {
   min-width: 56px;
   color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.user[data-waiting] .state {
+  color: var(--waiting);
+  font-weight: 500;
 }
 
 .time {

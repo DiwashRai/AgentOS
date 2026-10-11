@@ -68,8 +68,8 @@ export function UsersPage() {
 
       <p className={pages.banner} role="note">
         <span className={pages.k}>Access</span>
-        People appear here after their first sign-in, as viewers. Changes apply at once; disabling
-        someone signs them out.
+        People appear here after their first sign-in, waiting for approval: they see nothing until
+        an admin approves them. Changes apply at once; disabling someone signs them out.
       </p>
 
       <div className={s.frame}>

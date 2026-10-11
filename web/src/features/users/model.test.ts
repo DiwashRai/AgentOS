@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import {
   describePatchError,
+  ENV_ADMIN_LOCK,
+  isWaiting,
   lastSignIn,
   locksFor,
   roleHint,
+  ROLES,
   shortDate,
   sortUsers,
   summary,
@@ -41,6 +44,18 @@ describe("sortUsers", () => {
     expect(out.map((u) => u.id)).toEqual([3, 6, 2, 4, 1]);
   });
 
+  it("puts people waiting for approval first, keeping name order within each group", () => {
+    const out = sortUsers([
+      user(1, "Anna"),
+      user(2, "zed", { role: "pending" }),
+      user(3, "Bea", { role: "pending" }),
+      user(4, "Cal", { role: "admin" }),
+      user(5, "Abe", { role: "pending", disabled: true }),
+      user(6, "Dov", { disabled: true }),
+    ]);
+    expect(out.map((u) => u.id)).toEqual([3, 2, 1, 4, 5, 6]);
+  });
+
   it("does not mutate its input", () => {
     const input = [user(2, "b"), user(1, "a")];
     sortUsers(input);
@@ -48,16 +63,36 @@ describe("sortUsers", () => {
   });
 });
 
+describe("isWaiting", () => {
+  it("is a pending person who may still sign in", () => {
+    expect(isWaiting(user(1, "a", { role: "pending" }))).toBe(true);
+    expect(isWaiting(user(1, "a", { role: "pending", disabled: true }))).toBe(false);
+    expect(isWaiting(user(1, "a", { role: "viewer" }))).toBe(false);
+  });
+});
+
 describe("locksFor", () => {
+  const none = { role: undefined, disabled: undefined, note: undefined };
+
   it("locks role and disabling on the signed-in admin's own row only", () => {
-    expect(locksFor({ id: 2 }, 1)).toEqual({ role: undefined, disabled: undefined });
-    const own = locksFor({ id: 1 }, 1);
+    expect(locksFor({ id: 2, env_admin: false }, 1)).toEqual(none);
+    const own = locksFor({ id: 1, env_admin: false }, 1);
     expect(own.role).toMatch(/own role/);
     expect(own.disabled).toMatch(/disable yourself/);
+    expect(own.note).toBeUndefined();
   });
 
   it("locks nothing while the viewer is unknown", () => {
-    expect(locksFor({ id: 1 }, undefined)).toEqual({ role: undefined, disabled: undefined });
+    expect(locksFor({ id: 1, env_admin: false }, undefined)).toEqual(none);
+  });
+
+  it("locks a config admin's row with one reason, said out loud", () => {
+    const want = { role: ENV_ADMIN_LOCK, disabled: ENV_ADMIN_LOCK, note: ENV_ADMIN_LOCK };
+    expect(ENV_ADMIN_LOCK).toBe("Set in server config (AGENTOS_ADMINS)");
+    expect(locksFor({ id: 2, env_admin: true }, 1)).toEqual(want);
+    // The config reason wins over the self-lock: another admin can't change it either.
+    expect(locksFor({ id: 1, env_admin: true }, 1)).toEqual(want);
+    expect(locksFor({ id: 1, env_admin: true }, undefined)).toEqual(want);
   });
 });
 
@@ -104,7 +139,23 @@ describe("summary and roleHint", () => {
     expect(summary([user(1, "a"), user(2, "b", { disabled: true })])).toBe("2 people · 1 disabled");
   });
 
-  it("has a hint for every role", () => {
+  it("says how many are waiting for approval, when any are", () => {
+    const pending = { role: "pending" } as const;
+    expect(
+      summary([
+        user(1, "a", pending),
+        user(2, "b", pending),
+        user(3, "c", { ...pending, disabled: true }),
+        user(4, "d"),
+      ]),
+    ).toBe("4 people · 2 waiting for approval · 1 disabled");
+    expect(summary([user(1, "a", pending)])).toBe("1 person · 1 waiting for approval");
+  });
+
+  it("has a word and a hint for every role, pending first", () => {
+    expect(ROLES.map((r) => r.value)).toEqual(["pending", "viewer", "writer", "admin"]);
+    expect(ROLES[0]?.label).toBe("Pending");
+    expect(roleHint("pending")).toMatch(/until approved/);
     expect(roleHint("viewer")).toMatch(/talks/);
     expect(roleHint("writer")).toMatch(/runs/);
     expect(roleHint("admin")).toMatch(/users/);
