@@ -1,0 +1,102 @@
+/* The byline's base branch: a value that reads like the owner select (Header.module.css .pick) and
+   an inline kit .ao-input (pipeline fields.module.css) when editing. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+}
+.suffix {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.rest,
+.value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+/* At rest, editable: transparent until hovered, like the owner select. */
+.value {
+  height: 22px;
+  align-items: center;
+  margin: -3px 0 -3px -6px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.value:hover {
+  border-color: var(--rule);
+  background: var(--surface);
+}
+.value:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.value:disabled {
+  cursor: default;
+}
+.value:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
+/* Editing: the input row, then the message and the hint under it. */
+.edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-weight: 400;
+}
+.row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.input {
+  width: 26ch;
+  min-width: 0;
+  height: 24px;
+  margin: -1px 0;
+  padding: 0 7px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  background: var(--field);
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.input:focus-visible {
+  border-color: var(--rule-strong);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.input[aria-invalid="true"] {
+  border-color: var(--blocked);
+}
+.input:read-only {
+  background: var(--surface);
+  color: var(--ink-2);
+}
+.useDefault:disabled {
+  cursor: default;
+  color: var(--ink-3);
+}
+
+.err,
+.note {
+  max-width: 52ch;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.err {
+  color: var(--blocked);
+}

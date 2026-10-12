@@ -107,6 +107,10 @@
   font-weight: 600;
   color: var(--ink-1);
 }
+/* The base branch grows a message and a hint while editing: keep its label on the input's line. */
+.byline > .branch {
+  align-items: baseline;
+}
 
 /* The owner: the avatar + a native select that reads as a byline value. */
 .owner {
