@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from agentos.broker import Broker
 from agentos.clock import from_db, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -223,7 +224,9 @@ def get_file(db: Database, key: str, path: str, version: int | None) -> FileCont
     return FileContent(**_info(row).model_dump(), content=row["content"])
 
 
-def put_file(db: Database, key: str, path: str, body: FileWrite, user: Me) -> FileInfo:
+def put_file(
+    db: Database, broker: Broker, key: str, path: str, body: FileWrite, user: Me
+) -> FileInfo:
     """Human write: `base_version` 0 creates (409 `stale_version` if the file exists), otherwise it
     must be the current version. 409 `bundle_locked` while the ticket's run is `running`.
     Unchanged content + mode appends nothing and returns the current info."""
@@ -235,14 +238,20 @@ def put_file(db: Database, key: str, path: str, body: FileWrite, user: Me) -> Fi
         if body.base_version != current:
             why = "already exists" if body.base_version == 0 else "was changed by someone else"
             raise ApiError(409, "stale_version", f"{path} {why} (current version {current})")
-        write_version(conn, ticket_id, path, body.content, body.mode, author_user_id=user.id)
+        version = write_version(
+            conn, ticket_id, path, body.content, body.mode, author_user_id=user.id
+        )
         latest = _latest(conn, ticket_id, path)
     if latest is None:  # pragma: no cover - a version was just written
         raise RuntimeError(f"{path}: no version after a write")
+    if version != current:
+        broker.ticket(key)
     return _info(latest)
 
 
-def delete_file(db: Database, key: str, path: str, base_version: int, user: Me) -> None:
+def delete_file(
+    db: Database, broker: Broker, key: str, path: str, base_version: int, user: Me
+) -> None:
     """Append a delete version. 404 if the file is absent; same lock and version rules as PUT."""
     with db.tx() as conn:
         ticket_id = _ticket_id(conn, key)
@@ -257,6 +266,7 @@ def delete_file(db: Database, key: str, path: str, base_version: int, user: Me) 
                 f"{path} was changed by someone else (current version {latest['version']})",
             )
         write_version(conn, ticket_id, path, None, latest["mode"], author_user_id=user.id)
+    broker.ticket(key)
 
 
 def list_versions(db: Database, key: str, path: str) -> list[FileVersionInfo]:

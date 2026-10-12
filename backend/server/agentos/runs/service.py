@@ -4,6 +4,7 @@ Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zer
 was elsewhere already (a no-op or a conflict, the caller decides). Terminal side effects
 (`finish`): unfinished stage_runs → `cancelled`, `finished_at` set, the ticket's `updated_at`
 bumped. The dispatcher and the reaper (loops) and the worker API call the primitives here.
+Every change publishes `broker.run(key, run_id)` after its transaction commits.
 
 Tokens are never stored in plaintext: `dispatch_token_hash` / `worker_token_hash` are SHA-256
 hex digests, and they are never cleared (a token's validity follows the run's status).
@@ -19,6 +20,7 @@ from datetime import datetime, timedelta
 
 from pydantic import TypeAdapter
 
+from agentos.broker import Broker
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError
@@ -167,6 +169,7 @@ def _latest_run_fact(conn: Conn, ticket_id: int) -> RunFact | None:
 
 def dispatch(
     db: Database,
+    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     launcher_name: str,
@@ -217,8 +220,9 @@ def dispatch(
             [(run_id, i, s.id) for i, s in enumerate(stages)],
         )
         conn.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (now, ticket["id"]))
-        # publish: run {key, id} (broker, Sunday)
-        return _summary(run_row(conn, run_id))
+        summary = _summary(run_row(conn, run_id))
+    broker.run(summary.ticket_key, summary.id)
+    return summary
 
 
 # ------------------------------------------------------------------ reads
@@ -286,24 +290,28 @@ def run_events(
 # ------------------------------------------------------------------ cancel
 
 
-def cancel(db: Database, run_id: int) -> RunSummary:
+def cancel(db: Database, broker: Broker, run_id: int) -> RunSummary:
     """queued/dispatched → `cancelled` at once (a late claim gets 410). running → set
     `cancel_requested_at` once; the worker sees `cancel: true` on its next event post and
     completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A terminal run
     is returned unchanged."""
     now = utcnow()
+    changed = False
     with db.tx() as conn:
         row = run_row(conn, run_id)
         if row["status"] in ("queued", "dispatched"):
-            finish(conn, run_id, "cancelled", ("queued", "dispatched"), now=now)
+            changed = finish(conn, run_id, "cancelled", ("queued", "dispatched"), now=now)
         elif row["status"] == "running":
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE runs SET cancel_requested_at = ? "
                 "WHERE id = ? AND status = 'running' AND cancel_requested_at IS NULL",
                 (to_db(now), run_id),
             )
-            # publish: run {key, id}
-        return _summary(run_row(conn, run_id))
+            changed = cursor.rowcount > 0
+        summary = _summary(run_row(conn, run_id))
+    if changed:
+        broker.run(summary.ticket_key, run_id)
+    return summary
 
 
 # ------------------------------------------------------------------ state machine primitives
@@ -320,7 +328,8 @@ def finish(
 ) -> bool:
     """Guarded terminal transition + side effects, in the caller's transaction.
 
-    Returns False (and changes nothing) if the run's status isn't one of `from_statuses`.
+    Returns False (and changes nothing) if the run's status isn't one of `from_statuses`. On True
+    the caller publishes `broker.run(key, run_id)` once its transaction has committed.
     """
     if status not in TERMINAL:
         raise ValueError(f"{status} is not a terminal status")
@@ -341,15 +350,26 @@ def finish(
         "UPDATE tickets SET updated_at = ? WHERE id = (SELECT ticket_id FROM runs WHERE id = ?)",
         (stamp, run_id),
     )
-    # publish: run {key, id} + ticket {key}
     return True
+
+
+def run_ticket_key(conn: Conn, run_id: int) -> str:
+    """The key of the run's ticket (what a run event names)."""
+    key: str = conn.execute(
+        "SELECT t.key FROM runs r JOIN tickets t ON t.id = r.ticket_id WHERE r.id = ?", (run_id,)
+    ).fetchone()["key"]
+    return key
 
 
 # ------------------------------------------------------------------ dispatcher primitives
 
 
 def mark_next_dispatched(
-    db: Database, launcher_name: str, max_concurrency: int | None, dispatch_token_hash: str
+    db: Database,
+    broker: Broker,
+    launcher_name: str,
+    max_concurrency: int | None,
+    dispatch_token_hash: str,
 ) -> int | None:
     """Move the launcher's oldest `queued` run to `dispatched` (storing the token hash), unless
     its active (dispatched|running) runs are already at `max_concurrency`. Returns the run id."""
@@ -376,18 +396,25 @@ def mark_next_dispatched(
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
-        # publish: run {key, id}
-        return run_id
+        key = run_ticket_key(conn, run_id)
+    broker.run(key, run_id)
+    return run_id
 
 
-def set_launch_ref(db: Database, run_id: int, launch_ref: str) -> None:
+def set_launch_ref(db: Database, broker: Broker, run_id: int, launch_ref: str) -> None:
+    """Store where the launcher started the worker (the run's `launch_url` derives from it)."""
     with db.tx() as conn:
         conn.execute("UPDATE runs SET launch_ref = ? WHERE id = ?", (launch_ref, run_id))
+        key = run_ticket_key(conn, run_id)
+    broker.run(key, run_id)
 
 
-def fail_launch(db: Database, run_id: int, error: str) -> None:
+def fail_launch(db: Database, broker: Broker, run_id: int, error: str) -> None:
     with db.tx() as conn:
-        finish(conn, run_id, "failed", ("dispatched",), now=utcnow(), error=error)
+        failed = finish(conn, run_id, "failed", ("dispatched",), now=utcnow(), error=error)
+        key = run_ticket_key(conn, run_id)
+    if failed:
+        broker.run(key, run_id)
 
 
 # ------------------------------------------------------------------ reaper primitives
@@ -398,6 +425,7 @@ class Reaped:
     run_id: int
     status: RunStatus
     reason: str
+    key: str  # the run's ticket
 
 
 def touch_running(db: Database, now: datetime) -> int:
@@ -409,7 +437,7 @@ def touch_running(db: Database, now: datetime) -> int:
         return cursor.rowcount
 
 
-def reap(db: Database, now: datetime, claim_timeout_s: int) -> list[Reaped]:
+def reap(db: Database, broker: Broker, now: datetime, claim_timeout_s: int) -> list[Reaped]:
     """Reaper rules 2-5 (SPEC §8), in order, in one transaction."""
     out: list[Reaped] = []
     with db.tx() as conn:
@@ -419,7 +447,7 @@ def reap(db: Database, now: datetime, claim_timeout_s: int) -> list[Reaped]:
         ) -> None:
             for run_id in ids:
                 if finish(conn, run_id, status, (was,), now=now, error=error):
-                    out.append(Reaped(run_id, status, why))
+                    out.append(Reaped(run_id, status, why, run_ticket_key(conn, run_id)))
 
         # 2. dispatched, never claimed
         stale = _ids(
@@ -454,6 +482,8 @@ def reap(db: Database, now: datetime, claim_timeout_s: int) -> list[Reaped]:
             (to_db(now - CANCEL_GRACE),),
         )
         end(unacked, "running", "cancelled", None, "cancel not acknowledged")
+    for r in out:
+        broker.run(r.key, r.run_id)
     return out
 
 

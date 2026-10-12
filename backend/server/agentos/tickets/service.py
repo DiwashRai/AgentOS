@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from agentos.broker import Broker
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -408,7 +409,9 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
 # ------------------------------------------------------------------ create
 
 
-def create_ticket(db: Database, space: SpaceConfig, user: Me, body: TicketCreate) -> TicketDetail:
+def create_ticket(
+    db: Database, broker: Broker, space: SpaceConfig, user: Me, body: TicketCreate
+) -> TicketDetail:
     """Allocate the key, copy the current template's pipeline, render its scaffold and write it as
     bundle v1, all in one transaction (a render error leaves no ticket and no used key).
 
@@ -442,7 +445,9 @@ def create_ticket(db: Database, space: SpaceConfig, user: Me, body: TicketCreate
                 owner_id=body.owner_id,
             ),
         )
-        return _detail(conn, space, key, user.id)
+        detail = _detail(conn, space, key, user.id)
+    broker.ticket(key)
+    return detail
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,6 +531,7 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
 
 def import_ticket(
     db: Database,
+    broker: Broker,
     space: SpaceConfig,
     source: TicketSource | None,
     user: Me,
@@ -592,7 +598,9 @@ def import_ticket(
         if conn.execute("SELECT 1 FROM tickets WHERE key = ?", (new.key,)).fetchone():
             raise ApiError(409, "key_taken", f"Another ticket already has the key {new.key}")
         _insert_ticket(conn, space, user, new)
-        return ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
+        result = ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
+    broker.ticket(new.key)
+    return result
 
 
 def _check_import_key(projects: Sequence[str], key: str) -> None:
@@ -697,7 +705,7 @@ _PATCHABLE = (
 
 
 def patch_ticket(
-    db: Database, space: SpaceConfig, key: str, user: Me, body: TicketPatch
+    db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
     """Apply the set fields. `state`, `repo` and `base_branch` changes → 409 `run_active` while a
     run is active. The slug never changes (it names the skill directory). A `state` change clears
@@ -763,14 +771,16 @@ def patch_ticket(
                     "WHERE id = ?",
                     (stripped.model_dump_json(), row["id"]),
                 )
-        return _detail(conn, space, key, user.id)
+        detail = _detail(conn, space, key, user.id)
+    broker.ticket(key)
+    return detail
 
 
 _RESOLVED_STATE: dict[ResolveOutcome, str] = {"completed": "done", "abandoned": "closed"}
 
 
 def resolve_ticket(
-    db: Database, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
+    db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
 ) -> TicketDetail:
     """Close the ticket as `completed` (state done) or `abandoned` (state closed), with an optional
     note (stripped; blank → null). 409 `run_active` while a run is active. Resolving a resolved
@@ -786,11 +796,14 @@ def resolve_ticket(
             "resolved_by = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
             (_RESOLVED_STATE[body.outcome], body.outcome, note, user.id, now, now, row["id"]),
         )
-        return _detail(conn, space, key, user.id)
+        detail = _detail(conn, space, key, user.id)
+    broker.ticket(key)
+    return detail
 
 
 def put_pipeline(
     db: Database,
+    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     key: str,
@@ -824,7 +837,9 @@ def put_pipeline(
             "updated_at = ? WHERE id = ?",
             (pipeline.model_dump_json(), to_db(utcnow()), row["id"]),
         )
-        return _detail(conn, space, key, user.id)
+        detail = _detail(conn, space, key, user.id)
+    broker.ticket(key)
+    return detail
 
 
 # ------------------------------------------------------------------ repo backfill (startup)

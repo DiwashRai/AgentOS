@@ -32,20 +32,22 @@ def worker_source() -> str:
 @router.post("/api/worker/claim")
 def claim(body: ClaimRequest, token: RunToken, ctx: Ctx) -> ClaimResponse:
     return ClaimResponse(
-        manifest=service.claim(ctx.db, ctx.runtimes, ctx.space, token, body.worker_token)
+        manifest=service.claim(
+            ctx.db, ctx.broker, ctx.runtimes, ctx.space, token, body.worker_token
+        )
     )
 
 
 @router.post("/api/worker/events")
 def events(body: EventsRequest, token: RunToken, ctx: Ctx) -> EventsResponse:
-    return EventsResponse(cancel=service.post_events(ctx.db, token, body.events))
+    return EventsResponse(cancel=service.post_events(ctx.db, ctx.broker, token, body.events))
 
 
 @router.post("/api/worker/sync")
 def sync(body: SyncRequest, token: RunToken, ctx: Ctx) -> SyncResponse:
-    return SyncResponse(versions=service.sync(ctx.db, token, body.stage_id, body.files))
+    return SyncResponse(versions=service.sync(ctx.db, ctx.broker, token, body.stage_id, body.files))
 
 
 @router.post("/api/worker/complete", status_code=204)
 def complete(body: CompleteRequest, token: RunToken, ctx: Ctx) -> None:
-    service.complete(ctx.db, token, body)
+    service.complete(ctx.db, ctx.broker, token, body)

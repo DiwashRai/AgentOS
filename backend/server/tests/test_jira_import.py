@@ -248,7 +248,7 @@ def test_concurrent_imports_end_with_one_ticket(
 
     def import_meanwhile() -> None:
         body = ImportRequest(ref="SCRUM-6")
-        inner = service.import_ticket(ctx.db, ctx.space, ctx.jira_source, me, body)
+        inner = service.import_ticket(ctx.db, ctx.broker, ctx.space, ctx.jira_source, me, body)
         assert inner.created
 
     jira.on_fetch = import_meanwhile

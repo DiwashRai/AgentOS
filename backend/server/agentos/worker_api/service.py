@@ -13,6 +13,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from agentos.broker import Broker
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError
@@ -31,7 +32,7 @@ from agentos.pipeline.manifest import build_manifest
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status
 from agentos.pipeline.space import SpaceConfig
-from agentos.runs.service import TERMINAL, finish, token_hash
+from agentos.runs.service import TERMINAL, finish, run_ticket_key, token_hash
 from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
 from agentos.validate import path_key, validate_path, validate_pr_url
@@ -63,10 +64,12 @@ def _unauthorized(what: str) -> ApiError:
 class _Claim:
     manifest: Manifest | None = None
     error: ApiError | None = None
+    changed: tuple[str, int] | None = None  # (ticket key, run id) when the run changed state
 
 
 def claim(
     db: Database,
+    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     dispatch_token: str,
@@ -76,6 +79,8 @@ def claim(
     as it is now (the bundle locks from here). A safe retry with the same worker token returns
     the stored manifest; another worker token → 409 `already_claimed`; terminal → 410."""
     outcome = _claim(db, runtimes, space, token_hash(dispatch_token), token_hash(worker_token))
+    if outcome.changed is not None:
+        broker.run(*outcome.changed)
     if outcome.error is not None:
         raise outcome.error
     if outcome.manifest is None:  # pragma: no cover - _claim sets one or the other
@@ -101,12 +106,13 @@ def _claim(
             return _Claim(manifest=Manifest.model_validate_json(run["manifest"]))
         if run["status"] != "dispatched":
             raise _gone(run["id"], run["status"])
+        changed = (run_ticket_key(conn, run["id"]), run["id"])
         try:
             manifest = _build(conn, run, runtimes, space)
         except ApiError as exc:
             error = f"cannot build the manifest: {exc.message}"
             finish(conn, run["id"], "failed", ("dispatched",), now=now, error=error)
-            return _Claim(error=_gone(run["id"], f"failed: {error}"))
+            return _Claim(error=_gone(run["id"], f"failed: {error}"), changed=changed)
         stamp = to_db(now)
         try:
             cursor = conn.execute(
@@ -118,8 +124,7 @@ def _claim(
             raise ApiError(409, "already_claimed", "That worker token is already in use") from exc
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-        # publish: run {key, id}
-        return _Claim(manifest=manifest)
+        return _Claim(manifest=manifest, changed=changed)
 
 
 def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
@@ -165,9 +170,12 @@ def _live_run(conn: Conn, worker_token: str) -> Row:
     return run
 
 
-def post_events(db: Database, worker_token: str, events: Sequence[RunEvent]) -> bool:
+def post_events(
+    db: Database, broker: Broker, worker_token: str, events: Sequence[RunEvent]
+) -> bool:
     """Store events idempotently on `(run_id, seq)`, move stage_runs along, refresh
     `last_seen_at` (an empty batch is the heartbeat). Returns whether a cancel was requested.
+    A stage that started or finished publishes `run` (log lines don't: the UI polls the log).
 
     Beyond MAX_EVENTS_PER_RUN stored events, `log` events are dropped (the worker already
     replaces its own overflow with one `warning`; this is the server-side backstop, logged here
@@ -185,6 +193,7 @@ def post_events(db: Database, worker_token: str, events: Sequence[RunEvent]) -> 
             "SELECT COUNT(*) FROM run_events WHERE run_id = ?", (run_id,)
         ).fetchone()[0]
         dropped = 0
+        stages_moved = 0
         for ev in events:
             if ev.type == "log" and stored >= MAX_EVENTS_PER_RUN:
                 dropped += 1
@@ -199,15 +208,15 @@ def post_events(db: Database, worker_token: str, events: Sequence[RunEvent]) -> 
                 continue
             at = to_db(min(ev.ts, now_dt))
             if ev.type == "stage_started":
-                conn.execute(
+                stages_moved += conn.execute(
                     "UPDATE stage_runs SET status = 'running', started_at = ? "
                     "WHERE run_id = ? AND idx = (SELECT MIN(idx) FROM stage_runs "
                     "  WHERE run_id = ? AND stage_id = ? AND status = 'pending')",
                     (at, run_id, run_id, ev.stage_id),
-                )
+                ).rowcount
             elif ev.type == "stage_finished":
                 # The running stage_run of that stage (else a pending one: a missed start).
-                conn.execute(
+                stages_moved += conn.execute(
                     "UPDATE stage_runs SET status = ?, exit_code = ?, reason = ?, finished_at = ? "
                     "WHERE run_id = ? AND idx = (SELECT idx FROM stage_runs "
                     "  WHERE run_id = ? AND stage_id = ? AND status IN ('running', 'pending') "
@@ -221,16 +230,18 @@ def post_events(db: Database, worker_token: str, events: Sequence[RunEvent]) -> 
                         run_id,
                         ev.stage_id,
                     ),
-                )
+                ).rowcount
         if dropped:
             log.warning("run %s: over %s events, dropped %s log events", run_id, stored, dropped)
         conn.execute("UPDATE runs SET last_seen_at = ? WHERE id = ?", (now, run_id))
-        # publish: run {key, id} when a stage started or finished
-        return run["cancel_requested_at"] is not None
+        key = run_ticket_key(conn, run_id) if stages_moved else None
+    if key is not None:
+        broker.run(key, run_id)
+    return run["cancel_requested_at"] is not None
 
 
 def sync(
-    db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]
+    db: Database, broker: Broker, worker_token: str, stage_id: str, files: Sequence[SyncFile]
 ) -> dict[str, int]:
     """Write the worker's context files back as new versions authored by the run (SPEC §9.4.1).
 
@@ -258,8 +269,10 @@ def sync(
                 author_stage=stage_id,
             )
             versions[path] = version or 0
-        # publish: ticket {key} (files changed)
-        return versions
+        key = run_ticket_key(conn, run["id"]) if entries else None
+    if key is not None:  # files (maybe) changed; unchanged ones appended nothing
+        broker.ticket(key)
+    return versions
 
 
 def _check_sync_entry(manifest: Manifest, f: SyncFile) -> tuple[str, SyncFile]:
@@ -283,7 +296,7 @@ def _check_sync_entry(manifest: Manifest, f: SyncFile) -> tuple[str, SyncFile]:
     return path, f
 
 
-def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:
+def complete(db: Database, broker: Broker, worker_token: str, body: CompleteRequest) -> None:
     """running → gated|succeeded (completed, per `completion_status`), failed or cancelled.
     Repeating the final status of a terminal run is a no-op; anything else on a terminal run →
     410."""
@@ -309,8 +322,12 @@ def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:
                 )
         else:
             status = "cancelled"
-        if finish(conn, run["id"], status, ("running",), now=now, error=error):
+        finished = finish(conn, run["id"], status, ("running",), now=now, error=error)
+        if finished:
             _store_pr_url(conn, run, body.pr_url)
+        key = run_ticket_key(conn, run["id"])
+    if finished:
+        broker.run(key, run["id"])
 
 
 def _store_pr_url(conn: Conn, run: Row, pr_url: str | None) -> None:

@@ -83,6 +83,7 @@ def create_app(
             log.critical("AgentOS cannot start. %s", exc)  # fail fast with the readable message
             raise
         app.state.ctx = ctx
+        ctx.broker.bind(asyncio.get_running_loop())
         seed_default_template(ctx.db)
         backfill_ticket_repos(ctx.db, ctx.space)
         stop = asyncio.Event()
@@ -100,6 +101,9 @@ def create_app(
         try:
             yield
         finally:
+            # Open SSE streams end here at the latest (uvicorn's --timeout-graceful-shutdown
+            # cancels them before the lifespan stops, so a reload never waits on a browser tab).
+            ctx.broker.close()
             stop.set()
             await asyncio.gather(*loops, return_exceptions=True)
 
