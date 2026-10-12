@@ -134,7 +134,7 @@ def test_dispatch_needs_the_repo_in_the_catalog(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
 ) -> None:
     t = create_ticket()
-    with ctx.db.tx() as conn:  # as if the repo was removed from agentos.toml
+    with ctx.db.tx() as conn:  # as if the repo was removed from the catalog
         conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (t.key,))
     r = runs.dispatch(t.key)
     assert error(r) == (422, "validation_error")

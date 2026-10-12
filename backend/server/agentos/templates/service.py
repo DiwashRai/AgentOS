@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Collection
 from dataclasses import dataclass
 
 from pydantic import TypeAdapter
@@ -28,6 +27,7 @@ from agentos.pipeline.scaffold import (
     default_pipeline,
 )
 from agentos.pipeline.segment import validate_pipeline
+from agentos.space_store import read_area, runtime_entries_of
 
 log = logging.getLogger(__name__)
 
@@ -141,18 +141,20 @@ def get_defaults(db: Database) -> TemplateDefaults:
         return current_defaults(conn)
 
 
-def put_template(
-    db: Database, runtimes: Collection[str], actor: Me, body: TemplateUpdate
-) -> Template:
+def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
     """Append version+1. 409 `stale_version` unless `base_version` is the current version.
     The checks raise 422 `invalid_pipeline` / `render_error` / `validation_error` or 413.
-    `defaults` omitted → the current version's are carried over."""
-    validate_pipeline(body.pipeline, runtimes=runtimes)
+    `defaults` omitted → the current version's are carried over. Runtimes are checked against
+    Settings > Runners in the same transaction, so a concurrent runtime removal can't slip by."""
     check_scaffold(body.scaffold)
-    runtime = None if body.defaults is None else body.defaults.runtime
-    if runtime is not None and runtime not in runtimes:
-        raise ApiError(422, "validation_error", f"defaults.runtime: unknown runtime {runtime!r}")
     with db.tx() as conn:
+        runtimes = _runtime_names(conn)
+        validate_pipeline(body.pipeline, runtimes=runtimes)
+        runtime = None if body.defaults is None else body.defaults.runtime
+        if runtime is not None and runtime not in runtimes:
+            raise ApiError(
+                422, "validation_error", f"defaults.runtime: unknown runtime {runtime!r}"
+            )
         template = current(conn).template
         if body.base_version != template.version:
             raise ApiError(409, "stale_version", "The template was changed by someone else")
@@ -171,3 +173,7 @@ def put_template(
             ),
         )
         return current(conn).template
+
+
+def _runtime_names(conn: Conn) -> frozenset[str]:
+    return frozenset(e.name for e in runtime_entries_of(read_area(conn, "runtimes")))

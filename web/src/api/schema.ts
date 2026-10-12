@@ -261,6 +261,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/runner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runner */
+        get: operations["get_runner_api_settings_runner_get"];
+        /** Put Runner */
+        put: operations["put_runner_api_settings_runner_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/runtimes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runtimes */
+        get: operations["get_runtimes_api_settings_runtimes_get"];
+        /** Put Runtimes */
+        put: operations["put_runtimes_api_settings_runtimes_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/space": {
         parameters: {
             query?: never;
@@ -1400,6 +1436,105 @@ export interface components {
             /** Ticket Key */
             ticket_key: string;
         };
+        /**
+         * RunnerSettings
+         * @description Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow. Read at
+         *     every launch (no restart). `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN
+         *     is set) come from the server's env and are read-only. `github_repo` null = none set: with the
+         *     github launcher, runs then fail at launch saying so.
+         */
+        RunnerSettings: {
+            /** Github Repo */
+            github_repo: string | null;
+            /**
+             * Launcher
+             * @enum {string}
+             */
+            launcher: "local" | "github";
+            /** Ref */
+            ref: string;
+            /** Token Set */
+            token_set: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+            /** Workflow */
+            workflow: string;
+        };
+        /**
+         * RunnerSettingsUpdate
+         * @description PUT /api/settings/runner. `github_repo`: `owner/name` or null; `workflow`: a .yml file name
+         *     in that repo's .github/workflows/; `ref`: the branch or tag the workflow file is on.
+         */
+        RunnerSettingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            /** Github Repo */
+            github_repo: string | null;
+            /** Ref */
+            ref: string;
+            /** Workflow */
+            workflow: string;
+        };
+        /**
+         * RuntimeEntry
+         * @description One agent runtime: how a stage's argv is built (SPEC §7). `argv`, then `model_args` when a
+         *     model resolves, `agent_args` when the stage names an agent, then `prompt_args` when
+         *     `prompt_via` is "arg" (else the prompt is the stdin). The placeholders `{model}`, `{agent}`
+         *     and `{prompt}` replace whole elements; no shell is involved. `prompt_via: "arg"` needs
+         *     `prompt_args` containing "{prompt}"; "stdin" takes no `prompt_args`.
+         */
+        RuntimeEntry: {
+            /** Agent Args */
+            agent_args: string[];
+            /** Argv */
+            argv: string[];
+            /** Model Args */
+            model_args: string[];
+            /** Name */
+            name: string;
+            /** Prompt Args */
+            prompt_args: string[];
+            /**
+             * Prompt Via
+             * @enum {string}
+             */
+            prompt_via: "stdin" | "arg";
+        };
+        /**
+         * RuntimeSettings
+         * @description Settings > Runners (runtimes). The first runtime is the server default: what an agent stage
+         *     runs on when neither it nor the template's `defaults` names one.
+         */
+        RuntimeSettings: {
+            /** Runtimes */
+            runtimes: components["schemas"]["RuntimeEntry"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * RuntimeSettingsUpdate
+         * @description PUT /api/settings/runtimes: the whole list, in order (the first = the server default).
+         *     Names are unique. Removing a runtime the current template's `defaults` or stages use → 409
+         *     `in_use` (a ticket's own stage pinned to it fails when dispatched).
+         */
+        RuntimeSettingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            /** Runtimes */
+            runtimes: components["schemas"]["RuntimeEntry"][];
+        };
         /** SourceLink */
         SourceLink: {
             /** External Id */
@@ -1644,8 +1779,9 @@ export interface components {
         /**
          * TemplateDefaults
          * @description The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's
-         *     own `runtime` / `model` wins; unset here → the server config's `default_runtime` / no model.
-         *     `runtime` must be a configured runtime (422 `validation_error`).
+         *     own `runtime` / `model` wins; unset here → the server default runtime (the first in
+         *     Settings > Runners) / no model. `runtime` must be a configured runtime (422
+         *     `validation_error`).
          */
         TemplateDefaults: {
             /** Model */
@@ -2563,6 +2699,166 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepoSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_runner_api_settings_runner_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_runner_api_settings_runner_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_runtimes_api_settings_runtimes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSettings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_runtimes_api_settings_runtimes_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSettings"];
                 };
             };
             /** @description Client error */

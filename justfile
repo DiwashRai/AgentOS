@@ -91,20 +91,18 @@ container_name := "agentos"
 container_volume := "agentos-data"
 container_port := "8080"
 container_env := "backend/deploy/.env.container"
-container_config := "backend/agentos.toml"
 
 # Build the image from the working tree. Podman needs --format docker to keep the HEALTHCHECK.
 container-build:
     {{ engine }} build {{ if engine == "podman" { "--format docker " } else { "" } }}-f Containerfile -t {{ container_image }} .
 
-# /data on a named volume, config read-only, secrets from the env file. Replacing the container
+# /data on a named volume (db + settings), secrets from the env file. Replacing the container
 # keeps the volume, so this is also the upgrade step (after container-build).
 # (Re)start the container on host port 8080.
 container-run:
     if (-not (Test-Path '{{ container_env }}')) { throw "{{ container_env }} not found: copy backend/deploy/container.env.example and fill it in" }
-    if (-not (Test-Path '{{ container_config }}')) { throw "{{ container_config }} not found: copy backend/agentos.toml.example" }
     -{{ engine }} rm --force {{ container_name }} 2>$null
-    {{ engine }} run --detach --name {{ container_name }} --restart unless-stopped --publish {{ container_port }}:8000 --volume {{ container_volume }}:/data --mount "type=bind,source=$((Resolve-Path '{{ container_config }}').Path),target=/config/agentos.toml,readonly" --env-file '{{ container_env }}' {{ container_image }}
+    {{ engine }} run --detach --name {{ container_name }} --restart unless-stopped --publish {{ container_port }}:8000 --volume {{ container_volume }}:/data --env-file '{{ container_env }}' {{ container_image }}
 
 # Follow the container's logs.
 container-logs:

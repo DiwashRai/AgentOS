@@ -1,9 +1,11 @@
-"""Settings: pydantic-settings (AGENTOS_* env) + agentos.toml loader (runtimes, and the Space's
-first-start seed) + startup checks (SPEC §14, §17).
+"""Settings: pydantic-settings (AGENTOS_* env) + the optional agentos.toml seed file + startup
+checks (SPEC §14, §17).
 
-The server runs from `backend/`, so `.env`, `agentos.toml` and relative paths resolve from there.
-What an admin may change lives in the db and is edited in the app (Settings); env keeps what the
-server needs to start, who may sign in, and secrets.
+The server runs from `backend/`, so `.env` and relative paths resolve from there. What an admin
+may change lives in the db and is edited in the app (Settings); env keeps what the server needs
+to start, who may sign in, and secrets. `agentos.toml` is optional: if it exists, it is read only
+to seed settings areas the db doesn't have yet (the first start, or the first start after an
+upgrade that added an area); otherwise built-in defaults seed them.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
+    Field,
     ModelWrapValidatorHandler,
     PrivateAttr,
     SecretStr,
@@ -28,8 +32,8 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from agentos.pipeline.runtime import RuntimesConfig
-from agentos.pipeline.space import SPACE_TOML_KEYS, SpaceConfig, SpaceSection
+from agentos.pipeline.runtime import NamedRuntime, RuntimesConfig, RuntimeSpec
+from agentos.pipeline.space import SPACE_TOML_KEYS, RunnerSection, SpaceConfig, SpaceSection
 
 # Env vars whose settings moved into the app, and the Settings tab that replaced each. A moved var
 # that is still set doesn't stop startup: it is ignored with a warning, and its value seeds the
@@ -38,12 +42,30 @@ MOVED_ENV: dict[str, str] = {
     "AGENTOS_KEY_PREFIX": "Settings > Space",
     "AGENTOS_JIRA_PROJECTS": "Settings > Space",
     "AGENTOS_CLAIM_TIMEOUT_S": "Settings > Space",
+    "AGENTOS_GITHUB_REPO": "Settings > Runners",
+    "AGENTOS_GITHUB_WORKFLOW": "Settings > Runners",
+    "AGENTOS_GITHUB_REF": "Settings > Runners",
 }
-# The SpaceSection field each moved var seeds.
+# The settings area each moved var seeds.
+MOVED_AREA: dict[str, Literal["space", "runner"]] = {
+    "AGENTOS_KEY_PREFIX": "space",
+    "AGENTOS_JIRA_PROJECTS": "space",
+    "AGENTOS_CLAIM_TIMEOUT_S": "space",
+    "AGENTOS_GITHUB_REPO": "runner",
+    "AGENTOS_GITHUB_WORKFLOW": "runner",
+    "AGENTOS_GITHUB_REF": "runner",
+}
+# The SpaceSection field each moved Space var seeds.
 _MOVED_FIELD = {
     "AGENTOS_KEY_PREFIX": "key_prefix",
     "AGENTOS_JIRA_PROJECTS": "jira_projects",
     "AGENTOS_CLAIM_TIMEOUT_S": "claim_timeout_s",
+}
+# The RunnerSection field each moved runner var seeds.
+_MOVED_RUNNER_FIELD = {
+    "AGENTOS_GITHUB_REPO": "github_repo",
+    "AGENTOS_GITHUB_WORKFLOW": "workflow",
+    "AGENTOS_GITHUB_REF": "ref",
 }
 
 
@@ -78,6 +100,7 @@ class Settings(BaseSettings):
     worker_url: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
+    # Optional, seed-only: read once to seed settings areas the db doesn't have yet (if it exists).
     config: Path = Path("agentos.toml")
     launcher: Literal["local", "github"] = "local"
     local_max_concurrency: int | None = 2  # None ("none"/"unlimited" in env) = no limit
@@ -93,10 +116,8 @@ class Settings(BaseSettings):
     jira_service_token: SecretStr | None = None
     admins: Annotated[list[str], NoDecode] = []
     # AGENTOS_LAUNCHER=github: the workflow (backend/deploy/github/agentos-worker.yml) dispatched
-    # per run, on `github_ref` of `github_repo`. The token needs Actions: write on that repo.
-    github_repo: str | None = None
-    github_workflow: str = "agentos-worker.yml"
-    github_ref: str = "main"
+    # per run; which repo/workflow/ref is set in the app (Settings > Runners). The token needs
+    # Actions: write on that repo.
     github_token: SecretStr | None = None
     github_api_url: str = "https://api.github.com"  # GHES: https://<host>/api/v3
     github_api_version: str = "2022-11-28"
@@ -157,6 +178,11 @@ class Settings(BaseSettings):
         return self.worker_url or self.public_url
 
     @property
+    def config_set(self) -> bool:
+        """AGENTOS_CONFIG was set (env, .env or code) rather than defaulted."""
+        return "config" in self.model_fields_set
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "agentos.db"
 
@@ -181,14 +207,13 @@ def _describe(err: Any) -> str:
 
 @dataclass(frozen=True, slots=True)
 class FileConfig:
-    """`agentos.toml`: the agent runtimes (SPEC §7) and the Space's first-start seed (§17):
-    `[space]` name/default_repo, `[[repos]]`, `[[intake.queries]]`. Once an area has a db row,
-    its tables here are ignored. `space_tables` = which of `space`, `repos`, `intake` the file has.
-    """
+    """`agentos.toml`, a seed only (§17): the agent runtimes (`default_runtime` + `[runtimes.*]`),
+    `[space]` name/default_repo, `[[repos]]`, `[[intake.queries]]`. Each seeds its settings area
+    when the db has no row for it yet; after that the file is ignored. `runtimes` is None when the
+    file has none (the built-ins seed them)."""
 
-    runtimes: RuntimesConfig
+    runtimes: RuntimesConfig | None
     space: SpaceConfig
-    space_tables: frozenset[str] = frozenset()
 
 
 _M = TypeVar("_M", bound=BaseModel)
@@ -196,14 +221,36 @@ _M = TypeVar("_M", bound=BaseModel)
 _SPACE_KEYS = ("space", "repos", "intake")
 
 
+class _TomlRuntimes(BaseModel):
+    """agentos.toml's runtime part. `default_runtime` omitted = the first `[runtimes.*]` table."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default_runtime: str | None = None
+    runtimes: dict[str, RuntimeSpec] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _default_exists(self) -> _TomlRuntimes:
+        if self.default_runtime is not None and self.default_runtime not in self.runtimes:
+            raise ValueError(f"default_runtime {self.default_runtime!r} is not in [runtimes]")
+        return self
+
+    def entries(self) -> list[dict[str, Any]]:
+        """The Settings list: `default_runtime` first, then the file order."""
+        names = list(self.runtimes)
+        if self.default_runtime is not None:
+            names.remove(self.default_runtime)
+            names.insert(0, self.default_runtime)
+        return [{"name": n, **self.runtimes[n].model_dump()} for n in names]
+
+
 def load_config(path: Path) -> FileConfig:
-    """Parse `agentos.toml` once. Every problem in both parts is reported in one ConfigError."""
+    """Parse an `agentos.toml` (the seed file). Every problem is reported in one ConfigError.
+    The caller only calls this when the file exists and an area still needs seeding."""
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise ConfigError(
-            [f"{path}: config not found (copy agentos.toml.example, or set AGENTOS_CONFIG)"]
-        ) from None
+        raise ConfigError([f"{path}: not found"]) from None
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError([f"{path}: cannot read TOML: {exc}"]) from None
     space_data = {k: data.pop(k) for k in _SPACE_KEYS if k in data}
@@ -215,11 +262,21 @@ def load_config(path: Path) -> FileConfig:
             problems.append(
                 f"{path}: space.{key}: not an agentos.toml key (only {', '.join(SPACE_TOML_KEYS)})"
             )
-    runtimes = _validated(RuntimesConfig, data, path, problems)
+    runtimes: RuntimesConfig | None = None
+    if data:
+        parsed = _validated(_TomlRuntimes, data, path, problems)
+        if parsed is not None:
+            entries: list[NamedRuntime] = []
+            for entry in parsed.entries():
+                named = _validated(NamedRuntime, entry, path, problems, f"runtimes.{entry['name']}")
+                if named is not None:
+                    entries.append(named)
+            if len(entries) == len(parsed.runtimes):
+                runtimes = RuntimesConfig.from_entries(entries)
     space = _validated(SpaceConfig, space_data, path, problems)
-    if runtimes is None or space is None or problems:
+    if space is None or problems:
         raise ConfigError(problems)
-    return FileConfig(runtimes=runtimes, space=space, space_tables=frozenset(space_data))
+    return FileConfig(runtimes=runtimes, space=space)
 
 
 def seed_space(file_space: SpaceConfig, moved_env: Mapping[str, str]) -> SpaceConfig:
@@ -243,13 +300,31 @@ def seed_space(file_space: SpaceConfig, moved_env: Mapping[str, str]) -> SpaceCo
     return file_space.model_copy(update={"space": section})
 
 
-def _validated(model: type[_M], data: dict[str, Any], path: Path, problems: list[str]) -> _M | None:
+def seed_runner(moved_env: Mapping[str, str]) -> RunnerSection:
+    """The first-start seed of Settings > Runners: the AGENTOS_GITHUB_REPO / _WORKFLOW / _REF
+    values that are set, else the defaults (no repo, agentos-worker.yml, main). An invalid value
+    → ConfigError naming the variable."""
+    values = {f: moved_env[n] for n, f in _MOVED_RUNNER_FIELD.items() if n in moved_env}
+    try:
+        return RunnerSection.model_validate(values)
+    except ValidationError as exc:
+        problems: list[str] = []
+        for err in exc.errors():
+            loc = str(err["loc"][0]) if err["loc"] else ""
+            var = next((n for n, f in _MOVED_RUNNER_FIELD.items() if f == loc), "AGENTOS_GITHUB_*")
+            problems.append(f"{var}: {err['msg'].removeprefix('Value error, ')}")
+        raise ConfigError(problems) from None
+
+
+def _validated(
+    model: type[_M], data: dict[str, Any], path: Path, problems: list[str], prefix: str = ""
+) -> _M | None:
     """`model` validated from `data`, or None with its errors appended to `problems`."""
     try:
         return model.model_validate(data)
     except ValidationError as exc:
         for err in exc.errors():
-            where = ".".join(str(p) for p in err["loc"]) or "(root)"
+            where = ".".join(p for p in (prefix, *(str(x) for x in err["loc"])) if p) or "(root)"
             problems.append(f"{path}: {where}: {err['msg']}")
         return None
 
@@ -300,13 +375,11 @@ def _jira_service_problems(settings: Settings) -> list[str]:
     return problems
 
 
-def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
+def startup_checks(settings: Settings) -> None:
     """Validate cross-field rules, then create the data, logs and workspaces dirs.
 
-    Raises ConfigError listing every problem. `runtimes` is already validated by its model
-    (default_runtime exists); it is a parameter so later checks can cross-reference it.
+    Raises ConfigError listing every problem.
     """
-    del runtimes  # nothing cross-checked yet
     problems: list[str] = []
 
     urls = {"AGENTOS_PUBLIC_URL": settings.public_url, "AGENTOS_WORKER_URL": settings.worker_url}
@@ -331,13 +404,9 @@ def startup_checks(settings: Settings, runtimes: RuntimesConfig) -> None:
     problems.extend(_jira_service_problems(settings))
 
     if settings.launcher == "github":
-        # The launcher's own constructor checks the values' shapes (context.build_context).
-        for name, value in (
-            ("AGENTOS_GITHUB_REPO", settings.github_repo),
-            ("AGENTOS_GITHUB_TOKEN", settings.github_token),
-        ):
-            if not value:
-                problems.append(f"{name} is required with AGENTOS_LAUNCHER=github")
+        # The repo/workflow/ref are set in the app (Settings > Runners) and read at each launch.
+        if settings.github_token is None or not settings.github_token.get_secret_value().strip():
+            problems.append("AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER=github")
         if problem := _url_problem("AGENTOS_GITHUB_API_URL", settings.github_api_url):
             problems.append(problem)
 

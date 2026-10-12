@@ -1,4 +1,4 @@
-"""Settings parsing, agentos.toml loading, startup checks and GET /api/config."""
+"""Settings parsing, the agentos.toml seed file, startup checks and GET /api/config."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from agentos.context import build_context
 from agentos.launchers.github import GitHubActionsLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, RepoInfo
-from agentos.pipeline.runtime import RuntimesConfig
+from agentos.pipeline.runtime import BUILTIN_RUNTIMES
+from agentos.pipeline.space import SpaceConfig
 
 RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
 RUNTIME_Y = '[runtimes.y]\nargv = ["y"]\n'
@@ -40,13 +41,8 @@ def make(tmp_path: Path, **overrides: Any) -> Settings:
 
 def problems(settings: Settings) -> list[str]:
     with pytest.raises(ConfigError) as caught:
-        startup_checks(settings, load_config(settings.config).runtimes)
+        startup_checks(settings)
     return caught.value.problems
-
-
-@pytest.fixture
-def runtimes() -> RuntimesConfig:
-    return load_config(RUNTIMES_TOML).runtimes
 
 
 # ------------------------------------------------------------------ env parsing
@@ -120,6 +116,7 @@ def test_load_settings_reports_invalid_values(monkeypatch: pytest.MonkeyPatch) -
 
 def test_load_config() -> None:
     config = load_config(RUNTIMES_TOML)
+    assert config.runtimes is not None
     assert config.runtimes.default_runtime == "fake"
     assert set(config.runtimes.runtimes) == {"fake", "claude"}
     assert (config.space.name, config.space.default_repo) == ("Test Space", "r")
@@ -209,9 +206,9 @@ def test_repo_catalog_cross_checks(tmp_path: Path, catalog: str, why: str) -> No
 # ------------------------------------------------------------------ startup checks
 
 
-def test_valid_settings_pass_and_create_dirs(tmp_path: Path, runtimes: RuntimesConfig) -> None:
+def test_valid_settings_pass_and_create_dirs(tmp_path: Path) -> None:
     settings = make(tmp_path)
-    startup_checks(settings, runtimes)
+    startup_checks(settings)
     assert settings.data_dir.is_dir()
     assert settings.logs_dir.is_dir()
     assert settings.workspaces_dir.is_dir()
@@ -224,15 +221,15 @@ def test_dev_auth_requires_loopback_host_and_public_url(tmp_path: Path) -> None:
     assert len(found) == 2  # every problem reported at once
 
 
-def test_dev_auth_accepts_localhost(tmp_path: Path, runtimes: RuntimesConfig) -> None:
-    startup_checks(make(tmp_path, host="localhost", public_url="http://localhost:5173"), runtimes)
+def test_dev_auth_accepts_localhost(tmp_path: Path) -> None:
+    startup_checks(make(tmp_path, host="localhost", public_url="http://localhost:5173"))
 
 
-def test_jira_required_without_dev_auth(tmp_path: Path, runtimes: RuntimesConfig) -> None:
+def test_jira_required_without_dev_auth(tmp_path: Path) -> None:
     found = problems(make(tmp_path, dev_auth=False))
     assert found == ["AGENTOS_JIRA_URL is required unless AGENTOS_DEV_AUTH=1"]
     # The Space's Jira projects are set in the app (Settings > Space), not required at startup.
-    startup_checks(make(tmp_path, dev_auth=False, jira_url="https://x.atlassian.net"), runtimes)
+    startup_checks(make(tmp_path, dev_auth=False, jira_url="https://x.atlassian.net"))
 
 
 JIRA_URL = "https://x.atlassian.net"
@@ -270,25 +267,24 @@ def test_jira_service_account_checks(
         {},  # no service account: no import
     ],
 )
-def test_jira_service_account_accepted(
-    tmp_path: Path, runtimes: RuntimesConfig, overrides: dict[str, Any]
-) -> None:
-    startup_checks(make(tmp_path, jira_url=JIRA_URL, **overrides), runtimes)
+def test_jira_service_account_accepted(tmp_path: Path, overrides: dict[str, Any]) -> None:
+    startup_checks(make(tmp_path, jira_url=JIRA_URL, **overrides))
 
 
-def test_github_launcher_needs_repo_and_token(tmp_path: Path) -> None:
+def test_github_launcher_needs_a_token_but_not_a_repo(tmp_path: Path) -> None:
+    # The repo/workflow/ref are set in the app (Settings > Runners), read at each launch.
     found = problems(make(tmp_path, launcher="github"))
-    assert any("AGENTOS_GITHUB_REPO" in p for p in found)
-    assert any("AGENTOS_GITHUB_TOKEN" in p for p in found)
+    assert found == ["AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER=github"]
+    startup_checks(make(tmp_path, launcher="github", github_token="t0ken"))  # noqa: S106 - fake
 
 
 def test_github_launcher_is_built_from_settings(tmp_path: Path) -> None:
-    github = {"launcher": "github", "github_repo": "o/r", "github_token": "t0ken"}
+    github = {"launcher": "github", "github_token": "t0ken"}
     ctx = build_context(make(tmp_path, **github))
     assert isinstance(ctx.launcher, GitHubActionsLauncher)
     assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("github", None)
     with pytest.raises(ConfigError) as caught:
-        build_context(make(tmp_path, **{**github, "github_repo": "not a repo"}))
+        build_context(make(tmp_path, **{**github, "github_api_version": "latest"}))
     assert "AGENTOS_GITHUB_" in str(caught.value)
     assert "t0ken" not in str(caught.value)
 
@@ -325,7 +321,7 @@ def test_missing_worker_env_file(tmp_path: Path) -> None:
 
 def test_lifespan_fails_fast_on_bad_config(tmp_path: Path) -> None:
     app = create_app(make(tmp_path, launcher="github"))
-    with pytest.raises(ConfigError, match="AGENTOS_GITHUB_REPO"), TestClient(app):
+    with pytest.raises(ConfigError, match="AGENTOS_GITHUB_TOKEN"), TestClient(app):
         pass
 
 
@@ -381,3 +377,74 @@ def test_api_config_without_a_space(tmp_path: Path) -> None:
     with TestClient(create_app(make(tmp_path, config=path))) as client:
         config = client.get("/api/config").json()
     assert (config["space_name"], config["repos"], config["default_repo"]) == ("AgentOS", [], None)
+
+
+# ------------------------------------------------------------------ no agentos.toml at all
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_startup_without_any_agentos_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
+) -> None:
+    """agentos.toml is optional: without one the built-in defaults seed every area."""
+    monkeypatch.chdir(tmp_path)  # the default ./agentos.toml doesn't exist here
+    values: dict[str, Any] = {
+        "data_dir": tmp_path / "data",
+        "workspaces_dir": tmp_path / "workspaces",
+        "dev_auth": True,
+    }
+    if explicit:
+        values["config"] = tmp_path / "absent.toml"
+    settings = Settings(_env_file=None, **values)
+    assert settings.config_set is explicit
+    with TestClient(create_app(settings)) as client:
+        config = AppConfig.model_validate(client.get("/api/config").json())
+    assert (config.space_name, config.repos, config.default_repo) == ("AgentOS", [], None)
+    assert config.runtimes == ["claude", "copilot"]
+    assert (config.default_runtime, config.server_default_runtime) == ("claude", "claude")
+
+
+def test_a_toml_without_runtimes_seeds_the_built_ins(tmp_path: Path) -> None:
+    path = tmp_path / "space-only.toml"
+    path.write_text('[space]\nname = "Only a Space"\n', encoding="utf-8")
+    loaded = load_config(path)
+    assert (loaded.runtimes, loaded.space.name) == (None, "Only a Space")
+    with TestClient(create_app(make(tmp_path, config=path))) as client:
+        config = AppConfig.model_validate(client.get("/api/config").json())
+    assert (config.space_name, config.server_default_runtime) == ("Only a Space", "claude")
+    assert config.runtimes == ["claude", "copilot"]
+
+
+def test_toml_runtimes_order_default_first_then_file_order(tmp_path: Path) -> None:
+    path = tmp_path / "rt.toml"
+    tables = '[runtimes.a]\nargv = ["a"]\n[runtimes.b]\nargv = ["b"]\n[runtimes.c]\nargv = ["c"]\n'
+    path.write_text('default_runtime = "b"\n' + tables, encoding="utf-8")
+    runtimes = load_config(path).runtimes
+    assert runtimes is not None
+    assert [e.name for e in runtimes.entries()] == ["b", "a", "c"]
+    path.write_text(tables, encoding="utf-8")  # no default_runtime: the first table
+    runtimes = load_config(path).runtimes
+    assert runtimes is not None
+    assert [e.name for e in runtimes.entries()] == ["a", "b", "c"]
+
+
+def test_toml_runtime_names_follow_the_settings_pattern(tmp_path: Path) -> None:
+    path = tmp_path / "rt.toml"
+    path.write_text('[runtimes.Claude]\nargv = ["claude"]\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"runtimes\.Claude\.name"):
+        load_config(path)
+
+
+def test_the_example_toml_is_all_optional_and_lists_the_built_in_runtimes(tmp_path: Path) -> None:
+    example = Path(__file__).resolve().parents[2] / "agentos.toml.example"
+    as_is = load_config(example)  # everything commented out: nothing to seed from
+    assert (as_is.runtimes, as_is.space) == (None, SpaceConfig())
+    text = example.read_text(encoding="utf-8")
+    block = text[text.index("# default_runtime =") :].split("\n\n", 1)[0]
+    path = tmp_path / "rt.toml"
+    path.write_text(
+        "\n".join(line.removeprefix("# ") for line in block.splitlines()), encoding="utf-8"
+    )
+    runtimes = load_config(path).runtimes
+    assert runtimes is not None
+    assert runtimes.entries() == list(BUILTIN_RUNTIMES)

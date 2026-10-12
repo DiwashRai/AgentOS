@@ -1,4 +1,5 @@
-"""Settings routes: Space, Repos, Intake (+ the intake query preview). Admin-only, reads too."""
+"""Settings routes: Space, Repos, Intake (+ the intake query preview), Runtimes, Runner.
+Admin-only, reads too."""
 
 from __future__ import annotations
 
@@ -15,6 +16,10 @@ from agentos.models import (
     IntakeSettingsUpdate,
     RepoSettings,
     RepoSettingsUpdate,
+    RunnerSettings,
+    RunnerSettingsUpdate,
+    RuntimeSettings,
+    RuntimeSettingsUpdate,
     SpaceSettings,
     SpaceSettingsUpdate,
 )
@@ -60,3 +65,32 @@ def preview_intake(body: IntakePreviewRequest, _: Admin, ctx: Ctx) -> IntakePrev
     """Test a JQL before saving it: live (never cached), at most 5 items, with the same filtering
     and error messages as GET /api/intake."""
     return intake.preview(ctx.db, body.jql, ctx.jira_source, ctx.space.jira_projects)
+
+
+@router.get("/runtimes")
+def get_runtimes(_: Admin, ctx: Ctx) -> RuntimeSettings:
+    return service.get_runtimes(ctx.db)
+
+
+@router.put("/runtimes")
+def put_runtimes(body: RuntimeSettingsUpdate, user: Admin, ctx: Ctx) -> RuntimeSettings:
+    return service.put_runtimes(ctx.db, ctx.space_store, user, body)
+
+
+@router.get("/runner")
+def get_runner(_: Admin, ctx: Ctx) -> RunnerSettings:
+    return service.get_runner(
+        ctx.db, launcher=ctx.settings.launcher, token_set=ctx.settings.github_token is not None
+    )
+
+
+@router.put("/runner")
+def put_runner(body: RunnerSettingsUpdate, user: Admin, ctx: Ctx) -> RunnerSettings:
+    return service.put_runner(
+        ctx.db,
+        ctx.space_store,
+        user,
+        body,
+        launcher=ctx.settings.launcher,
+        token_set=ctx.settings.github_token is not None,
+    )

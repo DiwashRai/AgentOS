@@ -27,7 +27,9 @@ from agentos.models import (
     RepoSettings,
     RunDetail,
     RunEvent,
+    RunnerSettings,
     RunSummary,
+    RuntimeSettings,
     SpaceSettings,
     Template,
     TicketDetail,
@@ -110,6 +112,14 @@ def test_every_get_matches_its_model(
     queries = {"queries": [{"id": None, "name": "To do", "jql": "x"}], "base_version": 1}
     assert client.put("/api/settings/intake", json=queries, headers=CSRF).status_code == 200
     assert check(client, "/api/settings/intake", IntakeSettings).queries
+    runtimes = check(client, "/api/settings/runtimes", RuntimeSettings)
+    body = {"runtimes": [r.model_dump() for r in runtimes.runtimes], "base_version": 1}
+    assert client.put("/api/settings/runtimes", json=body, headers=CSRF).status_code == 200
+    assert check(client, "/api/settings/runtimes", RuntimeSettings).updated_by is not None
+    runner = check(client, "/api/settings/runner", RunnerSettings)
+    body = {"github_repo": "o/r", "workflow": runner.workflow, "ref": "main", "base_version": 1}
+    assert client.put("/api/settings/runner", json=body, headers=CSRF).status_code == 200
+    assert check(client, "/api/settings/runner", RunnerSettings).github_repo == "o/r"
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
     assert len(summaries) == 4
     assert any(s.latest_run is not None for s in summaries)

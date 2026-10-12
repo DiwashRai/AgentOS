@@ -2226,6 +2226,248 @@
         "title": "RunSummary",
         "type": "object"
       },
+      "RunnerSettings": {
+        "additionalProperties": false,
+        "description": "Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow. Read at\nevery launch (no restart). `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN\nis set) come from the server's env and are read-only. `github_repo` null = none set: with the\ngithub launcher, runs then fail at launch saying so.",
+        "properties": {
+          "github_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Repo"
+          },
+          "launcher": {
+            "enum": [
+              "local",
+              "github"
+            ],
+            "title": "Launcher",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "token_set": {
+            "title": "Token Set",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "workflow": {
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "launcher",
+          "github_repo",
+          "workflow",
+          "ref",
+          "token_set",
+          "version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "RunnerSettings",
+        "type": "object"
+      },
+      "RunnerSettingsUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/settings/runner. `github_repo`: `owner/name` or null; `workflow`: a .yml file name\nin that repo's .github/workflows/; `ref`: the branch or tag the workflow file is on.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "github_repo": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Repo"
+          },
+          "ref": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Ref",
+            "type": "string"
+          },
+          "workflow": {
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.-]+\\.ya?ml$",
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "github_repo",
+          "workflow",
+          "ref",
+          "base_version"
+        ],
+        "title": "RunnerSettingsUpdate",
+        "type": "object"
+      },
+      "RuntimeEntry": {
+        "additionalProperties": false,
+        "description": "One agent runtime: how a stage's argv is built (SPEC \u00a77). `argv`, then `model_args` when a\nmodel resolves, `agent_args` when the stage names an agent, then `prompt_args` when\n`prompt_via` is \"arg\" (else the prompt is the stdin). The placeholders `{model}`, `{agent}`\nand `{prompt}` replace whole elements; no shell is involved. `prompt_via: \"arg\"` needs\n`prompt_args` containing \"{prompt}\"; \"stdin\" takes no `prompt_args`.",
+        "properties": {
+          "agent_args": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Agent Args",
+            "type": "array"
+          },
+          "argv": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Argv",
+            "type": "array"
+          },
+          "model_args": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Model Args",
+            "type": "array"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "prompt_args": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Prompt Args",
+            "type": "array"
+          },
+          "prompt_via": {
+            "enum": [
+              "stdin",
+              "arg"
+            ],
+            "title": "Prompt Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "argv",
+          "model_args",
+          "agent_args",
+          "prompt_via",
+          "prompt_args"
+        ],
+        "title": "RuntimeEntry",
+        "type": "object"
+      },
+      "RuntimeSettings": {
+        "additionalProperties": false,
+        "description": "Settings > Runners (runtimes). The first runtime is the server default: what an agent stage\nruns on when neither it nor the template's `defaults` names one.",
+        "properties": {
+          "runtimes": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeEntry"
+            },
+            "title": "Runtimes",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runtimes",
+          "version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "RuntimeSettings",
+        "type": "object"
+      },
+      "RuntimeSettingsUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/settings/runtimes: the whole list, in order (the first = the server default).\nNames are unique. Removing a runtime the current template's `defaults` or stages use \u2192 409\n`in_use` (a ticket's own stage pinned to it fails when dispatched).",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "runtimes": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeEntry"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Runtimes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runtimes",
+          "base_version"
+        ],
+        "title": "RuntimeSettingsUpdate",
+        "type": "object"
+      },
       "SourceLink": {
         "additionalProperties": false,
         "properties": {
@@ -2866,7 +3108,7 @@
       },
       "TemplateDefaults": {
         "additionalProperties": false,
-        "description": "The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's\nown `runtime` / `model` wins; unset here \u2192 the server config's `default_runtime` / no model.\n`runtime` must be a configured runtime (422 `validation_error`).",
+        "description": "The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's\nown `runtime` / `model` wins; unset here \u2192 the server default runtime (the first in\nSettings > Runners) / no model. `runtime` must be a configured runtime (422\n`validation_error`).",
         "properties": {
           "model": {
             "anyOf": [
@@ -4586,6 +4828,186 @@
           }
         },
         "summary": "Put Repos",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/runner": {
+      "get": {
+        "operationId": "get_runner_api_settings_runner_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Runner",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "put_runner_api_settings_runner_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Put Runner",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/runtimes": {
+      "get": {
+        "operationId": "get_runtimes_api_settings_runtimes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Runtimes",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "put_runtimes_api_settings_runtimes_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Put Runtimes",
         "tags": [
           "settings"
         ]

@@ -3,7 +3,8 @@
 The workflow (`backend/deploy/github/agentos-worker.yml`, installed as
 `.github/workflows/agentos-worker.yml` on the target repo's default branch) masks the token,
 downloads GET /api/worker/worker.py from `server_url` and runs it. GitHub queues the job, so
-`max_concurrency` is None.
+`max_concurrency` is None. Which repo/workflow/ref is asked of `target()` at every launch (they
+are edited in Settings > Runners); the token and API URL/version are fixed (env).
 
 REST facts (docs.github.com, checked 2026-10-11):
 - `POST /repos/{repo}/actions/workflows/{workflow}/dispatches` with `{ref, inputs}`.
@@ -19,10 +20,14 @@ Neither the GitHub token nor the dispatch token ever appears in a raised message
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+
+from agentos.models import GITHUB_REPO_PATTERN, GITHUB_WORKFLOW_PATTERN
 
 DEFAULT_API_URL = "https://api.github.com"
 DEFAULT_API_VERSION = "2022-11-28"
@@ -31,13 +36,38 @@ _RUN_DETAILS_BUILT_IN = "2026-03-10"
 TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 _MAX_MESSAGE_CHARS = 300
 
-_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-_WORKFLOW = re.compile(r"^[A-Za-z0-9_.-]+\.ya?ml$")
+_REPO = re.compile(GITHUB_REPO_PATTERN)
+_WORKFLOW = re.compile(GITHUB_WORKFLOW_PATTERN)
 _API_VERSION = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+NO_REPO = "no GitHub repo is set for runs: an admin sets it in Settings > Runners"
+
+
 class LaunchError(RuntimeError):
-    """A dispatch GitHub didn't accept. The message is safe to store and log (no tokens)."""
+    """A dispatch GitHub didn't accept (or couldn't be sent). The message is safe to store and log
+    (no tokens)."""
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubTarget:
+    """Where a run's workflow is dispatched: `workflow` on `ref` of `repo` (None = not set)."""
+
+    repo: str | None
+    workflow: str
+    ref: str
+
+    def problem(self) -> str | None:
+        """Why this target can't be dispatched to, or None."""
+        if self.repo is None:
+            return NO_REPO
+        if not _REPO.fullmatch(self.repo):
+            return f"GitHub repo must look like owner/name, got {self.repo!r}"
+        if not _WORKFLOW.fullmatch(self.workflow):
+            return f"GitHub workflow must be a .yml file name, got {self.workflow!r}"
+        if not self.ref.strip():
+            return "GitHub workflow ref (a branch or tag) is required"
+        return None
 
 
 class GitHubActionsLauncher:
@@ -47,48 +77,42 @@ class GitHubActionsLauncher:
     def __init__(
         self,
         *,
-        repo: str,
-        workflow: str,
-        ref: str,
+        target: Callable[[], GitHubTarget],
         token: str,
         api_url: str = DEFAULT_API_URL,
         api_version: str = DEFAULT_API_VERSION,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        if not _REPO.fullmatch(repo):
-            raise ValueError(f"GitHub repo must look like owner/name, got {repo!r}")
-        if not _WORKFLOW.fullmatch(workflow):
-            raise ValueError(f"GitHub workflow must be a .yml file name, got {workflow!r}")
-        if not ref.strip():
-            raise ValueError("GitHub workflow ref (a branch or tag) is required")
+        """`target` is called at every launch (the repo/workflow/ref are edited in the app, so a
+        change applies to the next run without a restart)."""
         if not token.strip():
             raise ValueError("a GitHub token is required")
         if urlsplit(api_url).scheme not in ("http", "https"):
             raise ValueError(f"GitHub API URL must be http(s), got {api_url!r}")
         if not _API_VERSION.fullmatch(api_version):
             raise ValueError(f"GitHub API version must be YYYY-MM-DD, got {api_version!r}")
-        self.repo = repo
-        self.workflow = workflow
-        self.ref = ref
         self.api_url = api_url.rstrip("/")
         self.api_version = api_version
+        self._target = target
         self._token = token
         self._transport = transport
 
-    @property
-    def dispatch_url(self) -> str:
-        return f"{self.api_url}/repos/{self.repo}/actions/workflows/{self.workflow}/dispatches"
+    def dispatch_url(self, target: GitHubTarget) -> str:
+        return f"{self.api_url}/repos/{target.repo}/actions/workflows/{target.workflow}/dispatches"
 
-    @property
-    def runs_page_url(self) -> str:
+    def runs_page_url(self, target: GitHubTarget) -> str:
         """The workflow's run list in the web UI (the launch_ref when GitHub returns no run)."""
-        return f"{web_url(self.api_url)}/{self.repo}/actions/workflows/{self.workflow}"
+        return f"{web_url(self.api_url)}/{target.repo}/actions/workflows/{target.workflow}"
 
     def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
-        """Dispatch the workflow for `run_id`. Returns the Actions run URL (or the workflow's runs
-        page when GitHub doesn't return the run). Raises LaunchError if GitHub refuses."""
+        """Dispatch the workflow for `run_id` to the current target. Returns the Actions run URL
+        (or the workflow's runs page when GitHub doesn't return the run). Raises LaunchError if
+        no repo is set or GitHub refuses."""
+        target = self._target()
+        if problem := target.problem():
+            raise LaunchError(problem)
         body: dict[str, Any] = {
-            "ref": self.ref,
+            "ref": target.ref,
             "inputs": {"server": server_url, "token": dispatch_token, "run_id": str(run_id)},
         }
         if self.api_version < _RUN_DETAILS_BUILT_IN:
@@ -102,7 +126,7 @@ class GitHubActionsLauncher:
         secrets = (self._token, dispatch_token)
         try:
             with httpx.Client(transport=self._transport, timeout=TIMEOUT) as client:
-                resp = client.post(self.dispatch_url, json=body, headers=headers)
+                resp = client.post(self.dispatch_url(target), json=body, headers=headers)
         except httpx.HTTPError as exc:
             # `from None`: the chained exception carries the request, headers included.
             raise LaunchError(
@@ -110,9 +134,9 @@ class GitHubActionsLauncher:
             ) from None
 
         if resp.status_code == 204:
-            return self.runs_page_url
+            return self.runs_page_url(target)
         if resp.status_code == 200:
-            return _html_url(resp) or self.runs_page_url
+            return _html_url(resp) or self.runs_page_url(target)
         raise LaunchError(
             _safe(f"GitHub answered {resp.status_code}: {_github_message(resp)}", secrets)
         )

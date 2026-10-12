@@ -1,9 +1,10 @@
-"""The Space (SPEC §17): one AgentOS instance, its settings, its repo catalog and its intake
-queries.
+"""The Space (SPEC §17): one AgentOS instance, its settings, its repo catalog, its intake queries
+and where its runs are dispatched (the runner).
 
-They are edited in the app (Settings > Space, Repos, Intake) and stored in the db `settings`
-table (`agentos.space_store`); on first start each area is seeded from `agentos.toml` (`[space]`
-name/default_repo, `[[repos]]`, `[[intake.queries]]`) and the moved env vars (config.py).
+They are edited in the app (Settings > Space, Intake, Runners) and stored in the db `settings`
+table (`agentos.space_store`); on first start each area is seeded from an `agentos.toml` if one
+exists (`[space]` name/default_repo, `[[repos]]`, `[[intake.queries]]`) and the moved env vars
+(config.py), else from the defaults here.
 Tickets store a repo *name*; its URL and default branch are resolved from the catalog when they
 are read or dispatched, so moving a repo is a settings change.
 
@@ -23,6 +24,9 @@ from agentos.errors import ApiError
 from agentos.models import (
     CLAIM_TIMEOUT_MAX_S,
     CLAIM_TIMEOUT_MIN_S,
+    GIT_REF_MAX,
+    GITHUB_REPO_PATTERN,
+    GITHUB_WORKFLOW_PATTERN,
     INTAKE_QUERY_ID_PATTERN,
     KEY_PREFIX_PATTERN,
     REPO_NAME_PATTERN,
@@ -41,6 +45,7 @@ __all__ = [
     "IntakeSection",
     "RepoSpec",
     "ResolvedRepo",
+    "RunnerSection",
     "SpaceConfig",
     "SpaceSection",
     "query_id",
@@ -51,6 +56,7 @@ DEFAULT_SPACE_NAME = "AgentOS"
 DEFAULT_BRANCH = "main"
 DEFAULT_KEY_PREFIX = "AOS"
 DEFAULT_CLAIM_TIMEOUT_S = 900
+DEFAULT_WORKFLOW = "agentos-worker.yml"
 # The keys agentos.toml's `[space]` may hold (the first-start seed); the rest come from env.
 SPACE_TOML_KEYS = ("name", "default_repo")
 DEFAULT_QUERY_ID = "query"
@@ -130,6 +136,25 @@ class IntakeSection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     queries: tuple[IntakeQuerySpec, ...] = ()
+
+
+class RunnerSection(BaseModel):
+    """Where AGENTOS_LAUNCHER=github dispatches runs (Settings > Runners; the db `runner` area):
+    the workflow file `workflow` on `ref` of `github_repo` (None = not set yet). Read at every
+    launch. The token and API URL stay in env."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    github_repo: str | None = Field(default=None, pattern=GITHUB_REPO_PATTERN, max_length=200)
+    workflow: str = Field(default=DEFAULT_WORKFLOW, pattern=GITHUB_WORKFLOW_PATTERN, max_length=200)
+    ref: str = Field(default=DEFAULT_BRANCH, min_length=1, max_length=GIT_REF_MAX)
+
+    @field_validator("ref")
+    @classmethod
+    def _ref(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value.strip()
 
 
 class SpaceConfig(BaseModel):

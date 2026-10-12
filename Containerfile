@@ -32,7 +32,7 @@ FROM docker.io/library/python:3.12-slim
 RUN groupadd --gid 10001 agentos \
  && useradd --uid 10001 --gid agentos --no-log-init --home-dir /home/agentos --create-home \
       --shell /usr/sbin/nologin agentos \
- && mkdir -p /data /workspaces /config \
+ && mkdir -p /data /workspaces \
  && chown agentos:agentos /data /workspaces
 
 ENV PATH=/app/.venv/bin:$PATH \
@@ -40,7 +40,6 @@ ENV PATH=/app/.venv/bin:$PATH \
     AGENTOS_HOST=0.0.0.0 \
     AGENTOS_PORT=8000 \
     AGENTOS_DATA_DIR=/data \
-    AGENTOS_CONFIG=/config/agentos.toml \
     AGENTOS_WEB_DIR=/app/web \
     AGENTOS_WORKSPACES_DIR=/workspaces
 

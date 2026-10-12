@@ -20,4 +20,4 @@ def get_template(_: CurrentUser, ctx: Ctx) -> Template:
 
 @router.put("")
 def put_template(body: TemplateUpdate, user: Admin, ctx: Ctx) -> Template:
-    return service.put_template(ctx.db, ctx.runtimes.runtimes.keys(), user, body)
+    return service.put_template(ctx.db, user, body)

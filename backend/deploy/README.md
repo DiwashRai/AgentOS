@@ -2,18 +2,16 @@
 
 The image (root `Containerfile`) runs **the server only**: the API plus the built web UI, on port
 8000. It holds no agent CLIs and no git credentials; workers run on runners (GitHub Actions or
-self-hosted) and dial back to the server. The image is stateless: the database and logs live on
-the `/data` volume, the config is mounted read-only, and secrets come from an env file.
+self-hosted) and dial back to the server. The image is stateless: the database (which also holds
+every setting an admin edits in the app) and logs live on the `/data` volume, and the few
+deployment facts and secrets come from an env file. There is no config file to mount.
 
 Docker and Podman both work. The `just` recipes default to Docker; add `engine=podman` (or set
 `CONTAINER_ENGINE=podman`) for Podman.
 
 ## First run
 
-1. `backend/agentos.toml`: copy `backend/agentos.toml.example` (the runtimes). It is mounted
-   read-only at `/config/agentos.toml`. Its `[space]`, `[[repos]]` and `[[intake.queries]]` are
-   optional and only seed the settings on the very first start (see "Settings in the app").
-2. `backend/deploy/.env.container`: copy `container.env.example` and fill it in (gitignored).
+1. `backend/deploy/.env.container`: copy `container.env.example` and fill it in (gitignored).
    Dev auth can't run in the container (it needs a loopback host), so this uses Jira: people
    sign in with their Jira email + API token, need access to one of the Space's Jira projects
    (Settings › Space), and wait for an admin's approval after their first sign-in
@@ -21,18 +19,21 @@ Docker and Podman both work. The `just` recipes default to Docker; add `engine=p
    a valid Jira token, so the first sign-in is an admin who can then set up the Space. Importing
    Jira issues as tickets needs a service account: `AGENTOS_JIRA_SERVICE_EMAIL` +
    `AGENTOS_JIRA_SERVICE_TOKEN` (leave both empty to turn import off).
-3. Build and start:
+2. Build and start:
 
    ```
    just container-build
    just container-run        # http://127.0.0.1:8080 (the dev backend keeps :8000)
    just container-logs
    ```
+3. Open the app and sign in as one of the `AGENTOS_ADMINS` people, then set the Space up in
+   **Settings**: **Space** (name, key prefix, Jira projects, the repo catalog), **Intake** (the
+   Jira queries) and **Runners** (the GitHub repo/workflow/ref runs are dispatched to, and the
+   agent runtimes). Until Runners has a repo, every run fails at launch saying so.
 
 `container-run` replaces any container named `agentos` and starts a new one with:
 - `-p 8080:8000`, `--restart unless-stopped`
 - `-v agentos-data:/data` (a named volume: `agentos.db`, `logs/`, `backups/`)
-- `--mount type=bind,source=backend/agentos.toml,target=/config/agentos.toml,readonly`
 - `--env-file backend/deploy/.env.container`
 
 Every name, path and the port is a `just` variable: for example,
@@ -51,18 +52,28 @@ once, without a restart:
   Save): tickets reference a repo by name, so changing a URL is safe; removing a repo that open
   tickets or the default repo use is refused.
 - **Intake:** the Jira queries the Intake tab lists, with a "Test query" preview.
+- **Runners:** the GitHub repo (`owner/name`), workflow file and ref that each run's workflow is
+  dispatched to (read at every launch), plus the **agent runtimes** (separate Save): the argv
+  templates stages run (`claude` and `copilot` built in). The first runtime is the server
+  default. Removing a runtime the template's defaults or stages use is refused. Which launcher
+  runs use (`AGENTOS_LAUNCHER`) and whether the GitHub token is set are shown read-only.
 
-The env keeps what the server needs to start, who may sign in, and secrets. The minimal
+The env keeps what the server needs to start, who may sign in, and secrets. The whole
 `.env.container`: `AGENTOS_PUBLIC_URL`, `AGENTOS_WORKER_URL`, `AGENTOS_JIRA_URL`,
 `AGENTOS_ADMINS`, `AGENTOS_JIRA_SERVICE_EMAIL`, `AGENTOS_JIRA_SERVICE_TOKEN`, `AGENTOS_LAUNCHER`
-and the `AGENTOS_GITHUB_*` runner settings (with `AGENTOS_GITHUB_TOKEN`).
+and `AGENTOS_GITHUB_TOKEN`.
 
-**First start / upgrade from an older version:** each settings area with nothing in the database
-yet is seeded once, from `agentos.toml` (`[space]` name and default_repo, `[[repos]]`,
-`[[intake.queries]]`) and the env vars that moved into the app (`AGENTOS_KEY_PREFIX`,
-`AGENTOS_JIRA_PROJECTS`, `AGENTOS_CLAIM_TIMEOUT_S`), else from built-in defaults. After that
-they are ignored: the server logs a warning at startup for each one still set, naming the
-Settings tab that replaced it. Remove them once the warnings appear.
+**Upgrading from an older version:** each settings area with nothing in the database yet is
+seeded once, on the first start that knows it, from what configured it before: an
+`agentos.toml` if one is found (`AGENTOS_CONFIG`, default `./agentos.toml`: `[space]` name and
+default_repo, `[[repos]]`, `[[intake.queries]]`, `[runtimes.*]` with `default_runtime` first)
+and the env vars that moved into the app (`AGENTOS_KEY_PREFIX`, `AGENTOS_JIRA_PROJECTS`,
+`AGENTOS_CLAIM_TIMEOUT_S`; `AGENTOS_GITHUB_REPO`, `_WORKFLOW`, `_REF`), else from built-in
+defaults. After that they are ignored: the server logs a warning at startup for each one still
+set (naming the Settings tab that replaced it) and for an `agentos.toml` still present. Delete
+them once the warnings appear. The image no longer reads `/config/agentos.toml`; an instance
+whose runtimes were customised there gets the built-in `claude` + `copilot` instead, so check
+Settings › Runners after the upgrade.
 
 ## Upgrade
 
@@ -105,19 +116,20 @@ workers inside the container, which has no agent CLIs. For each run, the server 
 workflow `github/agentos-worker.yml`. The runner downloads `GET /api/worker/worker.py` from the
 server and runs it, and the worker dials back to `AGENTOS_WORKER_URL`.
 
-**Settings** (in `.env.container`):
+**Env** (in `.env.container`):
 
 ```
 AGENTOS_LAUNCHER=github
-AGENTOS_GITHUB_REPO=DiwashRai/AgentOS        # the repo whose Actions run the workflow
-AGENTOS_GITHUB_WORKFLOW=agentos-worker.yml   # default
-AGENTOS_GITHUB_REF=main                      # the branch the workflow file is on; default main
 AGENTOS_GITHUB_TOKEN=github_pat_...          # secret
 # AGENTOS_GITHUB_API_URL=https://ghe.example.com/api/v3   # GHES only; default api.github.com
 AGENTOS_WORKER_URL=http://<reachable from the runner>:8080
 ```
 
 (`--env-file` takes no inline comments; they're only here to explain each line.)
+
+**In the app** (Settings › Runners): the repo whose Actions run the workflow (`owner/name`, e.g.
+`DiwashRai/AgentOS`), the workflow file (default `agentos-worker.yml`) and the ref the workflow
+file is on (default `main`). They're read at every launch, so a change applies to the next run.
 
 **Token:** use a fine-grained PAT that covers only the one repository, with the repository
 permission **Actions: Read and write** (dispatching needs write; Metadata: read is added
@@ -130,7 +142,7 @@ default branch. In this repo the copy already exists, and a backend test keeps i
 to the template.
 
 **Runner checklist** (for the user the runner service runs as):
-- [ ] Self-hosted runner registered on `AGENTOS_GITHUB_REPO` with the label `agentos`
+- [ ] Self-hosted runner registered on the Runners repo with the label `agentos`
       (the job uses `runs-on: [self-hosted, agentos]`), running as a service.
 - [ ] `python3` >= 3.11, `curl`, `git` and `gh` installed. The job checks for these first.
 - [ ] The agent CLIs your runtimes use (e.g. `claude`), logged in.

@@ -140,12 +140,12 @@ class AppConfig(ApiModel):
     default_repo: str | None
     runtimes: list[str]
     # The effective Space defaults for an agent stage whose `runtime` / `model` is null (what a
-    # dispatch resolves to now): the template's `defaults`, else the server config's
-    # `default_runtime` / no model (the runtime CLI's own default; no `--model` is passed).
+    # dispatch resolves to now): the template's `defaults`, else the server default runtime
+    # (`server_default_runtime`) / no model (the runtime CLI's own default; no `--model` is passed).
     default_runtime: str
     default_model: str | None
-    # The server config's `default_runtime`: what `default_runtime` falls back to when the
-    # template sets no Space runtime (whatever the template says).
+    # The server default runtime (the first in Settings > Runners): what `default_runtime` falls
+    # back to when the template sets no Space runtime (whatever the template says).
     server_default_runtime: str
     # Where tickets can be imported from (POST /api/tickets/import): ["jira"] when the Jira URL and
     # service account are configured, else [].
@@ -213,7 +213,7 @@ class Stage(ApiModel):
     gate_after: bool = False
     requires_repo: bool = False
     prompt: str = Field(default="", max_length=65536)
-    # null = the Space default (`Template.defaults`, then the server config), resolved when the
+    # null = the Space default (`Template.defaults`, then the server default), resolved when the
     # run's manifest is built, so changing the Space default reaches every stage that leaves these
     # null.
     runtime: str | None = None
@@ -230,8 +230,9 @@ class Pipeline(ApiModel):
 
 class TemplateDefaults(ApiModel):
     """The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's
-    own `runtime` / `model` wins; unset here → the server config's `default_runtime` / no model.
-    `runtime` must be a configured runtime (422 `validation_error`)."""
+    own `runtime` / `model` wins; unset here → the server default runtime (the first in
+    Settings > Runners) / no model. `runtime` must be a configured runtime (422
+    `validation_error`)."""
 
     runtime: str | None = None
     model: str | None = Field(default=None, pattern=MODEL_PATTERN)
@@ -642,6 +643,85 @@ class IntakeSettingsUpdate(ApiModel):
 
     queries: list[IntakeQueryIn] = Field(max_length=MAX_INTAKE_QUERIES)
     base_version: int
+
+
+RUNTIME_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,31}$"
+MAX_RUNTIMES = 20
+MAX_RUNTIME_ARGS = 50
+RUNTIME_ARG_MAX = 1000
+# GitHub's `owner/name`, and a workflow file name under .github/workflows/.
+GITHUB_REPO_PATTERN = r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+GITHUB_WORKFLOW_PATTERN = r"^[A-Za-z0-9_.-]+\.ya?ml$"
+GIT_REF_MAX = 255
+
+RuntimeArgs = Annotated[
+    list[Annotated[str, Field(max_length=RUNTIME_ARG_MAX)]], Field(max_length=MAX_RUNTIME_ARGS)
+]
+
+
+class RuntimeEntry(ApiModel):
+    """One agent runtime: how a stage's argv is built (SPEC §7). `argv`, then `model_args` when a
+    model resolves, `agent_args` when the stage names an agent, then `prompt_args` when
+    `prompt_via` is "arg" (else the prompt is the stdin). The placeholders `{model}`, `{agent}`
+    and `{prompt}` replace whole elements; no shell is involved. `prompt_via: "arg"` needs
+    `prompt_args` containing "{prompt}"; "stdin" takes no `prompt_args`."""
+
+    name: str = Field(pattern=RUNTIME_NAME_PATTERN)
+    argv: RuntimeArgs = Field(min_length=1)
+    model_args: RuntimeArgs
+    agent_args: RuntimeArgs
+    prompt_via: Literal["stdin", "arg"]
+    prompt_args: RuntimeArgs
+
+
+class RuntimeSettings(ApiModel):
+    """Settings > Runners (runtimes). The first runtime is the server default: what an agent stage
+    runs on when neither it nor the template's `defaults` names one."""
+
+    runtimes: list[RuntimeEntry]
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class RuntimeSettingsUpdate(ApiModel):
+    """PUT /api/settings/runtimes: the whole list, in order (the first = the server default).
+    Names are unique. Removing a runtime the current template's `defaults` or stages use → 409
+    `in_use` (a ticket's own stage pinned to it fails when dispatched)."""
+
+    runtimes: list[RuntimeEntry] = Field(min_length=1, max_length=MAX_RUNTIMES)
+    base_version: int
+
+
+class RunnerSettings(ApiModel):
+    """Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow. Read at
+    every launch (no restart). `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN
+    is set) come from the server's env and are read-only. `github_repo` null = none set: with the
+    github launcher, runs then fail at launch saying so."""
+
+    launcher: Literal["local", "github"]
+    github_repo: str | None
+    workflow: str
+    ref: str
+    token_set: bool
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class RunnerSettingsUpdate(ApiModel):
+    """PUT /api/settings/runner. `github_repo`: `owner/name` or null; `workflow`: a .yml file name
+    in that repo's .github/workflows/; `ref`: the branch or tag the workflow file is on."""
+
+    github_repo: str | None = Field(pattern=GITHUB_REPO_PATTERN, max_length=200)
+    workflow: str = Field(pattern=GITHUB_WORKFLOW_PATTERN, max_length=200)
+    ref: str = Field(min_length=1, max_length=GIT_REF_MAX)
+    base_version: int
+
+    @field_validator("ref")
+    @classmethod
+    def _ref(cls, value: str) -> str:
+        return _stripped(value)
 
 
 class IntakePreviewRequest(ApiModel):

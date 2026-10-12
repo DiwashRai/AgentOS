@@ -155,7 +155,7 @@ def test_a_repo_that_left_the_catalog_fails_the_run_at_claim(
 ) -> None:
     run = runs.queue(ticket.key)
     runs.tick()
-    with ctx.db.tx() as conn:  # as if agentos.toml lost the repo between dispatch and claim
+    with ctx.db.tx() as conn:  # as if the catalog lost the repo between dispatch and claim
         conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (ticket.key,))
     assert error(runs.claim(run.id)) == (410, "run_gone")
     detail = runs.get(run.id)

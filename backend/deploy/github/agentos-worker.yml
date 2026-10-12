@@ -5,7 +5,7 @@
 # worker claims the run, clones the ticket's repo itself, runs the stages and pushes the branch.
 #
 # Install: this file must be on the DEFAULT branch of the repo AgentOS dispatches to
-# (AGENTOS_GITHUB_REPO), at .github/workflows/agentos-worker.yml (GitHub only accepts
+# (Settings > Runners), at .github/workflows/agentos-worker.yml (GitHub only accepts
 # workflow_dispatch for workflows it knows from the default branch). The template lives in
 # backend/deploy/github/; a backend test keeps the two copies byte-identical.
 #
@@ -16,7 +16,7 @@
 # repo, expiring with the job): `gh` reads it as GH_TOKEN, and git uses it through gh's credential
 # helper, configured for this job only (GIT_CONFIG_* env, nothing written to ~/.gitconfig). Agents
 # run with a shell, so any credential on the runner is theirs too: don't log the runner's user in
-# to gh or give it an SSH key; keep the ticket repos' URLs https (agentos.toml [[repos]]).
+# to gh or give it an SSH key; keep the ticket repos' URLs https (Settings > Space).
 # Caveat: PRs opened with GITHUB_TOKEN don't trigger other workflows (e.g. CI); switch to a
 # GitHub App or fine-grained token in a repo secret when that matters. No actions/checkout: the
 # worker clones the ticket's repo itself.

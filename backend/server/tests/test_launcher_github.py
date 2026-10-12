@@ -6,13 +6,20 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from agentos.launchers.github import GitHubActionsLauncher, LaunchError, web_url
+from agentos.launchers.github import (
+    NO_REPO,
+    GitHubActionsLauncher,
+    GitHubTarget,
+    LaunchError,
+    web_url,
+)
 
 GH_TOKEN = "github_pat_SECRET123"  # noqa: S105 - test value
 DISPATCH_TOKEN = "dispatch-SECRET-456"  # noqa: S105 - test value
@@ -27,13 +34,14 @@ INSTALLED = BACKEND.parent / ".github" / "workflows" / "agentos-worker.yml"
 Handler = Callable[[httpx.Request], httpx.Response]
 
 
+TARGET = GitHubTarget(repo="DiwashRai/AgentOS", workflow="agentos-worker.yml", ref="main")
+
+
 def _launcher(handler: Handler, **kw: Any) -> GitHubActionsLauncher:
-    args: dict[str, Any] = {
-        "repo": "DiwashRai/AgentOS",
-        "workflow": "agentos-worker.yml",
-        "ref": "main",
-        "token": GH_TOKEN,
-    }
+    """`repo`/`workflow`/`ref` in `kw` change the target; the rest are constructor arguments."""
+    fields = {k: kw.pop(k) for k in ("repo", "workflow", "ref") if k in kw}
+    target = replace(TARGET, **fields)
+    args: dict[str, Any] = {"target": lambda: target, "token": GH_TOKEN}
     args.update(kw)
     return GitHubActionsLauncher(**args, transport=httpx.MockTransport(handler))
 
@@ -215,11 +223,6 @@ def test_timeout_is_a_launch_error() -> None:
 @pytest.mark.parametrize(
     ("kw", "match"),
     [
-        ({"repo": "AgentOS"}, "owner/name"),
-        ({"repo": "a/b/c"}, "owner/name"),
-        ({"workflow": "../x.yml"}, ".yml file name"),
-        ({"workflow": "agentos-worker"}, ".yml file name"),
-        ({"ref": " "}, "ref"),
         ({"token": ""}, "token is required"),
         ({"api_url": "api.github.com"}, "http"),
         ({"api_version": "latest"}, "YYYY-MM-DD"),
@@ -228,6 +231,46 @@ def test_timeout_is_a_launch_error() -> None:
 def test_constructor_rejects_bad_config(kw: dict[str, Any], match: str) -> None:
     with pytest.raises(ValueError, match=match):
         _launcher(lambda _req: httpx.Response(204), **kw)
+
+
+@pytest.mark.parametrize(
+    ("kw", "match"),
+    [
+        ({"repo": None}, NO_REPO),
+        ({"repo": "AgentOS"}, "owner/name"),
+        ({"repo": "a/b/c"}, "owner/name"),
+        ({"workflow": "../x.yml"}, ".yml file name"),
+        ({"workflow": "agentos-worker"}, ".yml file name"),
+        ({"ref": " "}, "ref"),
+    ],
+)
+def test_a_bad_target_fails_the_launch_without_calling_github(
+    kw: dict[str, Any], match: str
+) -> None:
+    handler, seen = _recording(httpx.Response(204))
+    with pytest.raises(LaunchError, match=re.escape(match)):
+        _launcher(handler, **kw).launch(1, SERVER, DISPATCH_TOKEN)
+    assert seen == []
+
+
+def test_the_target_is_read_at_every_launch() -> None:
+    """Settings > Runners is edited in the app: the next launch uses the new repo/workflow/ref."""
+    handler, seen = _recording(httpx.Response(204))
+    current = [TARGET]
+    launcher = GitHubActionsLauncher(
+        target=lambda: current[0], token=GH_TOKEN, transport=httpx.MockTransport(handler)
+    )
+    assert launcher.launch(1, SERVER, DISPATCH_TOKEN) == RUNS_PAGE
+    current[0] = GitHubTarget(repo="o/other", workflow="w.yaml", ref="release")
+    assert launcher.launch(2, SERVER, DISPATCH_TOKEN) == (
+        "https://github.com/o/other/actions/workflows/w.yaml"
+    )
+    assert [str(r.url) for r in seen] == [
+        "https://api.github.com/repos/DiwashRai/AgentOS/actions/workflows/agentos-worker.yml/"
+        "dispatches",
+        "https://api.github.com/repos/o/other/actions/workflows/w.yaml/dispatches",
+    ]
+    assert json.loads(seen[1].content)["ref"] == "release"
 
 
 def test_token_is_not_in_the_repr_or_attributes() -> None:

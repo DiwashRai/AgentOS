@@ -1,5 +1,6 @@
-"""Settings > Space, Repos and Intake: read and save each area's document (SPEC "Settings in the
-app"). Storage and the cached read side every feature uses live in `agentos.space_store`.
+"""Settings > Space, Repos, Intake, Runtimes and Runner: read and save each area's document (SPEC
+"Settings in the app"). Storage and the cached read side every feature uses live in
+`agentos.space_store`.
 
 Every save: validate (422 `validation_error` with the field path), then in one transaction check
 `base_version` (409 `stale_version`) and the cross-area rules, write version+1, and after the
@@ -9,7 +10,7 @@ commit drop the SpaceStore cache so the change applies at once.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -23,10 +24,16 @@ from agentos.models import (
     RepoEntry,
     RepoSettings,
     RepoSettingsUpdate,
+    RunnerSettings,
+    RunnerSettingsUpdate,
+    RuntimeEntry,
+    RuntimeSettings,
+    RuntimeSettingsUpdate,
     SpaceSettings,
     SpaceSettingsUpdate,
 )
-from agentos.pipeline.space import RepoSpec, SpaceSection, query_id
+from agentos.pipeline.runtime import NamedRuntime
+from agentos.pipeline.space import RepoSpec, RunnerSection, SpaceSection, query_id
 from agentos.sources.jira import JiraSearch
 from agentos.space_store import (
     Area,
@@ -35,13 +42,24 @@ from agentos.space_store import (
     queries_of,
     read_area,
     repos_of,
+    runner_of,
+    runner_value,
+    runtime_entries_of,
+    runtimes_value,
     section_of,
     write_area,
 )
+from agentos.templates.service import current as current_template
 from agentos.ttlcache import TtlCache
 
 _M = TypeVar("_M", bound=BaseModel)
-_LABELS: dict[Area, str] = {"space": "Space settings", "repos": "repos", "intake": "intake queries"}
+_LABELS: dict[Area, str] = {
+    "space": "Space settings",
+    "repos": "repos",
+    "intake": "intake queries",
+    "runtimes": "runtimes",
+    "runner": "runner settings",
+}
 
 
 # ------------------------------------------------------------------ space
@@ -223,6 +241,127 @@ def put_intake(
 def _intake_settings(row: AreaRow) -> IntakeSettings:
     return IntakeSettings(
         queries=list(queries_of(row)),
+        version=row.version,
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )
+
+
+# ------------------------------------------------------------------ runtimes
+
+
+def get_runtimes(db: Database) -> RuntimeSettings:
+    with db.read() as conn:
+        return _runtime_settings(_row(conn, "runtimes"))
+
+
+def put_runtimes(
+    db: Database, store: SpaceStore, actor: Me, body: RuntimeSettingsUpdate
+) -> RuntimeSettings:
+    """Replace the runtimes (in order: the first is the server default). A name missing from the
+    body is a removal: 409 `in_use` while the current template's `defaults` or stages use it."""
+    entries: list[NamedRuntime] = []
+    for i, entry in enumerate(body.runtimes):
+        named = _validated(NamedRuntime, entry.model_dump(), f"runtimes.{i}")
+        if any(e.name == named.name for e in entries):
+            raise ApiError(
+                422, "validation_error", f"runtimes.{i}.name: {named.name!r} is listed twice"
+            )
+        entries.append(named)
+    with db.tx() as conn:
+        row = _current(conn, "runtimes", body.base_version)
+        kept = {e.name for e in entries}
+        removed = [e.name for e in runtime_entries_of(row) if e.name not in kept]
+        if removed:
+            _check_runtimes_unused(conn, removed)
+        write_area(
+            conn, "runtimes", runtimes_value(entries), version=row.version + 1, actor_id=actor.id
+        )
+        result = _runtime_settings(_row(conn, "runtimes"))
+    store.invalidate()
+    return result
+
+
+def _check_runtimes_unused(conn: Conn, removed: list[str]) -> None:
+    """409 `in_use` naming each removed runtime the current template still uses (its `defaults`
+    or any agent stage). Tickets' own pipelines aren't checked: a stage pinned to a removed
+    runtime fails its dispatch (422 `invalid_stage`) until the ticket's pipeline is edited."""
+    template = current_template(conn).template
+    problems: list[str] = []
+    for name in removed:
+        uses: list[str] = []
+        if template.defaults.runtime == name:
+            uses.append("it is the template's default runtime")
+        n = sum(1 for s in template.pipeline.stages if s.kind == "agent" and s.runtime == name)
+        if n:
+            uses.append(f"{n} template stage{'s' if n != 1 else ''} use{'s' if n == 1 else ''} it")
+        if uses:
+            problems.append(f"{name!r} ({' and '.join(uses)})")
+    if problems:
+        raise ApiError(409, "in_use", f"Can't remove {'; '.join(problems)}")
+
+
+def _runtime_settings(row: AreaRow) -> RuntimeSettings:
+    return RuntimeSettings(
+        runtimes=[
+            RuntimeEntry(
+                name=e.name,
+                argv=e.argv,
+                model_args=e.model_args,
+                agent_args=e.agent_args,
+                prompt_via=e.prompt_via,
+                prompt_args=e.prompt_args,
+            )
+            for e in runtime_entries_of(row)
+        ],
+        version=row.version,
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )
+
+
+# ------------------------------------------------------------------ runner
+
+
+def get_runner(
+    db: Database, *, launcher: Literal["local", "github"], token_set: bool
+) -> RunnerSettings:
+    """`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from env."""
+    with db.read() as conn:
+        return _runner_settings(_row(conn, "runner"), launcher=launcher, token_set=token_set)
+
+
+def put_runner(
+    db: Database,
+    store: SpaceStore,
+    actor: Me,
+    body: RunnerSettingsUpdate,
+    *,
+    launcher: Literal["local", "github"],
+    token_set: bool,
+) -> RunnerSettings:
+    """Replace where runs are dispatched. The github launcher reads it at its next launch."""
+    section = _validated(RunnerSection, body.model_dump(exclude={"base_version"}))
+    with db.tx() as conn:
+        row = _current(conn, "runner", body.base_version)
+        write_area(
+            conn, "runner", runner_value(section), version=row.version + 1, actor_id=actor.id
+        )
+        result = _runner_settings(_row(conn, "runner"), launcher=launcher, token_set=token_set)
+    store.invalidate()
+    return result
+
+
+def _runner_settings(
+    row: AreaRow, *, launcher: Literal["local", "github"], token_set: bool
+) -> RunnerSettings:
+    runner = runner_of(row)
+    return RunnerSettings(
+        launcher=launcher,
+        github_repo=runner.github_repo,
+        workflow=runner.workflow,
+        ref=runner.ref,
+        token_set=token_set,
         version=row.version,
         updated_at=row.updated_at,
         updated_by=row.updated_by,

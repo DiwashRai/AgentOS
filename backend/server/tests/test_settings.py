@@ -605,8 +605,7 @@ def test_the_seed_is_idempotent_and_later_sources_are_ignored_with_warnings(
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     for name in SEED_ENV:
         assert any(f"{name} is ignored: edit it in Settings > Space" in w for w in warnings), name
-    for table in ("[space]", "[[repos]]", "[[intake.queries]]"):
-        assert any(f"agentos.toml {table} is ignored" in w for w in warnings), table
+    assert any(f"{seed_toml} is ignored" in w for w in warnings), warnings
 
 
 def test_the_first_start_says_which_vars_seeded(
