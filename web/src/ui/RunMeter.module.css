@@ -47,8 +47,9 @@
     opacity: 0.9;
   }
 }
+/* finished: green progress (refresh: --progress for bars and ticks) */
 .rm.isFinished .seg {
-  background: var(--done);
+  background: var(--progress);
 }
 .rm.isFinished .seg::after {
   display: none;
@@ -91,12 +92,10 @@
   flex: none;
   width: 100%;
 }
+/* the step's caption ("Now", "Next", "Step 3"): sentence case (refresh) */
 .strip > li > .k {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: 11.5px;
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   line-height: 1.25;
   color: var(--ink-3);
 }

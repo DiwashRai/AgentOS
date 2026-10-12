@@ -1,5 +1,6 @@
 import { cx } from "./cx";
 import s from "./StatusMark.module.css";
+import { TickBadge } from "./TickBadge";
 
 export type MarkKind = "run" | "wait" | "you" | "blk" | "done" | "abandoned" | "queued" | "idle";
 
@@ -17,23 +18,30 @@ export const MARK_WORD: Record<MarkKind, string> = {
 
 export interface StatusMarkProps {
   kind: MarkKind;
-  /** Mono caps label ("Builder · run #42", "Sam", "Blocked"). Ignored for `you`, which always shows the YOU pill. */
+  /** Sentence-case label in the mark's colour ("Builder · run #42", "Sam", "Blocked"). Ignored for
+   *  `you`, which always shows the YOU pill. */
   name?: string | undefined;
-  /** Mono caps tail in the mark's colour: "· sign off the plan". */
+  /** The ask: after the YOU pill in 600 `--you-text` ("Plan sign-off"); after a name, "· ask". */
   ask?: string | undefined;
-  /** Plain 12px text after the label. */
+  /** Plain 12.5px `--ink-2` text after the label. */
   text?: string | undefined;
   /** The glyph alone (status columns, counters, legends). */
   glyphOnly?: boolean | undefined;
-  /** Glyph size: 8 (default) or 7 (counters, pills, group heads). */
+  /** Glyph size: 8 (default) or 7, the small mark of counters, pills and group heads (the refresh's
+   *  6px status dot; the Inbox ring is 7px). */
   size?: 7 | 8 | undefined;
   title?: string | undefined;
   className?: string | undefined;
 }
 
-/** The YOU pill: the only YOU form. */
+/** The YOU pill: the only YOU form, and the only mono caps in the product. */
 export function YouPill({ className }: { className?: string | undefined }) {
   return <b className={cx(s.youPill, className)}>YOU</b>;
+}
+
+function Glyph({ kind, label }: { kind: MarkKind; label?: string | undefined }) {
+  if (kind === "done") return <TickBadge size={12} label={label} className={s.tick} />;
+  return label ? <i role="img" aria-label={label} /> : <i aria-hidden="true" />;
 }
 
 export function StatusMark({
@@ -50,19 +58,20 @@ export function StatusMark({
   if (glyphOnly) {
     const label = title ?? name ?? MARK_WORD[kind];
     return (
-      <span className={cls} role="img" aria-label={label} title={title}>
-        <i />
+      <span className={cls} title={title}>
+        <Glyph kind={kind} label={label} />
       </span>
     );
   }
-  const label = kind === "you" ? <b className={s.youPill}>YOU</b> : name ? <b>{name}</b> : null;
+  const label = kind === "you" ? <YouPill /> : name ? <b>{name}</b> : null;
   return (
     <span className={cls} title={title}>
-      <i aria-hidden="true" />
+      {/* The YOU pill stands alone (refresh: no dot beside it). */}
+      {kind === "you" ? null : <Glyph kind={kind} />}
       {label}
       {ask ? (
         <span className={s.ask}>
-          {kind === "you" || name ? "· " : ""}
+          {kind !== "you" && name ? "· " : ""}
           {ask}
         </span>
       ) : null}

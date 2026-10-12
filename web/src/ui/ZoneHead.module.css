@@ -1,9 +1,11 @@
-/* Zone header (DESIGN §13.9). Ported from kit.css `.ao-zh`. */
+/* Zone head (refresh mock §4.2 `.zone-head`): 24px, title 15/600, count pill, 12px note, hairline,
+   right slot. Needs you in --you-text, Done in --done. No caps. */
 .zh {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  min-width: 0;
 }
 .zh > h2 {
   margin: 0;
@@ -14,11 +16,11 @@
   letter-spacing: -0.005em;
   white-space: nowrap;
 }
-.count {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
+.you > h2 {
+  color: var(--you-text);
+}
+.done > h2 {
+  color: var(--done);
 }
 .note {
   color: var(--ink-3);
@@ -32,19 +34,24 @@
   flex: 1;
   height: 1px;
   background: var(--rule);
-  align-self: center;
-  margin: 0 4px;
   min-width: 16px;
 }
 .right {
   display: flex;
   align-items: center;
   gap: 14px;
-  align-self: center;
-  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  white-space: nowrap;
 }
-/* the optional leading mark sits on the centre line (kit: `.ao-zh>.ao-mk`) */
+.right b {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.done .right b {
+  color: var(--done);
+}
+/* the optional leading mark */
 .mark {
   display: inline-flex;
-  align-self: center;
 }

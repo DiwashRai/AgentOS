@@ -16,7 +16,7 @@ describe("ticketActions", () => {
   describe("needs you", () => {
     it("parked at a gate with a stage after it: Approve, with Request changes", () => {
       const row = ticketActions(parkedOnYou, "row");
-      expect(shape(row)).toEqual(["request_changes:default", "approve:ink"]);
+      expect(shape(row)).toEqual(["request_changes:default", "approve:you"]);
       expect(row.primary?.label).toBe("Approve");
       expect(row.primary?.title).toBe("Plan sign-off");
     });
@@ -25,7 +25,7 @@ describe("ticketActions", () => {
       expect(shape(ticketActions(parkedOnYou, "header"))).toEqual([
         "abandon:quiet",
         "request_changes:default",
-        "approve:ink",
+        "approve:you",
       ]);
     });
 
@@ -42,8 +42,8 @@ describe("ticketActions", () => {
         rail: [step("Plan", "done", { gate: gate("you") }), step("Build", "skipped")],
       });
       const s = ticketActions(t, "row");
-      expect(s.primary).toMatchObject({ id: "complete", label: "Complete", variant: "ink" });
-      expect(shape(s)).toEqual(["abandon:quiet", "request_changes:default", "complete:ink"]);
+      expect(s.primary).toMatchObject({ id: "complete", label: "Complete", variant: "you" });
+      expect(shape(s)).toEqual(["abandon:quiet", "request_changes:default", "complete:you"]);
     });
 
     it("an upcoming (stale) stage after the gate still counts", () => {
@@ -68,8 +68,8 @@ describe("ticketActions", () => {
         latest_run: run("succeeded"),
         rail: [step("Plan", "done"), step("Build", "done")],
       });
-      expect(shape(ticketActions(t, "row"))).toEqual(["abandon:quiet", "complete:ink"]);
-      expect(shape(ticketActions(t, "header"))).toEqual(["abandon:quiet", "complete:ink"]);
+      expect(shape(ticketActions(t, "row"))).toEqual(["abandon:quiet", "complete:you"]);
+      expect(shape(ticketActions(t, "header"))).toEqual(["abandon:quiet", "complete:you"]);
     });
 
     it("reads only a gate on you, not passed or pending ones", () => {
@@ -179,7 +179,7 @@ describe("ticketActions", () => {
     }
   });
 
-  it("puts the accent only on Dispatch run, only in the header, at most one ink", () => {
+  it("puts the accent only on Dispatch run (header), you only on Approve / Complete, one strong button", () => {
     const tickets = [
       parkedOnYou,
       ticket({ attention: "needs_you" }),
@@ -198,8 +198,13 @@ describe("ticketActions", () => {
         for (const a of all.filter((x) => x.variant === "accent")) {
           expect([a.id, ctx]).toEqual(["dispatch", "header"]);
         }
-        expect(all.filter((a) => a.variant === "ink").length).toBeLessThanOrEqual(1);
-        expect(ticketActions(t, ctx).secondary.some((a) => a.variant === "ink")).toBe(false);
+        for (const a of all.filter((x) => x.variant === "you")) {
+          expect(["approve", "complete"]).toContain(a.id);
+        }
+        const strong = (x: { variant: string }) =>
+          x.variant === "ink" || x.variant === "you" || x.variant === "accent";
+        expect(all.filter(strong).length).toBeLessThanOrEqual(1);
+        expect(ticketActions(t, ctx).secondary.some(strong)).toBe(false);
       }
     }
   });

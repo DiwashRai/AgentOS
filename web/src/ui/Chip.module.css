@@ -1,4 +1,5 @@
-/* Context chip (DESIGN §13.9). Ported from kit.css `.ao-chip`. */
+/* Context chip (DESIGN §13.9). Ported from kit.css `.ao-chip`; chips keep --r-btn-sm and the 2px
+   lift (refresh). */
 .chip {
   box-sizing: border-box;
   display: inline-flex;
@@ -6,7 +7,7 @@
   gap: 6px;
   height: 24px;
   padding: 0 9px;
-  border-radius: 7px;
+  border-radius: var(--r-btn-sm);
   background: var(--field);
   border: 1px solid var(--rule-soft);
   color: var(--ink-2);
@@ -33,12 +34,11 @@
   background: transparent;
   color: var(--ink-3);
 }
+/* the file kind: data, so mono without caps (refresh) */
 .k {
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   line-height: 1.25;
   color: var(--ink-3);
 }

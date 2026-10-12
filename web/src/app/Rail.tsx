@@ -1,11 +1,11 @@
-// The left rail (DESIGN §4, kit.js Kit.rail). Order: logo · All teams · My queue · Compact · Intake · spacer
-// · Theme · Settings · avatar. Sources is omitted (no sources yet). Labels are native titles plus
-// aria-label; nothing is revealed on hover.
+// The left rail (DESIGN §4, kit.js Kit.rail; the refresh's dark brand rail in both themes). Order:
+// logo · All teams · My queue · Compact · Intake · spacer · Theme · Settings · avatar. Sources is
+// omitted (no sources yet). Labels are native titles plus aria-label; nothing is revealed on hover.
 import type { ReactNode } from "react";
 import { NavLink } from "react-router";
 
-import { avatarTone, initials } from "../domain/format";
-import { CompactIcon, IntakeIcon, LogoIcon, QueueIcon, SettingsIcon, TeamsIcon } from "./icons";
+import { Avatar } from "../ui";
+import { CompactIcon, IntakeIcon, QueueIcon, SettingsIcon, TeamsIcon } from "./icons";
 import s from "./Rail.module.css";
 import { ThemeMenu } from "./ThemeMenu";
 import { useBoard } from "./useBoard";
@@ -36,8 +36,9 @@ export function Rail() {
   const { me, counts } = useBoard();
   return (
     <nav className={s.rail} aria-label="Views">
+      {/* The logo: the accent's one other place (refresh: accent = Dispatch run and the logo). */}
       <div className={s.logo} aria-hidden="true">
-        <LogoIcon />
+        <i />
       </div>
       <RailLink to="/teams" label="All teams">
         <TeamsIcon />
@@ -58,9 +59,13 @@ export function Rail() {
         <SettingsIcon />
       </RailLink>
       {me && (
-        <span className={s.avatar} data-av={avatarTone(me.id)} title={me.display_name}>
-          {initials(me.display_name)}
-        </span>
+        <Avatar
+          className={s.avatar}
+          name={me.display_name}
+          id={me.id}
+          size={30}
+          palette="identity"
+        />
       )}
     </nav>
   );

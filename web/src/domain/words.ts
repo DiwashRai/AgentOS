@@ -1,5 +1,6 @@
 // One vocabulary for every view (DESIGN §16). Never "Needs me", never "Stuck".
-// Mono caps labels are uppercased by CSS; these stay in sentence case.
+// Everything renders in sentence case as written (visual refresh: no mono caps anywhere but the
+// YOU pill), so these strings are exactly what the screen shows.
 import type { Schemas } from "../api/client";
 import type { Attention, StatusKind } from "./status";
 

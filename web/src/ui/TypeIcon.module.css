@@ -1,0 +1,40 @@
+/* Type square (refresh mock §4.8 `.type-icon`). */
+.wrap {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.icon {
+  display: block;
+  flex: none;
+}
+.labelled {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.feature > rect {
+  fill: var(--t-feature);
+}
+.bug > rect {
+  fill: var(--t-bug);
+}
+.improvement > rect {
+  fill: var(--t-improvement);
+}
+.task > rect {
+  fill: var(--t-task);
+}
+.fill {
+  fill: var(--t-glyph);
+}
+.stroke {
+  fill: none;
+  stroke: var(--t-glyph);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

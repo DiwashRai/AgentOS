@@ -2,24 +2,31 @@
 // The token selectors are plain attribute selectors, so each `data-theme` subtree themes itself.
 // Data here is hand-written fixtures, not server data.
 import { useState } from "react";
-import type { GlyphGate, GateState } from "../domain/stage";
-import { Avatar } from "./Avatar";
-import { Button, IconButton } from "./Button";
+import type { GlyphGate, GateState, StepState } from "../domain/stage";
+import { Avatar, AvatarSlot } from "./Avatar";
+import { Button, IconButton, litRowClass } from "./Button";
 import { Chip } from "./Chip";
+import { CountPill } from "./CountPill";
+import { cx } from "./cx";
+import { EmptyRow } from "./EmptyRow";
 import { Faces } from "./Faces";
 import type { StepperModel } from "./glyph";
 import { GroupHead } from "./GroupHead";
 import { ChevronIcon, CloseIcon } from "./icons";
 import { Kbd } from "./Kbd";
+import { KeyChip } from "./KeyChip";
 import s from "./KitSheet.module.css";
 import { Link, LinkButton } from "./Link";
 import { RunMeter } from "./RunMeter";
 import type { MeterState } from "./meter";
+import { PriorityIcon } from "./PriorityIcon";
 import { StageGlyph } from "./StageGlyph";
 import { StatusMark } from "./StatusMark";
 import { Stepper } from "./Stepper";
 import { Tabs } from "./Tabs";
 import { Tag } from "./Tag";
+import { TickBadge } from "./TickBadge";
+import { TypeIcon } from "./TypeIcon";
 import { ZoneHead } from "./ZoneHead";
 
 const gate = (label: string, short: string, state: GateState, person?: string): GlyphGate => ({
@@ -159,6 +166,66 @@ const CASES: { title: string; model: StepperModel }[] = [
   },
 ];
 
+/** The refresh mock's pipeline: Inbox · Plan ◆ Sign-off · Implement · Lint · Review · Open PR · Done. */
+function mockPipe(states: StepState[], signOff: GateState, live = false): StepperModel {
+  const names = ["Inbox", "Plan", "Implement", "Lint", "Review", "Open PR", "Done"];
+  const stages = names.map((name, i) => ({
+    name,
+    state: states[i] ?? "upcoming",
+    gate: i === 1 ? gate("Plan sign-off", "Sign-off", signOff) : undefined,
+  }));
+  const current = stages.find((st) => st.state === "current" || st.state === "failed");
+  return {
+    live,
+    label: signOff === "you" || signOff === "waiting" ? "Sign-off" : (current?.name ?? ""),
+    stages,
+  };
+}
+
+/** Row-glyph cases: every label should start 90px into its cell (the dashed line is the cell edge). */
+const ROW_GLYPHS: { title: string; model: StepperModel }[] = [
+  {
+    title: "Parked on you (AOS-14)",
+    model: mockPipe(["done", "done", "upcoming", "skipped"], "you"),
+  },
+  { title: "Inbox", model: mockPipe(["current"], "pending") },
+  {
+    title: "Running",
+    model: mockPipe(["done", "done", "current", "skipped"], "passed", true),
+  },
+  {
+    title: "Blocked",
+    model: mockPipe(["done", "done", "failed", "skipped"], "passed"),
+  },
+  {
+    title: "Done",
+    model: mockPipe(["done", "done", "done", "skipped", "done", "done", "current"], "passed"),
+  },
+  {
+    title: "Long pipeline (auto xs)",
+    model: {
+      live: false,
+      label: "Fuzz",
+      stages: [
+        "Inbox",
+        "Plan",
+        "Spec",
+        "Build",
+        "Fuzz",
+        "Lint",
+        "Test",
+        "Review",
+        "Open PR",
+        "Done",
+      ].map((name, i): StepperModel["stages"][number] => ({
+        name,
+        state: i < 4 ? "done" : i === 4 ? "current" : "upcoming",
+        gate: i === 1 ? gate("Plan sign-off", "Sign-off", "passed") : undefined,
+      })),
+    },
+  },
+];
+
 const STEPS = [
   "Check out branch",
   "Implement change",
@@ -216,8 +283,21 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
       </section>
 
       <section className={s.section} aria-labelledby={id("glyph")}>
-        <ZoneHead id={id("glyph")} title="Stage glyph" note="xs · sm · lg · no label" />
+        <ZoneHead id={id("glyph")} title="Stage glyph" note="81px slot · label at 90px" />
         <div className={s.card}>
+          <div className={s.glyphs}>
+            {ROW_GLYPHS.map((c) => (
+              <div key={c.title} className={s.glyphRow}>
+                <span className={s.cap}>{c.title}</span>
+                <span className={s.slotCell}>
+                  <StageGlyph model={c.model} />
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={s.card}>
+          <span className={s.cap}>xs · sm · lg · no label</span>
           <div className={s.glyphs}>
             {CASES.map((c) => (
               <GlyphRow key={c.title} title={c.title} model={c.model} />
@@ -229,6 +309,12 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
       <section className={s.section} aria-labelledby={id("stepper")}>
         <ZoneHead id={id("stepper")} title="Stepper" note="full, then compact (peek)" />
         <div className={s.card}>
+          {ROW_GLYPHS.slice(0, 5).map((c) => (
+            <div key={`row-${c.title}`} className={s.stepperCase}>
+              <span className={s.cap}>{c.title}</span>
+              <Stepper model={c.model} />
+            </div>
+          ))}
           {CASES.map((c) => (
             <div key={c.title} className={s.stepperCase}>
               <span className={s.cap}>{c.title}</span>
@@ -266,24 +352,44 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
       <section className={s.section} aria-labelledby={id("buttons")}>
         <ZoneHead id={id("buttons")} title="Buttons" />
         <div className={s.card}>
-          {(["sm", "md", "lg"] as const).map((size) => (
+          {(["xs", "sm", "md", "lg"] as const).map((size) => (
             <div key={size} className={s.row}>
               <span className={s.cap}>{size}</span>
-              <Button size={size}>Request changes</Button>
+              <Button size={size}>New ticket</Button>
+              <Button size={size} variant="quiet">
+                Request changes
+              </Button>
+              <Button size={size} variant="you">
+                Approve
+              </Button>
               <Button size={size} variant="ink">
-                Approve plan
+                Retry
               </Button>
               <Button size={size} variant="accent">
                 Dispatch run
               </Button>
-              <Button size={size} variant="quiet">
-                Dispatch run
+              <Button size={size} variant="outline">
+                {size === "xs" ? "Add context" : "Take in"}
+              </Button>
+              <Button size={size} variant="danger">
+                Abandon
               </Button>
               <Button size={size} disabled>
                 Disabled
               </Button>
             </div>
           ))}
+          <span className={s.cap}>
+            Take in lights up with its row (hover, or Tab to the button)
+          </span>
+          <div className={cx(s.demoRow, litRowClass)}>
+            <KeyChip>SCRUM-23</KeyChip>
+            <TypeIcon type="feature" label />
+            <span>Export a ticket&apos;s runs as CSV</span>
+            <Button size="sm" variant="outline" litOnRow>
+              Take in
+            </Button>
+          </div>
           <div className={s.row}>
             <span className={s.cap}>Icon</span>
             <IconButton label="Close">
@@ -306,21 +412,81 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
         <ZoneHead id={id("bits")} title="Tags, people, keys, chips, links" />
         <div className={s.card}>
           <div className={s.row}>
+            <KeyChip size="lg">AOS-14</KeyChip>
+            <Tag>
+              <TypeIcon type="feature" />
+              Feature
+            </Tag>
+            <Tag>
+              <PriorityIcon priority="high" />
+              High
+            </Tag>
+            <Tag quiet>web-portal</Tag>
             <Tag>Jira PLAT-2231</Tag>
-            <Tag>Bug</Tag>
             <Tag prio>High</Tag>
-            <Tag>agentos</Tag>
           </div>
           <div className={s.row}>
-            {PEOPLE.slice(0, 4).map((p) => (
+            <span className={s.cap}>Key chips</span>
+            {["AOS-14", "SCRUM-21", "PLAT-3", "WEB-1", "OPS-2", "DATA-9"].map((k) => (
+              <KeyChip key={k}>{k}</KeyChip>
+            ))}
+            <KeyChip size="sm">SCRUM</KeyChip>
+          </div>
+          <div className={s.row}>
+            <span className={s.cap}>Type, priority</span>
+            {(["feature", "bug", "improvement", "task"] as const).map((t) => (
+              <TypeIcon key={t} type={t} />
+            ))}
+            {(["feature", "bug", "improvement", "task"] as const).map((t) => (
+              <TypeIcon key={`l-${t}`} type={t} label />
+            ))}
+            {(["high", "normal", "low"] as const).map((p) => (
+              <span key={p} className={s.row}>
+                <PriorityIcon priority={p} />
+                <span>{p} slot</span>
+              </span>
+            ))}
+          </div>
+          <div className={s.row}>
+            <span className={s.cap}>Counts, ticks</span>
+            <CountPill count={3} />
+            <CountPill count={1} tone="you" />
+            <CountPill count={12} tone="done" />
+            <TickBadge />
+            <TickBadge size={14} label="Done" />
+            <ZoneHead
+              title="Done recently"
+              tone="done"
+              count={3}
+              right={
+                <>
+                  <TickBadge />
+                  <span>
+                    <b>2 shipped</b> this week
+                  </span>
+                </>
+              }
+            />
+          </div>
+          <EmptyRow lead="All quiet">nothing running, nothing queued</EmptyRow>
+          <div className={s.row}>
+            <span className={s.cap}>Rows</span>
+            {PEOPLE.map((p) => (
               <Avatar key={p.id} name={p.name} id={p.id} />
             ))}
-            <Avatar name="Diwash Rai" id={1} size={24} />
-            <Avatar name="Maya Chen" id={2} size={26} />
+            <AvatarSlot />
+            <AvatarSlot dashed />
             <Avatar name="Tom Reid" id={3} size={30} />
-            <Avatar name="kofi" id={7} />
             <Faces people={PEOPLE} />
-            <Faces people={PEOPLE.slice(0, 2)} size={24} />
+          </div>
+          <div className={s.row}>
+            <span className={s.cap}>Talk</span>
+            {PEOPLE.slice(0, 4).map((p) => (
+              <Avatar key={p.id} name={p.name} id={p.id} palette="talk" />
+            ))}
+            <Avatar name="Diwash Rai" id={1} size={24} palette="talk" />
+            <Avatar name="Maya Chen" id={2} size={26} />
+            <Faces people={PEOPLE.slice(0, 2)} size={24} palette="talk" />
           </div>
           <div className={s.row}>
             <Kbd>/</Kbd>
@@ -342,20 +508,20 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
           <div className={s.stack}>
             <ZoneHead
               title="Needs you"
-              count={3}
-              mark={<StatusMark kind="you" glyphOnly />}
-              note="2 gates, 1 triage"
+              tone="you"
+              count={1}
+              note="Longest wait first"
               right={<LinkButton>Show all</LinkButton>}
             />
             <ZoneHead title="Agents at work" count={5} note="running and queued" />
             <ZoneHead title="Waiting on others" />
             <GroupHead
               name="Needs you"
-              count={3}
+              count={1}
               glyph="you"
               summary={
                 <>
-                  <b>2</b> at a gate · <b>1</b> triage
+                  Longest wait <b>38m</b>
                 </>
               }
               collapsed={collapsed}
@@ -363,14 +529,40 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
                 setCollapsed((v) => !v);
               }}
             />
-            <GroupHead name="Blocked" count={1} glyph="blk" collapsed onToggle={noop} />
+            <GroupHead name="Blocked" count={0} glyph="blk" collapsed onToggle={noop} />
+            <GroupHead
+              name="Inbox"
+              count={3}
+              glyph="idle"
+              summary="→ Add context, then dispatch"
+              collapsed={false}
+              onToggle={noop}
+            />
             <GroupHead
               name="Done recently"
               count={12}
               glyph="done"
+              summary={
+                <>
+                  <b>2 shipped</b> this week
+                </>
+              }
               collapsed={false}
               onToggle={noop}
             />
+            <GroupHead
+              name="To do"
+              count={3}
+              icon={<KeyChip size="sm">SCRUM</KeyChip>}
+              summary={
+                <span className={s.jql}>
+                  project = SCRUM AND statusCategory = &quot;To Do&quot;
+                </span>
+              }
+              collapsed={false}
+              onToggle={noop}
+            />
+            <EmptyRow lead="All quiet">nothing running, nothing queued</EmptyRow>
           </div>
         </div>
         <div className={s.card}>

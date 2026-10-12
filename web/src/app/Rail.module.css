@@ -1,17 +1,20 @@
-/* Ported from kit.css .ao-rail* and .ao-av / .ao-av--30 */
+/* The brand rail (refresh mock §3 `.rail*`): dark in both themes. Current = a lighter pad plus a 3px
+   marker on the left edge. Focus on the rail is the rail's own ink (--rail-on-ink), since the page
+   ink would vanish on the dark rail. */
 .rail {
   position: sticky;
   top: 0;
   height: 100vh;
-  width: 60px;
+  width: var(--w-rail);
   flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 16px 0;
-  border-right: 1px solid var(--rule);
-  background: var(--page);
+  gap: 10px;
+  padding: 14px 0;
+  background: var(--rail);
+  /* the theme menu's button reads these */
+  --rail-focus: var(--rail-on-ink);
 }
 
 /* Lift the rail (and its theme menu) above the main column while the menu is open. */
@@ -20,48 +23,73 @@
 }
 
 .logo {
+  flex: none;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
-  background: var(--ink-1);
+  border-radius: var(--r-md);
+  background: var(--accent);
   display: grid;
   place-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 2px;
+  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.logo > i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2.5px solid var(--accent-ink);
 }
 
 .link {
   position: relative;
+  flex: none;
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   display: grid;
   place-items: center;
-  color: var(--ink-3);
+  color: var(--rail-ink);
   transition:
     background-color var(--t-fast),
     color var(--t-fast);
 }
 
 .link:hover {
-  background: var(--recess);
-  color: var(--ink-1);
+  background: var(--rail-on);
+  color: var(--rail-on-ink);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--rail-focus);
+  outline-offset: 2px;
 }
 
 .link[aria-current] {
-  background: var(--recess);
-  color: var(--ink-1);
-  box-shadow: var(--recess-shadow);
+  background: var(--rail-on);
+  color: var(--rail-on-ink);
+}
+
+.link[aria-current]::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--rail-on-ink);
 }
 
 .badge {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 6px;
+  right: 6px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--waiting);
-  box-shadow: 0 0 0 2px var(--page);
+  box-shadow: 0 0 0 2px var(--rail);
 }
 
 .spacer {
@@ -69,29 +97,5 @@
 }
 
 .avatar {
-  flex: none;
   margin-top: 6px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: inline-grid;
-  place-items: center;
-  font-size: 11.5px;
-  line-height: 1;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--av-ink);
-  background: var(--av-1);
-}
-
-.avatar[data-av="2"] {
-  background: var(--av-2);
-}
-
-.avatar[data-av="3"] {
-  background: var(--av-3);
-}
-
-.avatar[data-av="4"] {
-  background: var(--av-4);
 }

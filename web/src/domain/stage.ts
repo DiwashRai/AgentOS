@@ -4,6 +4,7 @@
 // `attention`); this module maps them, never derives them.
 import type { Schemas } from "../api/client";
 import { firstName } from "./format";
+import { outcomeOf } from "./outcome";
 
 export type StepState = "done" | "current" | "upcoming" | "skipped" | "failed";
 export type GateState = Schemas["GateInfo"]["state"];
@@ -30,7 +31,8 @@ export interface GlyphModel {
   live: boolean;
 }
 
-type Ticket = Pick<Schemas["TicketSummary"], "rail" | "phase_track" | "attention">;
+type Ticket = Pick<Schemas["TicketSummary"], "rail" | "phase_track" | "attention"> &
+  Partial<Pick<Schemas["TicketSummary"], "state" | "resolution">>;
 
 // The server's `stale` (done before, but after the latest run's segment, so it will run again)
 // has no form in the design: it draws as upcoming.
@@ -76,6 +78,23 @@ export function stageModel(t: Ticket): GlyphModel {
     })),
     bookend(t, "done", "Done"),
   ];
+  // An abandoned ticket never reached Done: it stops (crimson) at the first stage it didn't finish.
+  const abandoned =
+    outcomeOf({
+      attention: t.attention,
+      state: t.state ?? "open",
+      resolution: t.resolution ?? null,
+    }) === "abandoned";
+  if (abandoned) {
+    const last = stages.length - 1;
+    const open = stages.map((s, i): GlyphStage => (i === last ? { ...s, state: "upcoming" } : s));
+    const stop = open.findIndex((s, i) => i > 0 && s.state !== "done" && s.state !== "skipped");
+    return {
+      stages: open.map((s, i): GlyphStage => (i === stop ? { ...s, state: "failed" } : s)),
+      label: "Closed",
+      live: false,
+    };
+  }
   const parked = stages.find((s) => s.gate?.state === "you" || s.gate?.state === "waiting");
   const current = stages.find((s) => s.state === "current" || s.state === "failed");
   return {

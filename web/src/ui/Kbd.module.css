@@ -1,12 +1,20 @@
-/* Key cap (DESIGN §13.9). Ported from kit.css `.ao-kbd`. */
+/* Keycap (refresh mock §4.11 `.keycap`): a real key, 1px edge + 2px base, mono 11/600, as written
+   ("Esc", "/"); never caps-transformed. */
 .kbd {
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  background: var(--key-bg);
+  color: var(--key-ink);
+  border: 1px solid var(--key-edge);
+  border-bottom-width: 2px;
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
+  font-weight: 600;
   line-height: 1;
-  color: var(--ink-3);
-  border: 1px solid var(--rule);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 2px 5px 1px;
-  background: var(--surface);
+  white-space: nowrap;
 }

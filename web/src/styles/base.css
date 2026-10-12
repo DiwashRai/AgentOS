@@ -35,10 +35,11 @@ a {
   text-decoration: none;
 }
 
+/* Focus is ink (refresh): a 2px outline at a 2px offset that follows the element's own radius.
+   Never blue, never the accent. */
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* Motion governance: one place pauses and disables animation for the whole app.

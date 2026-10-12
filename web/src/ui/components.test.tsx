@@ -1,14 +1,19 @@
 // Markup checks via server rendering (node environment; no DOM library needed).
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Avatar } from "./Avatar";
+import { Avatar, AvatarSlot } from "./Avatar";
 import { Button } from "./Button";
+import { CountPill } from "./CountPill";
+import { EmptyRow } from "./EmptyRow";
 import type { StepperModel } from "./glyph";
+import { KeyChip } from "./KeyChip";
+import { PriorityIcon } from "./PriorityIcon";
 import { RunMeter } from "./RunMeter";
 import { StageGlyph } from "./StageGlyph";
 import { StatusMark } from "./StatusMark";
 import { Stepper } from "./Stepper";
 import { Tabs } from "./Tabs";
+import { TypeIcon } from "./TypeIcon";
 
 const model: StepperModel = {
   live: false,
@@ -37,11 +42,21 @@ const model: StepperModel = {
 const count = (html: string, re: RegExp) => html.match(re)?.length ?? 0;
 
 describe("StatusMark", () => {
-  it("always renders the YOU pill for kind you, ignoring name", () => {
-    const html = renderToStaticMarkup(<StatusMark kind="you" name="ignored" ask="Sign off" />);
+  it("always renders the YOU pill for kind you, ignoring name; the ask follows it directly", () => {
+    const html = renderToStaticMarkup(<StatusMark kind="you" name="ignored" ask="Plan sign-off" />);
     expect(html).toContain(">YOU</b>");
     expect(html).not.toContain("ignored");
-    expect(html).toContain("· Sign off");
+    expect(html).toMatch(/>Plan sign-off<\/span>/);
+    expect(html).not.toContain("·");
+  });
+  it("puts a dot between a name and its ask", () => {
+    const html = renderToStaticMarkup(<StatusMark kind="wait" name="Sam" ask="Security review" />);
+    expect(html).toContain("· Security review");
+  });
+  it("draws done as the tick badge", () => {
+    const html = renderToStaticMarkup(<StatusMark kind="done" glyphOnly />);
+    expect(html).toContain("<circle");
+    expect(html).toContain('aria-label="Done"');
   });
   it("names a glyph-only mark for assistive tech", () => {
     const html = renderToStaticMarkup(<StatusMark kind="blk" glyphOnly />);
@@ -66,6 +81,71 @@ describe("StageGlyph", () => {
   });
   it("hides the label on request", () => {
     expect(renderToStaticMarkup(<StageGlyph model={model} label={false} />)).not.toContain("<b>");
+  });
+});
+
+describe("StageGlyph (refresh)", () => {
+  const seven: StepperModel = {
+    live: false,
+    label: "Sign-off",
+    stages: ["Inbox", "Plan", "Implement", "Lint", "Review", "Open PR", "Done"].map((name, i) => ({
+      name,
+      state: i < 2 ? "done" : i === 3 ? "skipped" : "upcoming",
+      gate:
+        i === 1 ? { label: "Plan sign-off", short: "Sign-off", state: "you" as const } : undefined,
+    })),
+  };
+  it("draws a 7-stage pipeline at sm in the 81px slot", () => {
+    const html = renderToStaticMarkup(<StageGlyph model={seven} />);
+    expect(html).not.toMatch(/class="[^"]*\bxs\b/);
+    expect(html).toContain("Plan → ◆ Plan sign-off → Implement → Lint (skipped)");
+  });
+  it("finished: the label gets the tick", () => {
+    const done: StepperModel = {
+      ...seven,
+      label: "Done",
+      stages: seven.stages.map((st, i) => ({
+        ...st,
+        state: i === 6 ? "current" : st.state === "skipped" ? "skipped" : "done",
+        gate: st.gate ? { ...st.gate, state: "passed" as const } : undefined,
+      })),
+    };
+    const html = renderToStaticMarkup(<StageGlyph model={done} />);
+    expect(html).toMatch(/<b><span[^>]*aria-hidden="true"><svg/);
+  });
+});
+
+describe("Stepper (refresh)", () => {
+  it("captions a gate on you 'Your move' (no YOU pill) and a finished last stage 'Complete'", () => {
+    const parked: StepperModel = {
+      live: false,
+      label: "Sign-off",
+      stages: [
+        { name: "Inbox", state: "done" },
+        {
+          name: "Plan",
+          state: "done",
+          gate: { label: "Plan sign-off", short: "Sign-off", state: "you" },
+        },
+        { name: "Build", state: "upcoming" },
+        { name: "Done", state: "upcoming" },
+      ],
+    };
+    const html = renderToStaticMarkup(<Stepper model={parked} />);
+    expect(html).toContain(">Your move<");
+    expect(html).not.toContain(">YOU<");
+    const finished: StepperModel = {
+      live: false,
+      label: "Done",
+      stages: [
+        { name: "Inbox", state: "done" },
+        { name: "Build", state: "done" },
+        { name: "Done", state: "current" },
+      ],
+    };
+    const done = renderToStaticMarkup(<Stepper model={finished} />);
+    expect(done).toContain(">Complete<");
+    expect(done).toContain("<circle");
   });
 });
 
@@ -128,6 +208,18 @@ describe("Button", () => {
     expect(html).toContain(">Abandon</button>");
     expect(html).not.toContain("<svg");
   });
+  it("gives the you variant no arrow, and marks a litOnRow button", () => {
+    const you = renderToStaticMarkup(<Button variant="you">Approve</Button>);
+    expect(you).toContain(">Approve</button>");
+    expect(you).not.toContain("<svg");
+    const plain = renderToStaticMarkup(<Button variant="outline">Take in</Button>);
+    const lit = renderToStaticMarkup(
+      <Button variant="outline" litOnRow>
+        Take in
+      </Button>,
+    );
+    expect(lit).not.toEqual(plain);
+  });
 });
 
 describe("Avatar", () => {
@@ -135,6 +227,51 @@ describe("Avatar", () => {
     const html = renderToStaticMarkup(<Avatar name="Diwash Rai" id={1} />);
     expect(html).toContain(">DR</span>");
     expect(html).toContain('title="Diwash Rai"');
+  });
+  it("uses the identity hue by default and the talk faces at 26px", () => {
+    const row = renderToStaticMarkup(<Avatar name="Diwash Rai" id={1} />);
+    const talk = renderToStaticMarkup(<Avatar name="Diwash Rai" id={1} size={26} />);
+    const forced = renderToStaticMarkup(<Avatar name="Diwash Rai" id={1} palette="talk" />);
+    expect(row).not.toEqual(forced);
+    expect(talk).not.toContain("identity");
+  });
+  it("reserves a decorative slot", () => {
+    expect(renderToStaticMarkup(<AvatarSlot dashed />)).toContain('aria-hidden="true"');
+  });
+});
+
+describe("KeyChip", () => {
+  it("renders the key as written", () => {
+    expect(renderToStaticMarkup(<KeyChip>AOS-14</KeyChip>)).toContain(">AOS-14</span>");
+  });
+});
+
+describe("TypeIcon / PriorityIcon", () => {
+  it("names the type, or shows it as a visible label", () => {
+    expect(renderToStaticMarkup(<TypeIcon type="bug" />)).toContain('aria-label="Bug"');
+    const labelled = renderToStaticMarkup(<TypeIcon type="improvement" label />);
+    expect(labelled).toContain(">Improvement</span>");
+    expect(labelled).not.toContain("aria-label");
+  });
+  it("names high and low, and reserves a silent slot for normal", () => {
+    expect(renderToStaticMarkup(<PriorityIcon priority="high" />)).toContain(
+      'aria-label="High priority"',
+    );
+    expect(renderToStaticMarkup(<PriorityIcon priority="low" />)).toContain(
+      'aria-label="Low priority"',
+    );
+    const normal = renderToStaticMarkup(<PriorityIcon priority="normal" />);
+    expect(normal).toContain('aria-hidden="true"');
+    expect(normal).not.toContain("<svg");
+  });
+});
+
+describe("CountPill / EmptyRow", () => {
+  it("shows the count and the lead word", () => {
+    expect(renderToStaticMarkup(<CountPill count={3} tone="you" />)).toContain(">3</span>");
+    const empty = renderToStaticMarkup(<EmptyRow lead="All quiet">nothing queued</EmptyRow>);
+    expect(empty).toContain("<b>All quiet</b>");
+    expect(empty).toContain("nothing queued");
   });
 });
 

@@ -1,0 +1,32 @@
+/* Identity hue scopes (refresh mock §4.6 `.h-*`): each sets --id (flat fill), --id-ink (text on a
+   tint), --id-tint (chip ground) and --id-on (initials on the flat fill). KeyChip and Avatar read them. */
+.violet {
+  --id: var(--cat-violet);
+  --id-ink: var(--cat-violet-ink);
+  --id-tint: var(--cat-violet-tint);
+  --id-on: var(--cat-on);
+}
+.plum {
+  --id: var(--cat-plum);
+  --id-ink: var(--cat-plum-ink);
+  --id-tint: var(--cat-plum-tint);
+  --id-on: var(--cat-on);
+}
+.rose {
+  --id: var(--cat-rose);
+  --id-ink: var(--cat-rose-ink);
+  --id-tint: var(--cat-rose-tint);
+  --id-on: var(--cat-on);
+}
+.gold {
+  --id: var(--cat-gold);
+  --id-ink: var(--cat-gold-ink);
+  --id-tint: var(--cat-gold-tint);
+  --id-on: var(--cat-gold-on);
+}
+.olive {
+  --id: var(--cat-olive);
+  --id-ink: var(--cat-olive-ink);
+  --id-tint: var(--cat-olive-tint);
+  --id-on: var(--cat-on);
+}

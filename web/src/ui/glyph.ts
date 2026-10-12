@@ -46,6 +46,51 @@ export function glyphTitle(model: Pick<GlyphModel, "stages">): string {
     .join(" → ");
 }
 
+/** The stage glyph's fixed slot (refresh HANDOFF §5): 81px, so the label beside it (9px gap) sits
+ *  90px into its cell in every row. */
+export const GLYPH_SLOT = 81;
+
+// Segment geometry (StageGlyph.module.css): stage width, current / stopped width, gate box incl. its
+// 1px side margins, gap. Keep these in step with the CSS.
+const GEOMETRY = {
+  sm: { stage: 8, now: 11, gate: 8, gap: 2 },
+  xs: { stage: 7, now: 10, gate: 7, gap: 2 },
+} as const;
+
+/** The glyph's natural width in px at a size (no label). */
+export function glyphWidth(model: Pick<GlyphModel, "stages">, size: "sm" | "xs"): number {
+  const g = GEOMETRY[size];
+  const items = glyphItems(model.stages);
+  const widths = items.map((it) => {
+    if (it.type === "gate") return g.gate;
+    const big = it.stage.state === "current" || it.stage.state === "failed";
+    return big ? g.now : g.stage;
+  });
+  return widths.reduce((a, b) => a + b, 0) + Math.max(items.length - 1, 0) * g.gap;
+}
+
+/** The size a row glyph draws at: sm when it fits the 81px slot, else xs (longer pipelines). */
+export function fitGlyphSize(model: Pick<GlyphModel, "stages">): "sm" | "xs" {
+  return glyphWidth(model, "sm") <= GLYPH_SLOT ? "sm" : "xs";
+}
+
+/**
+ * The ticket is finished: its last stage (the Done bookend) is reached and nothing failed. The glyph
+ * then draws all green and the stepper captions the last stage "Complete".
+ */
+export function isFinished(model: Pick<GlyphModel, "stages">): boolean {
+  const last = model.stages[model.stages.length - 1];
+  if (!last || (last.state !== "current" && last.state !== "done")) return false;
+  return !model.stages.some((st) => st.state === "failed");
+}
+
+/** A skipped stage still ahead of the ticket (nothing after it has been reached). */
+export function isAhead(model: Pick<GlyphModel, "stages">, index: number): boolean {
+  return !model.stages
+    .slice(index + 1)
+    .some((st) => st.state === "done" || st.state === "current" || st.state === "failed");
+}
+
 /** Stepper: with more than 2 gates, or in the compact variant, inactive gates collapse to a bare diamond. */
 export function collapsesGates(model: Pick<GlyphModel, "stages">, compact: boolean): boolean {
   return compact || model.stages.filter((st) => st.gate).length > 2;
@@ -62,11 +107,20 @@ export function gateTitle(gate: GlyphGate, bare: boolean): string {
   return gate.person ? `${gate.label} · ${gate.person}` : gate.label;
 }
 
+/** The caption under a gate the ticket is parked at on you (refresh stepper). */
+export const YOUR_MOVE = "Your move";
+
 /**
- * The stepper's mono caption under a stage. The final stage (the Done bookend) is current only
- * when the ticket is done, and then carries no caption, as in the kit.
+ * The stepper's caption under a stage (sentence case). The final stage (the Done bookend) is reached
+ * only when the ticket is done; then it reads "Complete" (refresh), unless something failed.
  */
-export function stageCaption(stage: StepperStage, isLast: boolean, live: boolean): string {
+export function stageCaption(
+  stage: StepperStage,
+  isLast: boolean,
+  live: boolean,
+  finished = false,
+): string {
+  if (isLast && finished) return "Complete";
   switch (stage.state) {
     case "skipped":
       return "Skipped";

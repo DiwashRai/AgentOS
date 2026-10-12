@@ -1,0 +1,20 @@
+/* Priority slot (refresh mock §4.8 `.prio-icon`): 12px, always reserved. */
+.slot {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.slot > svg {
+  display: block;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.high > svg {
+  stroke: var(--pri-high);
+}
+.low > svg {
+  stroke: var(--pri-low);
+}

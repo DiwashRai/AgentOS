@@ -1,47 +1,58 @@
-/* Collapsible group break for dense lists (DESIGN §13.9). Ported from kit.css `.ao-gh`. */
+/* Collapsible group head for dense lists (refresh mock §4.2 `.group-head`, HANDOFF §5): 34px,
+   chevron 10 · icon box 14 · name 13.5/600 · count pill · hairline · right slot. Sentence case. */
 .gh {
   box-sizing: border-box;
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 32px;
-  padding: 0 10px;
+  gap: 8px;
+  height: var(--h-group-head);
+  padding: 0 4px;
   border: 0;
   background: none;
-  border-radius: 7px;
+  border-radius: var(--r-control);
   text-align: left;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--fs-row-title);
+  color: var(--ink-1);
   white-space: nowrap;
   cursor: pointer;
-}
-.gh:hover {
-  color: var(--ink-1);
 }
 .gh:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 9px;
 }
-.gh > svg {
+.chev {
   flex: none;
+  display: grid;
+  place-items: center;
+  width: 10px;
+  height: 10px;
   color: var(--ink-3);
+}
+.chev > svg {
+  display: block;
   transition: transform var(--t-fast) ease;
 }
-.gh[aria-expanded="false"] > svg {
+.gh[aria-expanded="false"] .chev > svg {
   transform: rotate(-90deg);
 }
-.g {
-  display: inline-flex;
+.icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 14px;
+  height: 18px;
 }
-.c {
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
+.name {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.you .name {
+  color: var(--you-text);
+}
+.done .name {
+  color: var(--done);
 }
 .r {
   flex: 1;
@@ -50,19 +61,27 @@
   min-width: 16px;
 }
 .s {
-  color: var(--ink-3);
-  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  color: var(--ink-2);
 }
 .s b {
-  font-weight: 500;
-  color: var(--ink-2);
+  font-weight: 600;
+  color: var(--ink-1);
+}
+/* "2 shipped this week": the stat's number in green on a Done head */
+.done .s b {
+  color: var(--done);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gh > svg {
+  .chev > svg {
     transition: none;
   }
 }

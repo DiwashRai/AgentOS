@@ -11,22 +11,6 @@ const stroke18 = {
   "aria-hidden": true,
 } as const;
 
-export function LogoIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-      <circle cx="7" cy="7" r="2.4" style={{ fill: "var(--accent-mark)" }} />
-      <circle
-        cx="7"
-        cy="7"
-        r="5.6"
-        fill="none"
-        style={{ stroke: "var(--bubble-mine-ink)" }}
-        strokeWidth="1.3"
-      />
-    </svg>
-  );
-}
-
 export function TeamsIcon() {
   return (
     <svg {...stroke18}>

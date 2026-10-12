@@ -1,0 +1,28 @@
+/* Count pill (refresh mock §4.2). */
+.pill {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--rule-soft);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  color: var(--ink-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.you {
+  background: var(--you-tint);
+  box-shadow: none;
+  color: var(--you-text);
+}
+.done {
+  background: var(--done-tint);
+  box-shadow: none;
+  color: var(--done);
+}

@@ -13,20 +13,22 @@
   background: none;
   display: grid;
   place-items: center;
-  color: var(--ink-3);
+  color: var(--rail-ink);
   transition:
     background-color var(--t-fast),
     color var(--t-fast);
 }
 
+/* the button sits on the dark brand rail */
 .button:hover,
 .button[aria-expanded="true"] {
-  background: var(--recess);
-  color: var(--ink-1);
+  background: var(--rail-on);
+  color: var(--rail-on-ink);
 }
 
-.button[aria-expanded="true"] {
-  box-shadow: var(--recess-shadow);
+.button:focus-visible {
+  outline: 2px solid var(--rail-focus, var(--focus));
+  outline-offset: 2px;
 }
 
 .menu {
@@ -55,11 +57,8 @@
 
 .head {
   padding: 6px 8px 7px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-meta);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 
@@ -111,10 +110,7 @@
 
 .mode {
   grid-column: 1;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   padding-left: 18px;
 }

@@ -1,15 +1,19 @@
-/* Buttons (DESIGN §13.9). Ported from kit.css `.ao-btn` / `.ao-ib`.
-   primary = ink. accent is ONLY for Dispatch run, and only where there is a ticket. */
+/* Buttons: the visual refresh (mock §4.10, HANDOFF §5 "Button"). md 34 / sm 28 / xs 24, 12.5/600,
+   raised with a --rule edge; hover only strengthens the edge. The weight never changes by state.
+   you = the gate primary (Approve, Complete). accent is ONLY for Dispatch run, only on a ticket.
+   Focus is ink: a 2px outline at a 2px offset, following the radius. */
 .btn {
   box-sizing: border-box;
-  height: 34px;
-  padding: 0 13px;
-  border-radius: 8px;
+  height: var(--h-btn);
+  padding: 0 14px;
+  border-radius: var(--r-md);
   border: 1px solid var(--rule);
-  background: var(--surface);
+  background: var(--surface-raised);
   font-family: inherit;
-  font-size: 12.5px;
-  color: var(--ink-2);
+  font-size: var(--fs-control);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink-1);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -17,16 +21,13 @@
   white-space: nowrap;
   cursor: pointer;
   transition:
-    transform var(--t-fast) ease,
-    border-color var(--t-fast) ease,
-    background-color var(--t-fast) ease;
+    border-color 0.12s ease,
+    background-color 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 .btn:hover {
   border-color: var(--rule-strong);
-  color: var(--ink-1);
-}
-.btn:active {
-  transform: translateY(1px);
 }
 .btn:focus-visible,
 .ib:focus-visible {
@@ -34,38 +35,55 @@
   outline-offset: 2px;
 }
 .sm {
-  height: 28px;
-  padding: 0 10px;
+  height: var(--h-btn-sm);
+  padding: 0 11px;
+  border-radius: var(--r-control);
+}
+.xs {
+  height: var(--h-btn-xs);
+  padding: 0 9px;
+  border-radius: var(--r-control);
   font-size: 12px;
-  border-radius: 7px;
+  font-weight: 500;
 }
 .lg {
-  height: 40px;
+  height: var(--h-btn-lg);
   padding: 0 17px;
   font-size: 13.5px;
 }
+
+/* ink: a primary that isn't a gate (Retry, form submits) */
 .ink {
   background: var(--ink-1);
   border-color: var(--ink-1);
   color: var(--bubble-mine-ink);
-  font-weight: 500;
 }
 .ink:hover {
   background: var(--ink-hover);
   border-color: var(--ink-hover);
-  color: var(--bubble-mine-ink);
 }
+
+/* you: the gate primary. On focus the ink ring replaces the halo. */
+.you,
+.you:hover {
+  background: var(--waiting);
+  border-color: var(--waiting);
+  color: var(--you-ink);
+  box-shadow: 0 0 0 3px var(--you-ring);
+}
+.you:focus-visible {
+  box-shadow: none;
+}
+
 .accent {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  font-weight: 600;
   box-shadow: var(--accent-shadow);
 }
 .accent:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  color: var(--accent-ink);
 }
 .accent svg {
   transition: transform 0.18s ease;
@@ -73,28 +91,45 @@
 .accent:hover svg {
   transform: translateX(2px);
 }
+
 /* danger: the confirm of a destructive choice (Abandon). --bubble-mine-ink contrasts with
    --blocked in both themes, as it does with --ink-1. */
 .danger {
   background: var(--blocked);
   border-color: var(--blocked);
   color: var(--bubble-mine-ink);
-  font-weight: 500;
 }
 .danger:hover {
   background: color-mix(in oklab, var(--blocked) 88%, var(--ink-1));
   border-color: color-mix(in oklab, var(--blocked) 88%, var(--ink-1));
-  color: var(--bubble-mine-ink);
 }
+
 .quiet {
   background: transparent;
   border-color: transparent;
-  color: var(--ink-3);
+  font-weight: 500;
 }
 .quiet:hover {
-  background: var(--recess);
+  background: var(--field);
   border-color: transparent;
 }
+
+/* outline: Take in (sm, 600) and Add context (xs, 500). Transparent with an inset edge. */
+.outline,
+.outline:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+}
+
+/* A `litOnRow` button fills like `you` while its row is hovered or keyboard-focused. */
+.litRow:is(:hover, :focus-visible, :has(:focus-visible)) .lit {
+  background: var(--waiting);
+  border-color: var(--waiting);
+  color: var(--you-ink);
+  box-shadow: none;
+}
+
 .btn[disabled] {
   opacity: 0.45;
   pointer-events: none;
@@ -105,9 +140,9 @@
   box-sizing: border-box;
   width: 30px;
   height: 30px;
-  border-radius: 7px;
+  border-radius: var(--r-btn-sm);
   border: 1px solid var(--rule);
-  background: var(--surface);
+  background: var(--surface-raised);
   display: inline-grid;
   place-items: center;
   color: var(--ink-3);
@@ -123,7 +158,7 @@
   background: transparent;
 }
 .bare:hover {
-  background: var(--recess);
+  background: var(--field);
   border-color: transparent;
 }
 .ib[disabled] {
@@ -136,7 +171,6 @@
   .accent svg {
     transition: none;
   }
-  .btn:active,
   .accent:hover svg {
     transform: none;
   }

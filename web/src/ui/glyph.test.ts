@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { GlyphGate, GlyphModel } from "../domain/stage";
 import {
   collapsesGates,
+  fitGlyphSize,
   gateTitle,
+  GLYPH_SLOT,
   glyphItems,
   glyphTitle,
+  glyphWidth,
+  isAhead,
   isBareGate,
+  isFinished,
   parkedGate,
   stageCaption,
 } from "./glyph";
@@ -121,5 +126,54 @@ describe("stageCaption", () => {
     );
     expect(stageCaption({ name: "Build", state: "failed" }, false, true)).toBe("Blocked");
     expect(stageCaption({ name: "Plan", state: "done" }, false, false)).toBe("");
+  });
+});
+
+describe("glyph geometry (refresh: 81px slot)", () => {
+  const pipe = (n: number, current: number): Pick<GlyphModel, "stages"> => ({
+    stages: Array.from({ length: n }, (_, i) => ({
+      name: `S${String(i)}`,
+      state: i < current ? "done" : i === current ? "current" : "upcoming",
+      gate: i === 1 ? gate("Plan sign-off", "Sign-off", "passed") : undefined,
+    })),
+  });
+
+  it("7 stages + 1 gate with a current stage fill the slot exactly at sm", () => {
+    expect(glyphWidth(pipe(7, 2), "sm")).toBe(GLYPH_SLOT);
+    expect(fitGlyphSize(pipe(7, 2))).toBe("sm");
+  });
+
+  it("longer pipelines drop to xs", () => {
+    expect(glyphWidth(pipe(9, 2), "sm")).toBeGreaterThan(GLYPH_SLOT);
+    expect(fitGlyphSize(pipe(9, 2))).toBe("xs");
+    expect(glyphWidth(pipe(9, 2), "xs")).toBeLessThan(glyphWidth(pipe(9, 2), "sm"));
+  });
+});
+
+describe("isFinished / isAhead", () => {
+  it("is finished when the last stage is reached and nothing failed", () => {
+    const done: Pick<GlyphModel, "stages"> = {
+      stages: [
+        { name: "Plan", state: "done" },
+        { name: "Lint", state: "skipped" },
+        { name: "Done", state: "current" },
+      ],
+    };
+    expect(isFinished(done)).toBe(true);
+    expect(isFinished(parked)).toBe(false);
+    expect(
+      isFinished({
+        stages: [
+          { name: "Plan", state: "failed" },
+          { name: "Done", state: "current" },
+        ],
+      }),
+    ).toBe(false);
+    expect(isAhead(done, 1)).toBe(false);
+    expect(isAhead(parked, 3)).toBe(true);
+  });
+
+  it("captions the finished last stage Complete", () => {
+    expect(stageCaption({ name: "Done", state: "current" }, true, false, true)).toBe("Complete");
   });
 });

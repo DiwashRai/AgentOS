@@ -1,5 +1,6 @@
 /* =====================================================================
-   AgentOS design tokens · copied from design/agentos-design-pack/tokens/tokens.css.
+   AgentOS design tokens · the design pack's tokens/tokens.css with the visual refresh's colour blocks
+   (design pack refresh/tokens.css, round 12, which maps every token: U unchanged, C changed, N new).
    The only change from the pack: the theme selectors. We use `data-theme` (not `data-palette`):
      Type Case Cool (light, default) = "light" (alias "company-light")
      Harbour (dark)                  = "dark"  (alias "company-dark")
@@ -7,7 +8,11 @@
    (the theme menu's swatches and the kit sheet use this). index.html sets the attribute on <html>
    before first paint; `:root:not([data-theme])` is a fallback if that script never ran.
    This is the ONLY file allowed to hold raw colour values.
-   Min text size is 11px (--fs-mono). Contrast: every text token on every ground >= 4.5:1 (see THEMES.md).
+   Min text size is 11px. Contrast: every text/ground pair >= 4.5:1 (refresh/checks/contrast.txt).
+   Hue rules: blue = you (--waiting fills, --you-text text), vermilion/brass = running (--live),
+   crimson = blocked, green = done (--done text, --progress bars/ticks). The accent is only Dispatch
+   run and the logo. Focus is ink, never blue or the accent. --cat-* are identity hues (project key
+   chips, row avatars); --av-* stay for Talk.
    ===================================================================== */
 
 /* Type Case Cool · light · default */
@@ -16,29 +21,45 @@
 [data-theme="company-light"] {
   color-scheme: light;
   /* Surfaces */
-  --page: #eff0f1;
-  --recess: #e3e4e6;
+  --page: #f1f2f4;
+  --recess: #e4e6e9;
   --surface: #fbfbfb;
   --surface-raised: #ffffff;
-  --field: #f4f5f6;
-  --track: #dee0e2;
+  --field: #f0f1f3;
+  --track: #dee0e3;
   /* Ink */
-  --ink-1: #1a1b1d;
-  --ink-2: #37393c;
-  --ink-3: #5b5f63;
+  --ink-1: #111317;
+  --ink-2: #454a51;
+  --ink-3: #5d636b;
   --ink-hover: #303236;
   /* Rules */
-  --rule: #d7dadc;
-  --rule-soft: #e8e9eb;
-  --rule-strong: #abb0b4;
-  /* Accent (Dispatch run, logo, focus) */
+  --rule: #d5d8dc;
+  --rule-soft: #e9eaed;
+  --rule-strong: #a9aeb5;
+  /* Rows: raised = actionable, flat = settled; light-up on hover / focus / selected */
+  --row-raised: #ffffff;
+  --row-raised-edge: rgba(17, 19, 23, 0.08);
+  --row-raised-shadow: 0 1px 2px rgba(17, 19, 23, 0.08), 0 2px 6px -3px rgba(17, 19, 23, 0.14);
+  --row-flat: #eef0f2;
+  --row-flat-edge: rgba(17, 19, 23, 0.06);
+  --row-hover: #ffffff;
+  --row-hover-edge: rgba(17, 19, 23, 0.55);
+  --row-hover-halo: 0 0 0 3px rgba(17, 19, 23, 0.06), 0 1px 2px rgba(17, 19, 23, 0.08);
+  --row-selected-edge: #111317;
+  --you-wash: #e4edf4;
+  /* Focus (ink, never blue) */
+  --focus: #111317;
+  /* Keycaps */
+  --key-bg: #ffffff;
+  --key-edge: #c4c8ce;
+  --key-ink: #33373d;
+  /* Accent (Dispatch run, logo) */
   --accent: #c4461a;
   --accent-hover: #ab3a12;
   --accent-ink: #ffffff;
   --accent-text: #ad3c12;
   --accent-mark: #ee6a33;
   --accent-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 1px 2px rgba(80, 30, 5, 0.22);
-  --focus: #c4461a;
   /* Live (running agents) */
   --live: #e0571f;
   --live-text: #ad3c12;
@@ -47,17 +68,56 @@
   --live-sweep: rgba(224, 87, 31, 0.3);
   /* Status */
   --waiting: #175176;
+  --you-text: #175176;
   --you-ink: #ffffff;
   --you-ring: rgba(23, 81, 118, 0.2);
+  --you-tint: #e4edf4;
   --blocked: #a62441;
-  --done: #437032;
+  --done: #3f6b2f;
+  --done-tint: #e5eedf;
+  --progress: #4f8a3a;
+  --progress-soft: #a9c99b;
+  --glyph-up: #c9cdd2;
+  --ck: #2e9a48;
+  --ck-glyph: #ffffff;
+  /* Type squares + priority chevrons */
+  --t-feature: #7c5cc4;
+  --t-bug: #cf3f63;
+  --t-improvement: #c58610;
+  --t-task: #2a8f83;
+  --t-glyph: #ffffff;
+  --pri-high: #d26a12;
+  --pri-low: #6d8aa5;
+  /* Identity hues (project key chips, flat avatars) */
+  --cat-violet: #6a4fc2;
+  --cat-violet-ink: #5b40b3;
+  --cat-violet-tint: #ebe7f8;
+  --cat-plum: #94409b;
+  --cat-plum-ink: #7f3386;
+  --cat-plum-tint: #f3e5f3;
+  --cat-rose: #c03a78;
+  --cat-rose-ink: #a32a62;
+  --cat-rose-tint: #f9e3ed;
+  --cat-gold: #d2a11c;
+  --cat-gold-ink: #765600;
+  --cat-gold-tint: #f6edd2;
+  --cat-olive: #6c7316;
+  --cat-olive-ink: #575c0b;
+  --cat-olive-tint: #eef0d5;
+  --cat-on: #ffffff;
+  --cat-gold-on: #2b2100;
+  /* Brand rail */
+  --rail: #1f2436;
+  --rail-ink: #a4abba;
+  --rail-on-ink: #ffffff;
+  --rail-on: rgba(255, 255, 255, 0.1);
   /* Talk */
   --bubble: #eeeff1;
   --bubble-ink: #26282b;
   --bubble-mine: #212325;
   --bubble-mine-ink: #f2f3f4;
   --mention: #f6a079;
-  /* Avatars */
+  /* Avatars (pack; rows use --cat-*) */
   --av-1: #f4af8c;
   --av-2: #a8c9d4;
   --av-3: #e4d186;
@@ -79,28 +139,46 @@
   color-scheme: dark;
   /* Surfaces */
   --page: #161b22;
-  --recess: #0f1318;
+  --recess: #0e1217;
   --surface: #1e242c;
   --surface-raised: #262d36;
   --field: #1a1f26;
   --track: #2e3641;
   /* Ink */
-  --ink-1: #efebe3;
-  --ink-2: #cbcdcf;
-  --ink-3: #979ea7;
+  --ink-1: #f6f3ec;
+  --ink-2: #c5cad1;
+  --ink-3: #a1a9b3;
   --ink-hover: #d8d4cb;
   /* Rules */
   --rule: #2d353f;
-  --rule-soft: #242b34;
+  --rule-soft: #232a33;
   --rule-strong: #4b5664;
-  /* Accent (Dispatch run, logo, focus) */
+  /* Rows: raised #252d38 vs flat #131820 on the #0e1217 recess (1.28:1 step) */
+  --row-raised: #252d38;
+  --row-raised-edge: rgba(220, 235, 255, 0.09);
+  --row-raised-shadow:
+    inset 0 1px 0 rgba(220, 235, 255, 0.06), 0 1px 2px rgba(0, 4, 12, 0.55),
+    0 4px 10px -6px rgba(0, 4, 12, 0.7);
+  --row-flat: #131820;
+  --row-flat-edge: rgba(220, 235, 255, 0.05);
+  --row-hover: #2c3540;
+  --row-hover-edge: rgba(246, 243, 236, 0.42);
+  --row-hover-halo: 0 0 0 3px rgba(246, 243, 236, 0.06), 0 0 18px -6px rgba(170, 200, 240, 0.25);
+  --row-selected-edge: #f6f3ec;
+  --you-wash: rgba(111, 165, 224, 0.12);
+  /* Focus (ink, never blue) */
+  --focus: #f6f3ec;
+  /* Keycaps */
+  --key-bg: #262e38;
+  --key-edge: #46505d;
+  --key-ink: #d3d7dc;
+  /* Accent (Dispatch run, logo) */
   --accent: #e1a548;
   --accent-hover: #ebb563;
   --accent-ink: #1d1404;
   --accent-text: #e9b665;
   --accent-mark: #e1a548;
   --accent-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 2px rgba(0, 0, 0, 0.45);
-  --focus: #e9b665;
   /* Live (running agents) */
   --live: #e8ab4f;
   --live-text: #e9b665;
@@ -109,17 +187,56 @@
   --live-sweep: rgba(232, 171, 79, 0.3);
   /* Status */
   --waiting: #6fa5e0;
+  --you-text: #82b4e8;
   --you-ink: #0c1d30;
   --you-ring: rgba(111, 165, 224, 0.22);
-  --blocked: #ec6f86;
+  --you-tint: rgba(111, 165, 224, 0.13);
+  --blocked: #f27c91;
   --done: #a9d8ad;
+  --done-tint: rgba(169, 216, 173, 0.1);
+  --progress: #8cc98f;
+  --progress-soft: #4f7a52;
+  --glyph-up: #46505d;
+  --ck: #6fcf7e;
+  --ck-glyph: #0f2414;
+  /* Type squares + priority chevrons */
+  --t-feature: #a68ae6;
+  --t-bug: #ec7f9b;
+  --t-improvement: #e1b04d;
+  --t-task: #4cc2b2;
+  --t-glyph: #161b22;
+  --pri-high: #f0a03c;
+  --pri-low: #8aa4bd;
+  /* Identity hues (project key chips, flat avatars) */
+  --cat-violet: #a68ae6;
+  --cat-violet-ink: #bba6f2;
+  --cat-violet-tint: #2e2a47;
+  --cat-plum: #cf8ad6;
+  --cat-plum-ink: #dfa3e4;
+  --cat-plum-tint: #382842;
+  --cat-rose: #ee86b1;
+  --cat-rose-ink: #f4a0c3;
+  --cat-rose-tint: #3e2635;
+  --cat-gold: #dcc160;
+  --cat-gold-ink: #e3c96f;
+  --cat-gold-tint: #35311d;
+  --cat-olive: #b9c46e;
+  --cat-olive-ink: #c7d07f;
+  --cat-olive-tint: #2f3320;
+  --cat-on: #161b22;
+  --cat-gold-on: #161b22;
+  /* Brand rail */
+  --rail: #0b0f18;
+  --rail-ink: #8790a0;
+  --rail-on-ink: #efebe3;
+  --rail-on: rgba(255, 255, 255, 0.08);
   /* Talk */
   --bubble: #28303a;
   --bubble-ink: #e6e4de;
   --bubble-mine: #e9e3d6;
   --bubble-mine-ink: #161b22;
   --mention: #7f4f00;
-  /* Avatars */
+  /* Avatars (pack; rows use --cat-*) */
   --av-1: #e6b46a;
   --av-2: #8fbde8;
   --av-3: #9fcfa4;
@@ -150,9 +267,10 @@
   --fs-body: 14px; /* description body · 1.62 */
   --fs-ui: 13px; /* base: rows, chat, controls */
   --fs-meta: 12px; /* sub-lines, notes */
-  --fs-mono: 11px; /* mono caps labels · 500 · +0.05em · uppercase · 1.25. THE FLOOR: no text below 11px */
+  --fs-mono: 11px; /* THE FLOOR: no text below 11px. Mono caps only on the YOU pill (refresh); mono without caps for keys, JQL, keycaps */
   /* in-between sizes used by components: 12.5px (buttons, inline run, rack titles, meta rows), 13.5px (row/tile titles) */
   --fs-row-title: 13.5px;
+  --fs-row-title-lg: 14.5px; /* My queue Needs-you title (refresh) */
   --fs-control: 12.5px;
 
   /* Spacing (px values used by the kit; 4px-ish rhythm with a few 2/3/5/7/9 optical steps) */
@@ -174,7 +292,8 @@
   --r-sm: 6px; /* rack line, small hover pads */
   --r-btn-sm: 7px; /* small buttons, chips, icon buttons, pills inner */
   --r-md: 8px; /* buttons, inputs, sidebar items, rail items, team items */
-  --r-row: 9px; /* item rows, compact rows, pills track, Talk sheet */
+  --r-row: 8px; /* item rows, compact/intake rows, empty rows, pills track, Talk sheet (refresh: was 9) */
+  --r-control: 8px; /* sm / xs buttons and fields (refresh); filter chips keep --r-btn-sm */
   --r-sheet: 10px; /* sheets, run tiles, menus */
   --r-lg: 12px; /* Talk recess */
   --r-xl: 14px; /* the surface recess, peek, queue overlay */
@@ -182,11 +301,17 @@
 
   /* Fixed sizes */
   --h-line: 28px; /* one-line rows: rack line, wait line, small buttons */
-  --h-group: 32px; /* group head, column head, overflow strip */
-  --h-compact: 36px; /* compact row line */
-  --h-quiet: 42px; /* quiet row (Waiting on others / Blocked / Done) */
+  --h-group: 32px; /* overflow strip, My queue group head */
+  --h-group-head: 34px; /* Compact / Intake group head; 12px above it (refresh) */
+  --h-col-head: 38px; /* Compact / Intake column head (refresh) */
+  --h-compact: 42px; /* Compact / Intake raised row (refresh: was 36) */
+  --h-compact-flat: 38px; /* Compact flat (settled) row, 4px shorter (refresh) */
+  --h-empty: 34px; /* dashed empty row: Needs you, Running, Queued (refresh) */
+  --h-quiet: 44px; /* My queue flat row min-height (refresh: was 42) */
   --h-team-item: 44px; /* All teams item */
-  --h-item: 52px; /* Needs-you item row (min-height) */
+  --h-item: 56px; /* My queue raised item row min-height (refresh: was 52) */
+  --sp-zone: 18px; /* gap between My queue zones (refresh) */
+  --h-btn-xs: 24px; /* Add context (refresh) */
   --h-btn-sm: 28px;
   --h-btn: 34px;
   --h-btn-lg: 40px;
@@ -197,7 +322,8 @@
   --av: 20px; /* avatar floor; also 24, 26 (Talk), 30 (rail) */
 
   /* Motion. Animate transform and opacity only, and only on live things. */
-  --lift: -3px; /* hover / focus lift, translate only */
+  --lift: -3px; /* My queue items, tiles, team items: hover / focus lift, translate only (rack lines and chips 2px).
+                   Compact and Intake rows never lift: they light up (--row-hover*). */
   --t-fast: 0.16s; /* lift, hover colour, chip, button */
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
   --ease-glide: cubic-bezier(0.2, 0.75, 0.2, 1);

@@ -21,8 +21,10 @@ export type ActionId =
   | "request_changes"
   | "open";
 
-/** `ink` = the one primary; `accent` = Dispatch run on a ticket only; `quiet` = transparent. */
-export type ActionVariant = "ink" | "accent" | "default" | "quiet";
+/** `you` = the gate primary (Approve, Complete: the blue button, refresh HANDOFF §3.3); `ink` = any
+ *  other primary (Retry, a row's Open); `accent` = Dispatch run on a ticket only; `quiet` =
+ *  transparent. A group has at most one of `you` / `ink` / `accent`. */
+export type ActionVariant = "you" | "ink" | "accent" | "default" | "quiet";
 
 export interface Action {
   id: ActionId;
@@ -98,11 +100,11 @@ export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
       const changes = parked ? [act("request_changes", words.requestChanges, "default")] : [];
       if (parked?.more) {
         // Gate primacy: Approve stays the one primary; only the header may also abandon here.
-        const approve = act("approve", words.approve, "ink", { title: parked.gate.label });
+        const approve = act("approve", words.approve, "you", { title: parked.gate.label });
         return set(approve, header ? [abandon, ...changes] : changes);
       }
       // The last gate, or no gate at all (a succeeded run): the only step left is to close it.
-      return set(act("complete", words.complete, "ink"), [abandon, ...changes]);
+      return set(act("complete", words.complete, "you"), [abandon, ...changes]);
     }
     case "waiting":
       return set(

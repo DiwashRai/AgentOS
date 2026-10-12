@@ -38,9 +38,11 @@
   outline-offset: 2px;
   border-radius: 4px;
 }
+/* the count: sentence-case Geist, tabular (refresh: no mono for counts) */
 .list > button > span {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-3);
   margin-left: 5px;
 }

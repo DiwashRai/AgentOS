@@ -1,4 +1,6 @@
-/* Status marks: exactly one form per state (DESIGN §13.1). Ported from kit.css `.ao-mk`. */
+/* Status marks: exactly one form per state (DESIGN §13.1), in the visual refresh's type: labels are
+   sentence-case Geist (no mono caps), the YOU pill is the only mono caps. Small marks (s7) are the
+   refresh's 6px status dots (mock §3 `.status-dot`); done is the green tick badge (mock §4.9). */
 .mark {
   display: inline-flex;
   align-items: center;
@@ -6,6 +8,7 @@
   white-space: nowrap;
   min-width: 0;
   vertical-align: middle;
+  font-size: var(--fs-control);
 }
 .mark > i {
   flex: none;
@@ -16,11 +19,7 @@
   position: relative;
 }
 .mark > b {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   line-height: 1.25;
   min-width: 0;
   overflow: hidden;
@@ -31,7 +30,7 @@
   flex: none;
 }
 .mark > span {
-  font-size: var(--fs-meta);
+  font-size: var(--fs-control);
   color: var(--ink-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -48,7 +47,7 @@
   border-radius: 50%;
   border: 1.5px solid var(--live);
   opacity: 0;
-  animation: breathe 2s ease-out infinite;
+  animation: breathe var(--dur-breathe) ease-out infinite;
 }
 .run > b {
   color: var(--live-text);
@@ -64,12 +63,13 @@
   }
 }
 
-/* waiting on someone: blue ring + name */
+/* waiting on someone: the pack's blue ring (HANDOFF §9: kept until the owner decides); the name is
+   ink, since blue text means "you" */
 .wait > i {
   box-shadow: inset 0 0 0 1.6px var(--waiting);
 }
 .wait > b {
-  color: var(--waiting);
+  color: var(--ink-1);
 }
 
 /* waiting on YOU: blue dot + YOU pill (the only YOU form) */
@@ -78,13 +78,15 @@
 }
 .youPill {
   display: inline-block;
+  flex: none;
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   font-weight: 600;
   letter-spacing: 0.06em;
+  text-transform: uppercase;
   line-height: 1;
   padding: 3px 5px 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: var(--waiting);
   color: var(--you-ink);
 }
@@ -102,26 +104,16 @@
 }
 .blk > b {
   color: var(--blocked);
+  font-weight: 600;
 }
 
-/* done: green check */
-.done > i {
-  border-radius: 0;
-  width: 9px;
-}
-.done > i::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: -1px;
-  width: 3.5px;
-  height: 7px;
-  border: solid var(--done);
-  border-width: 0 1.7px 1.7px 0;
-  transform: rotate(45deg);
+/* done: the green tick badge */
+.tick {
+  flex: none;
 }
 .done > b {
   color: var(--done);
+  font-weight: 600;
 }
 
 /* abandoned (a done ticket closed as unsuccessful): a crimson cross */
@@ -146,6 +138,7 @@
 }
 .abandoned > b {
   color: var(--blocked);
+  font-weight: 600;
 }
 
 /* queued: dashed ring (waiting for a runner). The mask reads alpha only, so any opaque token works. */
@@ -166,18 +159,17 @@
   color: var(--ink-3);
 }
 
-/* mark followed by a mono ask: "YOU · sign off the plan" */
+/* the ask: after the YOU pill it is the ask label (600 --you-text); after a name, "· ask" */
 .mark .ask {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: inherit;
 }
-.you .ask,
+.you .ask {
+  font-weight: 600;
+  color: var(--you-text);
+}
 .wait .ask {
-  color: var(--waiting);
+  color: var(--ink-2);
 }
 .blk .ask,
 .abandoned .ask {
@@ -194,11 +186,32 @@
   color: var(--ink-3);
 }
 
-/* 7px glyph (counters, pills, group heads): kit's `.ao-counters .ao-mk>i`. As in the kit, the blocked
-   bar becomes a 7px square here: counters work as a legend. */
+/* small mark (counters, pills, group heads): the refresh's 6px status dots; the Inbox ring is 7px */
 .mark.s7 > i {
+  width: 6px;
+  height: 6px;
+}
+.s7.run > i {
+  box-shadow: 0 0 0 3px var(--live-ring);
+}
+.s7.run > i::after {
+  display: none;
+}
+.s7.blk > i {
+  margin: 0;
+  border-radius: 1px;
+}
+.s7.queued > i {
+  background: none;
+  -webkit-mask: none;
+  mask: none;
+  border: 1.5px dotted var(--ink-3);
+}
+.s7.idle > i {
   width: 7px;
   height: 7px;
+  box-shadow: none;
+  border: 1.5px solid var(--ink-3);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -31,9 +31,8 @@
 }
 
 .groupHead > span {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
+  font-size: var(--fs-meta);
+  font-weight: 600;
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
@@ -64,7 +63,6 @@
   width: 120px;
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
-  letter-spacing: 0.03em;
   color: var(--ink-3);
   white-space: nowrap;
 }
@@ -77,11 +75,8 @@
 }
 
 .crumb {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-meta);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-3);
   white-space: nowrap;
 }
@@ -90,9 +85,9 @@
 .iconButton {
   width: 30px;
   height: 30px;
-  border-radius: 7px;
+  border-radius: var(--r-btn-sm);
   border: 1px solid var(--rule);
-  background: var(--surface);
+  background: var(--surface-raised);
   display: inline-grid;
   place-items: center;
   color: var(--ink-3);
@@ -104,18 +99,23 @@
   border-color: var(--rule-strong);
 }
 
-/* kit .ao-btn--quiet */
+/* the quiet button (refresh mock §4.10 `.btn--quiet`): transparent, ink-1 500, hover --field */
 .quietButton {
-  height: 34px;
-  padding: 0 13px;
-  border-radius: 8px;
+  height: var(--h-btn);
+  padding: 0 14px;
+  border-radius: var(--r-md);
   border: 1px solid transparent;
   background: transparent;
-  font-size: 12.5px;
-  color: var(--ink-3);
+  font-size: var(--fs-control);
+  font-weight: 500;
+  color: var(--ink-1);
 }
 
 .quietButton:hover {
-  background: var(--recess);
-  color: var(--ink-1);
+  background: var(--field);
+}
+
+.quietButton[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
 }

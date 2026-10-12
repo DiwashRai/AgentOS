@@ -7,7 +7,9 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useConfig } from "../api/queries";
 import { COUNTERS, type CountKey } from "../domain/counts";
 import { jumpTarget } from "../domain/search";
+import type { StatusKind } from "../domain/status";
 import { words } from "../domain/words";
+import { Button, cx, Kbd, type MarkKind, StatusMark } from "../ui";
 import { SearchIcon } from "./icons";
 import { isShortcut } from "./keys";
 import s from "./TopBar.module.css";
@@ -15,6 +17,17 @@ import { useBoard } from "./useBoard";
 import { useSearchQuery } from "./useSearchQuery";
 
 export type CounterSlot = CountKey | "|";
+
+/** A count's status kind → its mark (the kinds share names with the marks). */
+const MARK_OF: Record<StatusKind, MarkKind> = {
+  you: "you",
+  wait: "wait",
+  blk: "blk",
+  run: "run",
+  queued: "queued",
+  done: "done",
+  idle: "idle",
+};
 
 export interface TopBarProps {
   title: string;
@@ -29,6 +42,8 @@ export interface TopBarProps {
   action?: ReactNode;
 }
 
+/** Counters (refresh mock §3 `.counter`): the number carries the weight (15/600) and a zero recedes
+ *  (13/500 `--ink-3`); a non-zero "need you" is the one tinted pill. */
 function Counters({ slots }: { slots: readonly CounterSlot[] }) {
   const { counts } = useBoard();
   return (
@@ -36,11 +51,18 @@ function Counters({ slots }: { slots: readonly CounterSlot[] }) {
       {slots.map((slot, i) => {
         if (slot === "|") return <span key={`sep-${String(i)}`} className={s.sep} />;
         const { mark, label } = COUNTERS[slot];
+        const n = counts[slot];
         return (
-          <span key={slot}>
-            {/* Placeholder dot per kind; the orchestrator swaps in ui/StatusMark. */}
-            {mark && <i className={s.mark} data-kind={mark} aria-hidden="true" />}
-            <b>{counts[slot]}</b> {label}
+          <span
+            key={slot}
+            className={cx(s.counter, n === 0 && s.isZero, n > 0 && mark === "you" && s.isYou)}
+          >
+            {mark && (
+              <span className={s.mark} aria-hidden="true">
+                <StatusMark kind={MARK_OF[mark]} glyphOnly size={7} />
+              </span>
+            )}
+            <b>{n}</b> {label}
           </span>
         );
       })}
@@ -97,7 +119,7 @@ function Search({ placeholder }: { placeholder: string }) {
           }
         }}
       />
-      <kbd className={s.kbd}>/</kbd>
+      <Kbd className={s.kbd}>/</Kbd>
     </label>
   );
 }
@@ -105,9 +127,7 @@ function Search({ placeholder }: { placeholder: string }) {
 function NewTicketButton() {
   const [, setParams] = useSearchParams();
   return (
-    <button
-      type="button"
-      className={s.button}
+    <Button
       onClick={() => {
         setParams((p) => {
           p.set("new", "1");
@@ -116,7 +136,7 @@ function NewTicketButton() {
       }}
     >
       {words.newTicket}
-    </button>
+    </Button>
   );
 }
 

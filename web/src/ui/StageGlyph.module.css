@@ -1,113 +1,170 @@
 /* Stage glyph: one segment per stage of THIS ticket's pipeline, gates as diamonds between
-   (DESIGN §13.2). Ported from kit.css `.ao-stg`. `isFailed` and `isBlocked` are ours. */
+   (DESIGN §13.2), in the visual refresh's form (mock §4.4, HANDOFF §5 "Stage glyph"): a fixed 81px
+   slot so the label sits 90px into its cell; segments 8×3 (xs 7×3); past --progress, current 11×5
+   --ink-1 (--live while running), upcoming --glyph-up, skipped 1.5px, stopped --blocked. Gate 6px
+   diamond; on you, --waiting with the --you-ring halo. Segment sizes are mirrored in glyph.ts
+   (GEOMETRY) for the fit check. `isFailed` and `isBlocked` are ours. */
 .stg {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 9px;
+  min-width: 0;
   white-space: nowrap;
   vertical-align: middle;
 }
-.stg > i {
+.segs {
   flex: none;
-  width: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: 81px; /* GLYPH_SLOT */
+}
+/* A pipeline too long even at xs: segments shrink (never below 2px) so the label stays at 90px. */
+.segs > i {
+  flex: 0 1 auto;
+  min-width: 2px;
+  display: block;
+  width: 8px;
   height: 3px;
-  border-radius: 1px;
-  background: var(--rule);
+  border-radius: 2px;
+  background: var(--glyph-up);
 }
-.stg > i.isDone {
-  background: var(--rule-strong);
+.segs > i.isDone {
+  background: var(--progress);
 }
-.stg > i.isCur {
+.segs > i.isCur {
+  width: 11px;
+  height: 5px;
   background: var(--ink-1);
 }
-.stg.isLive > i.isCur {
+.stg.isLive .segs > i.isCur {
   background: var(--live);
 }
-.stg > i.isSkip {
-  height: 1px;
+.segs > i.isSkip {
+  height: 1.5px;
   background: var(--rule-strong);
-  opacity: 0.55;
+  opacity: 0.7;
 }
-/* ours: a failed stage is the current one, in the blocked colour */
-.stg > i.isFailed {
+/* ours: a failed stage is the stopped one, in the blocked colour */
+.segs > i.isFailed {
+  width: 11px;
+  height: 5px;
   background: var(--blocked);
 }
-/* gate notch: a small diamond between two segments */
-.stg > u {
+/* gate: a 6px diamond between two segments */
+.segs > u {
   flex: none;
-  width: 5px;
-  height: 5px;
-  margin: 0 1.5px;
+  display: block;
+  width: 6px;
+  height: 6px;
+  margin: 0 1px;
   transform: rotate(45deg);
-  border-radius: 0.5px;
+  border-radius: 1px;
   box-shadow: inset 0 0 0 1.2px var(--rule-strong);
   text-decoration: none;
 }
-.stg > u.isPassed {
-  background: var(--rule-strong);
+.segs > u.isPassed {
+  background: var(--progress);
   box-shadow: none;
 }
-.stg > u.isWait {
+.segs > u.isWait {
   box-shadow: inset 0 0 0 1.5px var(--waiting);
 }
-.stg > u.isYou {
+.segs > u.isYou {
   background: var(--waiting);
-  box-shadow: 0 0 0 2px var(--you-ring);
+  box-shadow: 0 0 0 2.5px var(--you-ring);
 }
+/* a finished ticket: the whole path is green */
+.stg.isFinished .segs > i {
+  background: var(--progress);
+}
+.stg.isFinished .segs > i.isSkip {
+  background: var(--progress-soft);
+  opacity: 1;
+}
+/* the reached Done bookend draws as one more past segment */
+.stg.isFinished .segs > i.isCur {
+  width: 8px;
+  height: 3px;
+}
+.stg.isFinished.xs .segs > i.isCur {
+  width: 7px;
+}
+
+/* the label: sentence case, never caps */
 .stg > b {
-  margin-left: 7px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-control);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
-.stg.isGateYou > b,
-.stg.isGateWait > b {
-  color: var(--waiting);
+.stg.isGateYou > b {
+  color: var(--you-text);
+  font-weight: 600;
 }
 .stg.isBlocked > b {
   color: var(--blocked);
+  font-weight: 600;
+}
+.stg.isFinished > b {
+  color: var(--done);
+  font-weight: 600;
 }
 
-/* tiny variant for sidebar/compact lines (7px segments) */
-.xs > i {
+/* xs: longer pipelines (pack's 7px segments) */
+.xs .segs > i {
   width: 7px;
 }
-.xs > u {
-  width: 4.5px;
-  height: 4.5px;
+.xs .segs > i.isCur,
+.xs .segs > i.isFailed {
+  width: 10px;
 }
-.xs > b {
-  margin-left: 6px;
+.xs .segs > u {
+  width: 5px;
+  height: 5px;
 }
 
-/* large variant for boards and column heads: real sizes, never transform: scale() */
-.lg {
+/* lg: boards and column heads; real sizes, never transform: scale(); no slot */
+.lg .segs {
   gap: 3px;
+  width: auto;
 }
-.lg > i {
+.lg .segs > i {
+  flex: none;
+}
+.lg .segs > i {
   width: 14px;
   height: 4px;
-  border-radius: 2px;
 }
-.lg > i.isSkip {
+.lg .segs > i.isCur,
+.lg .segs > i.isFailed {
+  width: 18px;
+  height: 6px;
+}
+.stg.isFinished.lg .segs > i.isCur {
+  width: 14px;
+  height: 4px;
+}
+.lg .segs > i.isSkip {
   height: 1.5px;
 }
-.lg > u {
+.lg .segs > u {
   width: 8px;
   height: 8px;
   margin: 0 2px;
-  border-radius: 1px;
   box-shadow: inset 0 0 0 1.4px var(--rule-strong);
 }
-.lg > u.isWait {
+.lg .segs > u.isWait {
   box-shadow: inset 0 0 0 1.8px var(--waiting);
 }
-.lg > u.isYou {
+.lg .segs > u.isYou {
   box-shadow: 0 0 0 3px var(--you-ring);
 }
-.lg > u.isPassed {
+.lg .segs > u.isPassed {
   box-shadow: none;
 }

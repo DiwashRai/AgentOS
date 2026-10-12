@@ -1,5 +1,9 @@
-/* Labelled stepper (ticket header, peek): DESIGN §13.3. Ported from kit.css `.ao-stepper`.
-   `isFailed` is ours. */
+/* Labelled stepper (ticket header, peek): DESIGN §13.3 in the visual refresh's form (mock §4.5,
+   HANDOFF §5 "Stepper"). Bars 3px (skipped 1.5px) on one 10px track, gates an 8px diamond on the
+   same track, so every name shares one baseline. Past = --progress bar, --ink-1 500 name; upcoming
+   --track / --ink-3; current --ink-1 (live = --live, "Live"); a gate on you --waiting with
+   "Your move"; the finished last stage gets the tick badge and "Complete" in --done.
+   `isFailed` is ours. Layout around it (margins, the hairline under it) belongs to the view. */
 .stepper {
   display: flex;
   align-items: flex-start;
@@ -12,7 +16,7 @@
 .stepper > li {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
 }
 .stepper .s {
@@ -20,31 +24,39 @@
   min-width: 30px;
 }
 .stepper .bar {
+  display: block;
   height: 3px;
+  margin: 3.5px 0;
   border-radius: 2px;
-  background: var(--rule);
+  background: var(--track);
 }
 .stepper .nm {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-control);
+  line-height: 1.25;
   color: var(--ink-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .stepper .st {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: 11.5px;
+  line-height: 1.25;
   color: var(--ink-3);
   margin-top: -3px;
+  white-space: nowrap;
 }
+/* past */
 .stepper .isDone .bar {
-  background: var(--rule-strong);
+  background: var(--progress);
 }
 .stepper .isDone .nm {
-  color: var(--ink-2);
+  color: var(--ink-1);
+  font-weight: 500;
 }
+/* current (DESIGN §13.3): ink bar and a 600 name; live = the live colour and "Live" */
 .stepper .isCur .bar {
   background: var(--ink-1);
 }
@@ -58,17 +70,20 @@
 .stepper.isLive .isCur .st {
   color: var(--live-text);
 }
+/* skipped: 1.5px, struck name, "Skipped" */
 .stepper .isSkip .bar {
-  height: 1px;
-  margin: 1px 0;
+  height: 1.5px;
+  margin: 4.25px 0;
+  background: var(--progress-soft);
+}
+.stepper .isSkip.isAhead .bar {
   background: var(--rule-strong);
   opacity: 0.6;
 }
 .stepper .isSkip .nm {
   text-decoration: line-through;
-  text-decoration-color: var(--rule-strong);
 }
-/* ours: failed = the current stage in the blocked colour */
+/* ours: failed = the stopped stage in the blocked colour */
 .stepper .isFailed .bar {
   background: var(--blocked);
 }
@@ -79,47 +94,59 @@
 .stepper .isFailed .st {
   color: var(--blocked);
 }
-/* gates */
+/* the finished ticket's last stage */
+.stepper .isFinal .bar {
+  background: var(--progress);
+}
+.stepper .isFinal .nm,
+.stepper .isFinal .st {
+  color: var(--done);
+  font-weight: 600;
+}
+/* gates: an 8px diamond on the same 10px track */
 .stepper .g {
   flex: none;
   align-items: center;
   width: auto;
-  padding: 0 4px;
+  padding: 0 8px;
 }
 .stepper .g > u {
   display: block;
   width: 8px;
   height: 8px;
-  margin-top: -2.5px;
+  margin: 1px 0;
   transform: rotate(45deg);
-  border-radius: 1px;
+  border-radius: 1.5px;
   box-shadow: inset 0 0 0 1.4px var(--rule-strong);
   text-decoration: none;
 }
 .stepper .g.isPassed > u {
-  background: var(--rule-strong);
+  background: var(--progress);
   box-shadow: none;
 }
+.stepper .g.isPassed .nm {
+  color: var(--ink-1);
+  font-weight: 500;
+}
+/* waiting on someone: the pack's blue ring, kept (HANDOFF §9); the name is ink */
 .stepper .g.isWait > u {
   box-shadow: inset 0 0 0 1.8px var(--waiting);
 }
+.stepper .g.isWait .nm {
+  color: var(--ink-1);
+  font-weight: 500;
+}
 .stepper .g.isYou > u {
   background: var(--waiting);
-  box-shadow: 0 0 0 3px var(--you-ring);
+  box-shadow: 0 0 0 2.5px var(--you-ring);
+}
+.stepper .g.isYou .nm,
+.stepper .g.isYou .st {
+  color: var(--you-text);
+  font-weight: 600;
 }
 .stepper .g .nm {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  margin-top: 1px;
-}
-.stepper .g.isWait .nm,
-.stepper .g.isYou .nm {
-  color: var(--waiting);
-}
-.stepper .g .you {
-  margin-top: -2px;
+  max-width: 96px;
 }
 /* compact / 3+ gates: inactive gates are a bare diamond (name in the title), so the row never clips "Done" */
 .stepper .g.isBare {
@@ -133,7 +160,4 @@
 }
 .stepper.isCompact .g:not(.isBare) {
   padding: 0 6px;
-}
-.stepper .g .nm {
-  max-width: 96px;
 }

@@ -1,4 +1,5 @@
-/* Avatar (DESIGN §13.9). Ported from kit.css `.ao-av`; 26px is the Talk size (`.ao-msg>.ao-av`). */
+/* Avatar. Rows: the refresh's flat identity hue (mock §4.7 `.avatar`), 20px, initials 11/600.
+   Talk keeps the pack's `--av-*` faces (kit.css `.ao-av`; 26px is the Talk size). */
 .av {
   flex: none;
   width: 20px;
@@ -12,6 +13,10 @@
   letter-spacing: -0.02em;
   color: var(--av-ink);
   background: var(--av-1);
+}
+.identity {
+  color: var(--id-on);
+  background: var(--id);
 }
 .s24 {
   width: 24px;
@@ -34,4 +39,16 @@
 }
 .av4 {
   background: var(--av-4);
+}
+
+/* the reserved slot (mock `.avatar-slot`, `.avatar-empty`) */
+.slot {
+  display: inline-block;
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+.empty {
+  border-radius: 50%;
+  border: 1px dashed var(--rule-strong);
 }

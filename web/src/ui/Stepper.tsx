@@ -4,12 +4,15 @@ import {
   collapsesGates,
   gateTitle,
   glyphItems,
+  isAhead,
   isBareGate,
+  isFinished,
   stageCaption,
+  YOUR_MOVE,
   type StepperModel,
 } from "./glyph";
-import { YouPill } from "./StatusMark";
 import s from "./Stepper.module.css";
+import { TickBadge } from "./TickBadge";
 
 const STEP_CLASS: Record<StepState, string | undefined> = {
   done: s.isDone,
@@ -27,16 +30,22 @@ const GATE_CLASS: Record<GateState, string | undefined> = {
 };
 
 export interface StepperProps {
-  /** A GlyphModel; a stage may also carry `added` for the "ADDED" caption. */
+  /** A GlyphModel; a stage may also carry `added` for the "Added" caption. */
   model: StepperModel;
   /** Peek / narrow: every inactive gate is a bare diamond. */
   compact?: boolean | undefined;
   className?: string | undefined;
 }
 
+/**
+ * The labelled stepper (refresh HANDOFF §5 "Stepper"): 3px bars (skipped 1.5px) on one 10px track,
+ * so every name shares one baseline. A gate on you reads "Your move"; a finished ticket's last stage
+ * gets the tick badge and "Complete".
+ */
 export function Stepper({ model, compact = false, className }: StepperProps) {
   const collapse = collapsesGates(model, compact);
   const last = model.stages.length - 1;
+  const finished = isFinished(model);
   return (
     <ol
       className={cx(s.stepper, model.live && s.isLive, collapse && s.isCompact, className)}
@@ -55,31 +64,43 @@ export function Stepper({ model, compact = false, className }: StepperProps) {
               </li>
             );
           }
+          const caption =
+            gate.state === "you"
+              ? YOUR_MOVE
+              : gate.state === "waiting" && gate.person
+                ? gate.person
+                : "";
           return (
             <li key={`g${String(it.index)}`} className={cls} title={title}>
               <u />
               <span className={s.nm}>{gate.short}</span>
-              {gate.state === "you" ? (
-                <YouPill className={s.you} />
-              ) : gate.state === "waiting" && gate.person ? (
-                <span className={s.st}>{gate.person}</span>
-              ) : null}
+              {caption ? <span className={s.st}>{caption}</span> : null}
             </li>
           );
         }
         const { stage } = it;
-        const caption = stageCaption(stage, it.index === last, model.live);
+        const isLast = it.index === last;
+        const final = isLast && finished;
+        const caption = stageCaption(stage, isLast, model.live, finished);
         return (
           <li
             key={`s${String(it.index)}`}
-            className={cx(s.s, STEP_CLASS[stage.state])}
+            className={cx(
+              s.s,
+              STEP_CLASS[stage.state],
+              stage.state === "skipped" && isAhead(model, it.index) && s.isAhead,
+              final && s.isFinal,
+            )}
             title={stage.name + (caption ? ` · ${caption.toLowerCase()}` : "")}
             aria-current={
               stage.state === "current" || stage.state === "failed" ? "step" : undefined
             }
           >
             <span className={s.bar} />
-            <span className={s.nm}>{stage.name}</span>
+            <span className={s.nm}>
+              {final ? <TickBadge size={14} /> : null}
+              {stage.name}
+            </span>
             {caption ? <span className={s.st}>{caption}</span> : null}
           </li>
         );

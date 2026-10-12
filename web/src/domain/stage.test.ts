@@ -47,6 +47,20 @@ describe("stageModel", () => {
     ]);
   });
 
+  it("stops an abandoned ticket at the first stage it didn't finish, never at Done", () => {
+    const m = stageModel(
+      ticket({
+        attention: "done",
+        state: "closed",
+        phase_track: track({ inbox: "done", plan: "done", done: "done" }),
+        rail: [step("Plan", "done"), step("Lint", "skipped"), step("Build", "pending")],
+      }),
+    );
+    expect(m.stages.map((s) => s.state)).toEqual(["done", "done", "skipped", "failed", "upcoming"]);
+    expect(m.label).toBe("Closed");
+    expect(m.live).toBe(false);
+  });
+
   it("keeps skipped stages in place and never labels with one", () => {
     const m = stageModel(
       ticket({
