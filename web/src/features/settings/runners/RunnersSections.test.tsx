@@ -201,6 +201,22 @@ describe("RunnerSection", () => {
     expect(el.textContent).toContain("changes apply to the next run, no restart");
   });
 
+  it("with the mailbox launcher, names it and treats the fields as in use", () => {
+    const el = mount(
+      <RunnerSection
+        settings={{ launcher: "mailbox", token_set: false }}
+        value={{ ...FORM, workflow: "" }}
+        issues={{}}
+        readOnly={false}
+        onChange={() => undefined}
+      />,
+    );
+    expect(el.textContent).toContain("GitHub Actions via Artifactory");
+    expect(el.textContent).toContain("runs fail at launch until it is");
+    expect(el.textContent).toContain("changes apply to the next run, no restart");
+    expect(byLabel(el, "Workflow", HTMLInputElement).placeholder).toBe("agentos-mailbox.yml");
+  });
+
   it("with the local launcher, says the fields apply only to the GitHub launcher", () => {
     const onChange = vi.fn();
     const el = mount(

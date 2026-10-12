@@ -79,8 +79,21 @@ export function validateRunner(f: RunnerForm): RunnerIssues {
   return out;
 }
 
-export function launcherLabel(launcher: RunnerSettings["launcher"]): string {
-  return launcher === "github" ? "GitHub Actions" : "Local process";
+export type Launcher = RunnerSettings["launcher"];
+
+const LAUNCHER_LABEL: Record<Launcher, string> = {
+  local: "Local process",
+  github: "GitHub Actions",
+  mailbox: "GitHub Actions via Artifactory",
+};
+
+export function launcherLabel(launcher: Launcher): string {
+  return LAUNCHER_LABEL[launcher];
+}
+
+/** The launchers that dispatch a GitHub workflow, so the repo, workflow and ref apply. */
+export function dispatchesWorkflow(launcher: Launcher): boolean {
+  return launcher === "github" || launcher === "mailbox";
 }
 
 // ------------------------------------------------------------------ runtimes: draft

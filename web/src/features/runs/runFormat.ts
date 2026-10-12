@@ -62,6 +62,31 @@ export function spanSeconds(
   return Math.max(0, (to - from) / 1000);
 }
 
+/** When a run's log reaches the server: `live` (the worker posts events as it goes) or `at_end`
+ *  (the mailbox launcher: the server replays the run's outbox once the GitHub job finishes). */
+export type LogDelivery = "live" | "at_end";
+
+/** For now this keys off the server's launcher, which only admins can read (Settings › Runners);
+ *  everyone else gets `live`. A per-run field would replace it. */
+export function logDelivery(
+  launcher: Schemas["RunnerSettings"]["launcher"] | undefined,
+): LogDelivery {
+  return launcher === "mailbox" ? "at_end" : "live";
+}
+
+/** What an empty log says. */
+export function emptyLogText(o: {
+  queued: boolean;
+  active: boolean;
+  delivery: LogDelivery;
+}): string {
+  if (o.delivery === "at_end" && (o.queued || o.active)) {
+    return `${o.queued ? "Queued. " : ""}Logs arrive when the GitHub job finishes.`;
+  }
+  if (o.queued) return "Queued. The log starts when a worker picks it up.";
+  return o.active ? "Waiting for output" : "No output";
+}
+
 /** Where a run was launched: the launcher's link (`launch_url`: a GitHub Actions run, or the
  *  workflow's runs page when GitHub didn't name the run), else its ref as mono text (a PID). */
 export function launchRef(

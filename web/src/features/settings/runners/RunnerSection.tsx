@@ -1,9 +1,16 @@
-// Settings › Runners › Runner: where the GitHub launcher dispatches each run's workflow. The
-// launcher and the token come from the server's env (read-only here); the repo, workflow file and
-// ref are read at every dispatch. Controlled; the page owns the draft and the save.
+// Settings › Runners › Runner: where the GitHub launchers (github, and mailbox: GitHub Actions
+// with Artifactory carrying each run in and out) dispatch each run's workflow. The launcher and
+// the token come from the server's env (read-only here); the repo, workflow file and ref are read
+// at every dispatch. Controlled; the page owns the draft and the save.
 import { cx } from "../../../ui";
 import { Field, fieldStyles as f } from "../../pipeline/fields";
-import { launcherLabel, type RunnerForm, type RunnerIssues, type RunnerSettings } from "./model";
+import {
+  dispatchesWorkflow,
+  launcherLabel,
+  type RunnerForm,
+  type RunnerIssues,
+  type RunnerSettings,
+} from "./model";
 import s from "./Runners.module.css";
 
 export interface RunnerSectionProps {
@@ -15,7 +22,7 @@ export interface RunnerSectionProps {
 }
 
 export function RunnerSection({ settings, value, issues, readOnly, onChange }: RunnerSectionProps) {
-  const github = settings.launcher === "github";
+  const github = dispatchesWorkflow(settings.launcher);
   const noRepo = value.github_repo.trim() === "";
 
   /** A Field's control: one mono text input for `field`. */
@@ -83,7 +90,10 @@ export function RunnerSection({ settings, value, issues, readOnly, onChange }: R
           error={issues.workflow}
           hint="A file in that repo's .github/workflows/."
         >
-          {text("workflow", "agentos-worker.yml")}
+          {text(
+            "workflow",
+            settings.launcher === "mailbox" ? "agentos-mailbox.yml" : "agentos-worker.yml",
+          )}
         </Field>
         <Field label="Ref" error={issues.ref} hint="The branch or tag the workflow file is on.">
           {text("ref", "main")}

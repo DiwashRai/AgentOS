@@ -133,8 +133,18 @@
   text-underline-offset: 3px;
 }
 
-.refLink:hover {
+.refLink:hover,
+.textLink:hover {
   text-decoration-color: var(--ink-1);
+}
+
+/* a link inside a sentence (the empty log's "Watch it live on GitHub") */
+.textLink {
+  color: var(--ink-1);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
 }
 
 /* gated: the "you" glyph, the run's name and the word in blue text (no YOU pill: a run doesn't

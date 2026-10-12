@@ -4,7 +4,9 @@ import {
   addRuntime,
   argsToLines,
   commandPreview,
+  dispatchesWorkflow,
   fixFirst,
+  launcherLabel,
   linesToArgs,
   moveRuntime,
   patchRuntime,
@@ -84,6 +86,15 @@ describe("runner form", () => {
     expect(validateRunner({ ...ok, workflow: "w.yaml" })).toEqual({});
     expect(validateRunner({ ...ok, ref: "  " }).ref).toBeDefined();
     expect(validateRunner({ ...ok, ref: "x".repeat(256) }).ref).toBeDefined();
+  });
+
+  it("names each launcher; the repo, workflow and ref apply to both GitHub launchers", () => {
+    expect(launcherLabel("local")).toBe("Local process");
+    expect(launcherLabel("github")).toBe("GitHub Actions");
+    expect(launcherLabel("mailbox")).toBe("GitHub Actions via Artifactory");
+    expect(dispatchesWorkflow("github")).toBe(true);
+    expect(dispatchesWorkflow("mailbox")).toBe(true);
+    expect(dispatchesWorkflow("local")).toBe(false);
   });
 });
 
