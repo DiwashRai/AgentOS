@@ -1655,6 +1655,17 @@
             "title": "Done",
             "type": "boolean"
           },
+          "section": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -1662,7 +1673,8 @@
         },
         "required": [
           "text",
-          "done"
+          "done",
+          "section"
         ],
         "title": "PlanItem",
         "type": "object"
@@ -4190,8 +4202,20 @@
     },
     "/api/intake": {
       "get": {
-        "description": "Each configured intake query with the Jira issues it matches that aren't in AgentOS yet\n(newest-updated first, capped). \"Take in\" one with POST /api/tickets/import.",
+        "description": "Each configured intake query with the Jira issues it matches that aren't in AgentOS yet\n(newest-updated first, capped). \"Take in\" one with POST /api/tickets/import.\n\nJira's answers are cached ~45 s; `fresh=1` (Retry, Refresh) refetches every query that wasn't\nfetched in the last few seconds.",
         "operationId": "list_intake_api_intake_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Fresh",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {

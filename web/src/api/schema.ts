@@ -83,6 +83,9 @@ export interface paths {
          * List Intake
          * @description Each configured intake query with the Jira issues it matches that aren't in AgentOS yet
          *     (newest-updated first, capped). "Take in" one with POST /api/tickets/import.
+         *
+         *     Jira's answers are cached ~45 s; `fresh=1` (Retry, Refresh) refetches every query that wasn't
+         *     fetched in the last few seconds.
          */
         get: operations["list_intake_api_intake_get"];
         put?: never;
@@ -1245,6 +1248,8 @@ export interface components {
         PlanItem: {
             /** Done */
             done: boolean;
+            /** Section */
+            section: string | null;
             /** Text */
             text: string;
         };
@@ -2243,7 +2248,9 @@ export interface operations {
     };
     list_intake_api_intake_get: {
         parameters: {
-            query?: never;
+            query?: {
+                fresh?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

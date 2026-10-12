@@ -55,10 +55,12 @@ def issue(key: str, minutes_ago: int = 0, **fields: Any) -> dict[str, Any]:
 @dataclass
 class FakeJira:
     """Search results by JQL (as configured, without the appended ORDER BY), the issue GET for
-    imports, and failures by JQL. Answers 401 unless the service account is used."""
+    imports, failures by JQL, and the JQL parse check's errors by JQL. Answers 401 unless the
+    service account is used."""
 
     results: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     failures: dict[str, Exception | httpx.Response] = field(default_factory=dict)
+    invalid: dict[str, str] = field(default_factory=dict)
     approximate: dict[str, int] = field(default_factory=dict)
     calls: list[httpx.Request] = field(default_factory=list)
 
@@ -73,6 +75,13 @@ class FakeJira:
             found = [i for issues in self.results.values() for i in issues if i["key"] == key]
             return httpx.Response(200, json=found[0]) if found else httpx.Response(404)
         body = json.loads(request.content)
+        if path == "/rest/api/3/jql/parse":
+            assert request.url.params["validation"] == "strict"
+            [query] = body["queries"]
+            error = self.invalid.get(query.removesuffix(ORDER))
+            return httpx.Response(
+                200, json={"queries": [{"query": query, **({"errors": [error]} if error else {})}]}
+            )
         jql = body["jql"].removesuffix(ORDER)
         failure = self.failures.get(jql)
         if isinstance(failure, Exception):
@@ -137,8 +146,8 @@ def configure(ctx: AppContext, *queries: tuple[str, str]) -> None:
     set_queries(ctx, [IntakeQuerySpec(id=i, name=f"Query {i}", jql=jql) for i, jql in queries])
 
 
-def get_intake(client: TestClient) -> list[IntakeQuery]:
-    response = client.get("/api/intake")
+def get_intake(client: TestClient, *, fresh: bool = False) -> list[IntakeQuery]:
+    response = client.get("/api/intake", params={"fresh": "1"} if fresh else None)
     assert response.status_code == 200, response.text
     assert SERVICE_TOKEN not in response.text
     return TypeAdapter(list[IntakeQuery]).validate_python(response.json())
@@ -347,6 +356,54 @@ def test_a_failing_query_does_not_affect_the_others(
     assert bad.error == f"Jira rejected the query: {message}"
     assert down.error == slow.error == service.UNAVAILABLE
     assert auth.error == service.UNAUTHORIZED
+
+
+def test_cloud_explains_an_empty_answer_with_the_jql_check(
+    authed: TestClient, ctx: AppContext, jira: FakeJira
+) -> None:
+    """Cloud's search answers an unknown field, project or value with no issues, not a 400."""
+    configure(ctx, ("bad", "project = SCRUM AND nosuchfield = 1"), ("empty", "project = SCRUM"))
+    message = "Field 'nosuchfield' does not exist or you do not have permission to view it."
+    jira.invalid["project = SCRUM AND nosuchfield = 1"] = message
+    bad, empty = get_intake(authed)
+    assert (bad.items, bad.total, bad.error) == ([], 0, f"Jira rejected the query: {message}")
+    assert (empty.items, empty.total, empty.error) == ([], 0, None)
+    parsed = [c for c in jira.calls if c.url.path == "/rest/api/3/jql/parse"]
+    assert len(parsed) == 2  # only for the empty answers
+
+
+def test_jql_check_is_best_effort() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rest/api/3/jql/parse":
+            return httpx.Response(503)
+        return httpx.Response(200, json={"issues": [], "isLast": True})
+
+    client = JiraClient(JIRA, "cloud", transport=httpx.MockTransport(handler))
+    creds = client.credentials(token=SERVICE_TOKEN, email=SERVICE_EMAIL)
+    page = client.search(creds, "q", ("summary",), 1)
+    assert (page.issues, page.count, page.complete) == ([], 0, True)
+
+
+def test_fresh_refetches_unless_just_fetched(
+    authed: TestClient, ctx: AppContext, jira: FakeJira, clock: Clock
+) -> None:
+    configure(ctx, ("a", "project = SCRUM"))
+    jira.results["project = SCRUM"] = [issue("SCRUM-2")]
+    get_intake(authed)
+    assert len(jira.searches()) == 1
+    jira.results["project = SCRUM"] = [issue("SCRUM-2"), issue("SCRUM-3")]
+    clock.now += 4
+    [a] = get_intake(authed, fresh=True)
+    assert len(jira.searches()) == 1  # fetched under FRESH_MIN_AGE_S ago: reused
+    clock.now += 2
+    [a] = get_intake(authed)
+    assert len(jira.searches()) == 1  # a plain GET keeps the 45 s cache
+    [a] = get_intake(authed, fresh=True)
+    assert len(jira.searches()) == 2
+    assert [i.key for i in a.items] == ["SCRUM-2", "SCRUM-3"]
+    clock.now += 1
+    get_intake(authed)
+    assert len(jira.searches()) == 2  # the fresh answer is cached as usual
 
 
 def test_cache_within_ttl_and_refresh_after(

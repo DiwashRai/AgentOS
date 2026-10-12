@@ -411,7 +411,15 @@ class FakeSearch:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.calls += 1
-        jql = json.loads(request.content)["jql"].removesuffix(" ORDER BY updated DESC")
+        body = json.loads(request.content)
+        if request.url.path.endswith("/jql/parse"):
+            errors = (
+                ["Field 'nosuchfield' does not exist"]
+                if "nosuchfield" in body["queries"][0]
+                else []
+            )
+            return httpx.Response(200, json={"queries": [{"errors": errors}]})
+        jql = body["jql"].removesuffix(" ORDER BY updated DESC")
         if jql == "bad":
             return httpx.Response(400, json={"errorMessages": ["nope"]})
         matches = self.results.get(jql, [])
@@ -477,6 +485,8 @@ def test_preview_is_live_capped_and_filtered(
 def test_preview_errors(authed: TestClient, search: FakeSearch, ctx: AppContext) -> None:
     bad = preview(authed, "bad").json()
     assert bad == {"total": 0, "error": "Jira rejected the query: nope", "items": []}
+    unknown = preview(authed, "project = SCRUM AND nosuchfield = 1").json()  # Cloud: 200, empty
+    assert unknown["error"] == "Jira rejected the query: Field 'nosuchfield' does not exist"
     ctx.settings = ctx.settings.model_copy(update={"jira_service_token": None})
     calls = search.calls
     assert preview(authed, "x").json()["error"] == intake.NOT_CONFIGURED

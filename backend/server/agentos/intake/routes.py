@@ -14,10 +14,18 @@ router = APIRouter(prefix="/api/intake", tags=["intake"], responses=ERROR_RESPON
 
 
 @router.get("")
-def list_intake(_: CurrentUser, ctx: Ctx) -> list[IntakeQuery]:
+def list_intake(_: CurrentUser, ctx: Ctx, fresh: bool = False) -> list[IntakeQuery]:
     """Each configured intake query with the Jira issues it matches that aren't in AgentOS yet
-    (newest-updated first, capped). "Take in" one with POST /api/tickets/import."""
+    (newest-updated first, capped). "Take in" one with POST /api/tickets/import.
+
+    Jira's answers are cached ~45 s; `fresh=1` (Retry, Refresh) refetches every query that wasn't
+    fetched in the last few seconds."""
     space = ctx.space
     return service.list_intake(
-        ctx.db, space.intake.queries, ctx.jira_source, space.jira_projects, ctx.intake_cache
+        ctx.db,
+        space.intake.queries,
+        ctx.jira_source,
+        space.jira_projects,
+        ctx.intake_cache,
+        fresh=fresh,
     )

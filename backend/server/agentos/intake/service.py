@@ -2,8 +2,10 @@
 Jira issues that aren't in AgentOS yet, fetched live with the service account. "Take in" is the
 existing import. `preview` answers one JQL being edited (live, uncached).
 
-Jira's answer is cached per query (`AppContext.intake_cache`, ~45 s), errors included; the
-already-imported filter reads the db on every call, so a taken-in issue leaves the list at once.
+Jira's answer is cached per query (`AppContext.intake_cache`, ~45 s), errors included; `fresh`
+(request 19: Retry, Refresh) only reuses answers under FRESH_MIN_AGE_S old, which also bounds how
+often clicks reach Jira. The already-imported filter reads the db on every call, so a taken-in
+issue leaves the list at once.
 A failing query answers with its `error` and no items; the others are unaffected.
 """
 
@@ -33,6 +35,7 @@ FETCH_LIMIT = 100
 ITEM_CAP = 50
 PREVIEW_CAP = 5
 MAX_PARALLEL = 4
+FRESH_MIN_AGE_S = 5.0
 
 NOT_CONFIGURED = "Jira import isn't configured (AGENTOS_JIRA_URL and AGENTOS_JIRA_SERVICE_TOKEN)"
 UNAUTHORIZED = "Jira rejected the service account (AGENTOS_JIRA_SERVICE_EMAIL / _TOKEN)"
@@ -52,8 +55,11 @@ def list_intake(
     source: JiraSource | None,
     projects: Collection[str],
     cache: TtlCache[str, JiraSearch | str],
+    *,
+    fresh: bool = False,
 ) -> list[IntakeQuery]:
-    """Every configured query, in config order, with its candidates.
+    """Every configured query, in config order, with its candidates (`fresh`: refetched unless
+    fetched in the last FRESH_MIN_AGE_S).
 
     A candidate is a match that "Take in" would create: not imported yet (no ticket has it as its
     Jira source or as its key) and importable (a valid key, in the Space's Jira `projects` when
@@ -64,7 +70,7 @@ def list_intake(
     """
     if source is None:
         return [_failed(spec, NOT_CONFIGURED) for spec in queries]
-    results = _fetch_all(source, queries, cache)
+    results = _fetch_all(source, queries, cache, FRESH_MIN_AGE_S if fresh else None)
     keys = {c.key for r in results.values() if isinstance(r, JiraSearch) for c in r.issues}
     with db.read() as conn:
         taken = _in_agentos(conn, keys)
@@ -75,12 +81,14 @@ def _fetch_all(
     source: JiraSource,
     queries: Sequence[IntakeQuerySpec],
     cache: TtlCache[str, JiraSearch | str],
+    max_age_s: float | None,
 ) -> dict[str, JiraSearch | str]:
-    """Each query's Jira answer: from the cache, or fetched (in parallel) and cached."""
+    """Each query's Jira answer: from the cache (if younger than `max_age_s`, when given), or
+    fetched (in parallel) and cached."""
     results: dict[str, JiraSearch | str] = {}
     missing: list[IntakeQuerySpec] = []
     for spec in queries:
-        cached = cache.get(spec.id)
+        cached = cache.get(spec.id, max_age_s)
         if cached is None:
             missing.append(spec)
         else:

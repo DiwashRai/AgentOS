@@ -175,7 +175,9 @@ class JiraClient:
         /rest/api/2/search`, whose `total` is exact. Both are read-only.
 
         400 → JiraBadQuery (Jira's message, e.g. a JQL syntax error); 401/403 → JiraUnauthorized;
-        anything else but 200 → JiraUnavailable.
+        anything else but 200 → JiraUnavailable. Cloud answers an unknown field, project or value
+        with no issues instead of a 400, so an empty Cloud page asks `jql_errors` why and raises
+        JiraBadQuery with its message.
         """
         body: dict[str, Any] = {"jql": jql, "maxResults": limit, "fields": list(fields)}
         if self.deployment == "cloud":
@@ -189,6 +191,8 @@ class JiraClient:
             raise JiraUnavailable(f"POST {path}: no issues in the response")
         issues = [issue for issue in raw if isinstance(issue, dict)]
         if self.deployment == "cloud":
+            if not issues and (errors := self.jql_errors(creds, jql)):
+                raise JiraBadQuery(errors)
             if data.get("isLast") is True:
                 return JiraSearchPage(issues=issues, count=len(issues), complete=True)
             return JiraSearchPage(
@@ -211,6 +215,23 @@ class JiraClient:
             raise JiraUnavailable(f"POST {path}: no count in the response")
         return count
 
+    def jql_errors(self, creds: JiraCredentials, jql: str) -> str | None:
+        """Cloud only: Jira's errors for `jql` (`POST /rest/api/3/jql/parse?validation=strict`,
+        read-only), joined and cut short, or None when it's valid. Best effort: a failed check
+        is None, since the search it explains already succeeded."""
+        path = "/rest/api/3/jql/parse"
+        try:
+            response = self.post(creds, path, {"queries": [jql]}, params={"validation": "strict"})
+            data = self._json(path, response, method="POST")
+        except JiraError:
+            return None
+        queries = data.get("queries")
+        first = queries[0] if isinstance(queries, list) and queries else None
+        errors = first.get("errors") if isinstance(first, dict) else None
+        if not isinstance(errors, list):
+            return None
+        return _short([e for e in errors if isinstance(e, str) and e])
+
     # ------------------------------------------------------------------ plumbing
 
     def get(
@@ -220,10 +241,16 @@ class JiraClient:
         Other statuses are returned for the caller to interpret."""
         return self._request("GET", creds, path, params=params)
 
-    def post(self, creds: JiraCredentials, path: str, body: dict[str, Any]) -> httpx.Response:
+    def post(
+        self,
+        creds: JiraCredentials,
+        path: str,
+        body: dict[str, Any],
+        params: dict[str, str] | None = None,
+    ) -> httpx.Response:
         """One authenticated POST of a JSON body (Jira's read-only search endpoints use POST).
         Failures as for `get`."""
-        return self._request("POST", creds, path, json=body)
+        return self._request("POST", creds, path, params=params, json=body)
 
     def _request(
         self,
@@ -461,6 +488,11 @@ def _jira_messages(response: httpx.Response) -> str | None:
     errors = data.get("errors")
     if isinstance(errors, dict):
         parts.extend(f"{k}: {v}" for k, v in errors.items() if isinstance(v, str) and v)
+    return _short(parts)
+
+
+def _short(parts: list[str]) -> str | None:
+    """Messages joined on one line and cut to MAX_ERROR_CHARS, or None if there are none."""
     text = " ".join(" ".join(parts).split())
     if len(text) > MAX_ERROR_CHARS:
         text = text[: MAX_ERROR_CHARS - 1].rstrip() + "…"

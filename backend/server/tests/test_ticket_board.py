@@ -191,9 +191,9 @@ def test_detail_plan_is_the_current_tasks_md(
     put_tasks(authed, t, "# Tasks\n- [x] Reproduce\n- [ ] Run tests\n  - [X]  Nested  \n")
     d = detail(authed, t.key)
     assert d.plan == [
-        PlanItem(text="Reproduce", done=True),
-        PlanItem(text="Run tests", done=False),
-        PlanItem(text="Nested", done=True),
+        PlanItem(text="Reproduce", done=True, section="Tasks"),
+        PlanItem(text="Run tests", done=False, section="Tasks"),
+        PlanItem(text="Nested", done=True, section="Tasks"),
     ]
     assert d.tasks == TaskProgress(done=2, total=3)
     assert "plan" not in authed.get("/api/tickets").json()[0]  # detail only

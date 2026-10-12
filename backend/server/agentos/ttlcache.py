@@ -23,11 +23,13 @@ class TtlCache(Generic[K, V]):
         self._entries: dict[K, tuple[float, V]] = {}
         self._lock = threading.Lock()
 
-    def get(self, key: K) -> V | None:
-        """The value put under `key` less than `ttl_s` ago, else None."""
+    def get(self, key: K, max_age_s: float | None = None) -> V | None:
+        """The value put under `key` less than `ttl_s` (or `max_age_s`, if shorter) ago, else
+        None."""
+        limit = self.ttl_s if max_age_s is None else min(self.ttl_s, max_age_s)
         with self._lock:
             entry = self._entries.get(key)
-            if entry is None or self._clock() - entry[0] >= self.ttl_s:
+            if entry is None or self._clock() - entry[0] >= limit:
                 return None
             return entry[1]
 
