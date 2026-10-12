@@ -1,0 +1,101 @@
+# Backend conventions
+
+Applies to `backend/**`: the FastAPI + SQLite server (`server/agentos/`), the single-file worker (`worker/worker.py`) and their tests. Repo-wide rules (commands, gates, commits, multi-session work, Windows gotchas) are in `../AGENTS.md`; the design rationale is in `../ARCHITECTURE.md`. If present, `../SPEC.md` has the long-form background; code wins over it.
+
+## Layout
+- `server/agentos/`: one package per feature (`auth`, `tickets`, `files`, `social` (chat), `runs`, `templates`, `worker_api`, `intake`, `settings`), each split into `routes.py` / `deps.py` / `service.py` (+ `board.py`, `dispatcher.py`, `reaper.py` where needed).
+- Shared modules: `models.py` (the API contract), `db.py`, `config.py`, `context.py`, `clock.py`, `errors.py` + `http_errors.py`, `broker.py` + `stream.py`, `space_store.py`, `csrf.py`, `main.py`.
+- Pure core: `models.py`, `validate.py`, `pipeline/*` (scaffold, render, segment, manifest, plan, runtime, space), `tickets/board.py`.
+- Plugins: `launchers/` (`local`, `github`; protocol in `launchers/base.py`) and `sources/` (`jira`; protocol in `sources/base.py`).
+- `migrations/NNNN_name.sql`; `worker/worker.py` + `worker/worker_tests/`; `server/tests/` (+ `fixtures/`); `deploy/` (container + GitHub Actions runner, see `deploy/README.md`).
+
+## Architecture (enforced by import-linter)
+The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidance when broken. In plain words:
+- The pure core imports no web framework, `httpx`, `sqlite3`, `agentos.db` or `agentos.config`: it takes plain values, so it can be tested without I/O.
+- Inside a feature: `routes → deps → (dispatcher | reaper) → service → board`. Never import upwards.
+- Routes, deps, `meta` and `stream` never import `agentos.db` or `sqlite3`: they go through a service.
+- Only `agentos.db` imports `sqlite3` (keeps a Postgres swap to one module).
+- Only the HTTP layer imports FastAPI/Starlette/uvicorn. Services raise the pure `errors.ApiError`; `http_errors.py` turns it into a response.
+- Plugins are adapters: no db, services, routes or FastAPI. They get what they need as arguments (the dispatcher counts active runs; the launcher only reports `max_concurrency`).
+- No import cycles between subpackages. Direction: `worker_api → runs → social → tickets → templates | files → auth`. To read another feature's tables, query them in your own service rather than importing upwards.
+
+**Fix the code, never the contract.** Don't loosen a contract to make an import work.
+
+## Request pattern
+- A route takes `ctx: Ctx` (`http_deps.py`) plus the narrowest auth dep, calls ONE service function with plain values (`ctx.db`, `ctx.broker`, `ctx.space`, ids, models) and returns its result. `tickets/routes.py` is the model to copy.
+- Routers declare `responses=ERROR_RESPONSES` so the generated client knows the error shape.
+- Services own transactions and raise `ApiError(status, code, message)` with a code from `models.ErrorCode`.
+- Auth deps (`auth/deps.py`): `CurrentUser` (any approved user; `pending` gets 403 `pending_approval`), `Writer`, `Admin`, and `SignedIn` (`pending` included; only `GET /api/me`). Role deps run before body validation, so a too-low role gets 403 even with a bad body.
+- Every non-GET `/api/*` request except `/api/worker/*` needs the `X-AgentOS: 1` header (`csrf.py`).
+- `AppContext` (`context.py`) is built once in the lifespan and holds settings, db, launcher, space store, Jira client, broker and caches. Loops and tests use it directly.
+- `create_app()` is cheap and side-effect free (the OpenAPI export runs it without config). Config checks, migrations, seeding and the background loops run in the lifespan in `main.py`.
+
+## API contract
+- `models.py` is the contract. Datetimes are `AwareDatetime` (ruff `DTZ` is on). PATCH bodies extend `PatchModel`: an omitted field is unchanged, and an explicit null is rejected unless the field is in `clearable`. `RunEvent` is a discriminated union on `type`; the worker sends exactly these.
+- Add error codes to `ErrorCode`; never invent one at a raise site. The UI branches on them.
+- `server/tests/test_response_models.py` validates every GET against its model (FastAPI serializes without validating). Extend it for every new GET.
+- `server/tests/test_api_drift.py` fails when `web/src/api/openapi.json` is stale: run `just gen-api` and commit the generated files with the backend change.
+- SSE payload models that appear in no JSON route are added to the schema via `EXTRA_SCHEMAS` in `main.py`.
+
+## Data and migrations
+- Use `db.tx()` for writes (BEGIN IMMEDIATE, commit or roll back) and `db.read()` for reads (one snapshot; writes raise). Import `Conn`, `Row`, `IntegrityError`, `OperationalError` from `agentos.db`.
+- Timestamps are stored via `clock.to_db` and read via `from_db` / `from_db_opt`; get "now" from `clock.utcnow()`.
+- Migrations are `migrations/NNNN_name.sql`, numbered 1..N with no gaps (`db.migrations()` refuses otherwise). Never edit a shipped migration; add a new one. Before migrating an existing db, `migrate()` backs it up to `{data_dir}/backups/` (5 newest kept). A server refuses a db newer than it knows.
+- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only and tickets pin `template_id`; `stage_runs` is keyed by `(run_id, idx)`; a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
+- Batch-load for lists (one query per table, never one per ticket).
+
+## Settings and config
+- `config.Settings` reads `AGENTOS_*` env + `backend/.env` with `extra="forbid"`: a new var must be added to `Settings`, and a typo fails startup.
+- Admin-editable settings (Space, repo catalog, intake queries, runtimes, runner) live in the db `settings` table, one JSON document per area. `space_store.SpaceStore` is the cached read side (`ctx.space`, `ctx.runtimes`, `ctx.runner`); every save must call `store.invalidate()` so it applies without a restart.
+- `agentos.toml` and the moved env vars (`config.MOVED_ENV`) only seed a fresh db (`context.seed_settings`); afterwards they're ignored with a startup warning.
+- New settings go in the db, not env, unless they are a URL, a secret, startup/dev config, or decide who may sign in. `deploy/README.md` lists what the env keeps.
+
+## Broker and stream
+- `broker.py` fans notifications out to `GET /api/stream` (SSE). Events are notifications only; the client refetches.
+- Services that change what the UI shows take `broker` as a plain argument and publish **after** the transaction commits, from plain sync code: `broker.ticket(key)`, `broker.run(key, run_id)`, `broker.chat(key, message_id)`. A run or chat change also publishes `ticket(key)`.
+- Every new mutation of a ticket, its files, a run or chat must publish.
+
+## Runs
+- `runs/service.py` owns the state machine. Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means the run moved already (no-op or conflict; the caller decides).
+- `finish()` is the only terminal path: it runs in the caller's transaction, cancels unfinished stage_runs and stamps `finished_at`. The caller publishes after commit.
+- `runs/dispatcher.py` `tick(ctx)` launches queued runs within `launcher.max_concurrency`; `runs/reaper.py` `Reaper(ctx).tick(now)` (injected clock) fails runs whose worker never connects, goes silent or exceeds the time budget (rules in its docstring). `main.py` runs both as loops.
+- Dispatch and worker tokens are stored only as SHA-256 hex digests and never cleared (a token's validity follows the run's status).
+- The ticket's bundle is read-only (409 `bundle_locked`) only while a run is `running`.
+- Helpers other features call: `files.service.write_version` / `current_bundle`; `tickets.service.get_ticket_row`, `ticket_ref(row, space)` / `run_ticket_ref`, `ticket_pipeline`, `active_run_id`.
+
+## Board
+- `tickets/board.py` is pure: `derive(facts) -> TicketBoard` (viewer-independent), then `for_viewer(board, viewer_id) -> ViewerBoard`; `next_stage(pipeline, latest)` picks where a run continues. Services load the facts and pass them in.
+- UI copy (e.g. `now.text`) is asserted in `test_board.py` and `test_ticket_board.py` only; elsewhere assert structured fields.
+
+## Worker contract
+- `worker/worker.py` is one stdlib-only file (`test_worker_stdlib.py`), served to runners at `GET /api/worker/worker.py`. Its only interfaces are the manifest and the worker API models; the whole backend targets py311 for it (ruff `target-version`, plus `check-backend` type-checks it as 3.11).
+- `server/tests/fixtures/manifest_v1.json` is the worker ↔ server contract; both suites parse it.
+- Path rules live in one table, `fixtures/path_cases.json`, run against both `validate.validate_path` and `worker.path_error`. Add cases there, not in either suite.
+- Line limits: manifest `limits.max_line_bytes` = `validate.MAX_AGENT_LINE_BYTES` (256 KiB, agent stdout); the worker cuts every other stream at `min(SHELL_LINE_BYTES, max_line_bytes)` (8 KiB).
+- The worker appends `JUNK_PATTERNS` (tool caches only, never `dist/`/`build/`) to `.git/info/exclude`; it never touches tracked files and the repo's `.gitignore` wins.
+- `AGENTOS_PR_LOOKUP=0` skips the end-of-run `gh pr view`.
+
+## Testing
+- Fixtures in `server/tests/conftest.py`: `settings` (tmp dirs, dev auth, `Settings(_env_file=None)` so a developer's `.env` never leaks in), `launcher` (a `FakeLauncher`), `app` (`create_app(settings, launcher=launcher, run_loops=False)`), `client` (runs the lifespan; base URL `127.0.0.1` because dev auth needs a loopback host), `ctx`, `authed`, `login(username, role=None)`, `set_role`, `create_ticket`, `add_run` (inserts run rows directly) and `runs` (a `RunDriver` that dispatches, ticks and acts as the worker).
+- An autouse `_clean_env` drops every `AGENTOS_*` var from the shell, so tests see only the settings they pass.
+- Mutating requests send `CSRF = {"X-AgentOS": "1"}`. Tests drive `dispatcher.tick` / `Reaper.tick` themselves; no loops run.
+- Helpers: `run_support.py` (`FakeLauncher`, `RunDriver`, `Worker`, `event`, `log_event`, `finished`, `bearer`), `settings_support.py` (`set_space`, `set_repos`, `set_queries`). HTTP to Jira/GitHub is faked with `httpx.MockTransport`.
+- `test_e2e.py` is marked `e2e` (real launcher, worker and git; deselect with `-m 'not e2e'`).
+- Worker tests: helpers and fixtures in `worker_tests/worker_support.py` (re-exported by its `conftest.py`); autouse `fast` shrinks the timing constants and `no_pr_lookup` sets `AGENTOS_PR_LOOKUP=0`.
+- Test runtimes TOML is `fixtures/runtimes_test.toml`. Never name a test file `agentos.toml` (gitignored).
+
+## Launchers and deploy
+- `launchers/local.py` `LocalProcessLauncher.from_settings(settings, worker_path)` spawns detached workers (`CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, tested against Ctrl+C) so a `--reload` doesn't kill runs.
+- `launchers/github.py` dispatches `deploy/github/agentos-worker.yml`. Its copy in `.github/workflows/` must stay byte-identical (`test_launcher_github.py`).
+- Container and runner setup: `deploy/README.md`.
+
+## Safety rules
+- Ask before anything calls the GitHub API for real or pushes a workflow file.
+- Never write a token into a tracked file or a log. Source error messages never carry credentials.
+- Catalog URLs for runner repos must be https (the job's token only works over https).
+- The worker uses the job's `GITHUB_TOKEN` (as `GH_TOKEN`); don't switch to a GitHub App token without asking.
+- Real dispatch tests use the scratch repo and test model the owner names; ask if you don't know them.
+
+## Dev workflow
+- To run `just dev-backend` from an agent shell, give it its own hidden console: `Start-Process pwsh -ArgumentList '-NoProfile','-Command','just dev-backend' -WorkingDirectory <repo root> -WindowStyle Hidden -RedirectStandardOutput <log> -RedirectStandardError <err-log>`. As a harness background task, uvicorn's reload Ctrl+C kills the wrapper and the harness reaps the tree.
+- Keep files ruff-clean as you go (`uv run ruff format <files>`, `uv run ruff check <files>`): the pre-commit hook checks all of `backend/`.
