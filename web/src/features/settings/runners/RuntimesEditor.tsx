@@ -215,7 +215,7 @@ function RuntimeItem(props: RuntimeItemProps) {
               {nIssues === 1 ? "1 issue" : `${String(nIssues)} issues`}
             </span>
           ) : (
-            <span className={s.cap}>{e.prompt_via === "stdin" ? "stdin" : "arg"}</span>
+            <span className={cx(s.cap, s.mono)}>{e.prompt_via === "stdin" ? "stdin" : "arg"}</span>
           )}
         </button>
       </div>

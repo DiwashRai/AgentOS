@@ -1,30 +1,30 @@
 /* Context tab. The pack designs only the chips ("The agent reads", "+ Add context"); the file list
    and editor are built in the same quiet language from kit values. */
 
-/* kit .ao-k */
+/* labels and quiet lines: sentence case, 12 --ink-3 (refresh §3.4, §6) */
 .k,
 .quiet,
 .unsaved {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-meta);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  line-height: 1.25;
+  line-height: 1.3;
   color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .quiet {
   margin: 12px 0 0;
+  font-weight: 400;
 }
 
 .quiet[data-error] {
   color: var(--blocked);
 }
 
+/* your unsaved edit: blue text = you */
 .unsaved {
   flex: none;
-  color: var(--waiting);
+  color: var(--you-text);
 }
 
 .row {
@@ -75,28 +75,29 @@
   gap: 2px;
   padding: 7px 9px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r-row);
   background: none;
   text-align: left;
   min-width: 0;
   transition:
-    transform var(--t-fast) ease,
     background-color var(--t-fast) ease,
-    border-color var(--t-fast) ease;
+    border-color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease;
 }
 
+/* a list row lights up and never moves (refresh §3.1) */
 .file:hover {
-  transform: translateY(-2px);
-  background: var(--surface-raised);
-  border-color: var(--rule-strong);
+  background: var(--row-hover);
+  border-color: var(--row-hover-edge);
+  box-shadow: var(--row-hover-halo);
 }
 
 .file:focus-visible {
-  border-radius: 9px;
+  border-radius: var(--r-row);
 }
 
 .selected {
-  border-color: var(--ink-1);
+  border-color: var(--row-selected-edge);
 }
 
 .fileTop {
@@ -161,7 +162,7 @@
   height: 30px;
   padding: 0 9px;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: var(--field);
   color: var(--ink-1);
   font-family: var(--font-mono);
@@ -170,8 +171,12 @@
   min-width: 0;
 }
 
-.input:focus {
-  border-color: var(--focus);
+/* focus = the ink ring (refresh §3.5) */
+.input:focus-visible,
+.textarea:focus-visible {
+  border-color: var(--rule-strong);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .problem {
@@ -267,10 +272,6 @@
   scrollbar-width: thin;
 }
 
-.textarea:focus {
-  border-color: var(--focus);
-}
-
 .textarea[readonly] {
   background: var(--field);
   color: var(--ink-2);
@@ -288,8 +289,5 @@
 @media (prefers-reduced-motion: reduce) {
   .file {
     transition: none;
-  }
-  .file:hover {
-    transform: none;
   }
 }

@@ -10,13 +10,13 @@
   padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 9px;
+  border-radius: var(--r-sheet);
   box-shadow: var(--row-edge);
   text-align: left;
   cursor: default;
 }
 .complete {
-  border-left: 2px solid var(--done);
+  border-left: 2px solid var(--progress);
 }
 .abandon {
   border-left: 2px solid var(--blocked);
@@ -29,7 +29,7 @@
   min-height: 40px;
   padding: 7px 10px;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: var(--field);
   color: var(--ink-1);
   font: inherit;
@@ -41,8 +41,11 @@
 .note::placeholder {
   color: var(--ink-3);
 }
-.note:focus {
-  border-color: var(--focus);
+/* focus = the ink ring (refresh §3.5) */
+.note:focus-visible {
+  border-color: var(--rule-strong);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .err {

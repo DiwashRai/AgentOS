@@ -26,7 +26,7 @@
   padding: 16px;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 10px;
+  border-radius: var(--r-sheet);
   box-shadow: var(--row-edge);
 }
 .wide {
@@ -45,11 +45,14 @@
   min-height: 34px;
   padding: 4px 6px;
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   background: var(--field);
 }
-.keys:focus-within {
-  border-color: var(--focus);
+/* focus = the ink ring (refresh §3.5) when the key input has it; a chip's × rings on its own */
+.keys:has(.keyInput:focus-visible) {
+  border-color: var(--rule-strong);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .keys[data-invalid] {
   border-color: var(--blocked);
@@ -121,7 +124,7 @@
   max-width: 1080px;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 10px;
+  border-radius: var(--r-sheet);
   box-shadow: var(--row-edge);
 }
 .repo {

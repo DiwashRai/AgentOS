@@ -140,7 +140,14 @@ function StageList({ detail, now }: { detail: RunDetail; now: number }) {
             <li key={st.idx} className={s.stage}>
               <StatusMark kind={mark.kind} glyphOnly title={mark.word} />
               <span className={s.stageName}>{st.name}</span>
-              <span className={cx(s.stageNote, mark.kind === "blk" && s.bad)} title={note}>
+              <span
+                className={cx(
+                  s.stageNote,
+                  mark.kind === "blk" && s.bad,
+                  mark.kind === "done" && s.ok,
+                )}
+                title={note}
+              >
                 {note || mark.word}
               </span>
               <span className={s.mono}>{secs !== null ? duration(secs) : ""}</span>

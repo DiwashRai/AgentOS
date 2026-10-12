@@ -244,7 +244,10 @@ function TalkPane({ ticketKey, limit = 8, variant }: TalkProps) {
         <div className={s.head}>
           <b>Talk</b>
           {people.length > 0 && (
-            <Faces people={people.map((p) => ({ id: p.id, name: p.display_name }))} />
+            <Faces
+              palette="talk"
+              people={people.map((p) => ({ id: p.id, name: p.display_name }))}
+            />
           )}
           <span className={s.note}>{NOTE[variant]}</span>
         </div>

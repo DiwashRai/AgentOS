@@ -8,7 +8,7 @@
   display: flex;
   background: var(--recess);
   box-shadow: var(--recess-shadow);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   padding: 7px;
 }
 .ticket {
@@ -25,7 +25,7 @@
   min-width: 0;
   min-height: 0;
   background: var(--surface);
-  border-radius: 9px;
+  border-radius: var(--r-row);
   box-shadow: var(--surface-shadow);
   display: flex;
   flex-direction: column;
@@ -79,10 +79,8 @@
   text-align: center;
   color: var(--ink-3);
   margin: 6px 0 2px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: var(--fs-meta);
+  font-weight: 500;
 }
 
 .msg {
@@ -99,11 +97,11 @@
   gap: 8px;
   align-items: baseline;
 }
+/* the message time: tabular, at the floor */
 .k {
-  font-family: var(--font-mono);
   font-size: var(--fs-mono);
   font-weight: 400;
-  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
   line-height: 1.25;
   color: var(--ink-3);
 }
@@ -129,8 +127,9 @@
 .bub + .bub {
   border-radius: 14px;
 }
+/* links keep the bubble's ink: the accent is only Dispatch run and the logo (refresh §3.3) */
 .link {
-  color: var(--accent-text);
+  color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -155,9 +154,6 @@
 .mine .bub + .bub {
   border-radius: 14px;
 }
-.mine .link {
-  color: var(--mention);
-}
 
 /* A new message rises 8px and fades in (base.css turns this off under reduced motion). */
 .isNew {
@@ -181,10 +177,7 @@
 }
 .quiet {
   margin: 14px 0 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 
@@ -199,11 +192,8 @@
   border-radius: 999px;
   background: var(--surface-raised);
   box-shadow: var(--surface-shadow);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: var(--fs-meta);
+  font-weight: 600;
   color: var(--ink-1);
   transition:
     transform var(--t-fast) ease,
@@ -233,8 +223,11 @@
   background: var(--field);
   transition: border-color var(--t-fast);
 }
-.compose:focus-within {
-  border-color: var(--focus);
+/* focus = the ink ring (refresh §3.5); the Send button rings on its own */
+.compose:has(textarea:focus-visible) {
+  border-color: var(--rule-strong);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .compose > textarea {
   flex: 1;
@@ -259,9 +252,7 @@
 }
 .error {
   margin: -4px 14px 10px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.05em;
+  font-size: var(--fs-meta);
   color: var(--blocked);
 }
 

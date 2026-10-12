@@ -21,7 +21,7 @@
   position: relative;
   width: min(560px, 100%);
   background: var(--surface);
-  border-radius: 14px;
+  border-radius: var(--r-xl);
   box-shadow: var(--surface-shadow), var(--float-shadow);
   outline: none;
   animation:
