@@ -7,7 +7,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
-import { useConfig, useImportTicket, useIntake } from "../../api/queries";
+import { useConfig, useImportTicket, useIntake, useRefreshIntake } from "../../api/queries";
 import { OpenIcon } from "../../app/icons";
 import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
@@ -263,6 +263,8 @@ function toggled<T>(set: ReadonlySet<T>, v: T): ReadonlySet<T> {
 
 export function IntakeView() {
   const intake = useIntake();
+  const fresh = useRefreshIntake();
+  const refreshing = intake.isFetching || fresh.isPending;
   const jiraUrl = useConfig().data?.jira_url ?? null;
   const { query } = useSearchQuery();
   const now = useNow(AGE_TICK_MS);
@@ -317,7 +319,7 @@ export function IntakeView() {
         takenKeys={takenKeys}
         collapsed={collapsed.has(q.id)}
         expanded={expanded.has(q.id)}
-        retrying={intake.isFetching}
+        retrying={refreshing}
         onToggle={() => {
           setCollapsed((c) => toggled(c, q.id));
         }}
@@ -325,7 +327,7 @@ export function IntakeView() {
           setExpanded((e) => toggled(e, q.id));
         }}
         onRetry={() => {
-          void refetch();
+          fresh.mutate();
         }}
         onTaken={onTaken}
       />
@@ -368,13 +370,14 @@ export function IntakeView() {
           {intake.data && (
             <span className={s.note}>{footNote(queries, intake.dataUpdatedAt, now)}</span>
           )}
+          {fresh.error && <span className={s.note}>Refresh failed · {fresh.error.message}</span>}
           <LinkButton
-            disabled={intake.isFetching}
+            disabled={refreshing}
             onClick={() => {
-              void refetch();
+              fresh.mutate();
             }}
           >
-            {intake.isFetching && !intake.isPending ? "Refreshing…" : "Refresh"}
+            {refreshing && !intake.isPending ? "Refreshing…" : "Refresh"}
           </LinkButton>
         </footer>
       </Surface>

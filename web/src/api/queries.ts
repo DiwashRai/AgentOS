@@ -538,6 +538,18 @@ export function useIntake() {
   });
 }
 
+/** Refresh / Retry: `?fresh=1` asks Jira again instead of the ~45 s cache (a query fetched in the
+ *  last few seconds is still served from it), and the answer replaces the Intake list. */
+export function useRefreshIntake() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.GET("/api/intake", { params: { query: { fresh: true } } })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.intake(), data);
+    },
+  });
+}
+
 /** Close a ticket as completed (state done) or abandoned (state closed), with an optional note.
  *  409 `run_active` while a run is active. Reopen = PATCH `state: open` (clears the resolution). */
 export function useResolveTicket(key: string) {
