@@ -45,6 +45,7 @@ from agentos.tickets.service import (
     active_run_id,
     get_ticket_row,
     launch_url,
+    log_delivery,
     run_ticket_ref,
     ticket_pipeline,
 )
@@ -111,6 +112,7 @@ def _summary(row: Row) -> RunSummary:
         error=row["error"],
         launch_ref=row["launch_ref"],
         launch_url=launch_url(row["launcher"], row["launch_ref"]),
+        log_delivery=log_delivery(row["launcher"]),
     )
 
 

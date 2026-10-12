@@ -25,6 +25,7 @@ from agentos.files.service import write_version
 from agentos.models import (
     ImportRequest,
     ImportResult,
+    LogDelivery,
     Me,
     Person,
     Pipeline,
@@ -292,6 +293,7 @@ def _run_summary(run: Row, ticket_key: str) -> RunSummary:
         error=run["error"],
         launch_ref=run["launch_ref"],
         launch_url=launch_url(run["launcher"], run["launch_ref"]),
+        log_delivery=log_delivery(run["launcher"]),
     )
 
 
@@ -305,6 +307,11 @@ def launch_url(launcher: str, launch_ref: str | None) -> str | None:
     ):
         return launch_ref
     return None
+
+
+def log_delivery(launcher: str) -> LogDelivery:
+    """Mailbox runs replay their recorded events when the GitHub job ends; the rest stream them."""
+    return "at_end" if launcher == "mailbox" else "live"
 
 
 def _tasks(row: Row) -> TaskProgress | None:

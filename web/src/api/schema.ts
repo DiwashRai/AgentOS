@@ -1393,6 +1393,11 @@ export interface components {
             launch_ref: string | null;
             /** Launch Url */
             launch_url: string | null;
+            /**
+             * Log Delivery
+             * @enum {string}
+             */
+            log_delivery: "live" | "at_end";
             /** Stage Ids */
             stage_ids: string[];
             /** Stage Runs */
@@ -1429,6 +1434,11 @@ export interface components {
             launch_ref: string | null;
             /** Launch Url */
             launch_url: string | null;
+            /**
+             * Log Delivery
+             * @enum {string}
+             */
+            log_delivery: "live" | "at_end";
             /** Stage Ids */
             stage_ids: string[];
             /** Started At */

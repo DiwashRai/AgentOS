@@ -34,6 +34,7 @@ from agentos.runs import dispatcher as runs_dispatcher
 from agentos.runs.reaper import Reaper
 from agentos.runs.service import BUDGET_GRACE, OVER_BUDGET
 from agentos.stores.artifactory import ArtifactoryStore
+from agentos.tickets.service import log_delivery
 from agentos.worker_api import service as worker_api
 from tests.mailbox_support import FakeMailbox, Outbox
 from tests.run_support import CSRF, FakeLauncher, RunDriver, log_event
@@ -120,6 +121,7 @@ def test_dispatch_claims_sends_the_manifest_and_locks_the_bundle(
     assert manifest == row["manifest"].encode("utf-8")  # byte-identical to the stored manifest
     assert row["launch_ref"] == mailbox.ref_of(run_id)
     assert runs.get(run_id).launch_url == mailbox.ref_of(run_id)
+    assert runs.get(run_id).log_delivery == "at_end"
     r = authed.put(
         f"/api/tickets/{ticket.key}/files/new.md",
         json={"content": "x", "base_version": 0},
@@ -547,3 +549,11 @@ def test_the_lifespan_runs_the_mailbox_loops_instead_of_the_runs_dispatcher(
         assert seen["dispatcher"].wait(10)
         assert seen["reaper"].wait(10)
     assert calls["runs"] == 0
+
+
+def test_only_mailbox_runs_deliver_their_logs_at_the_end() -> None:
+    assert [log_delivery(name) for name in ("mailbox", "github", "local")] == [
+        "at_end",
+        "live",
+        "live",
+    ]

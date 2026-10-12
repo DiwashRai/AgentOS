@@ -335,6 +335,7 @@ class NowInfo(ApiModel):
 
 # AGENTOS_LAUNCHER. mailbox: runs travel through a store (design/mailbox.md).
 LauncherName = Literal["local", "github", "mailbox"]
+LogDelivery = Literal["live", "at_end"]
 
 
 class RunSummary(ApiModel):
@@ -353,6 +354,9 @@ class RunSummary(ApiModel):
     launch_ref: str | None  # informational: a PID (local), the Actions run URL (github)
     # The launcher's page for this run (the GitHub Actions run); null for the local launcher.
     launch_url: str | None
+    # When the run's events arrive: "live" as the worker sends them, or "at_end" (a mailbox run:
+    # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).
+    log_delivery: LogDelivery
 
 
 # ------------------------------------------------------------------ resolution (request 15)

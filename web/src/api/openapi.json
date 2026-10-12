@@ -2036,6 +2036,14 @@
             ],
             "title": "Launch Url"
           },
+          "log_delivery": {
+            "enum": [
+              "live",
+              "at_end"
+            ],
+            "title": "Log Delivery",
+            "type": "string"
+          },
           "stage_ids": {
             "items": {
               "type": "string"
@@ -2094,6 +2102,7 @@
           "error",
           "launch_ref",
           "launch_url",
+          "log_delivery",
           "stage_runs"
         ],
         "title": "RunDetail",
@@ -2182,6 +2191,14 @@
             ],
             "title": "Launch Url"
           },
+          "log_delivery": {
+            "enum": [
+              "live",
+              "at_end"
+            ],
+            "title": "Log Delivery",
+            "type": "string"
+          },
           "stage_ids": {
             "items": {
               "type": "string"
@@ -2232,7 +2249,8 @@
           "cancel_requested_at",
           "error",
           "launch_ref",
-          "launch_url"
+          "launch_url",
+          "log_delivery"
         ],
         "title": "RunSummary",
         "type": "object"
