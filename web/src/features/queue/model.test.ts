@@ -4,19 +4,24 @@ import { counts } from "../../domain/counts";
 import { gate, person, run, step, ticket } from "../../domain/fixtures";
 import { groups } from "../../domain/groups";
 import {
+  ageParts,
   askLabel,
   atWorkNote,
+  blockedReason,
   compactHref,
   listsAnything,
   meterOf,
   MINE_QUEUED,
   myRunning,
   NO_REPO,
+  outcomeLine,
   rackColumns,
   rackGroups,
+  rowLook,
   runName,
   runSeconds,
   showAllHref,
+  sourceWord,
   statusMark,
   subLine,
   waitingPerson,
@@ -46,6 +51,70 @@ describe("subLine", () => {
     expect(subLine(ticket({ repo_name: "web", owner: sam }), me)).toBe("web · Sam's ticket");
     expect(subLine(ticket({ repo_name: "web", owner: person(1) }), me)).toBe("web");
     expect(subLine(ticket(), me)).toBe("");
+  });
+  it("leads with the source when the ticket came from one", () => {
+    const jira = { source: "jira", external_id: "PLAT-7", url: "https://x/PLAT-7" } as const;
+    expect(sourceWord(ticket({ source: jira }))).toBe("Jira PLAT-7");
+    expect(sourceWord(ticket())).toBeNull();
+    const t = ticket({ source: jira, repo_name: "web", now: now({ run_id: 3 }) });
+    expect(subLine(t, me)).toBe("Jira PLAT-7 · web · run #3");
+  });
+});
+
+describe("row looks", () => {
+  const resolution = (outcome: "completed" | "abandoned", note: string | null = null) => ({
+    outcome,
+    note,
+    by: person(1, "Me"),
+    at: "2026-10-11T10:00:00Z",
+  });
+  it("raises in-flight rows with their edge and flattens done ones", () => {
+    expect(rowLook(ticket({ attention: "needs_you" }))).toEqual({ flat: false, edge: "you" });
+    expect(rowLook(ticket({ attention: "running" }))).toEqual({ flat: false, edge: "live" });
+    expect(rowLook(ticket({ attention: "blocked" }))).toEqual({ flat: false, edge: "blocked" });
+    expect(rowLook(ticket({ attention: "waiting" }))).toEqual({ flat: false, edge: "neutral" });
+    expect(rowLook(ticket({ attention: "queued" }))).toEqual({ flat: false, edge: "neutral" });
+    const done = ticket({ attention: "done", state: "done", resolution: resolution("completed") });
+    expect(rowLook(done)).toEqual({ flat: true, edge: "done" });
+    expect(rowLook(ticket({ attention: "done", state: "closed" }))).toEqual({
+      flat: true,
+      edge: "blocked",
+    });
+  });
+  it("says how a done ticket ended, with its note", () => {
+    const merged = ticket({
+      attention: "done",
+      state: "done",
+      resolution: resolution("completed", " merged "),
+    });
+    expect(outcomeLine(merged)).toEqual({ word: "Complete", abandoned: false, note: "merged" });
+    const dup = ticket({
+      attention: "done",
+      state: "closed",
+      resolution: resolution("abandoned", "duplicate of AOS-8"),
+    });
+    expect(outcomeLine(dup)).toEqual({
+      word: "Abandoned",
+      abandoned: true,
+      note: "duplicate of AOS-8",
+    });
+    expect(outcomeLine(ticket({ attention: "done", state: "done" }))?.note).toBeNull();
+    expect(outcomeLine(ticket({ attention: "needs_you" }))).toBeNull();
+  });
+  it("gives a blocked row its reason: the status line, else the run error", () => {
+    expect(blockedReason(ticket({ now: now({ text: "Lint failed" }) }))).toBe("Lint failed");
+    expect(blockedReason(ticket({ latest_run: run("failed", { error: "exit 1" }) }))).toBe(
+      "exit 1",
+    );
+    expect(blockedReason(ticket())).toBe("");
+  });
+  it("splits an age into numbers and units", () => {
+    expect(ageParts("38m")).toEqual([{ n: "38", unit: "m" }]);
+    expect(ageParts("1h 05m")).toEqual([
+      { n: "1", unit: "h" },
+      { n: "05", unit: "m" },
+    ]);
+    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
   });
 });
 

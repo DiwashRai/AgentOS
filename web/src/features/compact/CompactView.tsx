@@ -1,11 +1,21 @@
-// Compact (DESIGN §6): every ticket, one 36px line each, grouped by attention, filtered by `?f=`
-// (one group), `?repo=` (one repo) and the search `?q=`. The only list that shows the Inbox. A row expands in place,
-// one at a time; Esc collapses it (when no peek is open). Every list and number comes from
-// model.ts over useBoard(); this view only lays them out.
-// Cut from the prototype: J/K/P/O keys, the runner pool gauge, FLIP glides, team bands (repos instead).
-import { Fragment, useEffect, useMemo, useState } from "react";
+// Compact (DESIGN §6, refresh HANDOFF §5): every ticket, one line each, grouped by attention,
+// filtered by `?f=` (one group), `?repo=` (one repo) and the search `?q=`. The only list that shows
+// the Inbox. A row expands in place, one at a time; Esc collapses it (when no peek is open); J/K
+// move the keyboard between rows. Every list and number comes from model.ts over useBoard(); this
+// view only lays them out.
+// Cut from the prototype: P/O keys, the runner pool gauge, FLIP glides, team bands (repos instead).
+import {
+  Fragment,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router";
 
+import { isShortcut } from "../../app/keys";
 import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
@@ -14,23 +24,26 @@ import { useSearchQuery } from "../../app/useSearchQuery";
 import { repoShort } from "../../domain/format";
 import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
-import { GroupHead, Kbd } from "../../ui";
+import { ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, TickBadge } from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { NewTicketPrompt, NoMatches } from "../queue/QueueView";
 import { useNow } from "../runs/useNow";
+import { Age } from "./Age";
 import s from "./Compact.module.css";
 import {
   byFilter,
   collapsedByDefault,
   compactGroups,
+  compactSections,
   emptyText,
   FILTER_PARAM,
-  footNote,
+  footSummary,
+  type GroupRight,
   inRepo,
   parseFilter,
   pills,
+  plural,
   REPO_PARAM,
-  type Summary,
   withFilter,
 } from "./model";
 import { Pills } from "./Pills";
@@ -39,16 +52,80 @@ import { CompactRow } from "./Row";
 /** Ages tick by the minute; nothing on a compact line shows seconds. */
 const AGE_TICK_MS = 30_000;
 
-const COLUMNS = ["", "Ref", "Stage", "Ticket", "Now", "Source", "People", "Upd"] as const;
+/** Column heads, with the class that hides a column on a narrow surface. */
+const COLUMNS: readonly [string, string | undefined][] = [
+  ["Ref", undefined],
+  ["Stage", s.cStage],
+  ["Ticket", undefined],
+  ["Now", s.cNow],
+  ["Source", s.cSrc],
+  ["People", s.cPeople],
+  ["Upd", undefined],
+];
 
-function SummaryText({ parts }: { parts: Summary }) {
-  return (
-    <>
-      {parts.map((p, i) =>
-        typeof p === "string" ? <Fragment key={i}>{p}</Fragment> : <b key={i}>{p.b}</b>,
-      )}
-    </>
-  );
+function Right({ right }: { right: GroupRight }): ReactNode {
+  if (right === null) return undefined;
+  switch (right.kind) {
+    case "stat":
+      return right.parts.map((p, i) =>
+        typeof p === "string" ? (
+          <Fragment key={i}>{p}</Fragment>
+        ) : "b" in p ? (
+          <b key={i}>{p.b}</b>
+        ) : (
+          <span key={i} className={s.headAge}>
+            <Age text={p.age} />
+          </span>
+        ),
+      );
+    case "note":
+      return (
+        <span className={s.headNote}>
+          <ArrowIcon />
+          {right.text}
+        </span>
+      );
+    case "shipped":
+      return (
+        <>
+          <TickBadge size={12} />
+          <span>
+            <b>{`${String(right.n)} shipped`}</b> this week
+          </span>
+        </>
+      );
+  }
+}
+
+/** J / K move the keyboard to the next / previous row line in the list (never while typing). */
+function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== "j" && e.key !== "k") || !isShortcut(e)) return;
+      // Never from inside a dialog (New ticket, a confirm).
+      if (document.activeElement?.closest("dialog, [role='dialog']")) return;
+      const lines = [
+        ...(list.current?.querySelectorAll<HTMLButtonElement>("[data-row-line]") ?? []),
+      ].filter((el) => el.offsetParent !== null);
+      if (lines.length === 0) return;
+      const active = document.activeElement;
+      const at = lines.findIndex((el) => el === active || el.parentElement?.contains(active));
+      const next =
+        at === -1
+          ? e.key === "j"
+            ? 0
+            : lines.length - 1
+          : Math.min(lines.length - 1, Math.max(0, at + (e.key === "j" ? 1 : -1)));
+      e.preventDefault();
+      lines[next]?.focus();
+      lines[next]?.scrollIntoView({ block: "nearest" });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [list, enabled]);
 }
 
 export function CompactView() {
@@ -67,6 +144,8 @@ export function CompactView() {
   const listed = useMemo(() => bySearch(byFilter(scoped, filter), query), [scoped, filter, query]);
   const groups = useMemo(() => compactGroups(listed, board.me, now), [listed, board.me, now]);
   const pillItems = useMemo(() => pills(scoped, board.me, filter), [scoped, board.me, filter]);
+  const foot = useMemo(() => footSummary(listed), [listed]);
+  const listRef = useRef<HTMLDivElement>(null);
 
   // One row open at a time; groups the person flipped away from their default (Done collapsed).
   const [open, setOpen] = useState<string | null>(null);
@@ -84,6 +163,7 @@ export function CompactView() {
       document.removeEventListener("keydown", onKey);
     };
   }, [open, peekOpen]);
+  useRowKeys(listRef, !peekOpen);
 
   const toggleGroup = (id: Attention) => {
     setFlipped((prev) => {
@@ -106,7 +186,14 @@ export function CompactView() {
         <p className={s.empty}>{emptyText(filter, repo)}</p>
       );
   else
-    body = groups.map((g) => {
+    body = compactSections(groups, filter === "all" && query.length === 0).map((sec) => {
+      if (sec.kind === "empty")
+        return (
+          <EmptyRow key={`empty-${sec.id}`} lead={sec.lead} className={s.emptyRow}>
+            {sec.note}
+          </EmptyRow>
+        );
+      const g = sec.group;
       const collapsed = collapsedByDefault(g.id, filter) !== flipped.has(g.id);
       const bodyId = `cx-${g.id}`;
       return (
@@ -115,7 +202,7 @@ export function CompactView() {
             name={g.title}
             count={g.items.length}
             glyph={g.mark}
-            summary={g.summary.length > 0 ? <SummaryText parts={g.summary} /> : undefined}
+            summary={g.right ? <Right right={g.right} /> : undefined}
             collapsed={collapsed}
             onToggle={() => {
               toggleGroup(g.id);
@@ -156,23 +243,52 @@ export function CompactView() {
       />
       <Surface className={s.surface}>
         <div className={s.colhead} aria-hidden="true">
-          {COLUMNS.map((label, i) => (
-            <span key={i}>{label}</span>
+          {COLUMNS.map(([label, cls]) => (
+            <span key={label} className={cls}>
+              {label}
+            </span>
           ))}
         </div>
-        <div className={s.list}>{body}</div>
+        <div ref={listRef} className={s.list}>
+          {body}
+        </div>
         <footer className={s.foot}>
           <span className={s.keys}>
-            <Kbd>↵</Kbd> expand
+            <Kbd>↵</Kbd>Expand
           </span>
           <span className={s.keys}>
-            <Kbd>Esc</Kbd> collapse
+            <Kbd>Esc</Kbd>Collapse
           </span>
           <span className={s.keys}>
-            <Kbd>/</Kbd> search
+            <span className={s.caps}>
+              <Kbd>J</Kbd>
+              <Kbd>K</Kbd>
+            </span>
+            Move
+          </span>
+          <span className={s.keys}>
+            <Kbd>/</Kbd>Search
           </span>
           <span className={s.grow} />
-          <span className={s.note}>{footNote(listed)}</span>
+          <span className={s.sum}>
+            <span>
+              <b>{foot.tickets}</b> {plural(foot.tickets, "ticket")}
+            </span>
+            {foot.projects.length > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                {foot.projects.map((p) => (
+                  <KeyChip key={p} size="sm">
+                    {p}
+                  </KeyChip>
+                ))}
+              </>
+            )}
+            <span aria-hidden="true">·</span>
+            <span>
+              <b>{foot.repos}</b> {plural(foot.repos, "repo")}
+            </span>
+          </span>
         </footer>
       </Surface>
     </>

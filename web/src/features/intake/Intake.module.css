@@ -1,8 +1,8 @@
-/* Intake (design/intake-mock.html). The row, column head, group and footer follow Compact
-   (src/features/compact/Compact.module.css); the overflow strip is kit `.ao-overflow`. Every
+/* Intake (visual refresh: mock.html §5.3 `.intake-head`/`.intake-row`, §4.1 row, §4.16 lozenge and
+   list foot; HANDOFF §5). Every row is raised and lights up on hover / focus, never moves. Every
    colour is a token. */
 
-/* ---------- the page: top bar + a surface that fills the rest; only the list scrolls ---------- */
+/* ---------- the page: top bar + a recess that fills the rest; only the list scrolls ---------- */
 .page {
   container: intake / inline-size;
   display: flex;
@@ -12,32 +12,36 @@
   height: calc(100dvh - 24px);
 }
 
-/* top-bar counters (TopBar's own counters read board counts; these are the view's) */
+/* top-bar counters (mock `.counter`; TopBar's own counters read board counts, these are the view's) */
 .counters {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-left: 8px;
-  color: var(--ink-3);
-  font-size: 12.5px;
-  white-space: nowrap;
+  gap: 18px;
   min-width: 0;
+  white-space: nowrap;
 }
-.counters > span {
+.counter {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 0;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
 }
-.counters b {
+.counter > b {
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink-1);
   font-variant-numeric: tabular-nums;
 }
-.counters > .sep {
-  width: 1px;
-  height: 14px;
-  background: var(--rule);
+.counter.isZero,
+.counter.isZero > b {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.counter.isZero > b {
+  font-size: 13px;
 }
 
 .surface {
@@ -46,25 +50,28 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* key · type · title · Jira status · assignee · upd · action */
-  --ix-cols: 122px 124px minmax(0, 1fr) 150px 150px 48px 112px;
+  /* Jira key · type · issue · Jira status · assignee · upd · action */
+  --ix-cols: 112px 118px minmax(0, 1fr) 128px 168px 40px 84px;
+}
+/* The column head and the list both reserve the scrollbar's gutter, so the columns line up
+   whether or not the list scrolls. */
+.colhead,
+.list {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 .colhead {
   flex: none;
-  position: relative;
-  z-index: 6;
+  overflow: hidden;
   display: grid;
   grid-template-columns: var(--ix-cols);
   column-gap: 14px;
   align-items: center;
-  height: 32px;
-  margin: 0 8px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--rule);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  height: var(--h-col-head);
+  margin: 0 0 0 10px;
+  padding: 0 24px 0 14px;
+  font-size: var(--fs-meta);
+  font-weight: 500;
   color: var(--ink-3);
   white-space: nowrap;
 }
@@ -79,144 +86,187 @@
   flex: 1;
   min-height: 0;
   overflow: hidden auto;
-  padding: 6px 8px 24px;
-  scrollbar-width: thin;
+  /* room for the lit row's halo and the focus ring at the sides */
+  padding: 0 10px 18px;
 }
 .group + .group {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 .group [hidden] {
   display: none;
 }
 
-/* the query's JQL, under its group head */
-.jql {
+/* ---------- group head: the kit GroupHead (a button) + the "open in Jira" arrow beside it ---------- */
+.head {
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-height: 20px;
-  margin: -3px 0 4px;
-  padding: 0 10px 0 29px;
+  gap: 4px;
   min-width: 0;
 }
-.jql > code {
-  flex: 0 1 auto;
+.gh {
+  flex: 1 1 0;
   min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.01em;
+}
+.of {
+  flex: none;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   white-space: nowrap;
+}
+/* the right slot: the query's JQL, mono 11.5 `--ink-3`, truncated (full JQL in `title`) */
+.jql {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
 }
 .out {
   flex: none;
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 2px;
+  border-radius: var(--r-xs);
   color: var(--ink-3);
-  text-decoration: none;
-  white-space: nowrap;
 }
 .out:hover {
   color: var(--ink-1);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--rule-strong);
+  background: var(--field);
 }
 .out:focus-visible,
 .key:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
+}
+.arrow {
+  display: block;
+  flex: none;
 }
 
-/* ---------- the row: one 36px line; not a click target, so hover tints, it doesn't lift ---------- */
+/* ---------- the row: raised, one 42px line; lights up on hover / focus, never moves ---------- */
 .rows {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 .row {
+  position: relative;
   display: grid;
   grid-template-columns: var(--ix-cols);
   column-gap: 14px;
   align-items: center;
-  min-height: 36px;
-  padding: 0 10px;
-  border-radius: 9px;
-  border: 1px solid transparent;
-  transition: background-color var(--t-fast) ease;
+  min-height: var(--h-compact);
+  padding: 0 14px;
+  border-radius: var(--r-row);
+  background: var(--row-raised);
+  box-shadow:
+    0 0 0 1px var(--row-raised-edge),
+    var(--row-raised-shadow);
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
-.row:hover {
-  background: var(--surface);
+.row + .row {
+  margin-top: 4px;
 }
+.row:not(.isTaken):is(:hover, :has(:focus-visible)) {
+  z-index: 1;
+  background: var(--row-hover);
+  box-shadow:
+    0 0 0 1px var(--row-hover-edge),
+    var(--row-hover-halo);
+}
+/* taken in: settled, so it lies flat until the refetch drops it */
+.row.isTaken {
+  background: var(--row-flat);
+  box-shadow: inset 0 0 0 1px var(--row-flat-edge);
+}
+
+/* Jira: the key chip + the small arrow out to the issue */
 .key {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
   justify-self: start;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.03em;
   color: var(--ink-3);
   text-decoration: none;
-  white-space: nowrap;
 }
-.key > b {
-  font-weight: 500;
-  color: var(--ink-2);
-}
-.key > svg {
-  flex: none;
-}
-.key:hover > b {
+.key:hover {
   color: var(--ink-1);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--rule-strong);
 }
 .type {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  white-space: nowrap;
+  min-width: 0;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-.type > em {
-  font-style: normal;
-  color: var(--blocked);
 }
 .ti {
-  font-size: var(--fs-ui);
-  font-weight: 500;
-  color: var(--ink-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.st {
-  font-size: 12.5px;
-  color: var(--ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.as {
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
-  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: var(--fs-row-title);
+  font-weight: 500;
+  color: var(--ink-1);
+}
+.ti > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isTaken .ti {
   color: var(--ink-2);
+}
+
+/* Jira status: a neutral lozenge (mock `.lozenge`); we only have the name, so one ring for all */
+.st {
+  min-width: 0;
+}
+.loz {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--rule-soft);
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.loz > i {
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+}
+.loz > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.as {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-control);
+  font-weight: 500;
+  color: var(--ink-1);
   white-space: nowrap;
 }
 .as > span:last-child {
@@ -226,34 +276,27 @@
 }
 .as.isNone {
   color: var(--ink-3);
-}
-.nobody {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px var(--rule-strong);
-  opacity: 0.8;
+  font-weight: 400;
 }
 .upd {
   justify-self: end;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  color: var(--ink-3);
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.age {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.unit {
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  margin-left: 1px;
 }
 .act {
   justify-self: end;
 }
-.act > button {
-  min-width: 84px;
-}
-/* taken in: the state takes the right-hand columns until the refetch drops the row */
-.isTaken .ti {
-  color: var(--ink-2);
-  font-weight: 400;
-}
+/* the taken-in state takes the right-hand columns until the refetch drops the row */
 .taken {
   grid-column: 4 / -1;
   display: flex;
@@ -262,9 +305,9 @@
   gap: 12px;
   min-width: 0;
   white-space: nowrap;
+  font-size: var(--fs-control);
 }
 .where {
-  font-size: 12.5px;
   color: var(--ink-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -277,28 +320,24 @@
 .rowErr {
   grid-column: 1 / -1;
   justify-self: end;
-  margin: 0 0 6px;
-  font-size: 12px;
+  margin: 0 0 8px;
+  font-size: var(--fs-meta);
   color: var(--blocked);
   overflow-wrap: anywhere;
 }
 
-/* quiet lines for a failing or empty query */
+/* a failing query: one quiet line under its head */
 .err {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px 10px;
-  padding: 4px 10px 8px 29px;
-  font-size: 12.5px;
+  padding: 6px 14px 4px;
+  font-size: var(--fs-control);
   color: var(--ink-2);
 }
 .errK {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
   color: var(--blocked);
   white-space: nowrap;
 }
@@ -312,46 +351,28 @@
 .errRetry {
   margin-left: auto;
 }
-.empty {
-  margin: 0;
-  padding: 4px 10px 8px 29px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
 .none {
   margin: 0;
-  padding: 10px;
-  font-size: 13px;
+  padding: 10px 14px;
+  font-size: var(--fs-ui);
   color: var(--ink-2);
 }
-.none > code {
-  font-family: var(--font-mono);
-  font-size: 0.86em;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--ink-1);
-}
 
-/* the overflow strip (kit .ao-overflow): "+42 more · 73 match in Jira, newest 50 listed · Show all 50" */
+/* the overflow strip: "+42 more · 73 match in Jira, newest 50 listed · Show all 50" */
 .more {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 32px;
-  padding: 0 4px 0 10px;
-  font-size: 12px;
+  height: var(--h-empty);
+  margin-top: 4px;
+  padding: 0 14px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 .more > b {
   flex: none;
   white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-control);
   color: var(--ink-1);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -370,47 +391,47 @@
   text-overflow: ellipsis;
 }
 
-/* footer: its own row inside the surface */
+/* footer (mock `.list-foot`): keycaps, gap, "2 queries · checked just now", Refresh */
 .foot {
   flex: none;
   display: flex;
   align-items: center;
   gap: 18px;
-  height: 40px;
-  margin: 0 8px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 11px 24px;
+  box-sizing: border-box;
   border-top: 1px solid var(--rule);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
 }
 .keys {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  gap: 6px;
   white-space: nowrap;
 }
 .grow {
   flex: 1;
 }
 .note {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.04em;
-  color: var(--ink-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+.note > b {
+  font-weight: 600;
+  color: var(--ink-1);
   font-variant-numeric: tabular-nums;
+}
+.refresh {
+  font-size: var(--fs-meta);
 }
 
 /* ---------- medium widths: narrower fixed columns, so the title keeps room ---------- */
 @container intake (max-width: 1100px) {
   .surface {
-    --ix-cols: 116px 96px minmax(0, 1fr) 104px 120px 44px 96px;
+    --ix-cols: 104px 96px minmax(0, 1fr) 112px 128px 40px 84px;
   }
 }
 
@@ -440,34 +461,26 @@
   }
   .list {
     overflow: visible;
-    padding: 8px 6px 12px;
+    padding: 8px 8px 12px;
   }
   .colhead {
     display: none;
   }
   .jql {
-    padding-left: 10px;
-    flex-wrap: wrap;
-    gap: 2px 10px;
-    margin-bottom: 6px;
-  }
-  .jql > code {
-    flex: 1 1 100%;
     white-space: normal;
     overflow-wrap: anywhere;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
     -webkit-box-orient: vertical;
-    line-height: 1.45;
-  }
-  .out {
-    margin-left: 0;
   }
   .rows {
     display: flex;
     flex-direction: column;
     gap: 5px;
+  }
+  .row + .row {
+    margin-top: 0;
   }
   /* three lines: key · type · age / title / Jira status · assignee · action */
   .row {
@@ -476,9 +489,6 @@
     align-items: center;
     gap: 6px 10px;
     padding: 9px 10px 9px 12px;
-    background: var(--surface);
-    border-color: var(--rule);
-    box-shadow: var(--row-edge);
   }
   .key {
     order: 1;
@@ -486,7 +496,6 @@
   .type {
     order: 2;
     flex: 1 1 0;
-    min-width: 0;
   }
   .upd {
     order: 3;
@@ -519,9 +528,9 @@
     flex: 1 1 100%;
     margin: 0;
   }
-  .err,
-  .empty {
+  .err {
     padding-left: 10px;
+    padding-right: 10px;
   }
   .errRetry {
     margin-left: 0;
@@ -537,7 +546,7 @@
   }
   .foot {
     gap: 12px;
-    margin: 0 6px;
+    padding: 10px 14px;
   }
   .foot > .keys {
     display: none;

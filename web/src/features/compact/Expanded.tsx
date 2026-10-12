@@ -11,7 +11,7 @@ import { type Action, ticketActions } from "../../domain/actions";
 import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { words } from "../../domain/words";
-import { Avatar, Button, cx, StatusMark, Stepper } from "../../ui";
+import { Avatar, Button, cx, StatusMark, Stepper, TickBadge } from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import { planView, plainText, stagesText } from "../peek/model";
@@ -113,13 +113,15 @@ function Plan({
         <ul className={s.steps}>
           {plan.items.map((item, i) => (
             <li key={i} className={cx(item.done && s.isDone)}>
-              <span className={s.tick} role="img" aria-label={item.done ? "Done" : "Open"}>
-                {item.done ? "✓" : "○"}
-              </span>
+              {item.done ? (
+                <TickBadge size={14} label="Done" />
+              ) : (
+                <span className={s.todo} role="img" aria-label="Open" />
+              )}
               <span title={planText(item.text)}>{plainText(planText(item.text))}</span>
             </li>
           ))}
-          {plan.more > 0 && <li className={s.more}>{`+${String(plan.more)} more`}</li>}
+          {plan.more > 0 && <li className={s.moreItems}>{`+${String(plan.more)} more`}</li>}
         </ul>
       ) : (
         <p className={s.sub}>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseQuery } from "../../domain/search";
 import {
+  ageParts,
   ageText,
   capText,
   emptyGroupText,
@@ -15,6 +16,7 @@ import {
   nameId,
   ROW_CAP,
   searchItems,
+  sharedPrefix,
   toTakeIn,
   typeText,
   visibleRows,
@@ -131,17 +133,45 @@ describe("display", () => {
     expect(nameId("Maya Chen")).toBeGreaterThanOrEqual(0);
   });
 
-  it("writes the footer note", () => {
+  it("writes the footer note, with the query count apart (it is set in bold)", () => {
     const qs = [query("a", []), query("b", [], { error: "bad JQL" })];
-    expect(footNote(qs, NOON - 30_000, NOON)).toBe(
-      "2 queries · 1 didn't answer · checked just now",
-    );
-    expect(footNote([query("a", [])], NOON - 120_000, NOON)).toBe("1 query · checked 2m ago");
+    expect(footNote(qs, NOON - 30_000, NOON)).toEqual({
+      count: 2,
+      text: "queries · 1 didn't answer · checked just now",
+    });
+    expect(footNote([query("a", [])], NOON - 120_000, NOON)).toEqual({
+      count: 1,
+      text: "query · checked 2m ago",
+    });
   });
 
   it("says why a group is empty", () => {
-    expect(emptyGroupText(query("a", []), false)).toBe("Nothing new matches");
-    expect(emptyGroupText(query("a", []), true)).toBe("Nothing new matches");
-    expect(emptyGroupText(query("a", many(2)), true)).toBe("Nothing here matches the search");
+    const quiet = { lead: "All quiet", note: "nothing new matches this query" };
+    expect(emptyGroupText(query("a", []), false)).toEqual(quiet);
+    expect(emptyGroupText(query("a", []), true)).toEqual(quiet);
+    expect(emptyGroupText(query("a", many(2)), true)).toEqual({
+      lead: "No match",
+      note: "nothing here matches the search",
+    });
+  });
+
+  it("splits an age into tabular numbers and smaller units", () => {
+    expect(ageParts("12m")).toEqual([{ n: "12", unit: "m" }]);
+    expect(ageParts("3h 10m")).toEqual([
+      { n: "3", unit: "h" },
+      { n: "10", unit: "m" },
+    ]);
+    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
+  });
+});
+
+describe("sharedPrefix", () => {
+  it("is the one project prefix every item shares", () => {
+    expect(sharedPrefix([item("SCRUM-24"), item("SCRUM-3"), item("scrum-9")])).toBe("SCRUM");
+  });
+
+  it("is null for a mixed group or an empty one", () => {
+    expect(sharedPrefix([item("SCRUM-24"), item("AOS-3")])).toBeNull();
+    expect(sharedPrefix([])).toBeNull();
   });
 });

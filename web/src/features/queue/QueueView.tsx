@@ -10,11 +10,11 @@ import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
 import { useSearchQuery } from "../../app/useSearchQuery";
-import { counts } from "../../domain/counts";
+import { counts, shippedThisWeek } from "../../domain/counts";
 import { groups } from "../../domain/groups";
 import { bySearch } from "../../domain/search";
 import { statusWords, words } from "../../domain/words";
-import { Button, linkClass, StatusMark, ZoneHead } from "../../ui";
+import { Button, EmptyRow, linkClass, StatusMark, TickBadge, ZoneHead } from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { withParam } from "../peek/params";
 import { useNow } from "../runs/useNow";
@@ -135,13 +135,15 @@ export function QueueView() {
         items: g.waitingMine,
         count: c.waitingMine,
         note: undefined,
+        tone: "neutral",
       },
       {
         group: "blocked",
         title: statusWords.blk,
         items: g.blocked,
         count: c.blocked,
-        note: "yours first",
+        note: "Yours first",
+        tone: "neutral",
       },
       {
         group: "doneRecent",
@@ -149,35 +151,39 @@ export function QueueView() {
         items: g.doneRecent,
         count: c.done,
         note: undefined,
+        tone: "done",
       },
     ] as const;
     body = (
       <>
-        <section aria-labelledby="q-need">
-          <ZoneHead
-            id="q-need"
-            title={statusWords.you}
-            count={c.needYou}
-            note="Longest wait first"
-          />
-          {needShown.length === 0 ? (
-            <p className={s.empty}>Nothing needs you.</p>
-          ) : (
+        {needShown.length === 0 ? (
+          <EmptyRow lead="All clear" className={s.emptyZone}>
+            nothing needs you
+          </EmptyRow>
+        ) : (
+          <section aria-labelledby="q-need">
+            <ZoneHead
+              id="q-need"
+              title={statusWords.you}
+              count={c.needYou}
+              note="Longest wait first"
+              tone="you"
+            />
             <div className={s.list}>
               {needShown.map((t) => (
                 <NeedRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
               ))}
             </div>
-          )}
-          {needMore > 0 && (
-            <div className={s.overflow}>
-              <b>{`+${String(needMore)} more`}</b>
-              <ShowAll group="needYou" total={g.needYou.length} q={q} />
-            </div>
-          )}
-        </section>
+            {needMore > 0 && (
+              <div className={s.overflow}>
+                <b>{`+${String(needMore)} more`}</b>
+                <ShowAll group="needYou" total={g.needYou.length} q={q} />
+              </div>
+            )}
+          </section>
+        )}
 
-        {(tiles.length > 0 || rack.length > 0) && (
+        {tiles.length > 0 || rack.length > 0 ? (
           <section aria-labelledby="q-work">
             <ZoneHead
               id="q-work"
@@ -187,39 +193,55 @@ export function QueueView() {
               note={atWorkNote(c)}
             />
             <RunTiles tickets={tiles} now={now} onOpen={peek.open} />
+            <Rack groups={rack} onOpen={peek.open} />
           </section>
+        ) : (
+          <EmptyRow lead="All quiet" className={s.emptyZone}>
+            nothing running, nothing queued
+          </EmptyRow>
         )}
-        <Rack groups={rack} onOpen={peek.open} />
 
-        <div className={s.bottom}>
-          {quiet.map(
-            ({ group, title, items, count, note }) =>
-              items.length > 0 && (
-                <section key={group} aria-labelledby={`q-${group}`}>
-                  <ZoneHead
-                    id={`q-${group}`}
-                    title={title}
-                    count={count}
-                    note={note}
-                    right={
-                      items.length > CAP.quiet ? (
-                        <ShowAll group={group} total={items.length} q={q} />
-                      ) : undefined
-                    }
-                  />
-                  <div className={s.list}>
-                    {items.slice(0, CAP.quiet).map((t) => (
-                      <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
-                    ))}
-                  </div>
-                </section>
-              ),
-          )}
-        </div>
+        {quiet.map(({ group, title, items, count, note, tone }) => {
+          if (items.length === 0) return null;
+          const shipped = group === "doneRecent" ? shippedThisWeek(shown, now) : 0;
+          const more =
+            items.length > CAP.quiet ? <ShowAll group={group} total={items.length} q={q} /> : null;
+          return (
+            <section key={group} aria-labelledby={`q-${group}`}>
+              <ZoneHead
+                id={`q-${group}`}
+                title={title}
+                count={count}
+                note={note}
+                tone={tone}
+                right={
+                  shipped > 0 || more ? (
+                    <>
+                      {shipped > 0 && (
+                        <span className={s.stat}>
+                          <TickBadge size={12} />
+                          <span>
+                            <b>{`${String(shipped)} shipped`}</b>
+                            <span className={s.statWeek}> this week</span>
+                          </span>
+                        </span>
+                      )}
+                      {more}
+                    </>
+                  ) : undefined
+                }
+              />
+              <div className={s.list}>
+                {items.slice(0, CAP.quiet).map((t) => (
+                  <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </>
     );
   }
-
   return (
     <>
       <TopBar

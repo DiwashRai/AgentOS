@@ -6,19 +6,12 @@ import { useLocation, useNavigate } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket } from "../../api/queries";
-import { planSections, planText, sectionCount, showsSections } from "../../domain/plan";
 import { words } from "../../domain/words";
-import { Button, Chip, LinkButton, StatusMark, cx } from "../../ui";
+import { Button, Chip, LinkButton } from "../../ui";
 import { sortFiles } from "../context/files";
-import {
-  actionErrorText,
-  chipName,
-  paragraphs,
-  planNumber,
-  planSummary,
-  ticketPath,
-} from "./model";
+import { actionErrorText, chipName, paragraphs, stripKind, ticketPath } from "./model";
 import s from "./Overview.module.css";
+import { PlanList } from "./PlanList";
 
 type Detail = Schemas["TicketDetail"];
 
@@ -117,57 +110,6 @@ function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   );
 }
 
-/** The checklist rows; with 2+ TASKS.md sections, each under a quiet heading with its k of n. */
-function PlanSections({ plan }: { plan: Schemas["PlanItem"][] }) {
-  const sections = planSections(plan);
-  const headed = showsSections(sections);
-  return sections.map((sec, j) => {
-    const headId = `ticket-plan-${String(j)}`;
-    const labelled = headed && sec.section !== null;
-    return (
-      <div key={j} className={s.planSec}>
-        {labelled ? (
-          <h3 id={headId} className={s.secHead}>
-            <span title={sec.section ?? undefined}>{sec.section}</span>
-            <span>{sectionCount(sec)}</span>
-          </h3>
-        ) : null}
-        <ol className={s.plan} aria-labelledby={labelled ? headId : undefined}>
-          {sec.items.map(({ item, index }) => (
-            <li key={index} className={cx(item.done && s.isDone)}>
-              <span className={s.k}>{planNumber(index)}</span>
-              <span>{planText(item.text)}</span>
-              <span className={s.st}>
-                {item.done ? (
-                  <StatusMark kind="done" name="Done" />
-                ) : (
-                  <StatusMark kind="idle" name="Open" />
-                )}
-              </span>
-            </li>
-          ))}
-        </ol>
-      </div>
-    );
-  });
-}
-
-function Plan({ plan }: { plan: Detail["plan"] }) {
-  return (
-    <section className={s.sec} aria-labelledby="ticket-plan">
-      <h2 id="ticket-plan" className={s.heading}>
-        Plan
-        {plan && plan.length > 0 ? <span className={s.k}>{planSummary(plan)}</span> : null}
-      </h2>
-      {plan && plan.length > 0 ? (
-        <PlanSections plan={plan} />
-      ) : (
-        <p className={s.empty}>No plan yet.</p>
-      )}
-    </section>
-  );
-}
-
 function AgentReads({ t, files }: { t: Detail; files: readonly Schemas["FileInfo"][] }) {
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -212,7 +154,10 @@ export function Overview({ t, files }: { t: Detail; files: readonly Schemas["Fil
   return (
     <div className={s.read}>
       <Description key={t.key} t={t} readOnly={readOnly} />
-      <Plan plan={t.plan} />
+      {/* Parked at a gate, the plan already sits under the now band (what's being signed off). */}
+      {stripKind(t) === "gate" ? null : (
+        <PlanList plan={t.plan} id="ticket-plan" empty="No plan yet." className={s.sec} />
+      )}
       <AgentReads t={t} files={files} />
     </div>
   );

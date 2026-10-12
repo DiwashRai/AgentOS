@@ -1,7 +1,7 @@
-/* Ticket header (DESIGN §7.1; kit .ao-kicker, .ao-display, .ao-lead, .ao-byline, .ao-tacts;
-   prototypes/ticket/ticket.css .tv-head*). */
+/* Ticket header (refresh mock §5.4 .ticket, .ticket__kicker, h2, .ticket__meta; §4.5 stepper
+   layout). It sits on the page: no frame. */
 .head {
-  padding: 4px 0 18px;
+  padding: 8px 0 0;
 }
 
 .top {
@@ -9,7 +9,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  min-height: 36px;
+  min-height: 34px;
 }
 
 .kicker {
@@ -17,7 +17,8 @@
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
-  min-height: 40px;
+  min-height: 34px;
+  min-width: 0;
 }
 
 /* The source tag as a link to the issue (Jira browse link): the tag itself, no underline. */
@@ -27,7 +28,7 @@
   text-decoration: none;
 }
 .srcLink:hover > * {
-  color: var(--ink-1);
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
 }
 .srcLink:focus-visible {
   outline: 2px solid var(--focus);
@@ -48,7 +49,7 @@
   justify-content: flex-end;
 }
 .confirm {
-  width: 360px;
+  width: min(360px, 100%);
 }
 .actErr {
   margin: 0;
@@ -59,14 +60,15 @@
   color: var(--blocked);
 }
 
+/* Ticket h1: 34 / 600, -0.03em (HANDOFF §6). */
 .h1 {
   font-family: var(--font-display);
   font-size: var(--fs-display);
   line-height: 1.1;
   font-weight: 600;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
   color: var(--ink-1);
-  margin: 14px 0 10px;
+  margin: 16px 0 12px;
   text-wrap: balance;
   overflow-wrap: anywhere;
 }
@@ -75,103 +77,110 @@
   font-size: var(--fs-lead);
   line-height: 1.5;
   color: var(--ink-2);
-  margin: 0;
+  margin: 0 0 12px;
   max-width: 62ch;
   white-space: pre-line;
 }
 
+/* Byline: labels 12 --ink-3, values 600 --ink-1. */
 .byline {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 22px;
-  margin: 14px 0 0;
-  font-size: 12.5px;
+  align-items: center;
+  gap: 6px 24px;
+  margin: 0;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 .byline > div {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
 }
 .byline dt {
   margin: 0;
 }
 .byline dd {
   margin: 0;
-  font-weight: 500;
+  font-size: var(--fs-control);
+  font-weight: 600;
   color: var(--ink-1);
 }
 
-/* The owner picker: a native select that reads as a byline value. */
+/* The owner: the avatar + a native select that reads as a byline value. */
 .owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pick {
   position: relative;
   display: inline-flex;
   align-items: center;
 }
-.owner > select {
+.pick > select {
   appearance: none;
   field-sizing: content;
   height: 22px;
-  margin: -3px 0;
+  margin: -3px 0 -3px -6px;
   padding: 0 20px 0 5px;
-  margin-left: -6px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: var(--fs-control);
+  font-weight: 600;
   color: var(--ink-1);
   cursor: pointer;
 }
-.owner > select:hover {
+.pick > select:hover {
   border-color: var(--rule);
   background: var(--surface);
 }
-.owner > select:focus-visible {
+.pick > select:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.owner > select:disabled {
+.pick > select:disabled {
   cursor: default;
   padding-right: 5px;
 }
-.owner > select:disabled:hover {
+.pick > select:disabled:hover {
   border-color: transparent;
   background: transparent;
 }
-.owner > select[aria-invalid="true"] {
+.pick > select[aria-invalid="true"] {
   border-color: var(--blocked);
 }
-.owner > svg {
+.pick > svg {
   position: absolute;
   right: 6px;
   pointer-events: none;
   color: var(--ink-3);
 }
 
+/* The stepper: full width of the column, a hairline under it (mock .stepper margins). */
 .steps {
-  margin-top: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  margin-top: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
 }
 
-.then {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-height: 18px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-
-.k {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  line-height: 1.25;
-  color: var(--ink-3);
+@media (max-width: 640px) {
+  .top {
+    flex-direction: column;
+  }
+  .actsCol {
+    align-items: flex-start;
+  }
+  .acts {
+    justify-content: flex-start;
+  }
+  .actErr {
+    text-align: left;
+  }
+  .steps {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
 }

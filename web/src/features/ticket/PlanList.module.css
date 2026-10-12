@@ -1,0 +1,114 @@
+/* Plan list (refresh mock §4.15 .plan, .plan__head, .plan__count, .plan__bar, .plan-item). */
+.plan {
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-1);
+}
+.count {
+  font-size: var(--fs-control);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.count > b {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.bar {
+  display: block;
+  flex: none;
+  width: 140px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--progress);
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+/* TASKS.md sections (2+ headings): a small sentence-case heading with the section's own k of n. */
+.sec + .sec {
+  margin-top: 14px;
+}
+.secHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.secHead > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secHead > span:last-child {
+  flex: none;
+  font-weight: 500;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 0 12px;
+  /* One line sits centred in the 38px item; a wrapped one keeps the mark on its first line. */
+  align-items: start;
+  align-content: center;
+  min-height: 38px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--ink-1);
+  overflow-wrap: anywhere;
+}
+.item > :first-child {
+  margin-top: 2.5px;
+}
+.item:last-child {
+  border-bottom: 0;
+}
+.item.isDone {
+  color: var(--ink-2);
+}
+.todo {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
+}

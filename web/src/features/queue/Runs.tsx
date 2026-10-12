@@ -3,11 +3,11 @@
 import type { CSSProperties } from "react";
 
 import type { Schemas } from "../../api/client";
-import { elapsed, srcLabel } from "../../domain/format";
+import { elapsed } from "../../domain/format";
 import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { statusKind } from "../../domain/status";
-import { Avatar, cx, RunMeter, StageGlyph, StatusMark } from "../../ui";
+import { Avatar, CountPill, cx, KeyChip, RunMeter, StageGlyph, StatusMark } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import { peekItemProps } from "../peek/usePeek";
 import { CAP, meterOf, type RackGroup, rackColumns, runName, runSeconds } from "./model";
@@ -29,7 +29,7 @@ export function RunTile({
   return (
     <article
       className={cx(s.tile, s.lift)}
-      {...peekItemProps(t.title, () => {
+      {...peekItemProps(`${t.key} ${t.title}`, () => {
         onOpen(t.key);
       })}
     >
@@ -41,7 +41,7 @@ export function RunTile({
         {t.title}
       </span>
       <div className={s.tileMeta}>
-        <span className={s.src}>{srcLabel(t)}</span>
+        <KeyChip>{t.key}</KeyChip>
         <StageGlyph model={stageModel(t)} size="xs" />
       </div>
       <div className={s.tileNow}>
@@ -80,14 +80,16 @@ function RackLine({ ticket: t, onOpen }: { ticket: Ticket; onOpen: (key: string)
     <div
       className={cx(s.rl, kind === "queued" && s.isQueued)}
       title={t.title}
-      {...peekItemProps(t.title, () => {
+      {...peekItemProps(`${t.key} ${t.title}`, () => {
         onOpen(t.key);
       })}
     >
       <span className={s.rlMark}>
         <StatusMark kind={kind} glyphOnly />
       </span>
-      <span className={s.src}>{srcLabel(t)}</span>
+      <span className={s.rlKey}>
+        <KeyChip size="sm">{t.key}</KeyChip>
+      </span>
       <span className={s.rlT}>{t.title}</span>
       {meter ? (
         <RunMeter k={meter.k} n={meter.n} state={meter.state} size="row" width={36} />
@@ -116,7 +118,7 @@ export function Rack({
             <section key={g.id} className={s.rackGroup} aria-label={g.name}>
               <div className={s.gh}>
                 <span>{g.name}</span>
-                <span className={s.ghCount}>{g.items.length}</span>
+                <CountPill count={g.items.length} />
                 <span className={s.ghRule} aria-hidden="true" />
               </div>
               {g.items.map((t) => (

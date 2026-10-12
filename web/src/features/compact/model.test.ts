@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import { gate, person, run, step, ticket } from "../../domain/fixtures";
+import type { Attention } from "../../domain/status";
 import {
+  ageParts,
   byFilter,
   collapsedByDefault,
   compactGroups,
+  compactSections,
+  edgeOf,
   emptyText,
-  footNote,
+  footSummary,
   GROUP_ORDER,
   inRepo,
+  isFlat,
   moveText,
   nowCell,
   ownerLine,
   parseFilter,
   pills,
+  plural,
   runLine,
   sourceText,
   talkLabel,
@@ -119,7 +125,7 @@ describe("groups", () => {
       done: ["D2", "D1"],
     });
   });
-  it("summarises: longest wait, blocked yours, repos for 4+", () => {
+  it("summarises: longest wait, blocked yours, repos for 4+, the inbox note", () => {
     const ts = [
       ticket({ key: "Y1", attention: "needs_you", attention_since: at("09") }),
       ticket({ key: "Y2", attention: "needs_you", attention_since: at("11") }),
@@ -130,19 +136,37 @@ describe("groups", () => {
       ticket({ key: "R2", attention: "running", repo_name: "org/web" }),
       ticket({ key: "R3", attention: "running", repo_name: "org/api" }),
       ticket({ key: "R4", attention: "running", repo_name: null }),
+      ticket({ key: "I1", attention: "inbox" }),
     ];
-    const g = Object.fromEntries(compactGroups(ts, me, NOON).map((x) => [x.id, x.summary]));
-    expect(g.needs_you).toEqual(["longest wait ", { b: "3h" }]);
-    expect(g.blocked).toEqual([{ b: "1" }, " yours"]);
-    expect(g.running).toEqual([
-      "web ",
-      { b: "2" },
-      " · api ",
-      { b: "1" },
-      " · No repo ",
-      { b: "1" },
-    ]);
-    expect(g.queued).toEqual([]);
+    const g = Object.fromEntries(compactGroups(ts, me, NOON).map((x) => [x.id, x.right]));
+    expect(g.needs_you).toEqual({ kind: "stat", parts: ["Longest wait ", { age: "3h" }] });
+    expect(g.blocked).toEqual({ kind: "stat", parts: [{ b: "1" }, " yours"] });
+    expect(g.running).toEqual({
+      kind: "stat",
+      parts: ["web ", { b: "2" }, " · api ", { b: "1" }, " · No repo ", { b: "1" }],
+    });
+    expect(g.queued).toBeNull();
+    expect(g.inbox).toEqual({ kind: "note", text: "Add context, then dispatch" });
+  });
+  it("counts what shipped this week on the Done head, and hides a zero", () => {
+    const done = (key: string, outcome: "completed" | "abandoned", when: string) =>
+      ticket({
+        key,
+        attention: "done",
+        state: outcome === "completed" ? "done" : "closed",
+        attention_since: when,
+        resolution: { outcome, note: null, by: sam, at: when },
+      });
+    const right = (ts: ReturnType<typeof ticket>[]) =>
+      compactGroups(ts, me, NOON).find((g) => g.id === "done")?.right;
+    expect(
+      right([
+        done("D1", "completed", at("10")),
+        done("D2", "completed", "2026-10-01T10:00:00Z"),
+        done("D3", "abandoned", at("09")),
+      ]),
+    ).toEqual({ kind: "shipped", n: 1 });
+    expect(right([done("D3", "abandoned", at("09"))])).toBeNull();
   });
   it("collapses Done by default unless it is the filter", () => {
     expect(collapsedByDefault("done", "all")).toBe(true);
@@ -151,12 +175,73 @@ describe("groups", () => {
   });
 });
 
-describe("texts", () => {
-  it("counts tickets and repos in the footer", () => {
-    expect(footNote([ticket({ repo_name: "a" }), ticket({ repo_name: "a" }), ticket()])).toBe(
-      "3 tickets · 1 repo",
+describe("empty rows", () => {
+  const g = (ids: string[]) =>
+    compactGroups(
+      ids.map((a, i) => ticket({ key: `T${String(i)}`, attention: a as Attention })),
+      me,
+      NOON,
     );
-    expect(footNote([])).toBe("0 tickets · 0 repos");
+  const shape = (secs: ReturnType<typeof compactSections>) =>
+    secs.map((x) => (x.kind === "group" ? x.group.id : `empty:${x.id}:${x.lead}`));
+  it("says Needs you and Running + Queued are quiet in one row each; other empties stay hidden", () => {
+    const secs = compactSections(g(["inbox", "done"]), true);
+    expect(shape(secs)).toEqual([
+      "empty:needs_you:All quiet",
+      "empty:running:All quiet",
+      "inbox",
+      "done",
+    ]);
+    expect(secs[1]).toMatchObject({ note: "nothing running, nothing queued" });
+  });
+  it("says which of Running or Queued is empty when only one is", () => {
+    expect(shape(compactSections(g(["needs_you", "queued"]), true))).toEqual([
+      "needs_you",
+      "empty:running:Nothing running",
+      "queued",
+    ]);
+    expect(shape(compactSections(g(["running"]), true))).toEqual([
+      "empty:needs_you:All quiet",
+      "running",
+      "empty:queued:Nothing queued",
+    ]);
+  });
+  it("adds no empty rows while a filter or search narrows the list", () => {
+    expect(shape(compactSections(g(["inbox"]), false))).toEqual(["inbox"]);
+  });
+});
+
+describe("texts", () => {
+  it("sums the footer: tickets, a chip per project, repos", () => {
+    expect(
+      footSummary([
+        ticket({ key: "SCRUM-2", repo_name: "a" }),
+        ticket({ key: "AOS-1", repo_name: "a" }),
+        ticket({ key: "AOS-3" }),
+      ]),
+    ).toEqual({ tickets: 3, projects: ["AOS", "SCRUM"], repos: 1 });
+    expect(footSummary([])).toEqual({ tickets: 0, projects: [], repos: 0 });
+    expect(plural(1, "ticket")).toBe("ticket");
+    expect(plural(0, "repo")).toBe("repos");
+  });
+  it("splits an age into tabular numbers and smaller units", () => {
+    expect(ageParts("38m")).toEqual([{ n: "38", unit: "m" }]);
+    expect(ageParts("17h 30m")).toEqual([
+      { n: "17", unit: "h" },
+      { n: "30", unit: "m" },
+    ]);
+    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
+  });
+  it("edges each row by status, and lays settled rows flat", () => {
+    expect(edgeOf(ticket({ attention: "needs_you" }))).toBe("you");
+    expect(edgeOf(ticket({ attention: "running" }))).toBe("live");
+    expect(edgeOf(ticket({ attention: "blocked" }))).toBe("blocked");
+    expect(edgeOf(ticket({ attention: "done", state: "done" }))).toBe("done");
+    expect(edgeOf(ticket({ attention: "done", state: "closed" }))).toBe("blocked");
+    for (const a of ["inbox", "queued", "waiting"] as const)
+      expect(edgeOf(ticket({ attention: a }))).toBe("quiet");
+    expect(isFlat(ticket({ attention: "done" }))).toBe(true);
+    expect(isFlat(ticket({ attention: "inbox" }))).toBe(false);
   });
   it("says what is empty, in the repo when scoped", () => {
     expect(emptyText("needs_you", null)).toBe("Nothing needs you");
@@ -164,7 +249,7 @@ describe("texts", () => {
   });
   it("labels the source column and the upd column", () => {
     const src = { source: "jira" as const, external_id: "PLAT-1", url: "" };
-    expect(sourceText(ticket({ source: src, repo_name: "org/web" }))).toBe("JIRA · web");
+    expect(sourceText(ticket({ source: src, repo_name: "org/web" }))).toBe("Jira · web");
     expect(sourceText(ticket({ repo_name: "org/web" }))).toBe("web");
     expect(sourceText(ticket())).toBe("");
     expect(updText(ticket({ attention: "running", attention_since: at("09") }), NOON)).toBe("now");
@@ -219,22 +304,29 @@ describe("the now column", () => {
       latest_run: run("failed", { error: "exit 1" }),
     });
     expect(nowCell(blk)).toMatchObject({ mark: { kind: "blk" }, text: "Build failed · exit 1" });
-    expect(nowCell(ticket({ attention: "inbox" }))).toMatchObject({ text: "Nobody on it yet" });
-    expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) })).text).toBe("Draft");
   });
-  it("marks done tickets by outcome, with the note", () => {
+  it("leaves the inbox Now cell empty at rest (Add context reveals there)", () => {
+    expect(nowCell(ticket({ attention: "inbox" }))).toEqual({ kind: "empty" });
+    expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) }))).toEqual({
+      kind: "empty",
+    });
+  });
+  it("words done tickets by outcome, with the note", () => {
     const abandoned = ticket({
       attention: "done",
       state: "closed",
       resolution: { outcome: "abandoned", note: "Superseded", by: sam, at: at("10") },
     });
     expect(nowCell(abandoned)).toEqual({
-      kind: "mark",
-      mark: { kind: "abandoned", name: "Abandoned" },
+      kind: "outcome",
+      outcome: "abandoned",
+      word: "Abandoned",
       text: "Superseded",
     });
     expect(nowCell(ticket({ attention: "done", state: "done" }))).toMatchObject({
-      mark: { kind: "done", name: "Complete" },
+      kind: "outcome",
+      outcome: "completed",
+      word: "Complete",
     });
   });
 });
@@ -254,6 +346,11 @@ describe("the expansion", () => {
     const wait = ticket({ attention: "waiting", now: now({ person: sam, text: "Review" }) });
     expect(moveText(wait)).toEqual({ label: "Waiting on", lead: "Sam · Review" });
     expect(moveText(ticket({ attention: "queued" }))).toEqual({ label: "Now", lead: "Queued" });
+    // The inbox instruction lives once, in the group head.
+    expect(moveText(ticket({ attention: "inbox" }))).toEqual({
+      label: "Now",
+      lead: "Nobody on it yet",
+    });
   });
   it("labels a done ticket with its outcome, over the note", () => {
     const abandoned = ticket({

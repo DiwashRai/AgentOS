@@ -1,12 +1,35 @@
-// The item row (Needs you) and the quiet row (Waiting on others / Blocked / Done recently).
-// Click / Enter / Space anywhere on the row opens the peek; the row's buttons keep their action.
+// My queue rows (refresh HANDOFF §5 "My queue row"): one grid for every zone, so titles share one
+// x and stage labels sit at 90px. Needs you / Waiting / Blocked are raised; Done (incl. abandoned)
+// is flat. Click / Enter / Space anywhere on the row opens the peek; the row's buttons keep their
+// action.
+import type { ReactNode } from "react";
+
 import type { Schemas } from "../../api/client";
-import { age, isOld, srcLabel } from "../../domain/format";
+import { age } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import type { MeRef } from "../../domain/status";
-import { Avatar, cx, StageGlyph, StatusMark } from "../../ui";
+import {
+  Avatar,
+  AvatarSlot,
+  cx,
+  KeyChip,
+  PriorityIcon,
+  StageGlyph,
+  StatusMark,
+  TypeIcon,
+} from "../../ui";
 import { peekItemProps } from "../peek/usePeek";
-import { askLabel, statusMark, subLine, waitingPerson } from "./model";
+import {
+  ageParts,
+  askLabel,
+  blockedReason,
+  outcomeLine,
+  rowLook,
+  sourceWord,
+  statusMark,
+  subLine,
+  waitingPerson,
+} from "./model";
 import s from "./Queue.module.css";
 import { RowActions } from "./RowActions";
 
@@ -19,88 +42,172 @@ interface RowProps {
   onOpen: (key: string) => void;
 }
 
+/** Tabular numbers, units one size smaller ("38m", "3h 05m"). */
 export function Age({ since, now }: { since: string; now: number }) {
+  const parts = ageParts(age(since, now));
   return (
-    <span
-      className={cx(s.age, isOld(since, now) && s.old)}
-      title={new Date(since).toLocaleString()}
-    >
-      {age(since, now)}
+    <span className={s.age} title={new Date(since).toLocaleString()}>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 ? " " : ""}
+          {p.n}
+          {p.unit ? <span className={s.unit}>{p.unit}</span> : null}
+        </span>
+      ))}
     </span>
+  );
+}
+
+const EDGE = {
+  you: s.edgeYou,
+  live: s.edgeLive,
+  blocked: s.edgeBlocked,
+  done: s.edgeDone,
+  neutral: s.edgeNeutral,
+} as const;
+
+/** The row shell: surface, status edge, wash, lift, and the left half every row shares (stage
+ *  glyph, key chip, type/priority icons, title, optional sub-line). */
+function RowShell({
+  ticket: t,
+  sub,
+  onOpen,
+  children,
+}: {
+  ticket: Ticket;
+  sub?: string | undefined;
+  onOpen: (key: string) => void;
+  children: ReactNode;
+}) {
+  const look = rowLook(t);
+  return (
+    <article
+      className={cx(
+        s.row,
+        look.flat ? s.flat : s.raised,
+        t.attention === "needs_you" && s.isYou,
+        EDGE[look.edge],
+      )}
+      {...peekItemProps(`${t.key} ${t.title}`, () => {
+        onOpen(t.key);
+      })}
+    >
+      <StageGlyph model={stageModel(t)} className={s.stage} />
+      <span className={s.key}>
+        <KeyChip>{t.key}</KeyChip>
+      </span>
+      <div className={s.ti}>
+        <div className={s.title}>
+          <TypeIcon type={t.type} />
+          <PriorityIcon priority={t.priority} />
+          <span title={t.title}>{t.title}</span>
+        </div>
+        {sub ? (
+          <div className={s.sub} title={sub}>
+            {sub}
+          </div>
+        ) : null}
+      </div>
+      <span className={cx(s.divider, look.flat && s.blank)} aria-hidden="true" />
+      {children}
+    </article>
   );
 }
 
 export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
   return (
-    <article
-      className={cx(s.row, s.lift)}
-      {...peekItemProps(t.title, () => {
-        onOpen(t.key);
-      })}
-    >
-      <StageGlyph model={stageModel(t)} size="xs" className={s.stage} />
-      <span className={s.src}>{srcLabel(t)}</span>
-      <div className={s.ti}>
-        <span className={s.title} title={t.title}>
-          {t.title}
-        </span>
-        <div className={s.sub}>{subLine(t, me)}</div>
-      </div>
+    <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
       <div className={s.ask}>
-        <span>
+        <div className={s.ask1}>
           <StatusMark kind="you" ask={askLabel(t)} />
-        </span>
-        <span className={s.askText} title={t.now.text}>
-          {t.now.text}
-        </span>
+        </div>
+        {t.now.text ? (
+          <div className={s.ask2} title={t.now.text}>
+            {t.now.text}
+          </div>
+        ) : null}
       </div>
       <Age since={t.attention_since} now={now} />
       <RowActions ticket={t} />
-    </article>
+    </RowShell>
   );
 }
 
-function QuietState({ ticket: t, now }: { ticket: Ticket; now: number }) {
+/** Waiting on others / Blocked: raised, the status on line one and its text on line two. */
+function StateCell({ ticket: t }: { ticket: Ticket }) {
   const mark = statusMark(t);
   if (mark.kind === "wait") {
     const who = waitingPerson(t);
-    const tail = [mark.ask, t.now.text, age(t.attention_since, now)].filter(Boolean).join(" · ");
     return (
-      <span className={s.state}>
-        <StatusMark kind="wait" name={mark.name} />
-        {who && <Avatar name={who.display_name} id={who.id} />}
-        <span title={tail}>{tail}</span>
-      </span>
+      <div className={s.ask}>
+        <div className={s.ask1}>
+          {who ? <Avatar name={who.display_name} id={who.id} /> : null}
+          <StatusMark kind="wait" name={mark.name} ask={mark.ask} />
+        </div>
+        {t.now.text ? (
+          <div className={s.ask2} title={t.now.text}>
+            {t.now.text}
+          </div>
+        ) : null}
+      </div>
     );
   }
-  // A closed ticket's note (Complete / Abandoned) says more than the server's status line.
-  const text = t.resolution?.note ?? (t.now.text || age(t.attention_since, now));
+  const text = t.attention === "blocked" ? blockedReason(t) : t.now.text;
   return (
-    <span className={s.state}>
-      <StatusMark kind={mark.kind} name={mark.name} />
-      <span title={text}>{text}</span>
-    </span>
+    <div className={s.ask}>
+      <div className={s.ask1}>
+        <StatusMark kind={mark.kind} name={mark.name} />
+      </div>
+      {text ? (
+        <div className={s.ask2} title={text}>
+          {text}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-export function QuietRow({ ticket: t, now, onOpen }: RowProps) {
-  const blocked = t.attention === "blocked";
+/** Done recently: flat; the person and repo, the age, and the outcome right-aligned. */
+function DoneCells({ ticket: t, now }: { ticket: Ticket; now: number }) {
+  const out = outcomeLine(t);
+  const src = sourceWord(t);
+  const where = [src, t.repo_name].filter(Boolean).join(" · ");
   return (
-    <article
-      className={cx(s.quiet, s.lift, blocked && s.withAct, t.attention === "done" && s.isDone)}
-      {...peekItemProps(t.title, () => {
-        onOpen(t.key);
-      })}
-    >
-      <StageGlyph model={stageModel(t)} size="xs" className={s.stage} />
-      <span className={s.src}>{srcLabel(t)}</span>
-      <div className={s.ti}>
-        <span className={s.title} title={t.title}>
-          {t.title}
-        </span>
-      </div>
-      <QuietState ticket={t} now={now} />
-      {blocked && <RowActions ticket={t} primaryOnly />}
-    </article>
+    <>
+      <span className={s.who}>
+        {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}
+        <span title={where}>{where}</span>
+      </span>
+      <Age since={t.attention_since} now={now} />
+      <span className={s.outcome} title={out?.note ?? undefined}>
+        {out ? (
+          <>
+            <span className={cx(out.abandoned && s.abandoned)}>{out.word}</span>
+            {out.note ? ` · ${out.note}` : null}
+          </>
+        ) : null}
+      </span>
+    </>
+  );
+}
+
+export function QuietRow({ ticket: t, me, now, onOpen }: RowProps) {
+  if (t.attention === "done") {
+    return (
+      <RowShell ticket={t} onOpen={onOpen}>
+        <DoneCells ticket={t} now={now} />
+      </RowShell>
+    );
+  }
+  return (
+    <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
+      <StateCell ticket={t} />
+      <Age since={t.attention_since} now={now} />
+      {t.attention === "blocked" ? (
+        <RowActions ticket={t} primaryOnly />
+      ) : (
+        <span className={s.actsBlank} />
+      )}
+    </RowShell>
   );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError, type Schemas } from "../../api/client";
 import { gate, person, run, step, ticket } from "../../domain/fixtures";
+import { stageModel } from "../../domain/stage";
 import {
   actionErrorText,
   chipName,
@@ -13,13 +14,13 @@ import {
   paragraphs,
   parkedGate,
   parseTab,
-  pipelineText,
-  planNumber,
-  planSummary,
+  pipelineSummary,
+  planProgress,
   progressStep,
   runLabel,
   runnerText,
   runSeconds,
+  sourceText,
   statusText,
   stripKind,
   thenStage,
@@ -178,12 +179,54 @@ describe("header text", () => {
     expect(firstParagraph("   ")).toBe("");
   });
 
-  it("describes the pipeline as stages, with skipped ones", () => {
-    expect(pipelineText({ stages: [stage("plan"), stage("build")] })).toBe("2 stages");
-    expect(pipelineText({ stages: [stage("plan"), stage("verify", { enabled: false })] })).toBe(
-      "2 stages · 1 skipped",
+  it("counts the pipeline from the stepper's model: bookends in, gates and skipped apart", () => {
+    // The mock's AOS-14: Inbox, Plan ◆ Sign-off, Implement, Lint (skipped), Review, Open PR, Done.
+    const t = detail({
+      rail: [
+        step("Plan", "done", { gate: gate("you") }),
+        step("Implement", "pending"),
+        step("Lint", "skipped"),
+        step("Review", "pending"),
+        step("Open PR", "pending"),
+      ],
+    });
+    const model = stageModel(t);
+    expect(model.stages).toHaveLength(7);
+    expect(pipelineSummary(model.stages)).toBe("7 stages · 1 gate · 1 skipped");
+  });
+
+  it("leaves out zero parts and pluralises", () => {
+    const one = stageModel(detail({ rail: [step("Build", "pending")] }));
+    expect(pipelineSummary(one.stages)).toBe("3 stages");
+    const two = [
+      step("Plan", "done", { gate: gate("passed") }),
+      step("Build", "skipped"),
+      step("Review", "skipped", { gate: gate("pending") }),
+    ];
+    expect(pipelineSummary(stageModel(detail({ rail: two })).stages)).toBe(
+      "5 stages · 2 gates · 2 skipped",
     );
-    expect(pipelineText({ stages: [stage("build")] })).toBe("1 stage");
+    expect(pipelineSummary([{ state: "current" }])).toBe("1 stage");
+  });
+
+  it("keeps the count for an abandoned ticket (the stop changes states, not stages)", () => {
+    const t = detail({
+      attention: "done",
+      state: "done",
+      resolution: { outcome: "abandoned", note: null, at: "2026-10-11T12:00:00Z", by: person(1) },
+      rail: [step("Plan", "done"), step("Lint", "skipped"), step("Build", "pending")],
+    });
+    expect(pipelineSummary(stageModel(t).stages)).toBe("5 stages · 1 skipped");
+  });
+
+  it("names the source, adding the external id only when it isn't the key", () => {
+    const jira = { source: "jira" as const, external_id: "SCRUM-6", url: "https://x/SCRUM-6" };
+    expect(sourceText(detail({ key: "SCRUM-6", source: jira }))).toBe("Jira");
+    expect(sourceText(detail({ key: "AOS-3", source: jira }))).toBe("Jira SCRUM-6");
+    expect(
+      sourceText(detail({ source: { source: "github", external_id: "#12", url: "https://g" } })),
+    ).toBe("GitHub #12");
+    expect(sourceText(detail())).toBeNull();
   });
 
   it("shows the runner only while running", () => {
@@ -210,14 +253,16 @@ describe("header text", () => {
 });
 
 describe("plan, chips and owner", () => {
-  it("numbers plan lines and sums them up", () => {
-    expect(planNumber(0)).toBe("01");
-    expect(planNumber(11)).toBe("12");
-    const plan = [
-      { text: "a", done: true },
-      { text: "b", done: false },
-    ];
-    expect(planSummary(plan)).toBe("1 of 2 done");
+  it("counts the plan from its items, with the bar's fill", () => {
+    const plan = [true, true, false, false, false].map((done, i) => ({ text: String(i), done }));
+    expect(planProgress(plan)).toEqual({ done: 2, total: 5, pct: 40 });
+    expect(planProgress([{ done: true }, { done: false }, { done: false }])).toEqual({
+      done: 1,
+      total: 3,
+      pct: 33,
+    });
+    expect(planProgress([])).toEqual({ done: 0, total: 0, pct: 0 });
+    expect(planProgress([{ done: true }])).toEqual({ done: 1, total: 1, pct: 100 });
   });
 
   it("names a chip by the path's last segment", () => {

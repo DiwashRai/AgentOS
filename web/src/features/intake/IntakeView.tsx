@@ -1,24 +1,40 @@
-// Intake (contract request 14, design/intake-mock.html): the Jira issues matching the Space's
-// intake queries that aren't AgentOS tickets yet, one group per query, each row a "Take in" away
-// from the Inbox (POST /api/tickets/import). Rows are Compact-style lines; the key opens Jira, the
-// button takes it in, so the row itself is not a click target (it tints on hover, it doesn't lift).
-// Every list and number comes from model.ts; this view only lays them out.
+// Intake (contract request 14; visual refresh HANDOFF §5 "Intake row"): the Jira issues matching
+// the Space's intake queries that aren't AgentOS tickets yet, one group per query, each row a
+// "Take in" away from the Inbox (POST /api/tickets/import). Every row is raised; the key opens
+// Jira, the button takes it in, so the row itself is not a click target: it lights up on hover or
+// focus (never moves) and Take in fills blue. Every list and number comes from model.ts; this view
+// only lays them out.
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useConfig, useImportTicket, useIntake, useRefreshIntake } from "../../api/queries";
-import { OpenIcon } from "../../app/icons";
 import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useSearchQuery } from "../../app/useSearchQuery";
 import type { Query } from "../../domain/search";
-import { Avatar, Button, cx, GroupHead, Kbd, linkClass, LinkButton, StatusMark } from "../../ui";
+import {
+  Avatar,
+  AvatarSlot,
+  Button,
+  cx,
+  EmptyRow,
+  GroupHead,
+  Kbd,
+  KeyChip,
+  linkClass,
+  LinkButton,
+  litRowClass,
+  PriorityIcon,
+  StatusMark,
+  TypeIcon,
+} from "../../ui";
 import { importErrorText } from "../newticket/importForm";
 import { useNow } from "../runs/useNow";
 import s from "./Intake.module.css";
 import {
+  ageParts,
   ageText,
   capText,
   emptyGroupText,
@@ -30,8 +46,8 @@ import {
   jqlHref,
   nameId,
   searchItems,
+  sharedPrefix,
   toTakeIn,
-  typeText,
   visibleRows,
 } from "./model";
 
@@ -49,11 +65,46 @@ interface Taken {
 }
 type TakenMap = ReadonlyMap<string, Taken>;
 
+/** The small "↗" of a link out to Jira (the mock's form: an arrow, no box). */
+function OutArrow() {
+  return (
+    <svg
+      className={s.arrow}
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2.5 7.5 7.5 2.5M3.5 2.5h4v4" />
+    </svg>
+  );
+}
+
+/** An age: tabular numbers, each unit a size smaller (HANDOFF §5 "Age"). */
+function Age({ text }: { text: string }) {
+  return (
+    <span className={s.age}>
+      {ageParts(text).map((p, i) => (
+        <span key={i}>
+          {i > 0 && " "}
+          {p.n}
+          {p.unit && <span className={s.unit}>{p.unit}</span>}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function Assignee({ person }: { person: IntakeItem["assignee"] }) {
   if (!person)
     return (
       <span className={cx(s.as, s.isNone)}>
-        <i className={s.nobody} aria-hidden="true" />
+        <AvatarSlot dashed />
         <span>Unassigned</span>
       </span>
     );
@@ -77,9 +128,8 @@ function IntakeRow({
   onTaken: (key: string, result: Schemas["ImportResult"]) => void;
 }) {
   const take = useImportTicket();
-  const { type, priority } = typeText(item);
   return (
-    <li className={cx(s.row, taken && s.isTaken)}>
+    <li className={cx(s.row, taken ? s.isTaken : litRowClass)}>
       <a
         className={s.key}
         href={item.url}
@@ -87,15 +137,13 @@ function IntakeRow({
         rel="noopener noreferrer"
         title={`Open ${item.key} in Jira`}
       >
-        JIRA <b>{item.key}</b>
-        <OpenIcon />
+        <KeyChip>{item.key}</KeyChip>
+        <OutArrow />
       </a>
-      <span className={s.type}>
-        {type}
-        {priority && <em> · {priority}</em>}
-      </span>
-      <span className={s.ti} title={item.title}>
-        {item.title}
+      <TypeIcon type={item.type} label className={s.type} />
+      <span className={s.ti}>
+        <PriorityIcon priority={item.priority} />
+        <span title={item.title}>{item.title}</span>
       </span>
       {taken ? (
         <span className={s.taken} role="status">
@@ -107,19 +155,25 @@ function IntakeRow({
         </span>
       ) : (
         <>
-          <span className={s.st} title={`Jira status: ${item.status}`}>
-            {item.status}
+          <span className={s.st}>
+            {/* Jira gives only the status name (no category), so one neutral ring for all. */}
+            <span className={s.loz} title={`Jira status: ${item.status}`}>
+              <i aria-hidden="true" />
+              <span>{item.status}</span>
+            </span>
           </span>
           <Assignee person={item.assignee} />
           <span
             className={s.upd}
             title={`Updated in Jira ${new Date(item.updated_at).toLocaleString()}`}
           >
-            {ageText(item, now)}
+            <Age text={ageText(item, now)} />
           </span>
           <span className={s.act}>
             <Button
+              variant="outline"
               size="sm"
+              litOnRow
               disabled={take.isPending}
               aria-busy={take.isPending || undefined}
               aria-label={take.isPending ? undefined : `Take in ${item.key}`}
@@ -183,6 +237,7 @@ function IntakeGroup({
   const href = jqlHref(jiraUrl, q.jql);
   const cap = capText(q);
   const summary = headSummary(q);
+  const prefix = sharedPrefix(q.items);
 
   let body;
   if (q.error)
@@ -201,9 +256,10 @@ function IntakeGroup({
         </LinkButton>
       </div>
     );
-  else if (items.length === 0)
-    body = <p className={s.empty}>{emptyGroupText(q, query.length > 0)}</p>;
-  else
+  else if (items.length === 0) {
+    const { lead, note } = emptyGroupText(q, query.length > 0);
+    body = <EmptyRow lead={lead}>{note}</EmptyRow>;
+  } else
     body = (
       <>
         <ul className={s.rows}>
@@ -231,24 +287,39 @@ function IntakeGroup({
 
   return (
     <section className={s.group} aria-label={q.name}>
-      <GroupHead
-        name={q.name}
-        count={q.error ? undefined : groupCount(items, takenKeys)}
-        summary={summary ?? undefined}
-        collapsed={collapsed}
-        onToggle={onToggle}
-        controls={bodyId}
-      />
+      <div className={s.head}>
+        <GroupHead
+          className={s.gh}
+          name={q.name}
+          icon={prefix ? <KeyChip size="sm">{prefix}</KeyChip> : undefined}
+          count={q.error ? undefined : groupCount(items, takenKeys)}
+          summary={
+            <>
+              {summary && <span className={s.of}>{summary} ·</span>}
+              {/* Not uppercased: JQL values are case-sensitive. */}
+              <code className={s.jql} title={q.jql}>
+                {q.jql}
+              </code>
+            </>
+          }
+          collapsed={collapsed}
+          onToggle={onToggle}
+          controls={bodyId}
+        />
+        {href && (
+          <a
+            className={s.out}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open ${q.name} in Jira`}
+            title="Open in Jira"
+          >
+            <OutArrow />
+          </a>
+        )}
+      </div>
       <div id={bodyId} hidden={collapsed}>
-        <div className={s.jql}>
-          {/* Not uppercased: JQL values are case-sensitive. */}
-          <code title={q.jql}>{q.jql}</code>
-          {href && (
-            <a className={s.out} href={href} target="_blank" rel="noopener noreferrer">
-              Open in Jira <OpenIcon />
-            </a>
-          )}
-        </div>
         {body}
       </div>
     </section>
@@ -334,6 +405,7 @@ export function IntakeView() {
     ));
 
   const n = queries.length;
+  const foot = intake.data ? footNote(queries, intake.dataUpdatedAt, now) : null;
   return (
     <div className={s.page}>
       <TopBar
@@ -341,11 +413,10 @@ export function IntakeView() {
         middle={
           intake.data && (
             <div className={s.counters} aria-live="polite">
-              <span>
+              <span className={cx(s.counter, total === 0 && s.isZero)}>
                 <b>{total}</b> to take in
               </span>
-              <span className={cx(s.sep, s.wide)} />
-              <span className={s.wide}>
+              <span className={cx(s.counter, s.wide, n === 0 && s.isZero)}>
                 <b>{n}</b> {n === 1 ? "query" : "queries"}
               </span>
             </div>
@@ -361,17 +432,20 @@ export function IntakeView() {
         <div className={s.list}>{body}</div>
         <footer className={s.foot}>
           <span className={s.keys}>
-            <Kbd>/</Kbd> search
+            <Kbd>/</Kbd> Search
           </span>
           <span className={s.keys}>
-            <Kbd>Esc</Kbd> clear
+            <Kbd>Esc</Kbd> Clear
           </span>
           <span className={s.grow} />
-          {intake.data && (
-            <span className={s.note}>{footNote(queries, intake.dataUpdatedAt, now)}</span>
+          {foot && (
+            <span className={s.note}>
+              <b>{foot.count}</b> {foot.text}
+            </span>
           )}
           {fresh.error && <span className={s.note}>Refresh failed · {fresh.error.message}</span>}
           <LinkButton
+            className={s.refresh}
             disabled={refreshing}
             onClick={() => {
               fresh.mutate();

@@ -68,15 +68,30 @@ export function runNumber(t: Pick<Ticket, "now" | "latest_run">): number | null 
   return t.now.run_id ?? t.latest_run?.id ?? null;
 }
 
+const SOURCE_NAME: Record<Schemas["SourceLink"]["source"], string> = {
+  jira: "Jira",
+  github: "GitHub",
+  todoist: "Todoist",
+};
+
+/** Where the ticket came from, in sentence case beside the key chip: `Jira PLAT-2231`; null for
+ *  our own tickets (the key chip says it all). */
+export function sourceWord(t: Pick<Ticket, "source">): string | null {
+  if (!t.source) return null;
+  return `${SOURCE_NAME[t.source.source]} ${t.source.external_id}`;
+}
+
 /**
- * The item row's sub-line: `repo · Agent · run #N` when there is a run, else
+ * The item row's sub-line: `[Jira PLAT-1 ·] repo · Agent · run #N` when there is a run, else
  * `repo · <Owner>'s ticket` (someone else's), else `repo`.
  */
 export function subLine(
-  t: Pick<Ticket, "repo_name" | "now" | "latest_run" | "owner">,
+  t: Pick<Ticket, "repo_name" | "now" | "latest_run" | "owner" | "source">,
   me: MeRef,
 ): string {
   const parts: string[] = [];
+  const src = sourceWord(t);
+  if (src) parts.push(src);
   if (t.repo_name) parts.push(t.repo_name);
   const run = runNumber(t);
   if (run !== null) {
@@ -159,6 +174,59 @@ export function statusMark(
     case "idle":
       return { kind, name: statusWords.idle };
   }
+}
+
+/** The 3px status edge of a My queue row (refresh HANDOFF §4). */
+export type RowEdge = "you" | "live" | "blocked" | "done" | "neutral";
+
+/** A row's surface and edge: raised for in flight / needs action, flat for settled (done, incl.
+ *  abandoned, whose edge is crimson). Over `attention` and the outcome only. */
+export function rowLook(t: Pick<Ticket, "attention" | "state" | "resolution">): {
+  flat: boolean;
+  edge: RowEdge;
+} {
+  const outcome = outcomeOf(t);
+  if (outcome) return { flat: true, edge: outcome === "abandoned" ? "blocked" : "done" };
+  switch (t.attention) {
+    case "needs_you":
+      return { flat: false, edge: "you" };
+    case "running":
+      return { flat: false, edge: "live" };
+    case "blocked":
+      return { flat: false, edge: "blocked" };
+    default:
+      return { flat: false, edge: "neutral" };
+  }
+}
+
+/** A done row's right-aligned outcome: "Complete · merged", "Abandoned · duplicate of AOS-8";
+ *  the word alone without a note. Null for a ticket that isn't done. */
+export function outcomeLine(
+  t: Pick<Ticket, "attention" | "state" | "resolution">,
+): { word: string; abandoned: boolean; note: string | null } | null {
+  const outcome = outcomeOf(t);
+  if (!outcome) return null;
+  const note = t.resolution?.note?.trim();
+  return {
+    word: outcomeWords[outcome],
+    abandoned: outcome === "abandoned",
+    note: note === undefined || note === "" ? null : note,
+  };
+}
+
+/** A blocked row's reason: the server's status line, else the run's error. */
+export function blockedReason(t: Pick<Ticket, "now" | "latest_run">): string {
+  return t.now.text !== "" ? t.now.text : (t.latest_run?.error ?? "");
+}
+
+/** An age split for display: numbers tabular, units smaller ("3h 05m" → 3 h · 05 m). "now" has
+ *  no unit. */
+export function ageParts(text: string): { n: string; unit: string }[] {
+  const parts = [...text.matchAll(/(\d+)([a-z]+)/g)].map((m) => ({
+    n: m[1] ?? "",
+    unit: m[2] ?? "",
+  }));
+  return parts.length > 0 ? parts : [{ n: text, unit: "" }];
 }
 
 // ------------------------------------------------------------------ the rack

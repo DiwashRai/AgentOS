@@ -4,6 +4,7 @@
 import type { Schemas } from "../../api/client";
 import { age, type Instant } from "../../domain/format";
 import type { Query } from "../../domain/search";
+import { projectPrefix } from "../../ui/identity";
 
 export type IntakeQuery = Schemas["IntakeQuery"];
 export type IntakeItem = Schemas["IntakeItem"];
@@ -99,27 +100,48 @@ export function nameId(name: string): number {
   return Math.abs(h);
 }
 
-/** The footer: "4 queries · 1 didn't answer · checked 2m ago". */
+/** The footer: "**4** queries · 1 didn't answer · checked 2m ago" (the count is set in bold). */
 export function footNote(
   queries: readonly Pick<IntakeQuery, "error">[],
   checkedAt: Instant,
   now: Instant,
-): string {
+): { count: number; text: string } {
   const n = queries.length;
   const failing = queries.filter((q) => q.error).length;
   const a = age(checkedAt, now);
-  return [
-    `${String(n)} ${n === 1 ? "query" : "queries"}`,
+  const text = [
+    n === 1 ? "query" : "queries",
     failing > 0 ? `${String(failing)} didn't answer` : null,
     a === "now" ? "checked just now" : `checked ${a} ago`,
   ]
     .filter(Boolean)
     .join(" · ");
+  return { count: n, text };
 }
 
-/** What a group's body says when it has no rows to draw. */
-export function emptyGroupText(q: Pick<IntakeQuery, "items">, searching: boolean): string {
+/** What a group's body says when it has no rows to draw: an empty row's lead and its note. */
+export function emptyGroupText(
+  q: Pick<IntakeQuery, "items">,
+  searching: boolean,
+): { lead: string; note: string } {
   return searching && q.items.length > 0
-    ? "Nothing here matches the search"
-    : "Nothing new matches";
+    ? { lead: "No match", note: "nothing here matches the search" }
+    : { lead: "All quiet", note: "nothing new matches this query" };
+}
+
+/** The group head's project chip: the one project prefix every item shares ("SCRUM"), or null when
+ *  the group is empty or mixes projects. */
+export function sharedPrefix(items: readonly Pick<IntakeItem, "key">[]): string | null {
+  const first = items[0];
+  if (!first) return null;
+  const p = projectPrefix(first.key);
+  return items.every((i) => projectPrefix(i.key) === p) ? p : null;
+}
+
+/** An age split for display: each number tabular, each unit a size smaller ("3h 10m" →
+ *  [{n:"3",unit:"h"},{n:"10",unit:"m"}]). Text without a number ("now") is one unit-less part. */
+export function ageParts(text: string): { n: string; unit: string }[] {
+  const parts = text.split(" ").map((p) => /^(\d+)([a-z]+)$/.exec(p));
+  if (parts.some((m) => m === null)) return [{ n: text, unit: "" }];
+  return parts.map((m) => ({ n: m?.[1] ?? "", unit: m?.[2] ?? "" }));
 }

@@ -1,37 +1,36 @@
-/* My queue (DESIGN §5). Values ported from kit.css `.ao-row`, `.ao-row--quiet`, `.ao-ask`,
-   `.ao-tile`, `.ao-rl`, `.ao-gh.is-static`, `.ao-overflow` and prototypes/queue/main.html. */
+/* My queue (DESIGN §5 IA, visual refresh HANDOFF §4–§6). Row values from the refresh mock's
+   `.row`, `.queue-row*`, `.zone*`, `.empty-row`, `.age`, `.outcome`, `.head-stat`; tiles and the
+   rack keep the pack's structure in the refresh's type rules. */
 
-/* ---------- layout (prototypes/queue/main.html) ---------- */
+/* ---------- layout ---------- */
 .surface {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 8px 18px 18px;
+  gap: var(--sp-zone);
+  padding: 14px 18px 18px;
 }
 .list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
+  margin-top: 8px;
 }
-.bottom {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.bottom .list {
-  margin-top: 4px;
+/* an empty row after a zone sits 12px under it (mock `.queue .empty-row`) */
+.emptyZone:not(:first-child) {
+  margin-top: calc(12px - var(--sp-zone));
 }
 .tiles {
   display: grid;
   grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
   gap: 10px;
-  margin-top: 4px;
+  margin-top: 8px;
 }
 .rack {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0 20px;
   align-items: start;
+  margin-top: 6px;
 }
 .rack > div {
   min-width: 0;
@@ -41,31 +40,20 @@
 }
 
 /* ---------- shared bits ---------- */
-.src {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.03em;
-  color: var(--ink-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
 .age {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-control);
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   text-align: right;
 }
-.old {
-  color: var(--ink-1);
-  font-weight: 600;
+.unit {
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  margin-left: 1px;
 }
 .of {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -74,12 +62,8 @@
 .empty {
   margin: 4px 0 0;
   padding: 0 2px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  font-size: var(--fs-control);
+  color: var(--ink-2);
 }
 .nothing {
   display: flex;
@@ -90,60 +74,125 @@
 .nothing > .empty {
   margin: 0;
 }
+/* "N shipped this week" in the Done recently head (mock `.head-stat`; the zone head greens the b) */
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 
-/* hover = lift only (kit .ao-lift); keyboard focus lifts too */
-.lift {
+/* hover = lift only, transform only: no shadow, no surface or border change (refresh §3.1).
+   Keyboard focus lifts too, plus the ink ring; focus inside (a row button) lifts the row. */
+.lift,
+.row {
   cursor: pointer;
-  transition:
-    transform var(--t-fast) ease,
-    background-color var(--t-fast) ease,
-    border-color var(--t-fast) ease;
+  transition: transform var(--t-fast) var(--ease-out);
 }
-.lift:hover {
+.lift:is(:hover, :focus-visible, :has(:focus-visible)),
+.row:is(:hover, :focus-visible, :has(:focus-visible)) {
   transform: translateY(var(--lift));
-  background: var(--surface-raised);
-  border-color: var(--rule-strong);
 }
-.lift:focus-visible {
-  transform: translateY(var(--lift));
+.lift:focus,
+.row:focus {
+  outline: none;
+}
+.lift:focus-visible,
+.row:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 9px;
 }
 
-/* ---------- item row (Needs you) ---------- */
+/* ---------- the row (every zone) ---------- */
 .row {
   display: grid;
-  grid-template-columns: 150px 112px minmax(0, 1fr) 330px 58px 188px;
+  /* the mock's 196px actions column, widened to 208 so Geist's "Request changes" + "Approve" fit
+     and every row's ask column shares one x (a rare third button still widens its own row) */
+  grid-template-columns: 150px 82px minmax(0, 1fr) 1px 300px 48px minmax(208px, max-content);
   align-items: center;
   column-gap: 14px;
-  min-height: 52px;
-  padding: 0 10px 0 14px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 9px;
-  box-shadow: var(--row-edge);
+  min-height: var(--h-item);
+  padding: 9px 12px 9px 14px;
+  border-radius: var(--r-row);
   position: relative;
 }
+.raised {
+  background: var(--row-raised);
+  box-shadow:
+    0 0 0 1px var(--row-raised-edge),
+    var(--row-raised-shadow);
+}
+.flat {
+  min-height: var(--h-quiet);
+  padding-top: 6px;
+  padding-bottom: 6px;
+  background: var(--row-flat);
+  box-shadow: inset 0 0 0 1px var(--row-flat-edge);
+}
+/* the you-wash: Needs-you rows only, over the raised surface */
+.isYou {
+  background: linear-gradient(90deg, var(--you-wash), transparent 45%), var(--row-raised);
+}
+/* the 3px status edge */
+.row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: var(--r-row) 0 0 var(--r-row);
+  background: var(--edge, transparent);
+}
+.edgeYou {
+  --edge: var(--waiting);
+}
+.edgeLive {
+  --edge: var(--live);
+}
+.edgeBlocked {
+  --edge: var(--blocked);
+}
+.edgeDone {
+  --edge: var(--progress);
+}
+.edgeNeutral {
+  --edge: var(--rule-strong);
+}
+
 .stage {
   min-width: 0;
-  overflow: hidden;
 }
-.stage > b {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.key {
+  display: flex;
+  min-width: 0;
 }
 .ti {
   min-width: 0;
 }
 .title {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   font-size: var(--fs-row-title);
   font-weight: 500;
   color: var(--ink-1);
   white-space: nowrap;
+}
+.title > span:last-child {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.raised .title {
+  font-size: var(--fs-row-title-lg);
+  letter-spacing: -0.005em;
+}
+.isYou .title {
+  font-weight: 600;
+}
+.flat .title {
+  color: var(--ink-2);
 }
 .sub {
   font-size: var(--fs-meta);
@@ -153,23 +202,72 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.divider {
+  width: 1px;
+  height: 32px;
+  background: var(--rule);
+}
+.blank {
+  visibility: hidden;
+}
 .ask {
   min-width: 0;
+}
+.ask1 {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-left: 14px;
-  border-left: 1px solid var(--rule-soft);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--fs-ui);
+  white-space: nowrap;
+  overflow: hidden;
 }
-.ask > span {
-  max-width: 100%;
+.ask1 > * {
+  min-width: 0;
 }
-.askText {
+.ask2 {
+  margin-top: 3px;
   font-size: var(--fs-control);
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.isYou .age {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.isYou .unit {
+  font-size: var(--fs-meta);
+}
+.who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.who > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.outcome {
+  min-width: 0;
+  padding-right: 4px;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.abandoned {
+  color: var(--blocked);
+  font-weight: 600;
 }
 .acts {
   display: flex;
@@ -180,20 +278,19 @@
 }
 .btns {
   display: flex;
-  gap: 6px;
+  gap: 8px;
+  align-items: center;
   justify-content: flex-end;
 }
 /* the Complete / Abandon confirm: its own line under the row, right-aligned under the buttons */
 .confirm {
   grid-column: 1 / -1;
   justify-self: end;
-  margin: 2px 0 10px;
+  margin: 2px 0 4px;
 }
 .err {
   max-width: 100%;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  letter-spacing: 0.03em;
+  font-size: var(--fs-meta);
   color: var(--blocked);
   white-space: nowrap;
   overflow: hidden;
@@ -206,6 +303,7 @@
   align-items: center;
   gap: 10px;
   height: 32px;
+  margin-top: 4px;
   padding: 0 4px 0 14px;
   font-size: var(--fs-meta);
   color: var(--ink-3);
@@ -213,8 +311,6 @@
 .overflow > b {
   flex: none;
   white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
   color: var(--ink-1);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -223,51 +319,12 @@
   margin-left: auto;
 }
 
-/* ---------- quiet row (Waiting / Blocked / Done) ---------- */
-.quiet {
-  display: grid;
-  grid-template-columns: 150px 112px minmax(140px, 1fr) minmax(0, max-content);
-  align-items: center;
-  column-gap: 14px;
-  min-height: 42px;
-  padding: 0 12px;
-  background: var(--field);
-  border: 1px solid transparent;
-  border-radius: 9px;
-}
-.quiet .title {
-  font-size: var(--fs-ui);
-}
-.quiet.withAct {
-  grid-template-columns: 150px 112px minmax(140px, 1fr) minmax(0, max-content) auto;
-}
-.isDone .title {
-  color: var(--ink-2);
-}
-.state {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--fs-meta);
-  color: var(--ink-2);
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-}
-.state > * {
-  flex: none;
-}
-.state > span:last-child {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ---------- run tile (your runs) ---------- */
 .tile {
-  background: var(--surface);
-  border: 1px solid var(--rule);
+  background: var(--row-raised);
+  box-shadow:
+    0 0 0 1px var(--row-raised-edge),
+    var(--row-raised-shadow);
   border-radius: 10px;
   padding: 10px 13px 9px;
   display: flex;
@@ -291,8 +348,7 @@
   flex: none;
   margin-left: auto;
   padding-left: 6px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
@@ -337,17 +393,14 @@
 }
 
 /* ---------- the rack ---------- */
-/* static group head (kit .ao-gh.is-static), aligned with the rack lines that bleed 6px */
+/* static group head: sentence case (refresh: no caps), aligned with the rack lines that bleed 6px */
 .gh {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   height: 32px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--fs-control);
+  font-weight: 600;
   color: var(--ink-2);
   white-space: nowrap;
   min-width: 0;
@@ -356,10 +409,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-}
-.ghCount {
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
 }
 .ghRule {
   flex: 1;
@@ -372,24 +421,26 @@
   grid-template-columns: 12px 84px minmax(0, 1fr) 36px 30px 20px;
   align-items: center;
   column-gap: 8px;
-  height: 28px;
+  height: 30px;
   padding: 0 6px;
   margin: 0 -6px;
   border-radius: 6px;
   cursor: pointer;
-  transition:
-    transform var(--t-fast) ease,
-    background-color var(--t-fast) ease;
+  transition: transform var(--t-fast) var(--ease-out);
 }
-.rl:hover {
-  background: var(--field);
+.rl:is(:hover, :focus-visible) {
   transform: translateY(-2px);
+}
+.rl:focus {
+  outline: none;
 }
 .rl:focus-visible {
-  transform: translateY(-2px);
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 9px;
+}
+.rlKey {
+  display: flex;
+  min-width: 0;
 }
 .rlT {
   font-size: var(--fs-control);
@@ -405,15 +456,73 @@
   display: inline-flex;
 }
 
+/* ---------- narrower windows: the ask drops under the title, then everything stacks ---------- */
+@media (max-width: 1180px) {
+  .row {
+    grid-template-columns: 150px 82px minmax(0, 1fr) 48px max-content;
+    grid-template-areas:
+      "stage key title age acts"
+      ". . ask ask ask";
+    row-gap: 6px;
+  }
+  .stage {
+    grid-area: stage;
+  }
+  .key {
+    grid-area: key;
+  }
+  .ti {
+    grid-area: title;
+  }
+  .divider {
+    display: none;
+  }
+  .ask,
+  .who {
+    grid-area: ask;
+  }
+  .age {
+    grid-area: age;
+  }
+  .acts,
+  .outcome,
+  .actsBlank {
+    grid-area: acts;
+  }
+}
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-areas:
+      "stage key"
+      "title title"
+      "ask ask"
+      "age acts";
+  }
+  .row .age {
+    text-align: left;
+  }
+  /* "2 shipped" alone, so the Done head fits a phone */
+  .statWeek {
+    display: none;
+  }
+  .tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lift,
+  .row,
   .rl {
     transition: none;
   }
-  .lift:hover,
-  .lift:focus-visible,
-  .rl:hover,
-  .rl:focus-visible {
+  .lift:is(:hover, :focus-visible, :has(:focus-visible)),
+  .row:is(:hover, :focus-visible, :has(:focus-visible)),
+  .rl:is(:hover, :focus-visible) {
     transform: none;
   }
 }

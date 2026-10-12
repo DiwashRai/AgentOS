@@ -3,6 +3,7 @@
 // derive board state.
 import { ApiError, type Schemas } from "../../api/client";
 import { age, firstName } from "../../domain/format";
+import type { GlyphStage } from "../../domain/stage";
 
 type Detail = Schemas["TicketDetail"];
 type Gate = Schemas["GateInfo"];
@@ -100,12 +101,35 @@ export function paragraphs(text: string): string[] {
     .filter(Boolean);
 }
 
-/** "5 stages", "5 stages · 1 skipped" (disabled stages render as skipped). */
-export function pipelineText(p: Pick<Schemas["Pipeline"], "stages">): string {
-  const n = p.stages.length;
-  const skipped = p.stages.filter((s) => !s.enabled).length;
-  const stages = `${String(n)} ${n === 1 ? "stage" : "stages"}`;
-  return skipped ? `${stages} · ${String(skipped)} skipped` : stages;
+const plural = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
+
+/** The byline's "7 stages · 1 gate · 1 skipped", counted from the stepper's own model (Inbox and
+ *  Done bookends included, skipped stages still stages, gates apart), so the glyph, the stepper and
+ *  the byline describe one pipeline (refresh HANDOFF §5 "Pipeline byline"). Zero parts are left out. */
+export function pipelineSummary(stages: readonly Pick<GlyphStage, "state" | "gate">[]): string {
+  const gates = stages.filter((s) => s.gate).length;
+  const skipped = stages.filter((s) => s.state === "skipped").length;
+  return [
+    plural(stages.length, "stage", "stages"),
+    gates ? plural(gates, "gate", "gates") : "",
+    skipped ? `${String(skipped)} skipped` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+const SOURCE_WORD: Record<Schemas["SourceLink"]["source"], string> = {
+  jira: "Jira",
+  github: "GitHub",
+  todoist: "Todoist",
+};
+
+/** The kicker's source tag: "Jira", plus the external id only when it differs from our key
+ *  (an imported Jira ticket keeps its Jira key, so the key chip already says it). */
+export function sourceText(t: Pick<Detail, "key" | "source">): string | null {
+  if (!t.source) return null;
+  const word = SOURCE_WORD[t.source.source];
+  return t.source.external_id === t.key ? word : `${word} ${t.source.external_id}`;
 }
 
 /** The runner while a run is on one (`launch_ref`), else "none". */
@@ -143,15 +167,19 @@ export function gatePerson(g: Gate): string {
 
 // ------------------------------------------------------------------ plan & context
 
-/** `01`, `02`, … */
-export function planNumber(i: number): string {
-  return String(i + 1).padStart(2, "0");
+export interface PlanProgress {
+  done: number;
+  total: number;
+  /** The bar's fill, 0–100 (whole percent). */
+  pct: number;
 }
 
-/** "2 of 5 done". */
-export function planSummary(plan: readonly Schemas["PlanItem"][]): string {
+/** The plan head's "k of n done" and bar, counted from the items themselves (HANDOFF §8: the count
+ *  matches its items). */
+export function planProgress(plan: readonly Pick<Schemas["PlanItem"], "done">[]): PlanProgress {
   const done = plan.filter((p) => p.done).length;
-  return `${String(done)} of ${String(plan.length)} done`;
+  const total = plan.length;
+  return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
 }
 
 /** A context chip shows the path's last segment. */

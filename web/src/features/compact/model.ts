@@ -3,10 +3,10 @@
 // src/domain/counts.ts, so a pill's count always equals its group's count. Display helpers pick
 // and combine `now`, `rail[].gate`, `latest_run` and `source`; they never derive board state.
 import type { Schemas } from "../../api/client";
-import { type CountKey, counts } from "../../domain/counts";
+import { type CountKey, counts, shippedThisWeek } from "../../domain/counts";
 import { age, elapsed, firstName, repoShort } from "../../domain/format";
 import { since } from "../../domain/groups";
-import { outcomeWord } from "../../domain/outcome";
+import { type Outcome, outcomeOf, outcomeWord } from "../../domain/outcome";
 import { planText } from "../../domain/plan";
 import {
   type Attention,
@@ -15,7 +15,8 @@ import {
   statusKind,
   type StatusKind,
 } from "../../domain/status";
-import { attentionWords, statusWords, words } from "../../domain/words";
+import { attentionWords, outcomeWords, statusWords, words } from "../../domain/words";
+import { projectPrefix } from "../../ui/identity";
 import { meterOfText } from "../../ui/meter";
 import {
   type MarkModel,
@@ -125,18 +126,34 @@ export function pills(tickets: readonly CountTicket[], me: MeRef, active: Filter
 
 // ------------------------------------------------------------------ groups
 
-/** A mono group summary: plain text runs and `{b}` emphasised runs, in order. */
-export type Summary = (string | { b: string })[];
+/** A group-head stat: plain text runs, `{b}` emphasised runs and `{age}` ages, in order. */
+export type Summary = (string | { b: string } | { age: string })[];
+
+/** The group head's right slot (refresh HANDOFF §5 "Group head"). */
+export type GroupRight =
+  /** "Longest wait 38m", "1 yours", "web 2 · api 1" */
+  | { kind: "stat"; parts: Summary }
+  /** The Inbox instruction, once, in the head only. */
+  | { kind: "note"; text: string }
+  /** Done recently: the tick badge + "N shipped this week" (only when N > 0). */
+  | { kind: "shipped"; n: number }
+  | null;
 
 export interface CompactGroup<T> {
   id: Attention;
   title: string;
   mark: StatusKind;
   items: T[];
-  summary: Summary;
+  right: GroupRight;
 }
 
-type GroupTicket = Pick<Ticket, "key" | "attention" | "attention_since" | "owner" | "repo_name">;
+/** The Inbox group head's note. */
+export const INBOX_NOTE = "Add context, then dispatch";
+
+type GroupTicket = Pick<
+  Ticket,
+  "key" | "attention" | "attention_since" | "owner" | "repo_name" | "state" | "resolution"
+>;
 
 function sinceMs(t: GroupTicket): number {
   const ms = Date.parse(since(t));
@@ -184,20 +201,26 @@ function repoSummary(items: readonly GroupTicket[]): Summary {
   return out;
 }
 
-function summary(id: Attention, items: readonly GroupTicket[], me: MeRef, now: number): Summary {
+const stat = (parts: Summary): GroupRight => (parts.length > 0 ? { kind: "stat", parts } : null);
+
+function right(id: Attention, items: readonly GroupTicket[], me: MeRef, now: number): GroupRight {
   switch (id) {
     case "needs_you": {
       const oldest = Math.min(...items.map(sinceMs));
-      return Number.isFinite(oldest) ? ["longest wait ", { b: age(oldest, now) }] : [];
+      return stat(Number.isFinite(oldest) ? ["Longest wait ", { age: age(oldest, now) }] : []);
     }
     case "blocked": {
       const mine = items.filter((t) => isMine(t, me)).length;
-      return mine > 0 ? [{ b: String(mine) }, " yours"] : [];
+      return stat(mine > 0 ? [{ b: String(mine) }, " yours"] : []);
     }
-    case "done":
-      return [];
+    case "inbox":
+      return { kind: "note", text: INBOX_NOTE };
+    case "done": {
+      const n = shippedThisWeek(items, now);
+      return n > 0 ? { kind: "shipped", n } : null;
+    }
     default:
-      return repoSummary(items);
+      return stat(repoSummary(items));
   }
 }
 
@@ -216,10 +239,49 @@ export function compactGroups<T extends GroupTicket>(
         title: GROUP_TITLE[id],
         mark: statusKind({ attention: id }),
         items,
-        summary: summary(id, items, me, now),
+        right: right(id, items, me, now),
       },
     ];
   });
+}
+
+/** What the list renders, in order: the groups, plus a dashed empty row where an empty group is
+ *  worth saying out loud (refresh HANDOFF §3.10: Needs you, Running, Queued; others stay hidden). */
+export type Section<T> =
+  | { kind: "group"; group: CompactGroup<T> }
+  | { kind: "empty"; id: "needs_you" | "running" | "queued"; lead: string; note: string | null };
+
+/**
+ * The groups with their empty rows. `showEmpty` is false while a filter or a search narrows the
+ * list (an "All quiet" there would be about the filter, not the board). An empty Running and Queued
+ * share one row, at Running's place.
+ */
+export function compactSections<T>(
+  groups: readonly CompactGroup<T>[],
+  showEmpty: boolean,
+): Section<T>[] {
+  const has = (id: Attention) => groups.some((g) => g.id === id);
+  const out: Section<T>[] = [];
+  for (const id of GROUP_ORDER) {
+    const group = groups.find((g) => g.id === id);
+    if (group) {
+      out.push({ kind: "group", group });
+      continue;
+    }
+    if (!showEmpty) continue;
+    if (id === "needs_you") {
+      out.push({ kind: "empty", id, lead: "All quiet", note: "nothing needs you" });
+    } else if (id === "running") {
+      out.push(
+        has("queued")
+          ? { kind: "empty", id, lead: "Nothing running", note: null }
+          : { kind: "empty", id, lead: "All quiet", note: "nothing running, nothing queued" },
+      );
+    } else if (id === "queued" && has("running")) {
+      out.push({ kind: "empty", id, lead: "Nothing queued", note: null });
+    }
+  }
+  return out;
 }
 
 /** Done starts collapsed (DESIGN §6), unless it is what the filter asks for. */
@@ -227,11 +289,35 @@ export function collapsedByDefault(id: Attention, filter: Filter): boolean {
   return id === "done" && filter !== "done";
 }
 
-/** "3 tickets · 2 repos" in the footer, over what is listed. */
-export function footNote(tickets: readonly Pick<Ticket, "repo_name">[]): string {
-  const repos = new Set(tickets.map((t) => t.repo_name).filter((r) => r !== null)).size;
-  const n = tickets.length;
-  return `${String(n)} ${n === 1 ? "ticket" : "tickets"} · ${String(repos)} ${repos === 1 ? "repo" : "repos"}`;
+export interface FootSummary {
+  tickets: number;
+  /** One key chip per project prefix, alphabetical ("AOS", "SCRUM"). */
+  projects: string[];
+  repos: number;
+}
+
+/** "7 tickets · [AOS] [SCRUM] · 3 repos" in the footer, over what is listed. */
+export function footSummary(tickets: readonly Pick<Ticket, "key" | "repo_name">[]): FootSummary {
+  return {
+    tickets: tickets.length,
+    projects: [...new Set(tickets.map((t) => projectPrefix(t.key)))].sort(),
+    repos: new Set(tickets.map((t) => t.repo_name).filter((r) => r !== null)).size,
+  };
+}
+
+/** "1 ticket", "3 repos": the word after a footer count. */
+export function plural(n: number, one: string): string {
+  return n === 1 ? one : `${one}s`;
+}
+
+/** An age split for display: numbers tabular, each unit a size smaller ("3h 05m" → 3 h · 05 m).
+ *  Text without a number ("now") is one unit-less part. */
+export function ageParts(text: string): { n: string; unit: string }[] {
+  const parts = [...text.matchAll(/(\d+)([a-z]+)/g)].map((m) => ({
+    n: m[1] ?? "",
+    unit: m[2] ?? "",
+  }));
+  return parts.length > 0 ? parts : [{ n: text, unit: "" }];
 }
 
 const EMPTY: Record<Filter, string> = {
@@ -252,9 +338,35 @@ export function emptyText(filter: Filter, repo: string | null): string {
 
 // ------------------------------------------------------------------ the row
 
-/** The Source column: `JIRA · web`, `web` for our own tickets, "" with neither. */
+/** The Source column: `Jira · web`, `web` for our own tickets, "" with neither. Sentence case. */
 export function sourceText(t: Pick<Ticket, "source" | "repo_name">): string {
-  return [t.source?.source.toUpperCase(), repoShort(t.repo_name)].filter(Boolean).join(" · ");
+  const src = t.source?.source;
+  const name = src ? src.charAt(0).toUpperCase() + src.slice(1) : "";
+  return [name, repoShort(t.repo_name)].filter(Boolean).join(" · ");
+}
+
+/** The 3px status edge (refresh HANDOFF §4): you blue, running vermilion, blocked and abandoned
+ *  crimson, complete green; inbox, queued and waiting a quiet rule. */
+export type Edge = "you" | "live" | "blocked" | "done" | "quiet";
+
+export function edgeOf(t: Pick<Ticket, "attention" | "state" | "resolution">): Edge {
+  switch (t.attention) {
+    case "needs_you":
+      return "you";
+    case "running":
+      return "live";
+    case "blocked":
+      return "blocked";
+    case "done":
+      return outcomeOf(t) === "abandoned" ? "blocked" : "done";
+    default:
+      return "quiet";
+  }
+}
+
+/** Raised = in flight or needs action; flat = settled (done, closed). */
+export function isFlat(t: Pick<Ticket, "attention">): boolean {
+  return t.attention === "done";
 }
 
 /** The Upd column: `now` while a run is on a runner, else how long it has been in this state. */
@@ -267,11 +379,27 @@ type NowTicket = Pick<Ticket, "attention" | "rail" | "now" | "latest_run" | "sta
 export type NowCell =
   /** `BUILDER · step · meter · 3/5` */
   | { kind: "run"; actor: string; text: string; meter: MeterModel | null }
-  /** `● YOU · PLAN SIGN-OFF` + ask, `○ SAM · PR REVIEW` + text, `▌BLOCKED` + reason, … */
-  | { kind: "mark"; mark: MarkModel; text: string };
+  /** `YOU Plan sign-off` + ask, `○ Sam · PR review` + text, `■ Blocked` + reason, … */
+  | { kind: "mark"; mark: MarkModel; text: string }
+  /** A done row: `Complete · merged`, `Abandoned · duplicate of AOS-8` (no glyph: the stage cell
+   *  already carries the tick or the crimson stop). */
+  | { kind: "outcome"; outcome: Outcome; word: string; text: string }
+  /** An Inbox row at rest: nothing yet (no context summary; contract request 20). Add context
+   *  shows here on hover / focus / open. */
+  | { kind: "empty" };
 
 /** The Now column (DESIGN §6 "Now/next"; there is no "next" in our model). */
 export function nowCell(t: NowTicket): NowCell {
+  const outcome = outcomeOf(t);
+  if (outcome) {
+    return {
+      kind: "outcome",
+      outcome,
+      word: outcomeWords[outcome],
+      text: t.resolution?.note ?? t.now.text,
+    };
+  }
+  if (t.attention === "inbox") return { kind: "empty" };
   if (t.attention === "running") {
     return {
       kind: "run",
@@ -282,10 +410,7 @@ export function nowCell(t: NowTicket): NowCell {
     };
   }
   const mark = statusMark(t);
-  let text = t.now.text;
-  if (t.attention === "blocked") text = statusText(t);
-  else if (t.attention === "inbox") text = t.now.text || words.inboxNote;
-  else if (t.attention === "done") text = t.resolution?.note ?? t.now.text;
+  const text = t.attention === "blocked" ? statusText(t) : t.now.text;
   return { kind: "mark", mark, text };
 }
 
@@ -312,6 +437,9 @@ export function moveText(t: NowTicket): { label: string; lead: string } {
       const label = outcomeWord(t) ?? attentionWords.done;
       return { label, lead: t.resolution?.note ?? (statusText(t) || label) };
     }
+    // "Add context, then dispatch" is said once, in the Inbox group head.
+    case "inbox":
+      return { label: "Now", lead: t.now.text || words.inboxNote };
     default:
       return { label: "Now", lead: statusText(t) || attentionWords[t.attention] };
   }

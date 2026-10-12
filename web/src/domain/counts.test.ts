@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COUNTERS, counts } from "./counts";
+import { COUNTERS, counts, shippedThisWeek } from "./counts";
 import { person, run, ticket } from "./fixtures";
 
 const me = { id: 1 };
@@ -53,5 +53,23 @@ describe("counts", () => {
 
   it("has a counter label for every count", () => {
     expect(Object.keys(COUNTERS).sort()).toEqual(Object.keys(counts([], me)).sort());
+  });
+});
+
+describe("shippedThisWeek", () => {
+  const now = Date.parse("2026-10-12T12:00:00Z");
+  const done = (over: Parameters<typeof ticket>[0]) =>
+    ticket({ attention: "done", state: "done", ...over });
+
+  it("counts Complete tickets resolved in the last 7 days", () => {
+    const by = person(1);
+    const tickets = [
+      done({ resolution: { outcome: "completed", note: null, by, at: "2026-10-11T09:00:00Z" } }),
+      done({ resolution: { outcome: "completed", note: null, by, at: "2026-10-01T09:00:00Z" } }),
+      done({ resolution: { outcome: "abandoned", note: null, by, at: "2026-10-11T09:00:00Z" } }),
+      done({ attention_since: "2026-10-10T09:00:00Z" }), // marked done before resolutions existed
+      ticket({ attention: "needs_you", attention_since: "2026-10-11T09:00:00Z" }),
+    ];
+    expect(shippedThisWeek(tickets, now)).toBe(2);
   });
 });

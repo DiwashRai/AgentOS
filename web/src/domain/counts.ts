@@ -3,6 +3,7 @@
 // Dropped from the design: `watching` (no watchers in our model), `atWork`/`mineQueued` (same as
 // `mine` / derivable from groups), `merged` today (no merge time yet; `done` counts all done).
 import type { Schemas } from "../api/client";
+import { outcomeOf } from "./outcome";
 import { isMine, type MeRef, statusKind, type StatusKind } from "./status";
 
 type CountTicket = Pick<Schemas["TicketSummary"], "attention" | "owner">;
@@ -48,6 +49,23 @@ export const COUNTERS: Record<CountKey, { mark: StatusKind | null; label: string
   inFlight: { mark: null, label: "in flight" },
   done: { mark: "done", label: "done" },
 };
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+type ShippedTicket = Pick<
+  Schemas["TicketSummary"],
+  "attention" | "state" | "resolution" | "attention_since"
+>;
+
+/** "N shipped this week": done tickets that ended Complete in the last 7 days (by when they were
+ *  resolved, else when they became done). Counts only what the board returned. */
+export function shippedThisWeek(tickets: readonly ShippedTicket[], nowMs: number): number {
+  return tickets.filter((t) => {
+    if (outcomeOf(t) !== "completed") return false;
+    const at = Date.parse(t.resolution?.at ?? t.attention_since);
+    return nowMs - at <= WEEK_MS;
+  }).length;
+}
 
 export function counts(tickets: readonly CountTicket[], me: MeRef): Counts {
   const c: Counts = {
