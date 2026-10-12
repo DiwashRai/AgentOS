@@ -24,9 +24,15 @@ export const keys = {
   runEvents: (id: number) => [...keys.run(id), "events"] as const,
   manifest: (id: number) => [...keys.run(id), "manifest"] as const,
   intake: () => [...keys.all, "intake"] as const,
+  settings: (area: SettingsArea) => [...keys.all, "settings", area] as const,
 };
 
-/** Public app config (auth mode, key prefix, defaults). Static for the life of the server. */
+/** The admin Settings documents (GET/PUT /api/settings/{area}). */
+export type SettingsArea = "space" | "repos" | "intake" | "runtimes" | "runner";
+
+/** Public app config (auth mode, Space name, repos, key prefix, runtimes, defaults). Read from the
+ *  Settings documents, so it changes rarely: cached until a Settings or Template save here
+ *  refetches it (another admin's save shows on the next page load). */
 export function useConfig() {
   return useQuery({
     queryKey: keys.config(),
@@ -132,6 +138,134 @@ export function useSaveTemplate() {
       queryClient.setQueryData(keys.template(), t);
       // /api/config carries the effective Space defaults (default_runtime, default_model).
       void queryClient.invalidateQueries({ queryKey: keys.config() });
+    },
+  });
+}
+
+// ------------------------------------------------------------------ settings (admin)
+// One document per area: GET it whole, PUT it back whole with `base_version` (409 `stale_version`
+// if someone saved first; 409 `in_use` when a removal would break something). Admin only, so
+// callers gate on `enabled`. A save puts the answer in the cache and refetches what reads it.
+
+export function useSpaceSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.settings("space"),
+    queryFn: () => unwrap(api.GET("/api/settings/space")),
+    enabled,
+  });
+}
+
+/** Saving the Space changes /api/config (name, default repo, key prefix). */
+export function useSaveSpaceSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["SpaceSettingsUpdate"]) =>
+      unwrap(api.PUT("/api/settings/space", { body })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.settings("space"), data);
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.config() }),
+        queryClient.invalidateQueries({ queryKey: keys.intake() }),
+      ]);
+    },
+  });
+}
+
+export function useRepoSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.settings("repos"),
+    queryFn: () => unwrap(api.GET("/api/settings/repos")),
+    enabled,
+  });
+}
+
+/** Saving the repos changes /api/config's catalog and every ticket's resolved repo URL/branch. */
+export function useSaveRepoSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["RepoSettingsUpdate"]) =>
+      unwrap(api.PUT("/api/settings/repos", { body })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.settings("repos"), data);
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.config() }),
+        queryClient.invalidateQueries({ queryKey: keys.tickets() }),
+      ]);
+    },
+  });
+}
+
+export function useIntakeSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.settings("intake"),
+    queryFn: () => unwrap(api.GET("/api/settings/intake")),
+    enabled,
+  });
+}
+
+/** Saving the queries drops the server's intake cache, so the Intake view refetches. */
+export function useSaveIntakeSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["IntakeSettingsUpdate"]) =>
+      unwrap(api.PUT("/api/settings/intake", { body })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.settings("intake"), data);
+      return queryClient.invalidateQueries({ queryKey: keys.intake() });
+    },
+  });
+}
+
+/** "Test query": runs a JQL live (not cached, nothing saved), at most 5 items. A mutation, so it
+ *  runs only when asked; its `error` field carries Jira's complaint (the request still succeeds). */
+export function usePreviewIntake() {
+  return useMutation({
+    mutationFn: (body: Schemas["IntakePreviewRequest"]) =>
+      unwrap(api.POST("/api/settings/intake/preview", { body })),
+  });
+}
+
+export function useRuntimeSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.settings("runtimes"),
+    queryFn: () => unwrap(api.GET("/api/settings/runtimes")),
+    enabled,
+  });
+}
+
+/** Saving the runtimes changes /api/config (runtime names, server default) and what the Template
+ *  page validates against. */
+export function useSaveRuntimeSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["RuntimeSettingsUpdate"]) =>
+      unwrap(api.PUT("/api/settings/runtimes", { body })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.settings("runtimes"), data);
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.config() }),
+        queryClient.invalidateQueries({ queryKey: keys.template() }),
+      ]);
+    },
+  });
+}
+
+export function useRunnerSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.settings("runner"),
+    queryFn: () => unwrap(api.GET("/api/settings/runner")),
+    enabled,
+  });
+}
+
+/** The runner is read at each dispatch; nothing else in the UI reads it. */
+export function useSaveRunnerSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["RunnerSettingsUpdate"]) =>
+      unwrap(api.PUT("/api/settings/runner", { body })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.settings("runner"), data);
     },
   });
 }

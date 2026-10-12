@@ -8,7 +8,14 @@ import { QueueView } from "../features/queue/QueueView";
 import { TicketPage } from "../features/ticket/TicketPage";
 import { Shell } from "./Shell";
 import { TeamsView } from "./views/placeholders";
-import { TemplateView, UsersView } from "./views/Settings";
+import {
+  IntakeSettingsView,
+  RunnersView,
+  SettingsIndex,
+  SpaceView,
+  TemplateView,
+  UsersView,
+} from "./views/Settings";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -23,8 +30,11 @@ export const router = createBrowserRouter([
       { path: "teams", element: <TeamsView /> },
       { path: "t/:key/:tab?", element: <TicketPage /> },
       // The rail's Settings link points at /settings, so it stays current on every section.
-      { path: "settings", element: <Navigate to="/settings/template" replace /> },
+      { path: "settings", element: <SettingsIndex /> },
+      { path: "settings/space", element: <SpaceView /> },
+      { path: "settings/intake", element: <IntakeSettingsView /> },
       { path: "settings/template", element: <TemplateView /> },
+      { path: "settings/runners", element: <RunnersView /> },
       { path: "settings/users", element: <UsersView /> },
     ],
   },

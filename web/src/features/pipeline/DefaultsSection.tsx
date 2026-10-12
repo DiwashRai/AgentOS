@@ -15,11 +15,9 @@ import s from "./pages.module.css";
 
 export interface DefaultsSectionProps {
   value: Defaults;
-  /** The saved defaults: the unset runtime option can name the server's runtime only when the
-   *  saved template doesn't set one (/api/config gives the effective runtime). */
-  saved: Defaults;
   runtimes: readonly string[];
-  defaultRuntime: string;
+  /** The server's own runtime (`AppConfig.server_default_runtime`), named by the unset option. */
+  serverRuntime: string;
   issues: DefaultsIssues;
   readOnly: boolean;
   onChange: (d: Defaults) => void;
@@ -31,7 +29,7 @@ export function DefaultsSection(props: DefaultsSectionProps) {
   const model = value.model ?? null;
   const options = runtimeOptions(
     runtimes,
-    serverRuntimeLabel(props.saved, { default_runtime: props.defaultRuntime }),
+    serverRuntimeLabel({ server_default_runtime: props.serverRuntime }),
     runtime,
   );
 

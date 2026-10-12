@@ -320,8 +320,8 @@ export interface DefaultsBody {
 
 /**
  * The effective Space defaults a stage with an unset runtime/model falls back to.
- * `runtime: null` = a server default whose name isn't known here (see `effectiveDefaults`);
- * `model: null` = no Space model (the CLI's own default).
+ * `runtime: null` = a default whose name isn't known; `model: null` = no Space model (the CLI's
+ * own default).
  */
 export interface SpaceDefaults {
   runtime: string | null;
@@ -358,23 +358,21 @@ export function configDefaults(config: {
 
 /**
  * The defaults stages fall back to while the Template page's form is being edited: the draft's,
- * else what the server would use. /api/config only names the *effective* runtime, so once the
- * saved template sets one, the server config's own runtime is unknown (`runtime: null`).
+ * else the server's own runtime (the first in Settings › Runners) and no model.
  */
 export function effectiveDefaults(
   draft: Defaults,
-  saved: Defaults,
-  config: { default_runtime: string },
+  config: { server_default_runtime: string },
 ): SpaceDefaults {
   return {
-    runtime: draft.runtime ?? (saved.runtime == null ? config.default_runtime : null),
+    runtime: draft.runtime ?? config.server_default_runtime,
     model: draft.model ?? null,
   };
 }
 
-/** The Space runtime select's unset option: the server config's runtime, named when known. */
-export function serverRuntimeLabel(saved: Defaults, config: { default_runtime: string }): string {
-  return saved.runtime == null ? `Server default (${config.default_runtime})` : "Server default";
+/** The Space runtime select's unset option, naming the server's own runtime. */
+export function serverRuntimeLabel(config: { server_default_runtime: string }): string {
+  return `Server default (${config.server_default_runtime})`;
 }
 
 /** Runtime choices: unset ("") first, then every runtime, keeping an unknown current value

@@ -50,7 +50,7 @@ export function TemplatePage() {
   }
   const data = template.data;
   const value = draft.value ?? { pipeline: data.pipeline, defaults: data.defaults };
-  const { runtimes, default_runtime } = config.data;
+  const { runtimes, server_default_runtime } = config.data;
   const isAdmin = me.data?.role === "admin";
   const readOnly = !isAdmin || save.isPending;
   const defaultsIssues = validateDefaults(value.defaults, runtimes);
@@ -107,9 +107,8 @@ export function TemplatePage() {
 
       <DefaultsSection
         value={value.defaults}
-        saved={data.defaults}
         runtimes={runtimes}
-        defaultRuntime={default_runtime}
+        serverRuntime={server_default_runtime}
         issues={defaultsIssues}
         readOnly={readOnly}
         onChange={(defaults) => {
@@ -124,7 +123,7 @@ export function TemplatePage() {
         }}
         readOnly={readOnly}
         runtimes={runtimes}
-        space={effectiveDefaults(value.defaults, data.defaults, config.data)}
+        space={effectiveDefaults(value.defaults, config.data)}
       />
 
       <section className={s.scaffold} aria-labelledby="scaffold-head">

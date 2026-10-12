@@ -373,31 +373,24 @@ describe("Space defaults", () => {
   });
 
   it("effectiveDefaults follows the draft, else the server's", () => {
-    const config = { default_runtime: "claude" };
-    // Nothing set anywhere: the server's runtime, no model.
-    expect(effectiveDefaults({}, {}, config)).toEqual({ runtime: "claude", model: null });
+    const config = { server_default_runtime: "claude" };
+    // Nothing set: the server's runtime, no model.
+    expect(effectiveDefaults({}, config)).toEqual({ runtime: "claude", model: null });
     // The draft wins.
-    expect(effectiveDefaults({ runtime: "copilot", model: "gpt-5" }, {}, config)).toEqual({
+    expect(effectiveDefaults({ runtime: "copilot", model: "gpt-5" }, config)).toEqual({
       runtime: "copilot",
       model: "gpt-5",
     });
-    // Saved = effective: config already names it.
-    const saved = { runtime: "copilot", model: null };
-    expect(effectiveDefaults(saved, saved, { default_runtime: "copilot" }).runtime).toBe("copilot");
-    // Cleared in the draft while the saved template sets one: the server's own is unknown.
-    expect(effectiveDefaults({ runtime: null }, saved, { default_runtime: "copilot" })).toEqual({
-      runtime: null,
+    // Cleared in the draft: the server's own runtime, even while the saved template sets one.
+    expect(effectiveDefaults({ runtime: null }, config)).toEqual({
+      runtime: "claude",
       model: null,
     });
   });
 
-  it("serverRuntimeLabel names the server runtime only when the template sets none", () => {
-    expect(serverRuntimeLabel({}, { default_runtime: "claude" })).toBe("Server default (claude)");
-    expect(serverRuntimeLabel({ runtime: null }, { default_runtime: "claude" })).toBe(
+  it("serverRuntimeLabel names the server's own runtime", () => {
+    expect(serverRuntimeLabel({ server_default_runtime: "claude" })).toBe(
       "Server default (claude)",
-    );
-    expect(serverRuntimeLabel({ runtime: "copilot" }, { default_runtime: "copilot" })).toBe(
-      "Server default",
     );
   });
 

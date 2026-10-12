@@ -1,12 +1,13 @@
-// A draft over a saved copy, shared by the Pipeline tab (a pipeline) and the Template page (the
-// pipeline plus the Space defaults). `base` is the version the draft started from, so a save never
-// silently overwrites someone else's change (the server answers 409 `stale_version` instead).
+// A draft over a saved copy, shared by the Pipeline tab (a pipeline), the Template page (the
+// pipeline plus the Space defaults) and the Settings pages (one settings document each). `base` is
+// the version the draft started from, so a save never silently overwrites someone else's change
+// (the server answers 409 `stale_version` instead).
 import { useEffect, useState } from "react";
 import { useBlocker } from "react-router";
 
 import { samePipeline, type Pipeline } from "./model";
 
-const LEAVE = "Leave without saving your pipeline changes?";
+const LEAVE = "Leave without saving your changes?";
 
 export interface Draft<T> {
   /** What the editor shows: the draft while there are changes, else the saved copy. */
@@ -27,14 +28,19 @@ export function usePipelineDraft(
   return useDraft(saved, version, samePipeline);
 }
 
+/**
+ * `warn: false` skips the leave warning, for a page with two drafts: the router allows one blocker
+ * at a time, so that page calls `useUnsavedWarning(a.dirty || b.dirty)` once itself.
+ */
 export function useDraft<T>(
   saved: T | undefined,
   version: number | undefined,
   same: (a: T, b: T) => boolean,
+  options: { warn?: boolean } = {},
 ): Draft<T> {
   const [draft, setDraft] = useState<{ value: T; base: number | undefined } | null>(null);
   const dirty = draft !== null && saved !== undefined && !same(draft.value, saved);
-  useUnsavedWarning(dirty);
+  useUnsavedWarning(dirty && options.warn !== false);
   return {
     value: dirty ? draft.value : saved,
     dirty,
@@ -50,7 +56,7 @@ export function useDraft<T>(
 }
 
 /** Warn before leaving with unsaved changes: closing the tab, or navigating to another page. */
-function useUnsavedWarning(dirty: boolean) {
+export function useUnsavedWarning(dirty: boolean) {
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {

@@ -48,13 +48,12 @@ function change(el: HTMLInputElement | HTMLSelectElement, value: string) {
   });
 }
 
-function defaults(value: Defaults, onChange: (d: Defaults) => void, saved: Defaults = {}) {
+function defaults(value: Defaults, onChange: (d: Defaults) => void) {
   return mount(
     <DefaultsSection
       value={value}
-      saved={saved}
       runtimes={RT}
-      defaultRuntime="claude"
+      serverRuntime="claude"
       issues={{}}
       readOnly={false}
       onChange={onChange}
@@ -75,10 +74,10 @@ describe("DefaultsSection", () => {
     expect(el.querySelector("select")?.value).toBe("");
   });
 
-  it("can't name the server runtime once the saved template sets one", () => {
-    const set = { runtime: "copilot", model: null };
-    const el = defaults(set, () => undefined, set);
-    expect(el.querySelector("option")?.textContent).toBe("Server default");
+  it("still names the server runtime while the template sets one", () => {
+    const el = defaults({ runtime: "copilot", model: null }, () => undefined);
+    expect(el.querySelector("option")?.textContent).toBe("Server default (claude)");
+    expect(el.querySelector("select")?.value).toBe("copilot");
   });
 
   it("clearing the model or picking the server default sends null", () => {
