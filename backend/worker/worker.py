@@ -13,6 +13,11 @@ Failure paths after the claim:
 - run gone (401/410 on any call): kill the stage tree, no commit, no push, exit 1.
 - server unreachable (network errors / 5xx for RETRY_BUDGET_S): kill the stage tree, commit and
   push what exists, exit 1 (the reaper fails the run).
+
+Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
+server): no claim and no HTTP. The manifest comes from a file, and every worker API call is
+recorded as one JSONL line in the outbox (see Recorder), which the server replays later. Nothing
+answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
 """
 
 from __future__ import annotations
@@ -605,6 +610,55 @@ class WorkerApi:
             if exc.status in (401, 410):
                 raise RunGone(f"POST {path}: HTTP {exc.status} {exc.code}") from exc
             raise
+
+
+class Recorder(WorkerApi):
+    """Mailbox mode: records each call as one outbox line instead of POSTing it.
+
+    Line 1 is `{"outbox": 1, "run_id": N}`, then `{"path": ..., "body": ...}` per call in call
+    order, flushed per line (default json.dumps, so the body is what Client.post would send).
+    Empty event batches (heartbeats) are not recorded. `call` always returns None: no cancel, no
+    RunGone. A failed write raises Unreachable (and every later call too), so the run aborts.
+    """
+
+    def __init__(self, outbox: Path, run_id: int) -> None:
+        self._lock = threading.Lock()
+        self._fh: IO[bytes] | None = outbox.open("xb")  # never overwrite an earlier recording
+        self._closed = "the outbox is closed"
+        try:
+            self._write(self._fh, {"outbox": 1, "run_id": run_id})
+        except OSError:
+            self.close()
+            raise
+
+    @staticmethod
+    def _write(fh: IO[bytes], line: dict[str, Any]) -> None:
+        fh.write(json.dumps(line).encode("utf-8") + b"\n")
+        fh.flush()
+
+    def call(self, path: str, body: dict[str, Any]) -> Any:
+        if path == "/api/worker/events" and not body["events"]:
+            return None
+        with self._lock:
+            if self._fh is None:
+                raise Unreachable(f"record {path}: {self._closed}")
+            try:
+                self._write(self._fh, {"path": path, "body": body})
+            except OSError as exc:
+                self._shut(f"cannot write the outbox: {exc}")
+                raise Unreachable(f"record {path}: {self._closed}") from exc
+        return None
+
+    def close(self) -> None:
+        with self._lock:
+            self._shut("the outbox is closed")
+
+    def _shut(self, why: str) -> None:
+        """Close the file; every later call raises Unreachable with `why`."""
+        if self._fh is not None:
+            fh, self._fh, self._closed = self._fh, None, why
+            with contextlib.suppress(OSError):
+                fh.close()
 
 
 # ---------------------------------------------------------------- events
@@ -1626,13 +1680,23 @@ class Run:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Exactly one mode: HTTP (--server [--token]) or mailbox (--manifest --outbox --workdir)."""
     parser = argparse.ArgumentParser(prog="worker.py", description=__doc__)
-    parser.add_argument(
-        "--server", required=True, help="AgentOS server URL, e.g. http://127.0.0.1:8000"
-    )
+    parser.add_argument("--server", help="AgentOS server URL, e.g. http://127.0.0.1:8000")
     parser.add_argument("--token", help="dispatch token (default: $AGENTOS_TOKEN)")
     parser.add_argument("--workdir", help="workspace directory (default: ./agentos-run-<run_id>)")
+    parser.add_argument("--manifest", help="mailbox mode: the run's manifest.json")
+    parser.add_argument("--outbox", help="mailbox mode: the outbox.jsonl to create")
     args = parser.parse_args(argv)
+    args.mailbox = args.manifest is not None or args.outbox is not None
+    if args.mailbox:
+        if args.server is not None or args.token is not None:
+            parser.error("--manifest/--outbox (mailbox mode) can't be used with --server/--token")
+        if not (args.manifest and args.outbox and args.workdir):
+            parser.error("mailbox mode needs --manifest, --outbox and --workdir")
+        return args
+    if args.server is None:
+        parser.error("the following arguments are required: --server")
     args.token = args.token or os.environ.get("AGENTOS_TOKEN")
     if not args.token:
         parser.error("a dispatch token is required (--token or AGENTOS_TOKEN)")
@@ -1644,6 +1708,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     os.environ.pop("AGENTOS_TOKEN", None)  # never handed to git or to stages
+    if args.mailbox:
+        return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
     worker_token = secrets.token_urlsafe(32)
     say(f"claiming a run from {args.server}")
     try:
@@ -1685,6 +1751,31 @@ def main(argv: list[str] | None = None) -> int:
     say(f"claimed run {manifest.run_id} ({manifest.key}, {len(manifest.stages)} stage(s))")
     workdir = Path(args.workdir or f"agentos-run-{manifest.run_id}").resolve()
     return Run(api, events, manifest, workdir).execute()
+
+
+def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:
+    """Mailbox mode: the manifest is a file and every API call goes to the outbox. A manifest
+    that can't be used exits 1 before the outbox exists (the server then fails the run)."""
+    try:
+        manifest = parse_manifest(json.loads(manifest_path.read_bytes()))
+    except (OSError, ValueError) as exc:  # ValueError: bad JSON, bad UTF-8 or a ManifestError
+        say(f"invalid manifest {manifest_path}: {exc}")
+        return 1
+    try:
+        recorder = Recorder(outbox, manifest.run_id)
+    except FileExistsError:
+        say(f"the outbox {outbox} already exists: refusing to overwrite it")
+        return 1
+    except OSError as exc:
+        say(f"cannot create the outbox {outbox}: {exc}")
+        return 1
+    say(f"mailbox run {manifest.run_id} ({manifest.key}, {len(manifest.stages)} stage(s))")
+    events = EventSink(recorder)
+    events.start()
+    try:
+        return Run(recorder, events, manifest, workdir.resolve()).execute()
+    finally:
+        recorder.close()
 
 
 if __name__ == "__main__":
