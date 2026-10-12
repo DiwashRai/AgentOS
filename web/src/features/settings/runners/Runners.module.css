@@ -1,0 +1,272 @@
+/* Settings › Runners. Not designed in the pack: built from kit values like the pipeline editor
+   (.ao-sheet rows, .ao-k labels, mono values). */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.section + .section {
+  margin-top: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+}
+
+/* kit .ao-k */
+.k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+
+.lead {
+  margin: 0;
+  max-width: 760px;
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* runner: read-only facts from the server's env, then the editable target */
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+  align-items: baseline;
+  max-width: 760px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--row-edge);
+}
+.facts dt {
+  margin: 0;
+}
+.facts dd {
+  margin: 0;
+  font-size: var(--fs-control);
+  color: var(--ink-1);
+  min-width: 0;
+}
+.envNote {
+  margin-left: 8px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.missing {
+  color: var(--blocked);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.sheet {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+  max-width: 760px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--row-edge);
+}
+.warn {
+  color: var(--blocked);
+}
+
+/* runtimes list */
+.formError {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.adds {
+  display: flex;
+}
+
+.row {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--row-edge);
+  min-width: 0;
+}
+.isOpen {
+  border-color: var(--rule-strong);
+}
+.line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 14px 0 8px;
+}
+.move {
+  display: inline-flex;
+}
+.move button {
+  width: 26px;
+  height: 26px;
+}
+.up svg {
+  transform: rotate(180deg);
+}
+
+/* the expand toggle: chevron, name, default badge, the command in one line, captions */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.head:focus-visible {
+  outline-offset: -2px;
+}
+.chev {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 14px;
+  color: var(--ink-3);
+  transform: rotate(-90deg);
+  transition: transform var(--t-fast) ease;
+}
+.isOpen .chev {
+  transform: none;
+}
+.name {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+.summary {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cap {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.bad {
+  color: var(--blocked);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.args {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+/* the assembled command, as the worker would run it */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--field);
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  min-width: 0;
+}
+.cmd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+/* one argument: lines break between arguments, inside one only when it's wider than the line */
+.tok {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.slot {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+.stdin {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.notes {
+  margin: 0;
+  padding: 0 0 0 16px;
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px -6px 0 0;
+}
+
+@media (max-width: 720px) {
+  .sheet,
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .summary {
+    display: none;
+  }
+  .head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding: 8px 0;
+  }
+}

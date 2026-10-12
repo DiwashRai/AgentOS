@@ -1,8 +1,13 @@
 /* The Settings section pills: kit .ao-pills (as in Compact's filter), with links instead of
    toggle buttons. The current section is aria-current. */
+/* Five sections don't fit a phone's top bar: below 760px the pills leave the top bar for their
+   own row at the top of the surface (`.below`), scrolling sideways if they still don't fit. */
 .pills {
   display: inline-flex;
   flex: none;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
   gap: 2px;
   padding: 3px;
   margin-left: 8px;
@@ -34,5 +39,20 @@
 
 .pills > a:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+
+.below {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .inBar {
+    display: none;
+  }
+  .below {
+    display: flex;
+    margin: 0 0 12px;
+    align-self: flex-start;
+  }
 }

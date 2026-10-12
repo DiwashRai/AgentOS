@@ -1,0 +1,244 @@
+/* Settings › Intake. Not designed in the pack: kit values, as the Template page's stage sheets
+   (.ao-sheet rows, .ao-k labels) and the Intake view's rows (key, type, title). */
+.queries {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.formError {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+.none {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* a query: kit .ao-sheet */
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px 12px 8px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--row-edge);
+}
+
+/* the head line's cells sit in the row's grid, so the body lines up with the name field */
+.line {
+  display: contents;
+}
+.body {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* the arrows and Remove sit on the name input's line, past its label (even with an error under it) */
+.lead,
+.remove {
+  margin-top: calc(var(--fs-mono) * 1.25 + 6px);
+}
+.lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+}
+.move {
+  display: inline-flex;
+}
+.move button {
+  width: 26px;
+  height: 26px;
+}
+.up svg {
+  transform: rotate(180deg);
+}
+.num {
+  width: 26px;
+  padding-left: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.remove {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* the Test query line and its result */
+.test {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.testBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+/* kit .ao-k */
+.k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: var(--ink-3);
+}
+.k > b {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.k[data-error] {
+  color: var(--blocked);
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  background: var(--field);
+}
+.msg {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* preview rows: the Intake view's key · type · title */
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.item {
+  display: grid;
+  grid-template-columns: 11ch 9ch minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  min-height: 28px;
+}
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  justify-self: start;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.key > svg {
+  flex: none;
+  color: var(--ink-3);
+}
+.key:hover {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--rule-strong);
+}
+.key:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.type {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.type > em {
+  font-style: normal;
+  color: var(--blocked);
+}
+.ti {
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 600px) {
+  /* arrows and Remove share the first line; the name and the body take the full width */
+  .row {
+    align-items: center;
+    padding-left: 10px;
+  }
+  .lead,
+  .remove {
+    margin-top: 0;
+  }
+  .name {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .remove {
+    grid-column: 3;
+  }
+  .body {
+    grid-column: 1 / -1;
+  }
+  .item {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 2px;
+    padding: 4px 0;
+  }
+  .ti {
+    grid-column: 1 / -1;
+  }
+}
+
+/* JQL in the page's note */
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--ink-1);
+}

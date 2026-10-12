@@ -190,7 +190,12 @@ function IntakeGroup({
       <div className={s.err} role="status">
         <span className={s.errK}>Jira didn&apos;t answer</span>
         <span className={s.msg}>{q.error}</span>
-        <span className={s.hint}>Fix the query in agentos.toml (intake.queries · {q.id})</span>
+        <span className={s.hint}>
+          An admin can fix the query in{" "}
+          <RouterLink className={linkClass} to="/settings/intake">
+            Settings › Intake
+          </RouterLink>
+        </span>
         <LinkButton className={s.errRetry} disabled={retrying} onClick={onRetry}>
           {retrying ? "Retrying…" : "Retry"}
         </LinkButton>
@@ -293,7 +298,11 @@ export function IntakeView() {
   else if (queries.length === 0)
     body = (
       <p className={s.none}>
-        No intake queries yet. Add <code>[[intake.queries]]</code> to agentos.toml.
+        No intake queries yet. An admin adds them in{" "}
+        <RouterLink className={linkClass} to="/settings/intake">
+          Settings › Intake
+        </RouterLink>
+        .
       </p>
     );
   else

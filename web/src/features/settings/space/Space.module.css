@@ -1,0 +1,203 @@
+/* Settings › Space: two saved sections, each a sheet in kit values (.ao-sheet, .ao-input). */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.section + .section {
+  margin-top: 16px;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* the Space fields: two columns, the project keys across both */
+.sheet {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  align-items: start;
+  max-width: 760px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--row-edge);
+}
+.wide {
+  grid-column: 1 / -1;
+}
+.timeout {
+  max-width: 180px;
+}
+
+/* the project keys: chips and an input in one field-styled box */
+.keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--field);
+}
+.keys:focus-within {
+  border-color: var(--focus);
+}
+.keys[data-invalid] {
+  border-color: var(--blocked);
+}
+.keys[data-readonly] {
+  background: var(--surface);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-1);
+}
+.keys[data-readonly] .chip {
+  padding-right: 8px;
+}
+.chip > button {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.chip > button:hover {
+  color: var(--ink-1);
+  background: var(--field);
+}
+.chip > button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.chip svg {
+  width: 10px;
+  height: 10px;
+}
+.keyInput {
+  flex: 1 1 120px;
+  min-width: 100px;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.keyInput::placeholder {
+  color: var(--ink-3);
+}
+
+/* the repo catalog: one card per repo, in a framed list (kit .ao-sheet rows) */
+.repos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 1080px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--row-edge);
+}
+.repo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  min-width: 0;
+}
+.repo + .repo {
+  border-top: 1px solid var(--rule-soft);
+}
+.repoHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 28px;
+  min-width: 0;
+}
+.repoName {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-1);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.unnamed {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.count {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.spacer {
+  flex: 1;
+}
+.repoFields {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: start;
+}
+.repoFields[data-fresh] {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 3fr) minmax(0, 1fr);
+}
+.empty {
+  margin: 0;
+  padding: 14px 16px;
+  font-size: var(--fs-control);
+  color: var(--ink-3);
+}
+.add {
+  align-self: flex-start;
+}
+.problem {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+@media (max-width: 640px) {
+  .sheet,
+  .repoFields,
+  .repoFields[data-fresh] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .timeout {
+    max-width: none;
+  }
+  .sheet,
+  .repo {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}

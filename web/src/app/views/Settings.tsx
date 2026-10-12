@@ -8,6 +8,7 @@ import { useLogout, useMe } from "../../api/queries";
 import { TemplatePage } from "../../features/pipeline";
 import { IntakeSettingsPage, RunnersPage, SpacePage } from "../../features/settings";
 import { UsersPage } from "../../features/users";
+import { cx } from "../../ui";
 import { Quiet } from "../Quiet";
 import { Surface } from "../Surface";
 import { TopBar } from "../TopBar";
@@ -31,9 +32,11 @@ export function SettingsIndex() {
   );
 }
 
-function SettingsNav() {
+/** Rendered twice: in the top bar, and (below 760px, instead) as a row at the top of the surface.
+ *  CSS shows one at a time, so only one is ever in the accessibility tree. */
+function SettingsNav({ place }: { place: "inBar" | "below" }) {
   return (
-    <nav className={s.pills} aria-label="Settings">
+    <nav className={cx(s.pills, s[place])} aria-label="Settings">
       {SECTIONS.map((sec) => (
         <NavLink key={sec.to} to={sec.to} end>
           {sec.label}
@@ -49,7 +52,7 @@ function SettingsView({ children }: { children: ReactNode }) {
     <>
       <TopBar
         title="Settings"
-        middle={<SettingsNav />}
+        middle={<SettingsNav place="inBar" />}
         search={false}
         action={
           <button
@@ -65,6 +68,7 @@ function SettingsView({ children }: { children: ReactNode }) {
         }
       />
       <Surface className={v.scroll}>
+        <SettingsNav place="below" />
         {logout.error && <Quiet error>{logout.error.message}</Quiet>}
         {children}
       </Surface>
