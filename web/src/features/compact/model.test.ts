@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { gate, person, run, step, ticket } from "../../domain/fixtures";
 import type { Attention } from "../../domain/status";
 import {
-  ageParts,
   byFilter,
   collapsedByDefault,
   compactGroups,
@@ -223,14 +222,6 @@ describe("texts", () => {
     expect(footSummary([])).toEqual({ tickets: 0, projects: [], repos: 0 });
     expect(plural(1, "ticket")).toBe("ticket");
     expect(plural(0, "repo")).toBe("repos");
-  });
-  it("splits an age into tabular numbers and smaller units", () => {
-    expect(ageParts("38m")).toEqual([{ n: "38", unit: "m" }]);
-    expect(ageParts("17h 30m")).toEqual([
-      { n: "17", unit: "h" },
-      { n: "30", unit: "m" },
-    ]);
-    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
   });
   it("edges each row by status, and lays settled rows flat", () => {
     expect(edgeOf(ticket({ attention: "needs_you" }))).toBe("you");

@@ -1,4 +1,5 @@
 // Kit primitives (design pack kit.css + the visual refresh): presentational only, props in, markup out.
+export { Age, type AgeProps } from "./Age";
 export {
   Avatar,
   AvatarSlot,

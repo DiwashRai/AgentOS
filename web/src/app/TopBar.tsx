@@ -1,6 +1,10 @@
 // The top bar (DESIGN §4, kit.js Kit.topbar): h1 · context · counters · view middle · gap ·
 // search · one button. Counters read the shared counts; views pass only which ones to show. The
 // context leads with the Space name (the design's workspace slot); the tab title follows the view.
+// It fits any width >= 360px without a page scrollbar (TopBar.module.css, container `topbar`): the
+// context truncates, then zero counters go, then the context goes, the search folds to an icon that
+// opens over the bar on focus (and "/" still focuses it), New ticket becomes "+", and at the
+// narrowest only the "need you" pill stays.
 import { type ReactNode, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -10,7 +14,7 @@ import { jumpTarget } from "../domain/search";
 import type { StatusKind } from "../domain/status";
 import { words } from "../domain/words";
 import { Button, cx, Kbd, type MarkKind, StatusMark } from "../ui";
-import { SearchIcon } from "./icons";
+import { PlusIcon, SearchIcon } from "./icons";
 import { isShortcut } from "./keys";
 import s from "./TopBar.module.css";
 import { useBoard } from "./useBoard";
@@ -56,13 +60,14 @@ function Counters({ slots }: { slots: readonly CounterSlot[] }) {
           <span
             key={slot}
             className={cx(s.counter, n === 0 && s.isZero, n > 0 && mark === "you" && s.isYou)}
+            title={`${String(n)} ${label}`}
           >
             {mark && (
               <span className={s.mark} aria-hidden="true">
                 <StatusMark kind={MARK_OF[mark]} glyphOnly size={7} />
               </span>
             )}
-            <b>{n}</b> {label}
+            <b>{n}</b> <span className={s.label}>{label}</span>
           </span>
         );
       })}
@@ -92,7 +97,7 @@ function Search({ placeholder }: { placeholder: string }) {
     };
   }, []);
   return (
-    <label className={s.search}>
+    <label className={s.search} data-active={q !== "" || undefined}>
       <SearchIcon />
       <input
         ref={inputRef}
@@ -128,6 +133,7 @@ function NewTicketButton() {
   const [, setParams] = useSearchParams();
   return (
     <Button
+      className={s.newTicket}
       onClick={() => {
         setParams((p) => {
           p.set("new", "1");
@@ -135,7 +141,8 @@ function NewTicketButton() {
         });
       }}
     >
-      {words.newTicket}
+      <PlusIcon />
+      <span className={s.newLabel}>{words.newTicket}</span>
     </Button>
   );
 }
@@ -149,13 +156,15 @@ export function TopBar(props: TopBarProps) {
   }, [props.title, space]);
   return (
     <header className={s.top}>
-      <h1>{props.title}</h1>
-      {context && <span className={s.ctx}>{context}</span>}
-      {props.counters && props.counters.length > 0 && <Counters slots={props.counters} />}
-      {props.middle}
-      <span className={s.grow} />
-      {search !== false && <Search placeholder={search} />}
-      {props.action ?? <NewTicketButton />}
+      <div className={s.row}>
+        <h1>{props.title}</h1>
+        {context && <span className={s.ctx}>{context}</span>}
+        {props.counters && props.counters.length > 0 && <Counters slots={props.counters} />}
+        {props.middle}
+        <span className={s.grow} />
+        {search !== false && <Search placeholder={search} />}
+        {props.action ?? <NewTicketButton />}
+      </div>
     </header>
   );
 }

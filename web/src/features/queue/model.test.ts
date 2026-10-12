@@ -4,7 +4,6 @@ import { counts } from "../../domain/counts";
 import { gate, person, run, step, ticket } from "../../domain/fixtures";
 import { groups } from "../../domain/groups";
 import {
-  ageParts,
   askLabel,
   atWorkNote,
   blockedReason,
@@ -107,14 +106,6 @@ describe("row looks", () => {
       "exit 1",
     );
     expect(blockedReason(ticket())).toBe("");
-  });
-  it("splits an age into numbers and units", () => {
-    expect(ageParts("38m")).toEqual([{ n: "38", unit: "m" }]);
-    expect(ageParts("1h 05m")).toEqual([
-      { n: "1", unit: "h" },
-      { n: "05", unit: "m" },
-    ]);
-    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
   });
 });
 

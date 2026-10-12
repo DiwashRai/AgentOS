@@ -43,8 +43,7 @@ function ActionGroup({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   const button = (a: Action) => (
     <Button
       key={a.id}
-      // The mock's header keeps Request changes quiet beside the blue Approve.
-      variant={a.id === "request_changes" ? "quiet" : a.variant}
+      variant={a.variant}
       title={readOnly ? "Viewers can't change tickets" : a.title}
       disabled={a.disabled === true || readOnly || action.pending}
       onClick={() => {

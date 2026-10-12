@@ -47,11 +47,7 @@
   white-space: nowrap;
   text-align: right;
 }
-.unit {
-  font-size: var(--fs-mono);
-  font-weight: 500;
-  margin-left: 1px;
-}
+
 .of {
   font-size: var(--fs-meta);
   color: var(--ink-3);
@@ -233,14 +229,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.isYou .age {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-.isYou .unit {
-  font-size: var(--fs-meta);
-}
+
 .who {
   display: flex;
   align-items: center;

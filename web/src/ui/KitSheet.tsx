@@ -4,6 +4,7 @@
 import { useState } from "react";
 import type { GlyphGate, GateState, StepState } from "../domain/stage";
 import { Avatar, AvatarSlot } from "./Avatar";
+import { Age } from "./Age";
 import { Button, IconButton, litRowClass } from "./Button";
 import { Chip } from "./Chip";
 import { CountPill } from "./CountPill";
@@ -454,6 +455,8 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
             <CountPill count={12} tone="done" />
             <TickBadge />
             <TickBadge size={14} label="Done" />
+            <Age text="3h 05m" />
+            <Age text="38m" size="lg" />
             <ZoneHead
               title="Done recently"
               tone="done"

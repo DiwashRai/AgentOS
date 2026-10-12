@@ -1,0 +1,19 @@
+/* Age (refresh HANDOFF §5): tabular numbers, each unit a size smaller. Size and colour come from
+   the cell, except `lg` (the Needs-you age), which two classes keep above a view's own cell class. */
+.age {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.unit {
+  margin-left: 1px;
+  font-size: var(--fs-mono);
+  font-weight: 500;
+}
+.age.lg {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.age.lg .unit {
+  font-size: var(--fs-meta);
+}

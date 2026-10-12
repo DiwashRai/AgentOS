@@ -10,6 +10,7 @@ import { useNavigate } from "react-router";
 import type { Schemas } from "../../api/client";
 import { stageModel } from "../../domain/stage";
 import {
+  Age,
   Avatar,
   AvatarSlot,
   Button,
@@ -23,7 +24,6 @@ import {
 } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import { ticketPath } from "../ticket/model";
-import { Age } from "./Age";
 import s from "./Compact.module.css";
 import { Expanded } from "./Expanded";
 import { type Edge, edgeOf, isFlat, nowCell, sourceText, updText } from "./model";

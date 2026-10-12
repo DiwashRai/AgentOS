@@ -137,11 +137,3 @@ export function sharedPrefix(items: readonly Pick<IntakeItem, "key">[]): string 
   const p = projectPrefix(first.key);
   return items.every((i) => projectPrefix(i.key) === p) ? p : null;
 }
-
-/** An age split for display: each number tabular, each unit a size smaller ("3h 10m" →
- *  [{n:"3",unit:"h"},{n:"10",unit:"m"}]). Text without a number ("now") is one unit-less part. */
-export function ageParts(text: string): { n: string; unit: string }[] {
-  const parts = text.split(" ").map((p) => /^(\d+)([a-z]+)$/.exec(p));
-  if (parts.some((m) => m === null)) return [{ n: text, unit: "" }];
-  return parts.map((m) => ({ n: m?.[1] ?? "", unit: m?.[2] ?? "" }));
-}

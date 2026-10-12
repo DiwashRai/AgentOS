@@ -9,6 +9,7 @@ import { age } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import type { MeRef } from "../../domain/status";
 import {
+  Age,
   Avatar,
   AvatarSlot,
   cx,
@@ -20,7 +21,6 @@ import {
 } from "../../ui";
 import { peekItemProps } from "../peek/usePeek";
 import {
-  ageParts,
   askLabel,
   blockedReason,
   outcomeLine,
@@ -42,19 +42,15 @@ interface RowProps {
   onOpen: (key: string) => void;
 }
 
-/** Tabular numbers, units one size smaller ("38m", "3h 05m"). */
-export function Age({ since, now }: { since: string; now: number }) {
-  const parts = ageParts(age(since, now));
+/** The row's age cell: the kit Age, large on Needs-you rows ("38m", "3h 05m"). */
+function RowAge({ ticket: t, now }: { ticket: Ticket; now: number }) {
   return (
-    <span className={s.age} title={new Date(since).toLocaleString()}>
-      {parts.map((p, i) => (
-        <span key={i}>
-          {i > 0 ? " " : ""}
-          {p.n}
-          {p.unit ? <span className={s.unit}>{p.unit}</span> : null}
-        </span>
-      ))}
-    </span>
+    <Age
+      text={age(t.attention_since, now)}
+      size={t.attention === "needs_you" ? "lg" : "md"}
+      title={new Date(t.attention_since).toLocaleString()}
+      className={s.age}
+    />
   );
 }
 
@@ -127,7 +123,7 @@ export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
           </div>
         ) : null}
       </div>
-      <Age since={t.attention_since} now={now} />
+      <RowAge ticket={t} now={now} />
       <RowActions ticket={t} />
     </RowShell>
   );
@@ -178,7 +174,7 @@ function DoneCells({ ticket: t, now }: { ticket: Ticket; now: number }) {
         {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}
         <span title={where}>{where}</span>
       </span>
-      <Age since={t.attention_since} now={now} />
+      <RowAge ticket={t} now={now} />
       <span className={s.outcome} title={out?.note ?? undefined}>
         {out ? (
           <>
@@ -202,7 +198,7 @@ export function QuietRow({ ticket: t, me, now, onOpen }: RowProps) {
   return (
     <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
       <StateCell ticket={t} />
-      <Age since={t.attention_since} now={now} />
+      <RowAge ticket={t} now={now} />
       {t.attention === "blocked" ? (
         <RowActions ticket={t} primaryOnly />
       ) : (

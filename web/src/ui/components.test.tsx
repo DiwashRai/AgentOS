@@ -1,6 +1,7 @@
 // Markup checks via server rendering (node environment; no DOM library needed).
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { Age } from "./Age";
 import { Avatar, AvatarSlot } from "./Avatar";
 import { Button } from "./Button";
 import { CountPill } from "./CountPill";
@@ -263,6 +264,15 @@ describe("TypeIcon / PriorityIcon", () => {
     const normal = renderToStaticMarkup(<PriorityIcon priority="normal" />);
     expect(normal).toContain('aria-hidden="true"');
     expect(normal).not.toContain("<svg");
+  });
+});
+
+describe("Age", () => {
+  it("wraps each unit so it can sit a size smaller, and keeps unit-less text whole", () => {
+    const html = renderToStaticMarkup(<Age text="3h 05m" />);
+    expect(html).toMatch(/3<span class="[^"]*">h<\/span>/);
+    expect(html).toMatch(/05<span class="[^"]*">m<\/span>/);
+    expect(renderToStaticMarkup(<Age text="now" />)).toContain("<span>now</span>");
   });
 });
 

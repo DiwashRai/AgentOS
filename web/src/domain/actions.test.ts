@@ -16,7 +16,7 @@ describe("ticketActions", () => {
   describe("needs you", () => {
     it("parked at a gate with a stage after it: Approve, with Request changes", () => {
       const row = ticketActions(parkedOnYou, "row");
-      expect(shape(row)).toEqual(["request_changes:default", "approve:you"]);
+      expect(shape(row)).toEqual(["request_changes:quiet", "approve:you"]);
       expect(row.primary?.label).toBe("Approve");
       expect(row.primary?.title).toBe("Plan sign-off");
     });
@@ -24,7 +24,7 @@ describe("ticketActions", () => {
     it("the header adds a quiet Abandon but no Dispatch run (it would just do what Approve does)", () => {
       expect(shape(ticketActions(parkedOnYou, "header"))).toEqual([
         "abandon:quiet",
-        "request_changes:default",
+        "request_changes:quiet",
         "approve:you",
       ]);
     });
@@ -43,7 +43,7 @@ describe("ticketActions", () => {
       });
       const s = ticketActions(t, "row");
       expect(s.primary).toMatchObject({ id: "complete", label: "Complete", variant: "you" });
-      expect(shape(s)).toEqual(["abandon:quiet", "request_changes:default", "complete:you"]);
+      expect(shape(s)).toEqual(["abandon:quiet", "request_changes:quiet", "complete:you"]);
     });
 
     it("an upcoming (stale) stage after the gate still counts", () => {

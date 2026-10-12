@@ -97,7 +97,7 @@ export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
   switch (t.attention) {
     case "needs_you": {
       const parked = parkedGate(t, "you");
-      const changes = parked ? [act("request_changes", words.requestChanges, "default")] : [];
+      const changes = parked ? [act("request_changes", words.requestChanges, "quiet")] : [];
       if (parked?.more) {
         // Gate primacy: Approve stays the one primary; only the header may also abandon here.
         const approve = act("approve", words.approve, "you", { title: parked.gate.label });

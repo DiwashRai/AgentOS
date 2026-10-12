@@ -219,16 +219,6 @@ export function blockedReason(t: Pick<Ticket, "now" | "latest_run">): string {
   return t.now.text !== "" ? t.now.text : (t.latest_run?.error ?? "");
 }
 
-/** An age split for display: numbers tabular, units smaller ("3h 05m" → 3 h · 05 m). "now" has
- *  no unit. */
-export function ageParts(text: string): { n: string; unit: string }[] {
-  const parts = [...text.matchAll(/(\d+)([a-z]+)/g)].map((m) => ({
-    n: m[1] ?? "",
-    unit: m[2] ?? "",
-  }));
-  return parts.length > 0 ? parts : [{ n: text, unit: "" }];
-}
-
 // ------------------------------------------------------------------ the rack
 
 export interface RackGroup<T> {

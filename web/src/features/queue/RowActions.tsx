@@ -14,12 +14,9 @@ export interface RowActionsProps {
   primaryOnly?: boolean | undefined;
 }
 
-/** A row never carries the accent (the model never gives it one here anyway); Request changes is
- *  quiet beside the blue Approve (refresh mock `.queue-row__acts`). */
+/** A row never carries the accent (the model never gives it one here anyway). */
 function rowVariant(a: Action): ButtonVariant {
-  if (a.variant === "accent") return "default";
-  if (a.id === "request_changes") return "quiet";
-  return a.variant;
+  return a.variant === "accent" ? "default" : a.variant;
 }
 
 export function RowActions({ ticket, primaryOnly = false }: RowActionsProps) {

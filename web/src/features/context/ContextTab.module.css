@@ -21,10 +21,10 @@
   color: var(--blocked);
 }
 
-/* your unsaved edit: blue text = you */
+/* an unsaved edit: ink, as the Template/Pipeline save bar (blue is "your move" on a ticket) */
 .unsaved {
   flex: none;
-  color: var(--you-text);
+  color: var(--ink-1);
 }
 
 .row {

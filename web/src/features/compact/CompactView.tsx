@@ -24,11 +24,10 @@ import { useSearchQuery } from "../../app/useSearchQuery";
 import { repoShort } from "../../domain/format";
 import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
-import { ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, TickBadge } from "../../ui";
+import { Age, ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, TickBadge } from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { NewTicketPrompt, NoMatches } from "../queue/QueueView";
 import { useNow } from "../runs/useNow";
-import { Age } from "./Age";
 import s from "./Compact.module.css";
 import {
   byFilter,

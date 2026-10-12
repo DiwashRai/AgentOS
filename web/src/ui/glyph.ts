@@ -35,14 +35,16 @@ const STAGE_SUFFIX: Partial<Record<GlyphStage["state"], string>> = {
   failed: " (blocked)",
 };
 
-/** The glyph's `title`: "Inbox → Plan → ◆ Plan sign-off → Build → … → Done", "(skipped)" on skipped stages. */
-export function glyphTitle(model: Pick<GlyphModel, "stages">): string {
+/** The glyph's `title`: "Inbox → Plan → ◆ Plan sign-off → Build → … → Done", "(skipped)" on skipped
+ *  stages; an abandoned ticket's stopped stage is "(closed)", not "(blocked)". */
+export function glyphTitle(model: Pick<GlyphModel, "stages" | "closed">): string {
   return glyphItems(model.stages)
-    .map((it) =>
-      it.type === "gate"
-        ? `◆ ${it.gate.label}`
-        : it.stage.name + (STAGE_SUFFIX[it.stage.state] ?? ""),
-    )
+    .map((it) => {
+      if (it.type === "gate") return `◆ ${it.gate.label}`;
+      const suffix =
+        it.stage.state === "failed" && model.closed ? " (closed)" : STAGE_SUFFIX[it.stage.state];
+      return it.stage.name + (suffix ?? "");
+    })
     .join(" → ");
 }
 
@@ -112,20 +114,22 @@ export const YOUR_MOVE = "Your move";
 
 /**
  * The stepper's caption under a stage (sentence case). The final stage (the Done bookend) is reached
- * only when the ticket is done; then it reads "Complete" (refresh), unless something failed.
+ * only when the ticket is done; then it reads "Complete" (refresh), unless something failed. An
+ * abandoned ticket (`closed`, set by the domain's stageModel) captions its stopped stage "Closed".
  */
 export function stageCaption(
   stage: StepperStage,
   isLast: boolean,
   live: boolean,
   finished = false,
+  closed = false,
 ): string {
   if (isLast && finished) return "Complete";
   switch (stage.state) {
     case "skipped":
       return "Skipped";
     case "failed":
-      return "Blocked";
+      return closed ? "Closed" : "Blocked";
     case "current":
       if (live) return "Live";
       return isLast ? "" : "Now";

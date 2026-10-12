@@ -70,6 +70,19 @@ describe("glyphTitle", () => {
       }),
     ).toBe("Plan → Verify (blocked)");
   });
+
+  it("calls an abandoned ticket's stopped stage closed", () => {
+    expect(
+      glyphTitle({
+        closed: true,
+        stages: [
+          { name: "Plan", state: "done" },
+          { name: "Build", state: "failed" },
+          { name: "Done", state: "upcoming" },
+        ],
+      }),
+    ).toBe("Plan → Build (closed) → Done");
+  });
 });
 
 describe("parkedGate", () => {
@@ -126,6 +139,12 @@ describe("stageCaption", () => {
     );
     expect(stageCaption({ name: "Build", state: "failed" }, false, true)).toBe("Blocked");
     expect(stageCaption({ name: "Plan", state: "done" }, false, false)).toBe("");
+  });
+
+  it("captions an abandoned ticket's stopped stage Closed, not Blocked", () => {
+    expect(stageCaption({ name: "Build", state: "failed" }, false, false, false, true)).toBe(
+      "Closed",
+    );
   });
 });
 

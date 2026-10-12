@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { ticket } from "./fixtures";
-import { age, avatarTone, elapsed, initials, isOld, prLabel, repoShort, srcLabel } from "./format";
+import {
+  age,
+  ageParts,
+  avatarTone,
+  elapsed,
+  initials,
+  isOld,
+  prLabel,
+  repoShort,
+  srcLabel,
+} from "./format";
 
 const now = Date.parse("2026-10-11T12:00:00Z");
 const ago = (min: number) => new Date(now - min * 60_000).toISOString();
@@ -27,6 +37,22 @@ describe("age", () => {
 
   it("accepts a Date for now", () => {
     expect(age(ago(25), new Date(now))).toBe("25m");
+  });
+});
+
+describe("ageParts", () => {
+  it("splits each number from its unit", () => {
+    expect(ageParts("38m")).toEqual([{ n: "38", unit: "m" }]);
+    expect(ageParts("1h 05m")).toEqual([
+      { n: "1", unit: "h" },
+      { n: "05", unit: "m" },
+    ]);
+    expect(ageParts("2d")).toEqual([{ n: "2", unit: "d" }]);
+  });
+
+  it("keeps text without a number+unit pair whole", () => {
+    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
+    expect(ageParts("3h ago")).toEqual([{ n: "3h ago", unit: "" }]);
   });
 });
 

@@ -1,15 +1,23 @@
 /* The top bar (refresh mock §3 `.topbar`, `.counter`, §4.12 `.search`): h1 20/600, context, counters,
    the view's middle, gap, the search field (268×34 with a "/" keycap), one button. */
+/* The header is the size container; its one child is the row, so the row's own gap can step down. */
 .top {
-  display: flex;
-  align-items: center;
-  gap: 18px;
+  container: topbar / inline-size;
   height: var(--h-top);
   flex: none;
   min-width: 0;
 }
 
-.top > h1 {
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 100%;
+  min-width: 0;
+}
+
+.row > h1 {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 600;
@@ -17,9 +25,16 @@
   margin: 0;
   color: var(--ink-1);
   white-space: nowrap;
+  flex: none;
 }
 
+/* The search gives way first (down to 150px), then the context truncates; a view's middle (the
+   Compact pill track: 0.02) and the counters (0.001) barely shrink. */
 .ctx {
+  flex: 0 0.01 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--ink-3);
   font-size: var(--fs-control);
   white-space: nowrap;
@@ -30,12 +45,15 @@
 }
 
 /* ---------- counters: the number carries the weight; zero recedes ---------- */
+/* Counters barely shrink (the narrow steps below hide them in order); the clip is only a backstop
+   so an unusually long set can never widen the page. */
 .counters {
-  flex: none;
+  flex: 0 0.001 auto;
   display: flex;
   align-items: center;
   gap: 18px;
   min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -143,4 +161,122 @@
 
 .kbd {
   margin-left: auto;
+}
+
+/* the bar's one button (New ticket, or the view's own) never shrinks */
+.row > button {
+  flex: none;
+}
+
+/* New ticket: the "+" shows only once the button folds to an icon */
+.newTicket > svg {
+  display: none;
+}
+
+/* ---------- narrow: the bar keeps one line at any width >= 360px ---------- */
+/* 1. zeros recede entirely */
+@container topbar (max-width: 1059px) {
+  .counter.isZero,
+  .counters > .sep {
+    display: none;
+  }
+}
+
+/* 2. the context goes; search folds to a 34px icon that opens over the whole bar while focused
+   (a click on it or "/" focuses the input); New ticket becomes "+" (its name stays for AT) */
+@container topbar (max-width: 759px) {
+  .row {
+    gap: 12px;
+  }
+  .ctx {
+    display: none;
+  }
+  .counters {
+    gap: 12px;
+  }
+  .search {
+    position: relative;
+    flex: none;
+    width: var(--h-btn);
+    min-width: 0;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+    cursor: pointer;
+  }
+  .search > input {
+    flex: 0 0 0;
+    width: 0;
+  }
+  .search > .kbd {
+    display: none;
+  }
+  /* a filter is set: a dot on the folded icon says so */
+  .search[data-active]::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ink-1);
+  }
+  .search:focus-within {
+    position: absolute;
+    inset: 50% 0 auto;
+    z-index: 3;
+    width: auto;
+    gap: 8px;
+    padding: 0 7px 0 10px;
+    justify-content: flex-start;
+    transform: translateY(-50%);
+    cursor: text;
+  }
+  .search:focus-within::after {
+    display: none;
+  }
+  .search:focus-within > input {
+    flex: 1;
+  }
+  .newTicket {
+    width: var(--h-btn);
+    padding: 0;
+  }
+  .newTicket > svg {
+    display: block;
+  }
+  .newLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* 3. only the "need you" pill stays */
+@container topbar (max-width: 699px) {
+  .counter:not(.isYou) {
+    display: none;
+  }
+}
+
+/* 4. the pill keeps its number; the words stay for AT and in its title */
+@container topbar (max-width: 319px) {
+  .row {
+    gap: 8px;
+  }
+  .counter.isYou {
+    padding: 3px 9px 3px 8px;
+  }
+  .counter > .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }

@@ -30,6 +30,15 @@ export function age(from: Instant, now: Instant): string {
   return `${String(Math.floor(total / 1440))}d`;
 }
 
+/** An age split for display (refresh HANDOFF §5 "Age"): each number tabular, each unit a size
+ *  smaller. `3h 05m` → `[{n:"3",unit:"h"},{n:"05",unit:"m"}]`. Text that isn't all number+unit
+ *  pairs (`now`) is one unit-less part, so nothing is ever dropped. */
+export function ageParts(text: string): { n: string; unit: string }[] {
+  const parts = text.split(" ").map((p) => /^(\d+)([a-z]+)$/.exec(p));
+  if (parts.some((m) => m === null)) return [{ n: text, unit: "" }];
+  return parts.map((m) => ({ n: m?.[1] ?? "", unit: m?.[2] ?? "" }));
+}
+
 /** An age of 90 minutes or more is shown strong (`.is-old`). */
 export function isOld(from: Instant, now: Instant): boolean {
   return minutesBetween(from, now) >= 90;

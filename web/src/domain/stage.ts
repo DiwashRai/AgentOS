@@ -29,6 +29,8 @@ export interface GlyphModel {
   label: string;
   /** A run is on a runner: the current segment and label use the live colour. */
   live: boolean;
+  /** The ticket was abandoned: its `failed` stage is where it stopped ("Closed"), not a block. */
+  closed?: boolean | undefined;
 }
 
 type Ticket = Pick<Schemas["TicketSummary"], "rail" | "phase_track" | "attention"> &
@@ -93,6 +95,7 @@ export function stageModel(t: Ticket): GlyphModel {
       stages: open.map((s, i): GlyphStage => (i === stop ? { ...s, state: "failed" } : s)),
       label: "Closed",
       live: false,
+      closed: true,
     };
   }
   const parked = stages.find((s) => s.gate?.state === "you" || s.gate?.state === "waiting");

@@ -81,7 +81,7 @@ export function Stepper({ model, compact = false, className }: StepperProps) {
         const { stage } = it;
         const isLast = it.index === last;
         const final = isLast && finished;
-        const caption = stageCaption(stage, isLast, model.live, finished);
+        const caption = stageCaption(stage, isLast, model.live, finished, model.closed);
         return (
           <li
             key={`s${String(it.index)}`}

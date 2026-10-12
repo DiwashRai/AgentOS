@@ -58,6 +58,7 @@ describe("stageModel", () => {
     );
     expect(m.stages.map((s) => s.state)).toEqual(["done", "done", "skipped", "failed", "upcoming"]);
     expect(m.label).toBe("Closed");
+    expect(m.closed).toBe(true);
     expect(m.live).toBe(false);
   });
 

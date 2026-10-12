@@ -117,6 +117,22 @@ export function SearchIcon() {
   );
 }
 
+export function PlusIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      aria-hidden="true"
+    >
+      <path d="M6 1.75v8.5M1.75 6h8.5" />
+    </svg>
+  );
+}
+
 export function CloseIcon() {
   return (
     <svg

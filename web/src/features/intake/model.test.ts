@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { parseQuery } from "../../domain/search";
 import {
-  ageParts,
   ageText,
   capText,
   emptyGroupText,
@@ -153,15 +152,6 @@ describe("display", () => {
       lead: "No match",
       note: "nothing here matches the search",
     });
-  });
-
-  it("splits an age into tabular numbers and smaller units", () => {
-    expect(ageParts("12m")).toEqual([{ n: "12", unit: "m" }]);
-    expect(ageParts("3h 10m")).toEqual([
-      { n: "3", unit: "h" },
-      { n: "10", unit: "m" },
-    ]);
-    expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
   });
 });
 

@@ -310,16 +310,6 @@ export function plural(n: number, one: string): string {
   return n === 1 ? one : `${one}s`;
 }
 
-/** An age split for display: numbers tabular, each unit a size smaller ("3h 05m" → 3 h · 05 m).
- *  Text without a number ("now") is one unit-less part. */
-export function ageParts(text: string): { n: string; unit: string }[] {
-  const parts = [...text.matchAll(/(\d+)([a-z]+)/g)].map((m) => ({
-    n: m[1] ?? "",
-    unit: m[2] ?? "",
-  }));
-  return parts.length > 0 ? parts : [{ n: text, unit: "" }];
-}
-
 const EMPTY: Record<Filter, string> = {
   all: "No tickets",
   needs_you: "Nothing needs you",

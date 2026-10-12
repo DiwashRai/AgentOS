@@ -15,6 +15,7 @@ import { TopBar } from "../../app/TopBar";
 import { useSearchQuery } from "../../app/useSearchQuery";
 import type { Query } from "../../domain/search";
 import {
+  Age,
   Avatar,
   AvatarSlot,
   Button,
@@ -34,7 +35,6 @@ import { importErrorText } from "../newticket/importForm";
 import { useNow } from "../runs/useNow";
 import s from "./Intake.module.css";
 import {
-  ageParts,
   ageText,
   capText,
   emptyGroupText,
@@ -82,21 +82,6 @@ function OutArrow() {
     >
       <path d="M2.5 7.5 7.5 2.5M3.5 2.5h4v4" />
     </svg>
-  );
-}
-
-/** An age: tabular numbers, each unit a size smaller (HANDOFF §5 "Age"). */
-function Age({ text }: { text: string }) {
-  return (
-    <span className={s.age}>
-      {ageParts(text).map((p, i) => (
-        <span key={i}>
-          {i > 0 && " "}
-          {p.n}
-          {p.unit && <span className={s.unit}>{p.unit}</span>}
-        </span>
-      ))}
-    </span>
   );
 }
 
