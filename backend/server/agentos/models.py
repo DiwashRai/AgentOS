@@ -308,8 +308,8 @@ class PlanItem(ApiModel):
     text: str
     done: bool
     # The nearest markdown heading above the item (any level, `#` marks stripped); None if
-    # there is none. The UI groups consecutive items by it (request 8).
-    section: str | None
+    # there is none. The UI groups consecutive items by it (request 8). Always sent.
+    section: str | None = None
 
 
 class NowInfo(ApiModel):

@@ -1673,8 +1673,7 @@
         },
         "required": [
           "text",
-          "done",
-          "section"
+          "done"
         ],
         "title": "PlanItem",
         "type": "object"

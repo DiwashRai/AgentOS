@@ -1249,7 +1249,7 @@ export interface components {
             /** Done */
             done: boolean;
             /** Section */
-            section: string | null;
+            section?: string | null;
             /** Text */
             text: string;
         };
