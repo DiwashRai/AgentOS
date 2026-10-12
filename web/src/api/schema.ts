@@ -1455,7 +1455,7 @@ export interface components {
              * Launcher
              * @enum {string}
              */
-            launcher: "local" | "github";
+            launcher: "local" | "github" | "mailbox";
             /** Ref */
             ref: string;
             /** Token Set */

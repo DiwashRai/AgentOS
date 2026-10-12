@@ -79,7 +79,7 @@ type = "layers"
 containers = [
     "agentos.auth", "agentos.tickets", "agentos.files", "agentos.runs",
     "agentos.social", "agentos.templates", "agentos.worker_api", "agentos.intake",
-    "agentos.settings",
+    "agentos.settings", "agentos.mailbox",
 ]
 layers = [
     "(routes)",
@@ -110,7 +110,7 @@ type = "forbidden"
 source_modules = [
     "agentos.*.service", "agentos.*.board", "agentos.*.dispatcher", "agentos.*.reaper",
     "agentos.*.comment_sync", "agentos.db", "agentos.config", "agentos.broker", "agentos.errors",
-    "agentos.launchers", "agentos.sources",
+    "agentos.launchers", "agentos.sources", "agentos.stores",
 ]
 forbidden_modules = ["fastapi", "starlette", "uvicorn"]
 broken_contract_guidance = "Raise agentos.errors.ApiError (pure). Translation to HTTP responses lives in agentos.http_errors."
@@ -118,7 +118,7 @@ broken_contract_guidance = "Raise agentos.errors.ApiError (pure). Translation to
 [[tool.importlinter.contracts]]
 name = "Plugins are adapters: no db, services or HTTP layer"
 type = "forbidden"
-source_modules = ["agentos.launchers", "agentos.sources"]
+source_modules = ["agentos.launchers", "agentos.sources", "agentos.stores"]
 forbidden_modules = [
     "fastapi", "starlette", "sqlite3", "agentos.db", "agentos.*.service", "agentos.*.routes",
 ]

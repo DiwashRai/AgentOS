@@ -2255,7 +2255,8 @@
           "launcher": {
             "enum": [
               "local",
-              "github"
+              "github",
+              "mailbox"
             ],
             "title": "Launcher",
             "type": "string"

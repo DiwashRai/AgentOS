@@ -70,6 +70,15 @@ class GitHubTarget:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class ActionsRun:
+    """A workflow run as GitHub reports it: `status` is queued | in_progress | completed | waiting |
+    requested | pending; `conclusion` (success, failure, cancelled, ...) is set once completed."""
+
+    status: str
+    conclusion: str | None
+
+
 class GitHubActionsLauncher:
     name = "github"
     max_concurrency: int | None = None  # GitHub queues jobs; the runner pool is the limit

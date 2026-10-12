@@ -333,6 +333,10 @@ class NowInfo(ApiModel):
     progress: TaskProgress | None
 
 
+# AGENTOS_LAUNCHER. mailbox: runs travel through a store (design/mailbox.md).
+LauncherName = Literal["local", "github", "mailbox"]
+
+
 class RunSummary(ApiModel):
     id: int
     ticket_key: str
@@ -702,7 +706,7 @@ class RunnerSettings(ApiModel):
     is set) come from the server's env and are read-only. `github_repo` null = none set: with the
     github launcher, runs then fail at launch saying so."""
 
-    launcher: Literal["local", "github"]
+    launcher: LauncherName
     github_repo: str | None
     workflow: str
     ref: str
