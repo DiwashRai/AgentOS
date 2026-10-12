@@ -2,7 +2,7 @@
 
 AgentOS is a web app for creating tickets, editing their context and pipeline, and dispatching them to disposable workers that run agent CLIs (Claude Code, Copilot CLI). The loop: create → dispatch → gate → edit → continue → PR. A FastAPI + SQLite server (`backend/server/agentos`), a React web app (`web/`) and a stdlib-only worker (`backend/worker/worker.py`) that runs on a local process or a GitHub Actions runner and dials back to the server.
 
-Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (the system and why), `backend/AGENTS.md` (backend conventions), `web/AGENTS.md` (frontend conventions), `backend/deploy/README.md` (container, runners). Local-only planning docs (`SPEC.md`, `TASKS.md`, `WEEKEND.md`, `CONTRACT_REQUESTS.md`, `design/`) are gitignored: use them if present, never assume them.
+Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (the system and why), `backend/AGENTS.md` (backend conventions), `web/AGENTS.md` (frontend conventions), `backend/deploy/README.md` (container, runners). Local-only planning docs (`SPEC.md`, `TASKS.md`, `CONTRACT_REQUESTS.md`, `design/`) are gitignored: use them if present, never assume them.
 
 ## Working principles
 - **Simplicity.** A minimal but watertight MVP beats a broad, leaky one. Cut breadth, not correctness: the git protections, the token lifecycle and the run state machine stay watertight.
