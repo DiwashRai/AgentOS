@@ -11,15 +11,21 @@ Every method raises MailboxError (a safe message, no credentials) when GitHub or
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import re
 from pathlib import Path
 from typing import Protocol
 
-from agentos.launchers.github import ActionsRun, GitHubActionsLauncher
-from agentos.stores.base import Store
+from agentos.launchers.github import ActionsRun, GitHubActionsLauncher, LaunchError
+from agentos.stores.base import Store, StoreError, StoreTooLarge
 
 # A folder name in the store: "<run id>-<16 hex>". The workflow checks the same pattern.
 RUN_FOLDER_PATTERN = r"^[0-9]+-[0-9a-f]{16}$"
 MAX_OUTBOX_BYTES = 512 * 1024 * 1024
+
+_FOLDER = re.compile(RUN_FOLDER_PATTERN)
+log = logging.getLogger(__name__)
 
 
 def run_folder(run_id: int, dispatch_token_hash: str) -> str:
@@ -83,19 +89,71 @@ class MailboxLauncher:
         raise MailboxError("mailbox runs are launched by the mailbox dispatcher")
 
     def send(self, run_id: int, folder: str, manifest_json: bytes) -> str:
-        raise NotImplementedError
+        _check_folder(folder)
+        if not folder.startswith(f"{run_id}-"):
+            raise MailboxError(f"run folder {folder!r} isn't run {run_id}'s")
+        try:
+            worker = self.worker_path.read_bytes()
+        except OSError as exc:
+            raise MailboxError(f"can't read worker.py: {type(exc).__name__}") from None
+        try:
+            self.store.put(f"runs/{folder}/worker.py", worker)
+            self.store.put(f"runs/{folder}/manifest.json", manifest_json)
+            ref = self.github.dispatch(
+                {
+                    "run": folder,
+                    "worker_sha256": hashlib.sha256(worker).hexdigest(),
+                    "manifest_sha256": hashlib.sha256(manifest_json).hexdigest(),
+                }
+            )
+        except (StoreError, LaunchError) as exc:
+            raise MailboxError(str(exc)) from None
+        if self.github.run_id_of(ref) is None:
+            log.warning(
+                "run %s: GitHub returned no workflow run (launch_ref %s); the liveness rules "
+                "that need the run's status won't apply to it",
+                run_id,
+                ref,
+            )
+        return ref
 
     def status(self, launch_ref: str) -> ActionsRun | None:
-        raise NotImplementedError
+        try:
+            return self.github.run_status(launch_ref)
+        except LaunchError as exc:
+            raise MailboxError(str(exc)) from None
 
     def cancel(self, launch_ref: str) -> None:
-        raise NotImplementedError
+        try:
+            self.github.cancel_run(launch_ref)
+        except LaunchError as exc:
+            raise MailboxError(str(exc)) from None
 
     def fetch_outbox(self, folder: str, dest: Path) -> bool:
-        raise NotImplementedError
+        _check_folder(folder)
+        try:
+            return self.store.get(f"runs/{folder}/outbox.jsonl", dest, max_bytes=MAX_OUTBOX_BYTES)
+        except StoreTooLarge as exc:
+            raise MailboxTooLarge(str(exc)) from None
+        except StoreError as exc:
+            raise MailboxError(str(exc)) from None
 
     def delete_run(self, folder: str) -> None:
-        raise NotImplementedError
+        # Any single name (not only RUN_FOLDER_PATTERN): the sweep also clears junk folders.
+        if not folder or "/" in folder or "\\" in folder or folder in (".", ".."):
+            raise MailboxError(f"bad run folder {folder!r}")
+        try:
+            self.store.delete(f"runs/{folder}")
+        except (StoreError, ValueError) as exc:  # ValueError: a name the store can't address
+            raise MailboxError(str(exc)) from None
 
     def run_folders(self) -> list[str]:
-        raise NotImplementedError
+        try:
+            return self.store.list_dir("runs")
+        except StoreError as exc:
+            raise MailboxError(str(exc)) from None
+
+
+def _check_folder(folder: str) -> None:
+    if not _FOLDER.fullmatch(folder):
+        raise MailboxError(f"bad run folder {folder!r}")

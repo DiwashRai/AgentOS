@@ -15,6 +15,7 @@ import pytest
 
 from agentos.launchers.github import (
     NO_REPO,
+    ActionsRun,
     GitHubActionsLauncher,
     GitHubTarget,
     LaunchError,
@@ -278,6 +279,160 @@ def test_token_is_not_in_the_repr_or_attributes() -> None:
     assert GH_TOKEN not in repr(launcher)
     public = {k: v for k, v in vars(launcher).items() if not k.startswith("_")}
     assert GH_TOKEN not in repr(public)
+
+
+# ---------------------------------------------------------------- mailbox mode
+
+
+def test_dispatch_sends_the_given_inputs() -> None:
+    handler, seen = _recording(_run_details())
+    inputs = {"run": "42-0123456789abcdef", "worker_sha256": "a" * 64, "manifest_sha256": "b" * 64}
+
+    assert _launcher(handler).dispatch(inputs) == RUN_HTML
+
+    [req] = seen
+    assert req.method == "POST"
+    assert str(req.url).endswith(
+        "/repos/DiwashRai/AgentOS/actions/workflows/agentos-worker.yml/dispatches"
+    )
+    assert req.headers["Authorization"] == f"Bearer {GH_TOKEN}"
+    assert json.loads(req.content) == {"ref": "main", "inputs": inputs, "return_run_details": True}
+
+
+def test_dispatch_204_and_errors_match_launch() -> None:
+    handler, _ = _recording(httpx.Response(204))
+    assert _launcher(handler).dispatch({"run": "1-0123456789abcdef"}) == RUNS_PAGE
+
+    handler, _ = _recording(httpx.Response(403, json={"message": f"nope {GH_TOKEN}"}))
+    with pytest.raises(LaunchError, match=r"^GitHub answered 403: nope \*\*\*$"):
+        _launcher(handler).dispatch({"run": "1-0123456789abcdef"})
+
+    handler, seen = _recording(httpx.Response(204))
+    with pytest.raises(LaunchError, match=re.escape(NO_REPO)):
+        _launcher(handler, repo=None).dispatch({})
+    assert seen == []
+
+
+GHES_API = "https://ghe.corp/api/v3"
+GHES_RUN = "https://ghe.corp/DiwashRai/AgentOS/actions/runs/555"
+
+
+@pytest.mark.parametrize(
+    ("api_url", "ref", "expected_url"),
+    [
+        (
+            "https://api.github.com",
+            RUN_HTML,
+            "https://api.github.com/repos/DiwashRai/AgentOS/actions/runs/987654321",
+        ),
+        (GHES_API, GHES_RUN, "https://ghe.corp/api/v3/repos/DiwashRai/AgentOS/actions/runs/555"),
+        # Owner/repo compare case-insensitively; the request uses the configured repo's spelling.
+        (
+            "https://api.github.com",
+            "https://github.com/diwashrai/agentos/actions/runs/7/",
+            "https://api.github.com/repos/DiwashRai/AgentOS/actions/runs/7",
+        ),
+    ],
+)
+def test_run_status(api_url: str, ref: str, expected_url: str) -> None:
+    handler, seen = _recording(
+        httpx.Response(200, json={"id": 1, "status": "completed", "conclusion": "success"})
+    )
+    launcher = _launcher(handler, api_url=api_url)
+
+    assert launcher.run_status(ref) == ActionsRun(status="completed", conclusion="success")
+    [req] = seen
+    assert (req.method, str(req.url)) == ("GET", expected_url)
+    assert req.headers["Authorization"] == f"Bearer {GH_TOKEN}"
+    assert req.content == b""
+
+
+def test_run_status_in_progress_has_no_conclusion() -> None:
+    handler, _ = _recording(httpx.Response(200, json={"status": "queued", "conclusion": None}))
+    assert _launcher(handler).run_status(RUN_HTML) == ActionsRun(status="queued", conclusion=None)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        RUNS_PAGE,  # the 204 fallback names no run
+        "https://github.com/someone/else/actions/runs/1",
+        "https://evil.example/attacker/repo/actions/runs/1",  # a crafted ref on another host
+        "https://github.com/DiwashRai/AgentOS/actions/runs/1/../../../../x",
+        "https://github.com/DiwashRai/AgentOS/actions/runs/abc",
+        "https://github.com/x/DiwashRai/AgentOS/actions/runs/1",
+        "",
+        "not a url",
+    ],
+)
+def test_a_ref_that_names_no_run_of_the_target_is_never_asked(ref: str) -> None:
+    handler, seen = _recording(httpx.Response(200, json={"status": "completed"}))
+    launcher = _launcher(handler)
+
+    assert launcher.run_id_of(ref) is None
+    assert launcher.run_status(ref) is None
+    launcher.cancel_run(ref)
+    assert seen == []
+
+
+def test_only_the_ref_path_is_read_never_its_host() -> None:
+    handler, seen = _recording(httpx.Response(200, json={"status": "queued"}))
+    launcher = _launcher(handler, api_url=GHES_API)
+
+    launcher.run_status("https://evil.example/DiwashRai/AgentOS/actions/runs/9")
+    assert str(seen[0].url) == "https://ghe.corp/api/v3/repos/DiwashRai/AgentOS/actions/runs/9"
+
+
+def test_no_repo_set_means_no_run() -> None:
+    handler, seen = _recording(httpx.Response(200, json={"status": "queued"}))
+    assert _launcher(handler, repo=None).run_status(RUN_HTML) is None
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, content=b"not json"),
+        httpx.Response(200, json={"conclusion": "success"}),
+        httpx.Response(200, json={"status": "completed", "conclusion": 3}),
+    ],
+)
+def test_run_status_bad_answer_is_a_launch_error(response: httpx.Response) -> None:
+    handler, _ = _recording(response)
+    with pytest.raises(LaunchError, match="without a workflow run"):
+        _launcher(handler).run_status(RUN_HTML)
+
+
+def test_run_status_errors_are_safe() -> None:
+    handler, _ = _recording(httpx.Response(404, json={"message": f"Not Found {GH_TOKEN}"}))
+    with pytest.raises(LaunchError, match=r"^GitHub answered 404: Not Found \*\*\*$"):
+        _launcher(handler).run_status(RUN_HTML)
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"refused {GH_TOKEN}", request=request)
+
+    with pytest.raises(LaunchError) as info:
+        _launcher(unreachable).run_status(RUN_HTML)
+    assert str(info.value).startswith("GitHub unreachable: ConnectError")
+    assert GH_TOKEN not in str(info.value)
+    assert info.value.__cause__ is None
+
+
+@pytest.mark.parametrize("status", [202, 409])
+def test_cancel_run(status: int) -> None:
+    handler, seen = _recording(httpx.Response(status, json={}))
+    _launcher(handler, api_url=GHES_API).cancel_run(GHES_RUN)
+    [req] = seen
+    assert (req.method, str(req.url)) == (
+        "POST",
+        "https://ghe.corp/api/v3/repos/DiwashRai/AgentOS/actions/runs/555/cancel",
+    )
+
+
+def test_cancel_run_other_answers_raise() -> None:
+    handler, _ = _recording(httpx.Response(403, json={"message": "Resource not accessible"}))
+    with pytest.raises(LaunchError, match="GitHub answered 403: Resource not accessible"):
+        _launcher(handler).cancel_run(RUN_HTML)
 
 
 # ---------------------------------------------------------------- the workflow template
