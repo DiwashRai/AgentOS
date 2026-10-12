@@ -10,7 +10,7 @@ commit drop the SpaceStore cache so the change applies at once.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -20,6 +20,7 @@ from agentos.models import (
     IntakeQuerySpec,
     IntakeSettings,
     IntakeSettingsUpdate,
+    LauncherName,
     Me,
     RepoEntry,
     RepoSettings,
@@ -323,9 +324,7 @@ def _runtime_settings(row: AreaRow) -> RuntimeSettings:
 # ------------------------------------------------------------------ runner
 
 
-def get_runner(
-    db: Database, *, launcher: Literal["local", "github"], token_set: bool
-) -> RunnerSettings:
+def get_runner(db: Database, *, launcher: LauncherName, token_set: bool) -> RunnerSettings:
     """`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from env."""
     with db.read() as conn:
         return _runner_settings(_row(conn, "runner"), launcher=launcher, token_set=token_set)
@@ -337,7 +336,7 @@ def put_runner(
     actor: Me,
     body: RunnerSettingsUpdate,
     *,
-    launcher: Literal["local", "github"],
+    launcher: LauncherName,
     token_set: bool,
 ) -> RunnerSettings:
     """Replace where runs are dispatched. The github launcher reads it at its next launch."""
@@ -352,9 +351,7 @@ def put_runner(
     return result
 
 
-def _runner_settings(
-    row: AreaRow, *, launcher: Literal["local", "github"], token_set: bool
-) -> RunnerSettings:
+def _runner_settings(row: AreaRow, *, launcher: LauncherName, token_set: bool) -> RunnerSettings:
     runner = runner_of(row)
     return RunnerSettings(
         launcher=launcher,

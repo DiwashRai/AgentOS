@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
@@ -18,13 +18,17 @@ from fastapi.openapi.utils import get_openapi
 from agentos.auth.routes import router as auth_router
 from agentos.clock import utcnow
 from agentos.config import ConfigError, Settings, load_settings
-from agentos.context import build_context
+from agentos.context import AppContext, build_context
 from agentos.csrf import install_csrf_check
 from agentos.db import MigrationError
 from agentos.files.routes import router as files_router
 from agentos.http_errors import install_error_handlers
 from agentos.intake.routes import router as intake_router
 from agentos.launchers.base import Launcher
+from agentos.launchers.mailbox import MailboxLauncher
+from agentos.mailbox import dispatcher as mailbox_dispatcher
+from agentos.mailbox.reaper import INTERVAL_S as MAILBOX_REAPER_INTERVAL_S
+from agentos.mailbox.reaper import MailboxReaper
 from agentos.meta import router as meta_router
 from agentos.models import StreamEvent
 from agentos.runs import dispatcher
@@ -61,6 +65,36 @@ async def _every(
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
 
 
+def _loops(ctx: AppContext, stop: asyncio.Event) -> list[Coroutine[Any, Any, None]]:
+    """The background loops: the runs reaper always; the runs dispatcher, or with the mailbox
+    launcher the mailbox dispatcher and reaper instead (D8: the runs dispatcher would hand
+    mailbox runs to `launch()`, which refuses them)."""
+    reaper = Reaper(ctx)
+    loops = [_every("reaper", REAPER_INTERVAL_S, lambda: reaper.tick(utcnow()), stop)]
+    launcher = ctx.launcher
+    if isinstance(launcher, MailboxLauncher):
+        mailbox_reaper = MailboxReaper(ctx, launcher)
+        loops += [
+            _every(
+                "mailbox-dispatcher",
+                mailbox_dispatcher.INTERVAL_S,
+                lambda: mailbox_dispatcher.tick(ctx, launcher),
+                stop,
+            ),
+            _every(
+                "mailbox-reaper",
+                MAILBOX_REAPER_INTERVAL_S,
+                lambda: mailbox_reaper.tick(utcnow()),
+                stop,
+            ),
+        ]
+    else:
+        loops.append(
+            _every("dispatcher", dispatcher.INTERVAL_S, lambda: dispatcher.tick(ctx), stop)
+        )
+    return loops
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -89,15 +123,7 @@ def create_app(
         stop = asyncio.Event()
         loops: list[asyncio.Task[None]] = []
         if run_loops:
-            reaper = Reaper(ctx)
-            loops = [
-                asyncio.create_task(
-                    _every("dispatcher", dispatcher.INTERVAL_S, lambda: dispatcher.tick(ctx), stop)
-                ),
-                asyncio.create_task(
-                    _every("reaper", REAPER_INTERVAL_S, lambda: reaper.tick(utcnow()), stop)
-                ),
-            ]
+            loops = [asyncio.create_task(task) for task in _loops(ctx, stop)]
         try:
             yield
         finally:

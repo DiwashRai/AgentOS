@@ -26,6 +26,7 @@ from agentos.db import Database
 from agentos.launchers.base import Launcher
 from agentos.launchers.github import GitHubActionsLauncher, GitHubTarget
 from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
+from agentos.launchers.mailbox import MailboxLauncher
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, RuntimesConfig
 from agentos.pipeline.space import RunnerSection, SpaceConfig
 from agentos.ratelimit import RateLimiter
@@ -39,6 +40,7 @@ from agentos.space_store import (
     seed,
     space_values,
 )
+from agentos.stores.artifactory import ArtifactoryStore
 from agentos.ttlcache import TtlCache
 
 log = logging.getLogger(__name__)
@@ -218,8 +220,23 @@ def runner_target(store: SpaceStore) -> Callable[[], GitHubTarget]:
 def _launcher(settings: Settings, store: SpaceStore) -> Launcher:
     if settings.launcher == "local":
         return LocalProcessLauncher.from_settings(settings, WORKER_PATH)
+    github = _github_launcher(settings, store)
+    if settings.launcher == "github":
+        return github
+    url, user, password = (
+        settings.artifactory_url,
+        settings.artifactory_user,
+        settings.artifactory_password,
+    )
+    if url is None or user is None or password is None:  # pragma: no cover - startup_checks
+        raise ConfigError(["AGENTOS_LAUNCHER=mailbox needs the AGENTOS_ARTIFACTORY_* vars"])
+    artifactory = ArtifactoryStore(base_url=url, user=user, password=password.get_secret_value())
+    return MailboxLauncher(github=github, store=artifactory, worker_path=WORKER_PATH)
+
+
+def _github_launcher(settings: Settings, store: SpaceStore) -> GitHubActionsLauncher:
     if settings.github_token is None:  # pragma: no cover - startup_checks requires it
-        raise ConfigError(["AGENTOS_LAUNCHER=github needs AGENTOS_GITHUB_TOKEN"])
+        raise ConfigError([f"AGENTOS_LAUNCHER={settings.launcher} needs AGENTOS_GITHUB_TOKEN"])
     try:
         return GitHubActionsLauncher(
             target=runner_target(store),

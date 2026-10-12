@@ -437,9 +437,21 @@ def touch_running(db: Database, now: datetime) -> int:
         return cursor.rowcount
 
 
-def reap(db: Database, broker: Broker, now: datetime, claim_timeout_s: int) -> list[Reaped]:
-    """Reaper rules 2-5 (SPEC §8), in order, in one transaction."""
+def reap(
+    db: Database,
+    broker: Broker,
+    now: datetime,
+    claim_timeout_s: int,
+    exempt_launcher: str | None = None,
+) -> list[Reaped]:
+    """Reaper rules 2-5 (SPEC §8), in order, in one transaction.
+
+    Runs of `exempt_launcher` skip rules 3-5 (heartbeat, budget, unacknowledged cancel): the
+    mailbox launcher's runs never send heartbeats and have their own reaper (`agentos.mailbox`).
+    """
     out: list[Reaped] = []
+    # Rules 3-5 end with `AND (? IS NULL OR launcher <> ?)`, bound to these two values.
+    exempt = (exempt_launcher, exempt_launcher)
     with db.tx() as conn:
 
         def end(
@@ -460,14 +472,16 @@ def reap(db: Database, broker: Broker, now: datetime, claim_timeout_s: int) -> l
         lost = _ids(
             conn,
             "SELECT id FROM runs WHERE status = 'running' "
-            "AND COALESCE(last_seen_at, started_at) < ?",
-            (to_db(now - HEARTBEAT_TIMEOUT),),
+            "AND COALESCE(last_seen_at, started_at) < ? AND (? IS NULL OR launcher <> ?)",
+            (to_db(now - HEARTBEAT_TIMEOUT), *exempt),
         )
         end(lost, "running", "failed", WORKER_LOST, WORKER_LOST)
         # 4. over the time budget
         running = conn.execute(
             "SELECT id, started_at, time_budget_s FROM runs "
-            "WHERE status = 'running' AND started_at IS NOT NULL"
+            "WHERE status = 'running' AND started_at IS NOT NULL "
+            "AND (? IS NULL OR launcher <> ?)",
+            exempt,
         ).fetchall()
         over = [
             int(r["id"])
@@ -478,8 +492,9 @@ def reap(db: Database, broker: Broker, now: datetime, claim_timeout_s: int) -> l
         # 5. a cancel the worker never acknowledged
         unacked = _ids(
             conn,
-            "SELECT id FROM runs WHERE status = 'running' AND cancel_requested_at < ?",
-            (to_db(now - CANCEL_GRACE),),
+            "SELECT id FROM runs WHERE status = 'running' AND cancel_requested_at < ? "
+            "AND (? IS NULL OR launcher <> ?)",
+            (to_db(now - CANCEL_GRACE), *exempt),
         )
         end(unacked, "running", "cancelled", None, "cancel not acknowledged")
     for r in out:

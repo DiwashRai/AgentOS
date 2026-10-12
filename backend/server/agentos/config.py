@@ -32,6 +32,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from agentos.models import LauncherName
 from agentos.pipeline.runtime import NamedRuntime, RuntimesConfig, RuntimeSpec
 from agentos.pipeline.space import SPACE_TOML_KEYS, RunnerSection, SpaceConfig, SpaceSection
 
@@ -102,7 +103,7 @@ class Settings(BaseSettings):
     port: int = 8000
     # Optional, seed-only: read once to seed settings areas the db doesn't have yet (if it exists).
     config: Path = Path("agentos.toml")
-    launcher: Literal["local", "github"] = "local"
+    launcher: LauncherName = "local"
     local_max_concurrency: int | None = 2  # None ("none"/"unlimited" in env) = no limit
     worker_env_file: Path | None = None
     web_dir: Path | None = None  # the built SPA (web/dist) to serve; None = API only (dev)
@@ -121,6 +122,12 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     github_api_url: str = "https://api.github.com"  # GHES: https://<host>/api/v3
     github_api_version: str = "2022-11-28"
+    # AGENTOS_LAUNCHER=mailbox (design/mailbox.md): runs are dispatched as with `github`, but the
+    # manifest and the worker's results travel through an Artifactory folder
+    # (https://<host>/artifactory/<repo>/<folder>, the same string as the runner repo's variable).
+    artifactory_url: str | None = None
+    artifactory_user: str | None = None
+    artifactory_password: SecretStr | None = None
 
     # MOVED_ENV vars that were set (env wins over .env), by name: the first-start seed only.
     _moved_env: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -155,7 +162,7 @@ class Settings(BaseSettings):
     def _absolute(cls, value: Path | None) -> Path | None:
         return None if value is None else value.expanduser().resolve()
 
-    @field_validator("public_url", "worker_url", "jira_url", "github_api_url")
+    @field_validator("public_url", "worker_url", "jira_url", "github_api_url", "artifactory_url")
     @classmethod
     def _strip_slash(cls, value: str | None) -> str | None:
         return None if value is None else value.rstrip("/")
@@ -375,6 +382,33 @@ def _jira_service_problems(settings: Settings) -> list[str]:
     return problems
 
 
+def _artifactory_problems(settings: Settings) -> list[str]:
+    """AGENTOS_LAUNCHER=mailbox: all three Artifactory vars, and an https URL with an
+    `/artifactory/<repo>` path. Problems never quote the password."""
+    password = settings.artifactory_password
+    values = {
+        "AGENTOS_ARTIFACTORY_URL": settings.artifactory_url,
+        "AGENTOS_ARTIFACTORY_USER": settings.artifactory_user,
+        "AGENTOS_ARTIFACTORY_PASSWORD": password.get_secret_value() if password else None,
+    }
+    problems = [
+        f"{name} is required with AGENTOS_LAUNCHER=mailbox"
+        for name, value in values.items()
+        if value is None or not value.strip()
+    ]
+    url = settings.artifactory_url
+    if url:
+        parts = urlsplit(url)
+        segments = [s for s in parts.path.split("/") if s]
+        repo_ok = "artifactory" in segments[:-1]  # .../artifactory/<repo>[/<folder>]
+        if parts.scheme != "https" or not parts.hostname or not repo_ok:
+            problems.append(
+                f"AGENTOS_ARTIFACTORY_URL={url!r} must be an https URL like "
+                "https://<host>/artifactory/<repo>/<folder>"
+            )
+    return problems
+
+
 def startup_checks(settings: Settings) -> None:
     """Validate cross-field rules, then create the data, logs and workspaces dirs.
 
@@ -403,12 +437,16 @@ def startup_checks(settings: Settings) -> None:
         problems.append(problem)
     problems.extend(_jira_service_problems(settings))
 
-    if settings.launcher == "github":
+    if settings.launcher in ("github", "mailbox"):
         # The repo/workflow/ref are set in the app (Settings > Runners) and read at each launch.
         if settings.github_token is None or not settings.github_token.get_secret_value().strip():
-            problems.append("AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER=github")
+            problems.append(
+                f"AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER={settings.launcher}"
+            )
         if problem := _url_problem("AGENTOS_GITHUB_API_URL", settings.github_api_url):
             problems.append(problem)
+    if settings.launcher == "mailbox":
+        problems.extend(_artifactory_problems(settings))
 
     if settings.local_max_concurrency is not None and settings.local_max_concurrency < 1:
         problems.append("AGENTOS_LOCAL_MAX_CONCURRENCY must be >= 1 (or 'unlimited')")

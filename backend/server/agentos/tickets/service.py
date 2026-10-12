@@ -296,9 +296,13 @@ def _run_summary(run: Row, ticket_key: str) -> RunSummary:
 
 
 def launch_url(launcher: str, launch_ref: str | None) -> str | None:
-    """The launcher's page for a run: the GitHub launcher's ref is the Actions run URL; the local
-    launcher's is a PID (no page)."""
-    if launcher == "github" and launch_ref is not None and launch_ref.startswith("https://"):
+    """The launcher's page for a run: the GitHub and mailbox launchers' ref is the Actions run URL;
+    the local launcher's is a PID (no page)."""
+    if (
+        launcher in ("github", "mailbox")
+        and launch_ref is not None
+        and launch_ref.startswith("https://")
+    ):
         return launch_ref
     return None
 

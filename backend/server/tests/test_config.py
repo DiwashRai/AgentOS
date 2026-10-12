@@ -18,6 +18,7 @@ from agentos.config import (
 )
 from agentos.context import build_context
 from agentos.launchers.github import GitHubActionsLauncher
+from agentos.launchers.mailbox import MailboxLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, RepoInfo
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES
@@ -287,6 +288,55 @@ def test_github_launcher_is_built_from_settings(tmp_path: Path) -> None:
         build_context(make(tmp_path, **{**github, "github_api_version": "latest"}))
     assert "AGENTOS_GITHUB_" in str(caught.value)
     assert "t0ken" not in str(caught.value)
+
+
+ARTIFACTORY = {
+    "artifactory_url": "https://artifactory.example/artifactory/generic-local/agentos",
+    "artifactory_user": "svc",
+    "artifactory_password": "s3cret-pw",
+}
+
+
+def test_mailbox_launcher_needs_the_github_token_and_artifactory(tmp_path: Path) -> None:
+    found = problems(make(tmp_path, launcher="mailbox"))
+    assert found == [
+        "AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER=mailbox",
+        "AGENTOS_ARTIFACTORY_URL is required with AGENTOS_LAUNCHER=mailbox",
+        "AGENTOS_ARTIFACTORY_USER is required with AGENTOS_LAUNCHER=mailbox",
+        "AGENTOS_ARTIFACTORY_PASSWORD is required with AGENTOS_LAUNCHER=mailbox",
+    ]
+    startup_checks(make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY))  # noqa: S106 - fake
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://artifactory.example/artifactory/generic-local/agentos",  # not https
+        "https://artifactory.example/generic-local/agentos",  # no /artifactory/
+        "https://artifactory.example/artifactory",  # no repo
+        "https:///artifactory/generic-local",  # no host
+    ],
+)
+def test_mailbox_artifactory_url_must_be_https_with_a_repo(tmp_path: Path, url: str) -> None:
+    settings = make(
+        tmp_path,
+        launcher="mailbox",
+        github_token="t0ken",  # noqa: S106 - fake
+        **{**ARTIFACTORY, "artifactory_url": url},
+    )
+    found = problems(settings)
+    assert len(found) == 1
+    assert found[0].startswith("AGENTOS_ARTIFACTORY_URL=")
+    assert "s3cret-pw" not in found[0]
+
+
+def test_mailbox_launcher_is_built_from_settings(tmp_path: Path) -> None:
+    ctx = build_context(
+        make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY)  # noqa: S106 - fake
+    )
+    assert isinstance(ctx.launcher, MailboxLauncher)
+    assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("mailbox", None)
+    assert isinstance(ctx.launcher.github, GitHubActionsLauncher)
 
 
 def test_workspaces_inside_data_dir(tmp_path: Path) -> None:

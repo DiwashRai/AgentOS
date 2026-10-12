@@ -43,7 +43,11 @@ class Reaper:
             if touched:
                 log.info("reaper: grace tick, refreshed %s running run(s)", touched)
             return []
-        reaped = service.reap(self.ctx.db, self.ctx.broker, now, self.ctx.space.claim_timeout_s)
+        # Mailbox runs send no heartbeats: the mailbox reaper (agentos.mailbox) watches them.
+        exempt = "mailbox" if self.ctx.launcher.name == "mailbox" else None
+        reaped = service.reap(
+            self.ctx.db, self.ctx.broker, now, self.ctx.space.claim_timeout_s, exempt
+        )
         for r in reaped:
             log.warning("reaper: run %s %s: %s", r.run_id, r.status, r.reason)
         if self.ctx.launcher.name == "local":
