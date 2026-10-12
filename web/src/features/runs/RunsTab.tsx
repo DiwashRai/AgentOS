@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
 import { ApiError, type Schemas } from "../../api/client";
-import { useCancelRun, useMe, useRun, useRunnerSettings, useRuns } from "../../api/queries";
+import { useCancelRun, useRun, useRuns } from "../../api/queries";
 import { age } from "../../domain/format";
 import { Button, cx, StatusMark } from "../../ui";
 import { RunLog } from "./RunLog";
@@ -13,8 +13,6 @@ import {
   duration,
   isActiveRun,
   launchRef,
-  logDelivery,
-  type LogDelivery,
   runMark,
   spanSeconds,
   stageMark,
@@ -160,15 +158,7 @@ function StageList({ detail, now }: { detail: RunDetail; now: number }) {
   );
 }
 
-function RunPanel({
-  summary,
-  now,
-  delivery,
-}: {
-  summary: RunSummary;
-  now: number;
-  delivery: LogDelivery;
-}) {
+function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
   const detailQ = useRun(summary.id, isActiveRun(summary.status));
   // The detail polls every second while active, so it is fresher than the 3 s list. If the list
   // sees the run finish first, polling stops: fetch the detail once more so it doesn't stay live.
@@ -210,7 +200,7 @@ function RunPanel({
         active={active}
         queued={run.status === "queued" || run.status === "dispatched"}
         stageName={stageName}
-        delivery={delivery}
+        delivery={run.log_delivery}
         liveHref={run.launch_url}
       />
     </section>
@@ -223,10 +213,6 @@ export function RunsTab({ ticketKey }: { ticketKey: string }) {
   const runs = useMemo(() => [...(runsQ.data ?? [])].sort((a, b) => b.id - a.id), [runsQ.data]);
   const anyActive = runs.some((r) => isActiveRun(r.status));
   const now = useNow(anyActive ? 1000 : 30_000);
-  // Only admins can read the launcher; everyone else sees the live wording.
-  const me = useMe();
-  const runner = useRunnerSettings(me.data?.role === "admin");
-  const delivery = logDelivery(runner.data?.launcher);
 
   if (runsQ.isPending) return <p className={s.quiet}>Loading runs</p>;
   if (runsQ.isError) {
@@ -269,9 +255,7 @@ export function RunsTab({ ticketKey }: { ticketKey: string }) {
           />
         ))}
       </ul>
-      {selected ? (
-        <RunPanel key={selected.id} summary={selected} now={now} delivery={delivery} />
-      ) : null}
+      {selected ? <RunPanel key={selected.id} summary={selected} now={now} /> : null}
     </div>
   );
 }

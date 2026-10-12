@@ -62,17 +62,9 @@ export function spanSeconds(
   return Math.max(0, (to - from) / 1000);
 }
 
-/** When a run's log reaches the server: `live` (the worker posts events as it goes) or `at_end`
- *  (the mailbox launcher: the server replays the run's outbox once the GitHub job finishes). */
-export type LogDelivery = "live" | "at_end";
-
-/** For now this keys off the server's launcher, which only admins can read (Settings › Runners);
- *  everyone else gets `live`. A per-run field would replace it. */
-export function logDelivery(
-  launcher: Schemas["RunnerSettings"]["launcher"] | undefined,
-): LogDelivery {
-  return launcher === "mailbox" ? "at_end" : "live";
-}
+/** When a run's log reaches the server (per run, from the server): `live` (the worker posts events
+ *  as it goes) or `at_end` (mailbox runs: the outbox is replayed once the GitHub job finishes). */
+export type LogDelivery = Schemas["RunSummary"]["log_delivery"];
 
 /** What an empty log says. */
 export function emptyLogText(o: {

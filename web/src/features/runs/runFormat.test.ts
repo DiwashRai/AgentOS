@@ -5,20 +5,12 @@ import {
   emptyLogText,
   isActiveRun,
   launchRef,
-  logDelivery,
   runMark,
   spanSeconds,
   stageMark,
 } from "./runFormat";
 
 describe("log delivery", () => {
-  it("is at the end only for the mailbox launcher, and live when the launcher is unknown", () => {
-    expect(logDelivery("mailbox")).toBe("at_end");
-    expect(logDelivery("github")).toBe("live");
-    expect(logDelivery("local")).toBe("live");
-    expect(logDelivery(undefined)).toBe("live");
-  });
-
   it("says when an empty log will fill", () => {
     const text = (queued: boolean, active: boolean, delivery: "live" | "at_end") =>
       emptyLogText({ queued, active, delivery });
