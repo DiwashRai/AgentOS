@@ -6,8 +6,9 @@ self-hosted) and dial back to the server. The image is stateless: the database (
 every setting an admin edits in the app) and logs live on the `/data` volume, and the few
 deployment facts and secrets come from an env file. There is no config file to mount.
 
-Docker and Podman both work. The `just` recipes default to Docker; add `engine=podman` (or set
-`CONTAINER_ENGINE=podman`) for Podman.
+Docker is verified. Podman is meant to work too (see "Podman notes") but hasn't been tested yet.
+The `just` recipes default to Docker; add `engine=podman` (or set `CONTAINER_ENGINE=podman`) for
+Podman.
 
 ## First run
 

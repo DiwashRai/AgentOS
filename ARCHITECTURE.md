@@ -26,6 +26,15 @@ flowchart LR
 - **Only `db.py` imports `sqlite3`.** A move to Postgres then touches one module. Enforced by import-linter.
 - **Migrations are numbered `NNNN_name.sql` files, tracked with `PRAGMA user_version`, and never edited once applied.** Gaps are rejected, a database newer than the code is refused, and an existing database is backed up to `{DATA_DIR}/backups/` (the 5 newest are kept) before migrating. This makes upgrades forward-only with a rollback path. Where: `db.py` `migrations()`, `migrate()`, `backup()`; `migrations/`.
 - **Admin-editable settings (Space, repos, intake queries, runtimes, runner) live in the `settings` table, one JSON document per area, with a `version` for 409 `stale_version`.** Env vars keep only URLs, secrets, startup/dev config and who may sign in. `agentos.toml` and the moved env vars only seed a fresh database. Changing a setting needs no redeploy, and a cached snapshot is dropped on every save. Where: `migrations/0006_settings.sql`, `space_store.py`, `settings/`.
+- **What stays in env, and why.** Each of these is a deliberate exception to "settings live in the db"; don't move one into Settings without revisiting its reason:
+  - `AGENTOS_JIRA_URL`: everyone's Jira token is typed into the login form and sent there. If it were editable in the app, one admin (or one stolen admin session) could point it at their own server and collect every token. It's also needed before anyone can sign in.
+  - Secrets (`AGENTOS_JIRA_SERVICE_EMAIL`/`_TOKEN`, `AGENTOS_GITHUB_TOKEN`): in the db they'd be plaintext in the db file and in every automatic backup. Env is how container platforms and secret managers deliver secrets.
+  - `AGENTOS_ADMINS`: the first admin (someone must be admin before the app can be configured) and the way back in if every admin is demoted.
+  - `AGENTOS_PUBLIC_URL`: decides whether the session cookie is Secure and which origin passes the login checks. Set wrong in the app, it locks everyone out or quietly weakens those checks.
+  - `AGENTOS_WORKER_URL`, `AGENTOS_LAUNCHER`, `AGENTOS_TRUST_PROXY`: facts about the deployment. A wrong `TRUST_PROXY` lets anyone fake their IP past the login rate limit.
+
+  Where: `config.py` `Settings`; the vars that moved into the app are `config.MOVED_ENV`.
+- **The native key prefix is never one of the Space's Jira projects** (checked both ways on every save). Otherwise native tickets would take keys like `SCRUM-6` that importing the real Jira issue later needs (409 `key_taken`). Where: `pipeline/space.py`, `settings/service.py`.
 - **Config is validated at startup, and startup fails fast.** `Settings` uses `extra="forbid"`, so a typo in an `AGENTOS_*` var stops the server. Where: `config.py` `startup_checks()`.
 
 ## Data model principles
@@ -112,19 +121,20 @@ flowchart LR
 
 ## Auth & security
 - **Roles: `pending < viewer < writer < admin`.** A first Jira login is `pending` and gets 403 `pending_approval` everywhere except `GET /api/me` until an admin approves it. Where: `models.py` `Role`, `auth/deps.py`.
-- **Jira login:** credentials are checked against Jira and never stored. Access needs browse rights on one of the Space's Jira projects (`GET /rest/api/2/project/{key}`). Admins are matched on the `/myself` profile against `AGENTOS_ADMINS`, never on request input. Where: `auth/service.py`, `sources/jira.py`.
+- **Jira login:** credentials are checked against Jira and never stored. Access needs browse rights on one of the Space's Jira projects (`GET /rest/api/2/project/{key}`). Admins are matched on the `/myself` profile against `AGENTOS_ADMINS`, never on request input. They skip the project check, so a bad Settings › Space save can't lock them out; with no projects set, only they can sign in. Where: `auth/service.py`, `sources/jira.py`.
 - **Sessions last 14 days; only token hashes are stored.** Cookies are HttpOnly, SameSite=Lax, and Secure when the public URL is https. Where: `auth/service.py` `SESSION_TTL`, `cookie_secure()`.
 - **CSRF:** every non-GET `/api` request (except `/api/worker/*`) must send `X-AgentOS: 1`, and CORS is off. A custom header can't be sent cross-origin without a preflight. Where: `csrf.py`, `web/src/api/client.ts`.
 - **Dev auth (any username, always admin) only works on loopback.** It is checked at startup against `AGENTOS_HOST` and `AGENTOS_PUBLIC_URL`, and per request against the client address. Where: `config.py` `startup_checks()`, `auth/service.py` `_dev_login()`.
 - **`WORKSPACES_DIR` must be outside `DATA_DIR` and outside any git repo.** Otherwise a parent `CLAUDE.md`/`AGENTS.md` leaks into agents, and agents could reach the database. Where: `config.py` `startup_checks()`.
 - **Imported ticket text is untrusted prompt input.** Intake never dispatches by itself.
-- **The server never runs git.** Clone, commit and push happen on the worker with the runner's credentials: the job's `GITHUB_TOKEN` on Actions, or `WORKER_ENV_FILE` locally. The server's own GitHub token can only dispatch the workflow.
+- **The server never runs git.** Clone, commit and push happen on the worker with the runner's credentials: the job's `GITHUB_TOKEN` on Actions, or `WORKER_ENV_FILE` locally. The server's own GitHub token can only dispatch the workflow. The worker uses the job's `GITHUB_TOKEN`, not a GitHub App installation token, on purpose: App tokens expire after an hour, and the worker pushes after every stage of runs that can last much longer. The cost: PRs it opens don't trigger other workflows.
 
 ## Plugins
 - **A launcher has a `name`, `max_concurrency` and `launch(run_id, server_url, dispatch_token) -> launch_ref`.** There is no cancel (that goes through the protocol), and launchers have no database access, because the dispatcher counts active runs. A fork can add a launcher without knowing the schema. Where: `launchers/base.py`.
   - `local`: a detached child process with its own process group, so a `--reload` doesn't kill runs. Its environment is the server's minus `AGENTOS_*`, plus `WORKER_ENV_FILE`. Where: `launchers/local.py`.
   - `github`: one workflow dispatch per run. The repo, workflow and ref come from Settings, and `backend/deploy/github/agentos-worker.yml` must stay identical to `.github/workflows/agentos-worker.yml` (a test checks this). Where: `launchers/github.py`.
 - **A ticket source implements `parse_ref`, `fetch` and `post_comment`.** Jira is the only source and is used by import and intake. Where: `sources/base.py`, `sources/jira.py`.
+  - Jira Cloud has removed `/rest/api/2/search`, so search uses `POST /rest/api/3/search/jql`, which has no total (`/search/approximate-count` estimates it). Cloud answers an unknown field, project or value with an empty result rather than a 400, so an empty answer is explained via `/rest/api/3/jql/parse`. Data Center still uses `/rest/api/2/search`.
 - **Runtimes are argv templates resolved on the server.** Placeholders (`{model}`, `{agent}`, `{prompt}`) replace whole argv elements, with no shell involved. The worker knows nothing about runtimes, so switching CLIs (e.g. Copilot) is a settings change. Where: `pipeline/runtime.py`, `pipeline/manifest.py`; edited in Settings › Runners.
 
 ## Frontend

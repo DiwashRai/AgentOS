@@ -5,7 +5,7 @@ AgentOS is a web app for creating tickets, editing their context and pipeline, a
 Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (the system and why), `backend/AGENTS.md` (backend conventions), `web/AGENTS.md` (frontend conventions), `backend/deploy/README.md` (container, runners). Local-only planning docs (`SPEC.md`, `TASKS.md`, `WEEKEND.md`, `CONTRACT_REQUESTS.md`, `design/`) are gitignored: use them if present, never assume them.
 
 ## Working principles
-- **Simplicity.** A minimal but watertight MVP beats a broad, leaky one.
+- **Simplicity.** A minimal but watertight MVP beats a broad, leaky one. Cut breadth, not correctness: the git protections, the token lifecycle and the run state machine stay watertight.
 - **Deterministic gates.** Behaviour is pinned by tests and static checks, not by review alone.
 - **Code wins.** Once code exists, it is the truth; planning docs only record decisions.
 - **Vertical slices.** Each step ends in something visible plus an automated check.
