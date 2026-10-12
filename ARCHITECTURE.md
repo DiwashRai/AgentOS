@@ -130,9 +130,18 @@ flowchart LR
 - **The server never runs git.** Clone, commit and push happen on the worker with the runner's credentials: the job's `GITHUB_TOKEN` on Actions, or `WORKER_ENV_FILE` locally. The server's own GitHub token can only dispatch the workflow. The worker uses the job's `GITHUB_TOKEN`, not a GitHub App installation token, on purpose: App tokens expire after an hour, and the worker pushes after every stage of runs that can last much longer. The cost: PRs it opens don't trigger other workflows.
 
 ## Plugins
-- **A launcher has a `name`, `max_concurrency` and `launch(run_id, server_url, dispatch_token) -> launch_ref`.** There is no cancel (that goes through the protocol), and launchers have no database access, because the dispatcher counts active runs. A fork can add a launcher without knowing the schema. Where: `launchers/base.py`.
+- **A launcher has a `name`, `max_concurrency` and `launch(run_id, server_url, dispatch_token) -> launch_ref`.** There is no cancel for HTTP-mode runs (that goes through the protocol), and launchers have no database access, because the dispatcher counts active runs. A fork can add a launcher without knowing the schema. Where: `launchers/base.py`.
   - `local`: a detached child process with its own process group, so a `--reload` doesn't kill runs. Its environment is the server's minus `AGENTOS_*`, plus `WORKER_ENV_FILE`. Where: `launchers/local.py`.
   - `github`: one workflow dispatch per run. The repo, workflow and ref come from Settings, and `backend/deploy/github/agentos-worker.yml` must stay identical to `.github/workflows/agentos-worker.yml` (a test checks this). Where: `launchers/github.py`.
+  - `mailbox`: for runners that can reach GitHub and a store (Artifactory) but not the server. One package in, one package out:
+    - **Launch:** the server claims the run itself at launch, which builds the manifest and locks the bundle. It uploads the manifest and `worker.py` to `runs/<run id>-<16 hex>/` in the store and dispatches `agentos-mailbox.yml`.
+    - **Three jobs:** fetch (holds the store secret) → work (runs the agent; no store secret, so the agent can never read it) → publish (holds the store secret again; uploads the outbox bytes without parsing them).
+    - **The outbox** is the worker's API calls, recorded one per line (`worker.py --manifest --outbox`). The server replays it through the unchanged `worker_api` service functions, so the state machine, board and UI are shared with HTTP mode.
+    - **Liveness** comes from the Actions run's status, not heartbeats. The runs reaper skips its heartbeat, budget and cancel rules for mailbox runs, and the mailbox reaper applies its own rules, cancelling the Actions run through the API.
+    - **Results arrive when the GitHub job ends**; to watch a run live, open it on GitHub.
+    - **Cleanup:** the run folder is deleted after replay, and an hourly sweep removes folders of runs that are no longer active.
+    - **Where:** `launchers/mailbox.py`, `stores/`, `mailbox/`; the design is in `design/mailbox.md` (local).
+    - **Long term** this is meant to become the only worker protocol, and the HTTP worker path will be deleted.
 - **A ticket source implements `parse_ref`, `fetch` and `post_comment`.** Jira is the only source and is used by import and intake. Where: `sources/base.py`, `sources/jira.py`.
   - Jira Cloud has removed `/rest/api/2/search`, so search uses `POST /rest/api/3/search/jql`, which has no total (`/search/approximate-count` estimates it). Cloud answers an unknown field, project or value with an empty result rather than a 400, so an empty answer is explained via `/rest/api/3/jql/parse`. Data Center still uses `/rest/api/2/search`.
 - **Runtimes are argv templates resolved on the server.** Placeholders (`{model}`, `{agent}`, `{prompt}`) replace whole argv elements, with no shell involved. The worker knows nothing about runtimes, so switching CLIs (e.g. Copilot) is a settings change. Where: `pipeline/runtime.py`, `pipeline/manifest.py`; edited in Settings › Runners.
@@ -151,7 +160,7 @@ flowchart LR
   3. Routes, deps, `meta` and `stream` reach the database only through services.
   4. Only `agentos.db` imports `sqlite3`.
   5. Only the HTTP layer imports FastAPI/Starlette/uvicorn; services raise the pure `ApiError`, which `http_errors.py` translates.
-  6. Plugins (`launchers`, `sources`) import no db, services, routes or FastAPI.
+  6. Plugins (`launchers`, `sources`, `stores`) import no db, services, routes or FastAPI.
   7. There are no import cycles between subpackages.
 - **Drift test:** `server/tests/test_api_drift.py` fails when the committed `web/src/api/openapi.json` doesn't match the backend.
 - **Shared fixtures:** `server/tests/fixtures/manifest_v1.json` is the server ↔ worker contract, and both test suites parse it. `fixtures/path_cases.json` is one table of path rules, run against both `validate.validate_path` and `worker.path_error`.
