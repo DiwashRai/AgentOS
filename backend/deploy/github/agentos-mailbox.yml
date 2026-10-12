@@ -1,0 +1,233 @@
+# AgentOS mailbox worker: runs one AgentOS run on runners that can reach GitHub and Artifactory
+# but NOT the AgentOS server (AGENTOS_LAUNCHER=mailbox; see backend/deploy/README.md, "Mailbox
+# mode").
+#
+# The server uploads runs/<run>/manifest.json and runs/<run>/worker.py to an Artifactory folder and
+# dispatches this workflow with three inputs (run, worker_sha256, manifest_sha256). Three jobs:
+#   fetch   (Artifactory secret)     downloads both files, checks their sha256, hands them on as
+#                                    the Actions artifact `agentos-inbox`
+#   work    (NO Artifactory secret)  runs worker.py, which runs the agent and records its results to
+#                                    outbox.jsonl (the Actions artifact `agentos-outbox`)
+#   publish (Artifactory secret)     uploads outbox.jsonl to runs/<run>/; the server replays it
+# The Artifactory credential never shares a job with the agent.
+#
+# Install: this file must be on the DEFAULT branch of the repo AgentOS dispatches to, at
+# .github/workflows/agentos-mailbox.yml; in AgentOS, Settings > Runners: workflow =
+# agentos-mailbox.yml. On that repo:
+#   - environment `agentos-store` (Settings > Environments), deployment branches: the default
+#     branch only. Secrets AGENTOS_ARTIFACTORY_USER and AGENTOS_ARTIFACTORY_PASSWORD (environment
+#     secrets preferred; repo secrets also work).
+#   - variable AGENTOS_ARTIFACTORY_URL = https://<host>/artifactory/<repo>/<folder>, the same string
+#     as the server's AGENTOS_ARTIFACTORY_URL. A variable, not an input: whoever holds the dispatch
+#     PAT must not be able to send the fetch job (and its credentials) to another host.
+#   - optional variables AGENTOS_RUNS_ON (the work job) and AGENTOS_STORE_RUNS_ON (fetch, publish),
+#     as JSON: "ubuntu-latest" (the default) or ["self-hosted","linux"]. On persistent
+#     self-hosted runners, AGENTOS_STORE_RUNS_ON must name a pool the agent never runs on.
+#
+# The work job needs Python >= 3.11 (as $AOS_PYTHON), git and gh (installed, NOT logged in), and
+# the agent CLI the pipeline's runtimes use plus its credential (see the placeholder step). Repo
+# access comes only from the job's GITHUB_TOKEN (contents + pull-requests: write on THIS repo,
+# expiring with the job): gh reads it as GH_TOKEN, and git uses it through gh's credential helper,
+# set for that step only (GIT_CONFIG_* env). Keep the ticket repos' URLs https.
+#
+# Security: inputs and variables reach scripts only through `env:`, never as `${{ }}` inside a
+# `run:` block (script injection), and every input is checked against a strict pattern first.
+# curl gets the Artifactory credentials from stdin (`--config -`), never in argv. publish uploads
+# the outbox bytes as-is: it never parses or runs them. The Actions artifacts hold the ticket's
+# files and the agent's transcript for 1 day, readable by anyone who can read this repo: keep it
+# private.
+
+name: AgentOS mailbox worker
+run-name: "AgentOS run ${{ inputs.run }} (mailbox)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: AgentOS run folder (<run id>-<16 hex>)
+        required: true
+        type: string
+      worker_sha256:
+        description: sha256 of runs/<run>/worker.py
+        required: true
+        type: string
+      manifest_sha256:
+        description: sha256 of runs/<run>/manifest.json
+        required: true
+        type: string
+
+# Nothing by default; only the work job gets a token that can push (see below).
+permissions: {}
+
+env:
+  AOS_RUN: ${{ inputs.run }}
+  AOS_STORE: ${{ vars.AGENTOS_ARTIFACTORY_URL }}
+
+jobs:
+  fetch:
+    runs-on: ${{ fromJSON(vars.AGENTOS_STORE_RUNS_ON || vars.AGENTOS_RUNS_ON || '"ubuntu-latest"') }}
+    environment: agentos-store
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the manifest and worker.py
+        env:
+          AOS_WORKER_SHA: ${{ inputs.worker_sha256 }}
+          AOS_MANIFEST_SHA: ${{ inputs.manifest_sha256 }}
+          AOS_USER: ${{ secrets.AGENTOS_ARTIFACTORY_USER }}
+          AOS_PASSWORD: ${{ secrets.AGENTOS_ARTIFACTORY_PASSWORD }}
+        run: |
+          [[ "$AOS_RUN" =~ ^[0-9]+-[0-9a-f]{16}$ ]] || { echo "::error::bad run input"; exit 1; }
+          [[ "$AOS_WORKER_SHA" =~ ^[0-9a-f]{64}$ && "$AOS_MANIFEST_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::bad sha256 input"; exit 1; }
+          [[ "$AOS_STORE" =~ ^https://[^[:space:]]+$ ]] || { echo "::error::set the repo variable AGENTOS_ARTIFACTORY_URL (https://<host>/artifactory/<repo>/<folder>)"; exit 1; }
+          [[ -n "$AOS_USER" && -n "$AOS_PASSWORD" ]] || { echo "::error::set the secrets AGENTOS_ARTIFACTORY_USER and AGENTOS_ARTIFACTORY_PASSWORD"; exit 1; }
+          command -v curl >/dev/null && command -v sha256sum >/dev/null || { echo "::error::curl and sha256sum are required"; exit 1; }
+          # curl reads `user = "..."` from stdin (--config -): the credentials never appear in argv.
+          auth() {
+            local u="$AOS_USER:$AOS_PASSWORD"
+            [[ "$u" != *$'\n'* ]] || { echo "::error::the Artifactory credentials contain a newline" >&2; return 1; }
+            u="${u//\\/\\\\}"; u="${u//\"/\\\"}"
+            printf 'user = "%s"\n' "$u"
+          }
+          get() {
+            auth | curl --config - --proto =https --fail --silent --show-error \
+              --retry 3 --retry-delay 2 --retry-all-errors --connect-timeout 10 --max-time 300 \
+              --output "$1" "${AOS_STORE%/}/runs/$AOS_RUN/$1"
+          }
+          mkdir -p "$RUNNER_TEMP/inbox" && cd "$RUNNER_TEMP/inbox"
+          get manifest.json
+          get worker.py
+          printf '%s  manifest.json\n%s  worker.py\n' "$AOS_MANIFEST_SHA" "$AOS_WORKER_SHA" | sha256sum --check --strict
+
+      - name: Hand the inbox to the work job
+        uses: actions/upload-artifact@v4 # pin to a commit SHA if your org requires it
+        with:
+          name: agentos-inbox
+          path: ${{ runner.temp }}/inbox/
+          retention-days: 1
+          if-no-files-found: error
+
+  work:
+    needs: fetch
+    runs-on: ${{ fromJSON(vars.AGENTOS_RUNS_ON || '"ubuntu-latest"') }}
+    # The worker pushes the ticket's branch and the open-pr stage opens/updates its PR.
+    permissions:
+      contents: write
+      pull-requests: write
+    # A backstop only: the server's limit is the run's time budget (plus the Space's claim timeout
+    # for the Actions queue); past it the server cancels this run.
+    timeout-minutes: 720
+    # Optional container. Rocky 8's python3 is 3.6: install python3.11 in the image and set
+    # AOS_PYTHON below to python3.11. The image needs git, gh and the agent CLI.
+    # container:
+    #   image: <registry>/<rocky8-agent-image>:<tag>
+    defaults:
+      run:
+        shell: bash
+    env:
+      AOS_PYTHON: python3
+    steps:
+      - name: Take the inbox
+        uses: actions/download-artifact@v4
+        with:
+          name: agentos-inbox
+          path: ${{ runner.temp }}/inbox
+
+      - name: Check the runner
+        run: |
+          [[ "$AOS_RUN" =~ ^[0-9]+-[0-9a-f]{16}$ ]] || { echo "::error::bad run input"; exit 1; }
+          command -v "$AOS_PYTHON" >/dev/null || { echo "::error::$AOS_PYTHON is not installed"; exit 1; }
+          "$AOS_PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "worker.py needs Python >= 3.11, found " + sys.version.split()[0])'
+          command -v git >/dev/null || { echo "::error::git is not installed"; exit 1; }
+          command -v gh >/dev/null || { echo "::error::gh is not installed"; exit 1; }
+
+      # The agent CLI your runtimes use (Settings > Runners), if the runner doesn't have it. Its
+      # credential is its own secret (never the Artifactory one), passed to the worker step below.
+      # - name: Install the agent CLI
+      #   run: npm install --global <the agent CLI package>   # e.g. through your npm mirror
+
+      - name: Run the worker
+        env:
+          # This job's token (masked by GitHub; scoped by `permissions:` above; expires with the
+          # job). gh reads GH_TOKEN; git gets it from gh's credential helper, for this GitHub
+          # host only (github.server_url: github.com or your GHES) and for this step only.
+          GH_TOKEN: ${{ github.token }}
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper
+          GIT_CONFIG_VALUE_0: ""
+          GIT_CONFIG_KEY_1: credential.${{ github.server_url }}.helper
+          GIT_CONFIG_VALUE_1: "!gh auth git-credential"
+          # The agent CLI's credential, from a secret you add for it, e.g.:
+          # ANTHROPIC_API_KEY: <the agent credential secret>
+        run: |
+          [[ "$AOS_RUN" =~ ^[0-9]+-[0-9a-f]{16}$ ]] || { echo "::error::bad run input"; exit 1; }
+          export PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8
+          mkdir -p "$RUNNER_TEMP/outbox"
+          # Agents read untrusted ticket text; stop the runner from acting on workflow commands
+          # (`::...::`) that anything prints from here on. Masks stay in effect.
+          echo "::stop-commands::$("$AOS_PYTHON" -c 'import secrets; print(secrets.token_hex(16))')"
+          cd "$RUNNER_TEMP"  # outside any checkout, so no parent CLAUDE.md/AGENTS.md leaks in
+          exec "$AOS_PYTHON" "$RUNNER_TEMP/inbox/worker.py" \
+            --manifest "$RUNNER_TEMP/inbox/manifest.json" \
+            --outbox "$RUNNER_TEMP/outbox/outbox.jsonl" \
+            --workdir "$RUNNER_TEMP/agentos-run-$AOS_RUN"
+
+      - name: Hand the outbox to the publish job
+        if: always()
+        uses: actions/upload-artifact@v4 # pin to a commit SHA if your org requires it
+        with:
+          name: agentos-outbox
+          path: ${{ runner.temp }}/outbox/outbox.jsonl
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Clean up
+        if: always()
+        run: |
+          if [[ "$AOS_RUN" =~ ^[0-9]+-[0-9a-f]{16}$ ]]; then
+            rm -rf -- "$RUNNER_TEMP/agentos-run-$AOS_RUN" "$RUNNER_TEMP/inbox" "$RUNNER_TEMP/outbox"
+          fi
+
+  publish:
+    needs: [fetch, work]
+    # Also after a failed or cancelled work job: a partial outbox still carries the synced files.
+    if: always() && needs.fetch.result == 'success'
+    runs-on: ${{ fromJSON(vars.AGENTOS_STORE_RUNS_ON || vars.AGENTOS_RUNS_ON || '"ubuntu-latest"') }}
+    environment: agentos-store
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Take the outbox
+        uses: actions/download-artifact@v4
+        with:
+          name: agentos-outbox
+          path: ${{ runner.temp }}/outbox
+
+      - name: Upload the outbox to Artifactory (bytes only; never parsed or run)
+        env:
+          AOS_USER: ${{ secrets.AGENTOS_ARTIFACTORY_USER }}
+          AOS_PASSWORD: ${{ secrets.AGENTOS_ARTIFACTORY_PASSWORD }}
+        run: |
+          [[ "$AOS_RUN" =~ ^[0-9]+-[0-9a-f]{16}$ ]] || { echo "::error::bad run input"; exit 1; }
+          [[ "$AOS_STORE" =~ ^https://[^[:space:]]+$ ]] || { echo "::error::set the repo variable AGENTOS_ARTIFACTORY_URL (https)"; exit 1; }
+          [[ -n "$AOS_USER" && -n "$AOS_PASSWORD" ]] || { echo "::error::set the secrets AGENTOS_ARTIFACTORY_USER and AGENTOS_ARTIFACTORY_PASSWORD"; exit 1; }
+          f="$RUNNER_TEMP/outbox/outbox.jsonl"
+          [[ -f "$f" && ! -L "$f" ]] || { echo "::error::no outbox (or not a regular file)"; exit 1; }
+          (( $(stat -c %s "$f") <= 536870912 )) || { echo "::error::the outbox is over 512 MiB"; exit 1; }
+          sha="$(sha256sum "$f" | cut -d' ' -f1)"
+          # curl reads `user = "..."` from stdin (--config -): the credentials never appear in argv.
+          auth() {
+            local u="$AOS_USER:$AOS_PASSWORD"
+            [[ "$u" != *$'\n'* ]] || { echo "::error::the Artifactory credentials contain a newline" >&2; return 1; }
+            u="${u//\\/\\\\}"; u="${u//\"/\\\"}"
+            printf 'user = "%s"\n' "$u"
+          }
+          auth | curl --config - --proto =https --fail --silent --show-error \
+            --retry 3 --retry-delay 2 --retry-all-errors --connect-timeout 10 --max-time 1500 \
+            --header "X-Checksum-Sha256: $sha" \
+            --upload-file "$f" "${AOS_STORE%/}/runs/$AOS_RUN/outbox.jsonl"
+          echo "Uploaded runs/$AOS_RUN/outbox.jsonl ($sha)"

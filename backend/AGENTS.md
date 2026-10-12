@@ -61,6 +61,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - `runs/dispatcher.py` `tick(ctx)` launches queued runs within `launcher.max_concurrency`; `runs/reaper.py` `Reaper(ctx).tick(now)` (injected clock) fails runs whose worker never connects, goes silent or exceeds the time budget (rules in its docstring). `main.py` runs both as loops.
 - Dispatch and worker tokens are stored only as SHA-256 hex digests and never cleared (a token's validity follows the run's status).
 - The ticket's bundle is read-only (409 `bundle_locked`) only while a run is `running`.
+- Mailbox runs (`runs.launcher = 'mailbox'`): `mailbox/dispatcher.py` claims server-side at launch (`dispatched → running`), and `mailbox/reaper.py` polls the Actions run and replays the outbox through the unchanged `worker_api.service` functions. With a `MailboxLauncher`, `main.py` runs those loops instead of `runs.dispatcher.tick`, and the runs reaper skips its heartbeat, budget and cancel rules for mailbox runs. Stages and logs land when the GitHub job ends.
 - Helpers other features call: `files.service.write_version` / `current_bundle`; `tickets.service.get_ticket_row`, `ticket_ref(row, space)` / `run_ticket_ref`, `ticket_pipeline`, `active_run_id`.
 
 ## Board
@@ -87,6 +88,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 ## Launchers and deploy
 - `launchers/local.py` `LocalProcessLauncher.from_settings(settings, worker_path)` spawns detached workers (`CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, tested against Ctrl+C) so a `--reload` doesn't kill runs.
 - `launchers/github.py` dispatches `deploy/github/agentos-worker.yml`. Its copy in `.github/workflows/` must stay byte-identical (`test_launcher_github.py`).
+- Mailbox mode (`AGENTOS_LAUNCHER=mailbox`, `design/mailbox.md` if present) is for runners that can't reach the server: `launchers/mailbox.py` puts `runs/<folder>/{manifest.json,worker.py}` in a `stores/` plugin (Artifactory) and dispatches `deploy/github/agentos-mailbox.yml` (inputs `run`, `worker_sha256`, `manifest_sha256`). Its jobs: fetch (Artifactory secret) → work (agent; no secret) → publish (uploads `outbox.jsonl`, bytes only). It has no installed copy in this repo; `test_workflow_mailbox.py` pins its security shape (no `${{` in `run:`, no secrets in work, credentials never in curl's argv).
 - Container and runner setup: `deploy/README.md`.
 
 ## Safety rules

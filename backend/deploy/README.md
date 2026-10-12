@@ -62,7 +62,7 @@ once, without a restart:
 The env keeps what the server needs to start, who may sign in, and secrets. The whole
 `.env.container`: `AGENTOS_PUBLIC_URL`, `AGENTOS_WORKER_URL`, `AGENTOS_JIRA_URL`,
 `AGENTOS_ADMINS`, `AGENTOS_JIRA_SERVICE_EMAIL`, `AGENTOS_JIRA_SERVICE_TOKEN`, `AGENTOS_LAUNCHER`
-and `AGENTOS_GITHUB_TOKEN`.
+and `AGENTOS_GITHUB_TOKEN` (plus the three `AGENTOS_ARTIFACTORY_*` keys in mailbox mode).
 
 **Upgrading from an older version:** each settings area with nothing in the database yet is
 seeded once, on the first start that knows it, from what configured it before: an
@@ -178,6 +178,86 @@ Inside WSL2, `127.0.0.1` means the WSL VM, not Windows, unless WSL uses mirrored
   `AGENTOS_WORKER_URL=http://<that-ip>:8080`.
 - If the runner has an HTTP proxy configured, add that host to `NO_PROXY`. The worker only
   bypasses proxies for loopback hosts.
+
+## Mailbox mode (runners that can't reach the server)
+
+Use it when the GitHub Actions runners reach GitHub and Artifactory but **not** the AgentOS
+server (`AGENTOS_WORKER_URL` would be unreachable). Nothing dials back: for each run the server
+uploads `runs/<run>/manifest.json` (the run, with every bundle file) and `runs/<run>/worker.py` to
+an Artifactory generic folder and dispatches `github/agentos-mailbox.yml`. Its three jobs:
+**fetch** (Artifactory secret) downloads and checksums both files; **work** (no Artifactory
+secret) runs the worker, which runs the agent, pushes the branch and records its results to
+`outbox.jsonl`; **publish** (Artifactory secret) uploads `runs/<run>/outbox.jsonl`. The server
+polls the Actions run, downloads the outbox, replays it through the same checks as HTTP mode, and
+deletes the run's folder. `<run>` is `<run id>-<16 hex>`, unique per run.
+
+**1. Server env** (`.env.container`; `AGENTOS_WORKER_URL` is unused in this mode):
+
+```
+AGENTOS_LAUNCHER=mailbox
+AGENTOS_GITHUB_TOKEN=github_pat_...          # as for the github launcher (above): 1 repo, Actions: Read and write
+# AGENTOS_GITHUB_API_URL=https://ghe.example.com/api/v3   # GHES only
+AGENTOS_ARTIFACTORY_URL=https://artifactory.example.com/artifactory/generic-local/agentos
+AGENTOS_ARTIFACTORY_USER=svc-agentos
+AGENTOS_ARTIFACTORY_PASSWORD=...             # password or access token (secret)
+```
+
+(Again, no inline comments in the real file.) The URL must be https and contain
+`/artifactory/<repo>/`; the server refuses to start otherwise.
+Use **one Artifactory folder per server instance** (a dev server and the work server must not
+share one: the sweep deletes folders of runs it doesn't know).
+
+**2. Artifactory** (a generic repo; the folder is created on first upload):
+- The server's user: **read, deploy, delete** (it uploads, downloads, overwrites and cleans up).
+- The runners' user (the GitHub secrets): **read and deploy** only, ideally no delete/overwrite,
+  so a job can't replace an outbox that's already there.
+- The server must trust Artifactory's TLS certificate (corporate CA) and reach it directly.
+
+**3. GitHub, on the repo runs are dispatched to** (Settings › Runners):
+- **Environment** `agentos-store` (repo Settings › Environments) with deployment branches limited
+  to the **default branch**. Add the secrets `AGENTOS_ARTIFACTORY_USER` and
+  `AGENTOS_ARTIFACTORY_PASSWORD` there (repo secrets work too, but then any workflow on any
+  branch can read them). Only the fetch and publish jobs use this environment.
+- **Variable** `AGENTOS_ARTIFACTORY_URL`: exactly the server's value. It's a variable, not a
+  dispatch input, so the dispatch PAT can't point the fetch job's credentials at another host. A
+  mismatch shows as a 404 in the fetch job.
+- Optional **variables**, as JSON: `AGENTOS_RUNS_ON` for the work job (default
+  `"ubuntu-latest"`, e.g. `["self-hosted","linux"]`), and `AGENTOS_STORE_RUNS_ON` for fetch and
+  publish (default: `AGENTOS_RUNS_ON`).
+
+**4. Install the workflow:** copy `github/agentos-mailbox.yml` to
+`.github/workflows/agentos-mailbox.yml` on the repo's **default branch** and push it. In the app,
+Settings › Runners: the repo, **workflow = `agentos-mailbox.yml`**, and the ref it's on.
+
+**5. Agent CLI:** the work job needs the agent CLI your runtimes use (Settings › Runners), plus
+Python >= 3.11, git and gh (not logged in), which it checks first. On GitHub-hosted runners,
+install the CLI in the commented "Install the agent CLI" step (e.g. npm through your Artifactory
+mirror) and give it its credential from **its own** secret in the "Run the worker" step's `env:`
+(the job's `GITHUB_TOKEN` has no Copilot or Claude entitlement). For a container (e.g. Rocky 8,
+whose `python3` is 3.6), uncomment `container:`, install python3.11 in the image and set
+`AOS_PYTHON: python3.11`.
+
+**What you see in the app:** the run shows as running with a link to the Actions run. Its stage
+progress and logs arrive **when the GitHub job ends** (the stage rail stays pending until then;
+that's expected): watch it live through the Actions link. A cancel in the app cancels the
+Actions run; whatever the worker recorded before that is still published and replayed. A run
+whose job ends without an outbox fails with an error pointing to the GitHub run: look there.
+
+**Security notes:**
+- The agent never shares a job with the Artifactory credential. That only holds if the runners
+  for fetch/publish are **ephemeral** (GitHub-hosted, or self-hosted with `--ephemeral`) **or a
+  separate pool** (`AGENTOS_STORE_RUNS_ON`) the work job never runs on. On a persistent runner
+  the agent could tamper with the runner and steal the credential from a later fetch/publish job.
+- The Actions artifacts `agentos-inbox` (the ticket's files) and `agentos-outbox` (the agent's
+  transcript and synced files) stay for 1 day and are readable by anyone who can read the repo:
+  keep the repo **private** with few readers.
+- Repo access in the work job is only the job's `GITHUB_TOKEN` (contents + pull-requests: write
+  on that repo), handed to git through gh's credential helper for the job's GitHub host, as in
+  the github launcher's workflow.
+- The workflow checks every input against a strict pattern, passes inputs only via `env:`,
+  verifies both sha256s, gives curl the credentials on stdin (never in argv), and uploads the
+  outbox as bytes without reading or running it. The server validates every recorded call as it
+  would over HTTP.
 
 ## Not yet
 
