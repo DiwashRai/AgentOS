@@ -150,7 +150,9 @@ flowchart LR
 
 ## Planned, not built
 - An SSE client in the web app (the server side exists).
-- Jira comments and comment sync; write-back will be official comments only.
+- Jira comments and comment sync: write-back will be official comments only (a resolve note is a candidate), with no status transitions. **Talk is never synced to Jira.**
+- Intake auto take-in: a per-query `auto_take_in`, **off by default**. Tickets it imports have no owner, and Intake still never dispatches.
+- Teams, edited in Settings › Teams, with Jira's team field mapped to `ticket.team_id`. Everyone in the Space sees every ticket, and My queue stays personal. All teams groups by team, or by repo when no teams are set up.
 - Library sets (shared read-only context); pipelines reject them as "not supported yet".
 - Fetch and publish workspace hooks supplied by the runner environment.
 - `CodeHost.find_pr`; today the worker runs `gh pr view`.

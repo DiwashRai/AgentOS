@@ -84,7 +84,9 @@ src/styles/    tokens.css, base.css, fonts.css
 - Use CSS modules (`X.module.css` beside `X.tsx`) and `var(--token)`. Raw colour values are allowed only in `src/styles/tokens.css`. Compose class names with `cx` from `ui/`.
 - Hues carry one meaning each; the hue rules are in the header of `tokens.css`. Identity hues (a project key's prefix, a person's id) come from `keyHue` / `personHue` in `ui/identity.ts`, a stable hash over the `--cat-*` hues.
 - Type: Geist for text and Geist Mono for keys and code. Sentence case everywhere; mono caps only on the YOU pill. Weights are 400, 500 and 600, never 700. The text floor is 11px.
-- Code comments cite the design pack as "DESIGN §n". The pack (`../design/agentos-design-pack/`) is local-only and gitignored, so it may be absent in a clone. In that case `tokens.css` and `src/ui/` are the source of truth. Match them rather than inventing new styling.
+- Surfaces: one recessed background per view. Rows that are in flight or need action are raised (`--row-raised*`); settled rows (done, closed) are flat (`--row-flat*`). My queue and Compact rows carry a 3px status edge, and only Needs-you rows get `--you-wash`.
+- Repos get no colour (one repo can hold many projects). Talk's faces keep their own `--av-*` palette.
+- Code comments cite the design pack as "DESIGN §n". The pack (`../design/agentos-design-pack/`) and its later visual refresh are local-only, so they may be absent in a clone; the refresh overrides the pack's row surfaces, hover, focus, weights, stepper and colours. In that case `tokens.css` and `src/ui/` are the source of truth. Match them rather than inventing new styling.
 
 ## Themes and fonts
 - Themes use the `data-theme` attribute: `light` (default) and `dark`, with `company-light` / `company-dark` as aliases. The selectors are plain attribute selectors, so a subtree can carry its own theme.
@@ -98,12 +100,19 @@ src/styles/    tokens.css, base.css, fonts.css
 ## Motion and keys
 - Animate only `transform` and `opacity`. Honour `prefers-reduced-motion` (`base.css` has a global rule; modules with their own motion add one), and `html.ao-paused` (`app/motion.ts`, `base.css`) stops animation while the tab is hidden.
 - Hover never opens anything. Click, Enter or Space opens.
+- Hover on Compact and Intake rows lights them up (`--row-hover*`) and never moves them. My queue items lift by `--lift` (transform only). Focus looks like hover plus a 2px `--focus` (ink) outline at a 2px offset.
 - Single-key shortcuts check `isShortcut(e)` (`app/keys.ts`), so they never fire while typing or with a modifier held. Current keys: `/` focuses search, Esc closes, `j`/`k` move between rows in Compact.
 
 ## Testing
 - Vitest runs in the `node` environment by default, because jsdom is slow to boot. A test that needs a DOM opts in with `// @vitest-environment jsdom` at the top.
 - Most logic tests are plain unit tests over `domain/` and feature `model.ts` files. Markup checks can use `renderToStaticMarkup` from `react-dom/server` in node. There is no DOM testing library.
 - Tests sit beside the code as `*.test.ts(x)`.
+- Browser checks with the Playwright MCP share one browser between agents. Open your own tab, put `page.route` fakes only on that tab, and never call `unrouteAll`. Switch themes with `document.documentElement.dataset.theme`, not the theme menu, which writes `localStorage` for every tab. Never save real settings or change real tickets from a check; fake the writes with `page.route`.
 
 ## People
 - People are `Person` objects from the API, never bare names or ids. `now.person` / a gate's `person` is a human; `now.actor` is a non-human label (the running stage), so never render an actor as a face.
+
+## Not built on purpose
+- Never: presence, online dots or typing indicators.
+- Not in our model, so not drawn even where the design pack shows them: watchers and a "Watching" rack, reviewers, reactions, a runner pool gauge, queue positions, runner names, acceptance criteria (the TASKS.md plan stands in for them).
+- Not yet: the SSE client (see Polling), the Activity tab, Context diff, the Manifest view, row glides.
