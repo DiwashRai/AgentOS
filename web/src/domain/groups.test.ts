@@ -53,43 +53,54 @@ describe("groups", () => {
     expect(keys(g.atWork)).toEqual(["R", "Q"]);
   });
 
-  it("lists only my waiting tickets, longest first", () => {
+  it("folds blocked tickets that are mine or nobody's into needs-you, by longest wait", () => {
     const g = groups(
       [
-        ticket({ key: "W1", attention: "waiting", owner: mine, attention_since: at("10") }),
-        ticket({ key: "W2", attention: "waiting", owner: mine, attention_since: at("07") }),
-        ticket({ key: "W3", attention: "waiting", owner: theirs, attention_since: at("06") }),
+        ticket({ key: "Y", attention: "needs_you", owner: mine, attention_since: at("09") }),
+        ticket({ key: "M", attention: "blocked", owner: mine, attention_since: at("08") }),
+        ticket({ key: "N", attention: "blocked", owner: null, attention_since: at("10") }),
+        ticket({ key: "T", attention: "blocked", owner: theirs, attention_since: at("05") }),
       ],
       me,
     );
-    expect(keys(g.waitingMine)).toEqual(["W2", "W1"]);
+    expect(keys(g.needYou)).toEqual(["M", "Y", "N"]);
   });
 
-  it("lists every blocked ticket, mine first, then longest", () => {
+  it("lists my inbox tickets as ready to start, longest wait first; nobody's stay out", () => {
     const g = groups(
       [
-        ticket({ key: "T1", attention: "blocked", owner: theirs, attention_since: at("06") }),
-        ticket({ key: "M1", attention: "blocked", owner: mine, attention_since: at("09") }),
-        ticket({ key: "M2", attention: "blocked", owner: mine, attention_since: at("08") }),
-        ticket({ key: "T2", attention: "blocked", owner: null, attention_since: at("05") }),
+        ticket({ key: "I1", attention: "inbox", owner: mine, attention_since: at("10") }),
+        ticket({ key: "I2", attention: "inbox", owner: mine, attention_since: at("07") }),
+        ticket({ key: "I3", attention: "inbox", owner: null, attention_since: at("06") }),
+        ticket({ key: "I4", attention: "inbox", owner: theirs, attention_since: at("06") }),
       ],
       me,
     );
-    expect(keys(g.blocked)).toEqual(["M2", "M1", "T2", "T1"]);
+    expect(keys(g.readyMine)).toEqual(["I2", "I1"]);
   });
 
-  it("lists done tickets most recent first and leaves the inbox out", () => {
+  it("lists my done tickets most recent first, and nobody else's", () => {
     const g = groups(
       [
-        ticket({ key: "D1", attention: "done", attention_since: at("08"), updated_at: at("11") }),
-        ticket({ key: "D2", attention: "done", attention_since: at("10"), updated_at: at("09") }),
-        ticket({ key: "I", attention: "inbox", owner: mine }),
+        ticket({ key: "D1", attention: "done", owner: mine, attention_since: at("08") }),
+        ticket({ key: "D2", attention: "done", owner: mine, attention_since: at("10") }),
+        ticket({ key: "D3", attention: "done", owner: theirs, attention_since: at("11") }),
       ],
       me,
     );
-    expect(keys(g.doneRecent)).toEqual(["D2", "D1"]);
-    const all = [...g.needYou, ...g.atWork, ...g.waitingMine, ...g.blocked, ...g.doneRecent];
-    expect(keys(all)).not.toContain("I");
+    expect(keys(g.doneMine)).toEqual(["D2", "D1"]);
+  });
+
+  it("leaves waiting tickets out: one I own is never waiting, and others' aren't mine", () => {
+    const g = groups(
+      [
+        ticket({ key: "W1", attention: "waiting", owner: theirs }),
+        ticket({ key: "W2", attention: "waiting", owner: mine }),
+      ],
+      me,
+    );
+    const all = [...g.needYou, ...g.atWork, ...g.readyMine, ...g.doneMine];
+    expect(all).toEqual([]);
   });
 
   it("breaks ties by key so the order is stable", () => {

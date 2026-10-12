@@ -43,7 +43,7 @@ export function Rail() {
       <RailLink to="/teams" label="All teams">
         <TeamsIcon />
       </RailLink>
-      <RailLink to="/" label="My queue" badge={counts.needYou > 0}>
+      <RailLink to="/" label="My queue" badge={counts.yourMove > 0}>
         <QueueIcon />
       </RailLink>
       <RailLink to="/compact" label="Compact">

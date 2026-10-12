@@ -1,6 +1,6 @@
 // My queue rows (refresh HANDOFF §5 "My queue row"): one grid for every zone, so titles share one
-// x and stage labels sit at 90px. Needs you / Waiting / Blocked are raised; Done (incl. abandoned)
-// is flat. Click / Enter / Space anywhere on the row opens the peek; the row's buttons keep their
+// x and stage labels sit at 90px. Needs you (incl. blocked) and Ready to start are raised; Done
+// (incl. abandoned) is flat. Click / Enter / Space anywhere on the row opens the peek; the row's buttons keep their
 // action.
 import type { ReactNode } from "react";
 
@@ -42,12 +42,13 @@ interface RowProps {
   onOpen: (key: string) => void;
 }
 
-/** The row's age cell: the kit Age, large on Needs-you rows ("38m", "3h 05m"). */
+/** The row's age cell: the kit Age, large in the Needs you zone (needs-you and blocked rows:
+ *  "38m", "3h 05m"). */
 function RowAge({ ticket: t, now }: { ticket: Ticket; now: number }) {
   return (
     <Age
       text={age(t.attention_since, now)}
-      size={t.attention === "needs_you" ? "lg" : "md"}
+      size={t.attention === "needs_you" || t.attention === "blocked" ? "lg" : "md"}
       title={new Date(t.attention_since).toLocaleString()}
       className={s.age}
     />

@@ -1,7 +1,9 @@
 // My queue (home), DESIGN §5 with our cuts (no Watching rack, pool gauge, freed-runner slots,
-// NEW · PINNED or overflow chips). Every list and number comes from src/domain over useBoard()'s
-// tickets, narrowed by the search (`?q=`); this view only lays them out. Click / Enter / Space on
-// an item opens the peek (`?peek=KEY`).
+// NEW · PINNED or overflow chips) and only what is the viewer's: Needs you (incl. blocked tickets
+// that are mine or nobody's), Agents at work, Ready to start (my inbox), Done recently (mine, last
+// 7 days). The team's waiting and blocked tickets live in Compact. Every list and number comes
+// from src/domain over useBoard()'s tickets, narrowed by the search (`?q=`); this view only lays
+// them out. Click / Enter / Space on an item opens the peek (`?peek=KEY`).
 import { type ReactNode, useMemo } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router";
 
@@ -10,7 +12,7 @@ import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
 import { useSearchQuery } from "../../app/useSearchQuery";
-import { counts, shippedThisWeek } from "../../domain/counts";
+import { counts, doneThisWeek, shippedThisWeek } from "../../domain/counts";
 import { groups } from "../../domain/groups";
 import { bySearch } from "../../domain/search";
 import { statusWords, words } from "../../domain/words";
@@ -18,35 +20,10 @@ import { Button, EmptyRow, linkClass, StatusMark, TickBadge, ZoneHead } from "..
 import { usePeek } from "../peek/usePeek";
 import { withParam } from "../peek/params";
 import { useNow } from "../runs/useNow";
-import {
-  atWorkNote,
-  CAP,
-  compactHref,
-  listsAnything,
-  myRunning,
-  rackGroups,
-  showAllHref,
-  SHOW_ALL_FILTER,
-} from "./model";
+import { atWorkNote, CAP, compactHref, listsAnything, myRunning, rackGroups } from "./model";
 import s from "./Queue.module.css";
 import { NeedRow, QuietRow } from "./Rows";
 import { Rack, RunTiles } from "./Runs";
-
-function ShowAll({
-  group,
-  total,
-  q,
-}: {
-  group: keyof typeof SHOW_ALL_FILTER;
-  total: number;
-  q: string;
-}) {
-  return (
-    <RouterLink className={linkClass} to={showAllHref(group, q)}>
-      {`Show all ${String(total)}`}
-    </RouterLink>
-  );
-}
 
 export function NewTicketPrompt() {
   const [, setParams] = useSearchParams();
@@ -108,15 +85,16 @@ export function QueueView() {
   const now = useNow(1000);
   const tiles = useMemo(() => myRunning(g.atWork), [g.atWork]);
   const rack = useMemo(() => rackGroups(shown, g.atWork, me), [shown, g.atWork, me]);
+  const doneRecent = doneThisWeek(g.doneMine, now);
 
   let body;
   if (board.isPending) body = <Quiet>Loading</Quiet>;
   else if (board.error)
     body = <Quiet error>{`Can't reach the server · ${board.error.message}`}</Quiet>;
   else if (board.tickets.length === 0) body = <NewTicketPrompt />;
-  else if (query.length > 0 && !listsAnything(g, rack))
+  else if (query.length > 0 && !listsAnything({ ...g, doneMine: doneRecent }, rack))
     body = (
-      // Matches can sit where My queue never shows (the inbox, the team's waits): point there.
+      // Matches can sit where My queue never shows (the team's tickets, older done): point there.
       <NoMatches where={shown.length > 0 ? "in My queue" : undefined}>
         {shown.length > 0 && (
           <RouterLink className={linkClass} to={compactHref({ q })}>
@@ -126,37 +104,10 @@ export function QueueView() {
       </NoMatches>
     );
   else {
-    const needShown = g.needYou.slice(0, CAP.needYou);
-    const needMore = g.needYou.length - needShown.length;
-    const quiet = [
-      {
-        group: "waitingMine",
-        title: statusWords.wait,
-        items: g.waitingMine,
-        count: c.waitingMine,
-        note: undefined,
-        tone: "neutral",
-      },
-      {
-        group: "blocked",
-        title: statusWords.blk,
-        items: g.blocked,
-        count: c.blocked,
-        note: "Yours first",
-        tone: "neutral",
-      },
-      {
-        group: "doneRecent",
-        title: words.doneRecent,
-        items: g.doneRecent,
-        count: c.done,
-        note: undefined,
-        tone: "done",
-      },
-    ] as const;
+    const shipped = shippedThisWeek(doneRecent, now);
     body = (
       <>
-        {needShown.length === 0 ? (
+        {g.needYou.length === 0 ? (
           <EmptyRow lead="All clear" className={s.emptyZone}>
             nothing needs you
           </EmptyRow>
@@ -165,21 +116,19 @@ export function QueueView() {
             <ZoneHead
               id="q-need"
               title={statusWords.you}
-              count={c.needYou}
+              count={g.needYou.length}
               note="Longest wait first"
               tone="you"
             />
             <div className={s.list}>
-              {needShown.map((t) => (
-                <NeedRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
-              ))}
+              {g.needYou.map((t) =>
+                t.attention === "needs_you" ? (
+                  <NeedRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
+                ) : (
+                  <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
+                ),
+              )}
             </div>
-            {needMore > 0 && (
-              <div className={s.overflow}>
-                <b>{`+${String(needMore)} more`}</b>
-                <ShowAll group="needYou" total={g.needYou.length} q={q} />
-              </div>
-            )}
           </section>
         )}
 
@@ -201,44 +150,54 @@ export function QueueView() {
           </EmptyRow>
         )}
 
-        {quiet.map(({ group, title, items, count, note, tone }) => {
-          if (items.length === 0) return null;
-          const shipped = group === "doneRecent" ? shippedThisWeek(shown, now) : 0;
-          const more =
-            items.length > CAP.quiet ? <ShowAll group={group} total={items.length} q={q} /> : null;
-          return (
-            <section key={group} aria-labelledby={`q-${group}`}>
-              <ZoneHead
-                id={`q-${group}`}
-                title={title}
-                count={count}
-                note={note}
-                tone={tone}
-                right={
-                  shipped > 0 || more ? (
-                    <>
-                      {shipped > 0 && (
-                        <span className={s.stat}>
-                          <TickBadge size={12} />
-                          <span>
-                            <b>{`${String(shipped)} shipped`}</b>
-                            <span className={s.statWeek}> this week</span>
-                          </span>
-                        </span>
-                      )}
-                      {more}
-                    </>
-                  ) : undefined
-                }
-              />
-              <div className={s.list}>
-                {items.slice(0, CAP.quiet).map((t) => (
-                  <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
-                ))}
-              </div>
-            </section>
-          );
-        })}
+        {g.readyMine.length > 0 && (
+          <section aria-labelledby="q-ready">
+            <ZoneHead
+              id="q-ready"
+              title={words.readyToStart}
+              count={g.readyMine.length}
+              note="Oldest first"
+            />
+            <div className={s.list}>
+              {g.readyMine.map((t) => (
+                <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {doneRecent.length > 0 && (
+          <section aria-labelledby="q-done">
+            <ZoneHead
+              id="q-done"
+              title={words.doneRecent}
+              count={doneRecent.length}
+              note="Yours, last 7 days"
+              tone="done"
+              right={
+                <>
+                  {shipped > 0 && (
+                    <span className={s.stat}>
+                      <TickBadge size={12} />
+                      <span>
+                        <b>{`${String(shipped)} shipped`}</b>
+                        <span className={s.statWeek}> this week</span>
+                      </span>
+                    </span>
+                  )}
+                  <RouterLink className={linkClass} to={compactHref({ f: "done", q })}>
+                    All done tickets
+                  </RouterLink>
+                </>
+              }
+            />
+            <div className={s.list}>
+              {doneRecent.slice(0, CAP.done).map((t) => (
+                <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
+              ))}
+            </div>
+          </section>
+        )}
       </>
     );
   }
@@ -247,7 +206,7 @@ export function QueueView() {
       <TopBar
         title="My queue"
         context={me?.display_name}
-        counters={["needYou", "blockedMine", "mine", "|", "running", "queued"]}
+        counters={["yourMove", "mine", "|", "running", "queued"]}
       />
       <Surface className={s.surface}>{body}</Surface>
     </>

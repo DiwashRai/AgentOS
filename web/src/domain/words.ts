@@ -34,6 +34,7 @@ export const attentionWords: Record<Attention, string> = {
 
 /** Other fixed phrases from DESIGN §16. */
 export const words = {
+  readyToStart: "Ready to start",
   atWork: "Agents at work",
   waitingSomeone: "Waiting on someone",
   doneRecent: "Done recently",

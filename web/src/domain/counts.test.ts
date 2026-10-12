@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COUNTERS, counts, shippedThisWeek } from "./counts";
+import { COUNTERS, counts, doneThisWeek, shippedThisWeek } from "./counts";
 import { person, run, ticket } from "./fixtures";
 
 const me = { id: 1 };
@@ -32,6 +32,7 @@ describe("counts", () => {
     );
     expect(c).toEqual({
       needYou: 2,
+      yourMove: 3,
       blockedMine: 1,
       mine: 2,
       running: 2,
@@ -43,6 +44,18 @@ describe("counts", () => {
       inFlight: 10,
       done: 1,
     });
+  });
+
+  it("counts blocked tickets that are mine or nobody's as my move, never someone else's", () => {
+    const c = counts(
+      [
+        ticket({ attention: "blocked", owner: mine }),
+        ticket({ attention: "blocked", owner: null }),
+        ticket({ attention: "blocked", owner: theirs }),
+      ],
+      me,
+    );
+    expect(c.yourMove).toBe(2);
   });
 
   it("counts nothing as mine when signed out", () => {
@@ -71,5 +84,22 @@ describe("shippedThisWeek", () => {
       ticket({ attention: "needs_you", attention_since: "2026-10-11T09:00:00Z" }),
     ];
     expect(shippedThisWeek(tickets, now)).toBe(2);
+  });
+
+  it("keeps the done tickets of the last 7 days, in order, whatever their outcome", () => {
+    const by = person(1);
+    const tickets = [
+      done({
+        key: "A",
+        resolution: { outcome: "abandoned", note: null, by, at: "2026-10-11T09:00:00Z" },
+      }),
+      done({
+        key: "B",
+        resolution: { outcome: "completed", note: null, by, at: "2026-10-01T09:00:00Z" },
+      }),
+      done({ key: "C", attention_since: "2026-10-10T09:00:00Z" }),
+      ticket({ key: "D", attention: "needs_you", attention_since: "2026-10-11T09:00:00Z" }),
+    ];
+    expect(doneThisWeek(tickets, now).map((t) => t.key)).toEqual(["A", "C"]);
   });
 });

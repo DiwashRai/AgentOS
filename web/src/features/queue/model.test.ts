@@ -19,7 +19,6 @@ import {
   rowLook,
   runName,
   runSeconds,
-  showAllHref,
   sourceWord,
   statusMark,
   subLine,
@@ -218,20 +217,23 @@ describe("the rack", () => {
   });
 });
 
-it("links Show all to the compact filter, keeping the search", () => {
-  expect(showAllHref("needYou")).toBe("/compact?f=needs_you");
-  expect(showAllHref("doneRecent")).toBe("/compact?f=done");
-  expect(showAllHref("blocked", "talk pane")).toBe("/compact?f=blocked&q=talk+pane");
+it("links to Compact, keeping the search and dropping empty params", () => {
+  expect(compactHref({ f: "done", q: "talk pane" })).toBe("/compact?f=done&q=talk+pane");
   expect(compactHref({ q: "" })).toBe("/compact");
 });
 
-it("knows when My queue lists nothing (inbox and the team's waiting tickets are not on it)", () => {
-  const inbox = ticket({ key: "AOS-1", attention: "inbox" });
-  const theirs = ticket({ key: "AOS-2", attention: "waiting", owner: sam });
-  const quiet = [inbox, theirs];
+it("knows when My queue lists nothing (other people's tickets are not on it)", () => {
+  const quiet = [
+    ticket({ key: "AOS-1", attention: "inbox" }),
+    ticket({ key: "AOS-2", attention: "waiting", owner: sam }),
+    ticket({ key: "AOS-5", attention: "blocked", owner: sam }),
+    ticket({ key: "AOS-6", attention: "done", owner: sam }),
+  ];
   expect(listsAnything(groups(quiet, me), rackGroups(quiet, [], me))).toBe(false);
   const blocked = [ticket({ key: "AOS-3", attention: "blocked" })];
   expect(listsAnything(groups(blocked, me), [])).toBe(true);
+  const ready = [ticket({ key: "AOS-7", attention: "inbox", owner: person(1) })];
+  expect(listsAnything(groups(ready, me), [])).toBe(true);
   const running = [ticket({ key: "AOS-4", attention: "running", owner: sam })];
   expect(listsAnything(groups(running, me), rackGroups(running, [], me))).toBe(true);
 });

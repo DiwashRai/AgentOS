@@ -13,21 +13,9 @@ import type { MeterState } from "../../ui";
 type Ticket = Schemas["TicketSummary"];
 type Person = Schemas["Person"];
 
-/** Caps from DESIGN §18 (My queue). */
-export const CAP = { needYou: 5, tiles: 5, quiet: 3 } as const;
-
-/** The `/compact` filter each "Show all N" link opens (`/compact?f=<group>`). */
-export const SHOW_ALL_FILTER = {
-  needYou: "needs_you",
-  waitingMine: "waiting",
-  blocked: "blocked",
-  doneRecent: "done",
-} as const;
-
-/** The search (`q`) rides along, so "Show all N" lists the same N. */
-export function showAllHref(group: keyof typeof SHOW_ALL_FILTER, q = ""): string {
-  return compactHref({ f: SHOW_ALL_FILTER[group], q });
-}
+/** Caps (DESIGN §18, adapted): Needs you and Ready to start list everything, because each row is
+ *  something to do; Done recently shows the newest few. */
+export const CAP = { tiles: 5, done: 3 } as const;
 
 /** `/compact` with the given params (empty ones dropped). */
 export function compactHref(params: Record<string, string>): string {
@@ -37,10 +25,10 @@ export function compactHref(params: Record<string, string>): string {
   return qs ? `/compact?${qs}` : "/compact";
 }
 
-/** True when My queue lists anything: one of its groups, or the team rack. Inbox tickets and
- *  the team's waiting tickets are never on it. */
+/** True when My queue lists anything: one of its groups, or the team rack. Other people's
+ *  inbox, waiting, blocked and done tickets are never on it; Compact shows the whole team. */
 export function listsAnything(g: Groups<unknown>, rack: readonly RackGroup<unknown>[]): boolean {
-  const lists = [g.needYou, g.atWork, g.waitingMine, g.blocked, g.doneRecent];
+  const lists = [g.needYou, g.atWork, g.readyMine, g.doneMine];
   return lists.some((list) => list.length > 0) || rack.length > 0;
 }
 

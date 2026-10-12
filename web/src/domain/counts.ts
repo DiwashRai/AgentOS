@@ -11,6 +11,8 @@ type CountTicket = Pick<Schemas["TicketSummary"], "attention" | "owner">;
 export interface Counts {
   /** status you */
   needYou: number;
+  /** My queue's Needs you: status you, plus blocked tickets that are mine or nobody's */
+  yourMove: number;
   /** blocked and mine */
   blockedMine: number;
   /** running or queued runs on my tickets */
@@ -38,6 +40,7 @@ export type CountKey = keyof Counts;
 /** How each count is shown as a top-bar counter: its mark (null = none) and label. */
 export const COUNTERS: Record<CountKey, { mark: StatusKind | null; label: string }> = {
   needYou: { mark: "you", label: "need you" },
+  yourMove: { mark: "you", label: "need you" },
   blockedMine: { mark: "blk", label: "blocked, yours" },
   mine: { mark: "run", label: "runs yours" },
   running: { mark: "run", label: "running" },
@@ -57,19 +60,26 @@ type ShippedTicket = Pick<
   "attention" | "state" | "resolution" | "attention_since"
 >;
 
-/** "N shipped this week": done tickets that ended Complete in the last 7 days (by when they were
- *  resolved, else when they became done). Counts only what the board returned. */
-export function shippedThisWeek(tickets: readonly ShippedTicket[], nowMs: number): number {
+/** Done tickets that ended in the last 7 days (by when they were resolved, else when they became
+ *  done), in the order given. */
+export function doneThisWeek<T extends ShippedTicket>(tickets: readonly T[], nowMs: number): T[] {
   return tickets.filter((t) => {
-    if (outcomeOf(t) !== "completed") return false;
+    if (t.attention !== "done") return false;
     const at = Date.parse(t.resolution?.at ?? t.attention_since);
     return nowMs - at <= WEEK_MS;
-  }).length;
+  });
+}
+
+/** "N shipped this week": the tickets of `doneThisWeek` that ended Complete. Counts only what it
+ *  is given. */
+export function shippedThisWeek(tickets: readonly ShippedTicket[], nowMs: number): number {
+  return doneThisWeek(tickets, nowMs).filter((t) => outcomeOf(t) === "completed").length;
 }
 
 export function counts(tickets: readonly CountTicket[], me: MeRef): Counts {
   const c: Counts = {
     needYou: 0,
+    yourMove: 0,
     blockedMine: 0,
     mine: 0,
     running: 0,
@@ -87,10 +97,12 @@ export function counts(tickets: readonly CountTicket[], me: MeRef): Counts {
     switch (kind) {
       case "you":
         c.needYou++;
+        c.yourMove++;
         break;
       case "blk":
         c.blocked++;
         if (mine) c.blockedMine++;
+        if (mine || t.owner === null) c.yourMove++;
         break;
       case "run":
         c.running++;
