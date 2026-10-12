@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from agentos.models import (
+    DispatchBlock,
     NowInfo,
     Person,
     Pipeline,
@@ -18,6 +19,7 @@ from agentos.models import (
     StageRunStatus,
     TaskProgress,
     TicketState,
+    WorkspaceMode,
 )
 from agentos.pipeline.scaffold import default_pipeline
 from agentos.tickets.board import (
@@ -920,3 +922,24 @@ TASKS = TaskProgress(done=2, total=5)
 )
 def test_now(f: TicketFacts, expected: NowInfo) -> None:
     assert for_viewer(derive(f), ME.id).now == expected
+
+
+# ------------------------------------------------------------------ dispatch_block (request 22A)
+
+
+@pytest.mark.parametrize(
+    ("state", "mode", "base", "blocked"),
+    [
+        pytest.param("open", "repo", None, True, id="repo-without-base"),
+        pytest.param("open", "repo", "main", False, id="repo-with-base"),
+        pytest.param("open", "none", None, False, id="no-repo"),
+        pytest.param("done", "repo", None, False, id="done"),
+        pytest.param("closed", "repo", None, False, id="closed"),
+    ],
+)
+def test_dispatch_block(
+    state: TicketState, mode: WorkspaceMode, base: str | None, blocked: bool
+) -> None:
+    f = replace(facts(GATED_PLAN, state=state), workspace_mode=mode, base_branch=base)
+    expected = DispatchBlock(code="base_branch_missing", text="Set a base branch first")
+    assert derive(f).dispatch_block == (expected if blocked else None)

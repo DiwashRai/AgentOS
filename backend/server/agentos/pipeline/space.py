@@ -31,6 +31,8 @@ from agentos.models import (
     KEY_PREFIX_PATTERN,
     REPO_NAME_PATTERN,
     SPACE_NAME_MAX,
+    BaseBranchOrigin,
+    BaseBranchSource,
     IntakeQuerySpec,
     JiraProjectKey,
     RepoInfo,
@@ -50,6 +52,7 @@ __all__ = [
     "SpaceSection",
     "query_id",
     "repo_url_key",
+    "resolve_base_branch",
 ]
 
 DEFAULT_SPACE_NAME = "AgentOS"
@@ -78,17 +81,23 @@ class RepoSpec(BaseModel):
 
     name: str = Field(pattern=REPO_NAME_PATTERN)
     url: str
-    default_branch: str = DEFAULT_BRANCH
+    # None = no default branch: each ticket on the repo needs its own (request 22A). Omitted in
+    # agentos.toml → "main"; `default_branch = ""` there (or null/blank in the API) → None.
+    default_branch: str | None = DEFAULT_BRANCH
 
     @field_validator("url")
     @classmethod
     def _url(cls, value: str) -> str:
         return _checked(validate_repo_url, value)
 
-    @field_validator("default_branch")
+    @field_validator("default_branch", mode="before")
     @classmethod
-    def _branch(cls, value: str) -> str:
-        return _checked(validate_base_branch, value)
+    def _branch(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if isinstance(value, str):
+            return _checked(validate_base_branch, value)
+        return value  # not a string: the type check reports it
 
     def info(self) -> RepoInfo:
         return RepoInfo(name=self.name, url=self.url, default_branch=self.default_branch)
@@ -224,20 +233,47 @@ class SpaceConfig(BaseModel):
         key = repo_url_key(url)
         return next((r for r in self.repos if repo_url_key(r.url) == key), None)
 
-    def resolve(self, repo: str | None, base_branch: str | None) -> ResolvedRepo:
-        """A ticket's stored `repo` + own `base_branch` → what the UI and the manifest see.
+    def resolve(
+        self, repo: str | None, base_branch: str | None, *, source: BaseBranchSource
+    ) -> ResolvedRepo:
+        """A ticket's stored `repo` + own `base_branch` (+ its `base_branch_source`) → what the
+        UI, the board and the manifest see (`resolve_base_branch`).
 
         No repo → no-repo mode (nothing else). A repo that left the catalog stays in repo mode
-        with a null `url` (dispatch rejects it) and only the ticket's own base branch.
+        with a null `url` (dispatch rejects it) and no repo default.
         """
         if repo is None:
-            return ResolvedRepo(mode="none", name=None, url=None, base_branch=None)
+            return ResolvedRepo(mode="none", name=None, url=None, base_branch=None, origin=None)
         spec = self.repo(repo)
-        if spec is None:
-            return ResolvedRepo(mode="repo", name=repo, url=None, base_branch=base_branch)
-        return ResolvedRepo(
-            mode="repo", name=repo, url=spec.url, base_branch=base_branch or spec.default_branch
+        branch, origin = resolve_base_branch(
+            source, base_branch, spec.default_branch if spec is not None else None
         )
+        return ResolvedRepo(
+            mode="repo",
+            name=repo,
+            url=spec.url if spec is not None else None,
+            base_branch=branch,
+            origin=origin,
+        )
+
+
+def resolve_base_branch(
+    source: BaseBranchSource, own: str | None, repo_default: str | None
+) -> tuple[str | None, BaseBranchOrigin]:
+    """A repo ticket's base branch and where it came from: the one rule every reader uses (the
+    ticket detail, the board's `dispatch_block`, the dispatch guard and the manifest).
+
+    `default` → the ticket's own (set when a run locked it: the default it started from) else the
+    repo's `default_branch` (may be None);
+    `manual` / `mapping` → the ticket's own only. A mapping that left it blank stays blank: the
+    repo default must not fill it, or work could start from the wrong release branch.
+    """
+    if own is not None:
+        origin: BaseBranchOrigin = "repo_default" if source == "default" else source
+        return own, origin
+    if source == "default" and repo_default is not None:
+        return repo_default, "repo_default"
+    return None, "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +282,7 @@ class ResolvedRepo:
     name: str | None
     url: str | None
     base_branch: str | None
+    origin: BaseBranchOrigin | None  # None in no-repo mode
 
 
 def repo_url_key(url: str) -> str:

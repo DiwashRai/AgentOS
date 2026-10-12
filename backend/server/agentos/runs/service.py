@@ -183,7 +183,8 @@ def dispatch(
 
     "Continue" and "Retry" are dispatches with the default `from_stage` (`board.next_stage`);
     "Run from…" passes one. The manifest is built later, at claim. A ticket whose repo is no
-    longer in the Space's catalog → 422 `validation_error`.
+    longer in the Space's catalog → 422 `validation_error`; a repo ticket without a base branch
+    → 409 `base_branch_missing` (`run_ticket_ref`; the board's `dispatch_block`).
     """
     now = to_db(utcnow())
     with db.tx() as conn:

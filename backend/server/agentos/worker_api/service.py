@@ -194,6 +194,7 @@ def post_events(
         ).fetchone()[0]
         dropped = 0
         stages_moved = 0
+        started = False  # a new `stage_started` was stored
         for ev in events:
             if ev.type == "log" and stored >= MAX_EVENTS_PER_RUN:
                 dropped += 1
@@ -204,6 +205,7 @@ def post_events(
                 (run_id, ev.seq, to_db(ev.ts), ev.stage_id, ev.type, ev.data.model_dump_json()),
             )
             stored += cursor.rowcount
+            started |= ev.type == "stage_started" and cursor.rowcount > 0
             if ev.stage_id is None:
                 continue
             at = to_db(min(ev.ts, now_dt))
@@ -233,11 +235,36 @@ def post_events(
                 ).rowcount
         if dropped:
             log.warning("run %s: over %s events, dropped %s log events", run_id, stored, dropped)
+        locked = started and _lock_base_branch(conn, run)
         conn.execute("UPDATE runs SET last_seen_at = ? WHERE id = ?", (now, run_id))
-        key = run_ticket_key(conn, run_id) if stages_moved else None
+        key = run_ticket_key(conn, run_id) if stages_moved or locked else None
     if key is not None:
-        broker.run(key, run_id)
+        broker.run(key, run_id)  # also publishes ticket(key): the lock shows on the ticket
     return run["cancel_requested_at"] is not None
+
+
+def _lock_base_branch(conn: Conn, run: Row) -> bool:
+    """Lock the base branch of the run's ticket on the run's first stored `stage_started`, if no
+    run locked it before (request 22A). Returns whether it locked it now.
+
+    Why then: the worker emits `stage_started` only after `_setup_workspace` succeeded, i.e. the
+    ticket branch was checked out from `origin/{base_branch}` (or from an existing
+    `origin/agent/{KEY}`). From then on work exists on top of that base, so changing it (or the
+    repo) would strand it. A run that fails at checkout (a wrong base branch) never sends one, so
+    the owner can still fix the base. Mailbox runs replay their events through `post_events`, so
+    the same moment applies. A no-repo ticket has no base branch: nothing to lock. The ticket's
+    `repo` can't change while the run is active (409 `run_active`), so it is the run's.
+
+    A ticket that followed the repo default is pinned to the branch the run started from (its
+    manifest), so a later change to the repo's `default_branch` doesn't move locked work.
+    """
+    cursor = conn.execute(
+        "UPDATE tickets SET base_branch_locked_by_run = ?, base_branch = COALESCE(base_branch, "
+        "(SELECT json_extract(manifest, '$.workspace.base_branch') FROM runs WHERE id = ?)) "
+        "WHERE id = ? AND repo IS NOT NULL AND base_branch_locked_by_run IS NULL",
+        (run["id"], run["id"], run["ticket_id"]),
+    )
+    return cursor.rowcount > 0
 
 
 def sync(

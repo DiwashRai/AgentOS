@@ -19,7 +19,7 @@ from pydantic import SecretStr
 
 from agentos.config import ConfigError, Settings
 from agentos.context import AppContext
-from agentos.db import MIGRATIONS_DIR, Database
+from agentos.db import MIGRATIONS_DIR, Database, migrations
 from agentos.intake import service as intake
 from agentos.main import create_app
 from agentos.models import (
@@ -712,4 +712,4 @@ def test_an_upgraded_instance_keeps_its_config(
         assert [r.name for r in cfg.repos] == ["agentos", "agentos-scratch"]
         assert space(c).jira_projects == ["SCRUM", "OPS"]
         assert len(queries(c).queries) == 2
-    assert Database(settings.db_path).user_version() == 6
+    assert Database(settings.db_path).user_version() == len(migrations())

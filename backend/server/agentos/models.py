@@ -81,6 +81,9 @@ ErrorCode = Literal[
     "invalid_pipeline",
     "render_error",
     "run_gone",
+    # base branch (request 22A)
+    "base_branch_missing",  # dispatch of a repo ticket whose base branch resolves to nothing
+    "base_branch_locked",  # changing the base branch or repo after a run started work on it
 ]
 
 
@@ -123,7 +126,8 @@ class RepoInfo(ApiModel):
 
     name: str
     url: str
-    default_branch: str
+    # null = none: a ticket on this repo needs its own base branch before it can be dispatched.
+    default_branch: str | None
 
 
 class AppConfig(ApiModel):
@@ -381,6 +385,41 @@ class ResolveRequest(ApiModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+# Where a repo ticket's own `base_branch` came from, as stored (`tickets.base_branch_source`):
+# `default` = none of its own (the repo's default_branch applies), `manual` = set by hand,
+# `mapping` = set (or left blank) by a Jira field mapping (request 22B). Not in the API.
+BaseBranchSource = Literal["default", "manual", "mapping"]
+# What the UI shows: `manual` / `mapping` = the ticket's own branch, `repo_default` = the repo's
+# default_branch, `none` = blank (dispatch is refused until it is set).
+BaseBranchOrigin = Literal["manual", "mapping", "repo_default", "none"]
+
+
+class BaseBranchInfo(ApiModel):
+    """Where a repo ticket's resolved `base_branch` came from, and whether it can still change.
+
+    `source_value`: the raw field text a mapping read (several joined with `, `), kept after a
+    manual edit for the record; null otherwise. `reason`: a short sentence when the branch is
+    blank (`source: none`), else null. `set_by`: who set it by hand (`manual` only). `locked`:
+    a run has started work from it (the worker got past checking out the ticket branch), so a
+    PATCH of `base_branch` or `repo` → 409 `base_branch_locked`; `locked_by_run` is that run.
+    """
+
+    source: BaseBranchOrigin
+    source_value: str | None
+    reason: str | None
+    set_by: Person | None
+    locked: bool
+    locked_by_run: int | None
+
+
+class DispatchBlock(ApiModel):
+    """Why Dispatch / Continue / Retry / Run from… would be refused now: the 409 `code` the
+    dispatch endpoint answers with, and a short UI sentence (e.g. "Set a base branch first")."""
+
+    code: ErrorCode
+    text: str
+
+
 class TicketSummary(ApiModel):
     key: str
     title: str
@@ -406,6 +445,10 @@ class TicketSummary(ApiModel):
     repo_name: str | None  # the ticket's repo catalog name; null = no-repo mode
     # The PR for `branch`, as last reported by a worker (a `gh pr view` at the end of a repo run).
     pr_url: str | None
+    # Set when the dispatch endpoint would refuse this open ticket (e.g. a repo ticket without a
+    # base branch → `base_branch_missing`): disable Dispatch / Continue / Retry and show `text`.
+    # Null for done/closed tickets (they must be reopened first anyway).
+    dispatch_block: DispatchBlock | None
     updated_at: AwareDatetime
 
 
@@ -414,10 +457,14 @@ class TicketDetail(TicketSummary):
     slug: str
     skill_name: str
     # `repo_name` set → "repo". `repo_url` is resolved from the catalog (null if the repo left
-    # it); `base_branch` is the ticket's own, else the repo's default_branch (null: no repo).
+    # it); `base_branch` is the resolved one: the ticket's own, else (unless a mapping left it
+    # blank) the repo's default_branch. Null on a no-repo ticket, and on a repo ticket that has
+    # none (then `dispatch_block` is set).
     workspace_mode: WorkspaceMode
     repo_url: str | None
     base_branch: str | None
+    # Where `base_branch` came from and whether it is locked; null for a no-repo ticket.
+    base_branch_info: BaseBranchInfo | None
     branch: str | None
     pipeline: Pipeline
     pipeline_version: int
@@ -436,14 +483,18 @@ class TicketCreate(ApiModel):
     labels: list[str] = Field(default_factory=list)
     # A repo catalog name. Omitted → the Space's `default_repo`; null → no-repo mode.
     repo: str | None = None
-    # Omitted/null → the repo's `default_branch`.
+    # Given → the ticket's own (`manual`, set by the creator). Omitted/null → the repo's
+    # `default_branch`; a repo without one leaves the ticket blank and blocked from dispatch.
     base_branch: str | None = None
     owner_id: int | None = None
 
 
 class TicketPatch(PatchModel):
     """`repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may
-    be null; others: omit or set."""
+    be null; others: omit or set. A `base_branch` sets it by hand (`manual`, by the caller);
+    changing `repo` drops the ticket's own base branch. Once a run has started work
+    (`base_branch_info.locked`), changing `base_branch` or `repo` → 409 `base_branch_locked`
+    (sending the current value is fine)."""
 
     clearable: ClassVar[frozenset[str]] = frozenset({"repo", "base_branch", "owner_id"})
 
@@ -579,7 +630,7 @@ class SpaceSettingsUpdate(ApiModel):
 class RepoEntry(ApiModel):
     name: str
     url: str
-    default_branch: str
+    default_branch: str | None  # null = none (tickets need their own base branch)
     # Open tickets that use this repo: removing it is refused (409 `in_use`) while this is > 0.
     open_ticket_count: int
 
@@ -595,11 +646,12 @@ class RepoSettings(ApiModel):
 
 
 class RepoEntryIn(ApiModel):
-    """`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https)."""
+    """`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).
+    `default_branch`: null or blank = none (then each ticket on the repo needs its own)."""
 
     name: str = Field(pattern=REPO_NAME_PATTERN)
     url: str = Field(min_length=1, max_length=500)
-    default_branch: str = Field(min_length=1, max_length=255)
+    default_branch: str | None = Field(max_length=255)
 
 
 class RepoSettingsUpdate(ApiModel):

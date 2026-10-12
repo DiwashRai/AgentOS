@@ -120,6 +120,79 @@
         "title": "AppConfig",
         "type": "object"
       },
+      "BaseBranchInfo": {
+        "additionalProperties": false,
+        "description": "Where a repo ticket's resolved `base_branch` came from, and whether it can still change.\n\n`source_value`: the raw field text a mapping read (several joined with `, `), kept after a\nmanual edit for the record; null otherwise. `reason`: a short sentence when the branch is\nblank (`source: none`), else null. `set_by`: who set it by hand (`manual` only). `locked`:\na run has started work from it (the worker got past checking out the ticket branch), so a\nPATCH of `base_branch` or `repo` \u2192 409 `base_branch_locked`; `locked_by_run` is that run.",
+        "properties": {
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "locked_by_run": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locked By Run"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "set_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "enum": [
+              "manual",
+              "mapping",
+              "repo_default",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "source_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Value"
+          }
+        },
+        "required": [
+          "source",
+          "source_value",
+          "reason",
+          "set_by",
+          "locked",
+          "locked_by_run"
+        ],
+        "title": "BaseBranchInfo",
+        "type": "object"
+      },
       "ChatMessage": {
         "additionalProperties": false,
         "properties": {
@@ -252,6 +325,62 @@
         "title": "CompleteRequest",
         "type": "object"
       },
+      "DispatchBlock": {
+        "additionalProperties": false,
+        "description": "Why Dispatch / Continue / Retry / Run from\u2026 would be refused now: the 409 `code` the\ndispatch endpoint answers with, and a short UI sentence (e.g. \"Set a base branch first\").",
+        "properties": {
+          "code": {
+            "enum": [
+              "unauthorized",
+              "forbidden",
+              "not_found",
+              "method_not_allowed",
+              "http_error",
+              "validation_error",
+              "internal_error",
+              "not_implemented",
+              "csrf_header_missing",
+              "rate_limited",
+              "upstream_error",
+              "too_large",
+              "missing_credentials",
+              "invalid_credentials",
+              "no_project_access",
+              "user_disabled",
+              "pending_approval",
+              "ticket_not_found",
+              "file_not_found",
+              "version_not_found",
+              "run_not_found",
+              "user_not_found",
+              "stale_version",
+              "run_active",
+              "bundle_locked",
+              "already_claimed",
+              "key_taken",
+              "in_use",
+              "invalid_stage",
+              "invalid_pipeline",
+              "render_error",
+              "run_gone",
+              "base_branch_missing",
+              "base_branch_locked"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "text"
+        ],
+        "title": "DispatchBlock",
+        "type": "object"
+      },
       "DispatchRequest": {
         "additionalProperties": false,
         "properties": {
@@ -325,7 +454,9 @@
               "invalid_stage",
               "invalid_pipeline",
               "render_error",
-              "run_gone"
+              "run_gone",
+              "base_branch_missing",
+              "base_branch_locked"
             ],
             "title": "Code",
             "type": "string"
@@ -1737,8 +1868,15 @@
         "additionalProperties": false,
         "properties": {
           "default_branch": {
-            "title": "Default Branch",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
           },
           "name": {
             "title": "Name",
@@ -1764,13 +1902,19 @@
       },
       "RepoEntryIn": {
         "additionalProperties": false,
-        "description": "`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).",
+        "description": "`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).\n`default_branch`: null or blank = none (then each ticket on the repo needs its own).",
         "properties": {
           "default_branch": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Default Branch",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
           },
           "name": {
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
@@ -1797,8 +1941,15 @@
         "description": "One entry of the Space's repo catalog (Settings > Repos).",
         "properties": {
           "default_branch": {
-            "title": "Default Branch",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
           },
           "name": {
             "title": "Name",
@@ -3323,6 +3474,16 @@
             ],
             "title": "Base Branch"
           },
+          "base_branch_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BaseBranchInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "branch": {
             "anyOf": [
               {
@@ -3346,6 +3507,16 @@
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "dispatch_block": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DispatchBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "key": {
             "title": "Key",
@@ -3577,6 +3748,7 @@
           "source",
           "repo_name",
           "pr_url",
+          "dispatch_block",
           "updated_at",
           "description",
           "slug",
@@ -3584,6 +3756,7 @@
           "workspace_mode",
           "repo_url",
           "base_branch",
+          "base_branch_info",
           "branch",
           "pipeline",
           "pipeline_version",
@@ -3597,7 +3770,7 @@
       },
       "TicketPatch": {
         "additionalProperties": false,
-        "description": "`repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may\nbe null; others: omit or set.",
+        "description": "`repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may\nbe null; others: omit or set. A `base_branch` sets it by hand (`manual`, by the caller);\nchanging `repo` drops the ticket's own base branch. Once a run has started work\n(`base_branch_info.locked`), changing `base_branch` or `repo` \u2192 409 `base_branch_locked`\n(sending the current value is fine).",
         "properties": {
           "base_branch": {
             "anyOf": [
@@ -3705,6 +3878,16 @@
           "chat_count": {
             "title": "Chat Count",
             "type": "integer"
+          },
+          "dispatch_block": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DispatchBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "key": {
             "title": "Key",
@@ -3877,6 +4060,7 @@
           "source",
           "repo_name",
           "pr_url",
+          "dispatch_block",
           "updated_at"
         ],
         "title": "TicketSummary",

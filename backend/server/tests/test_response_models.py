@@ -54,7 +54,19 @@ def test_every_get_matches_its_model(
 ) -> None:
     sam = login("sam")
     login("dev")
-    repo = create_ticket("Repo ticket", labels=["x"], owner_id=sam.id, repo="docs")
+    # A repo without a default branch (request 22A), for a blank, blocked ticket.
+    repos = check(client, "/api/settings/repos", RepoSettings)
+    bare = {"name": "bare", "url": "https://github.com/o/bare.git", "default_branch": None}
+    entries = [*(r.model_dump(exclude={"open_ticket_count"}) for r in repos.repos), bare]
+    put = client.put(
+        "/api/settings/repos", json={"repos": entries, "base_version": 1}, headers=CSRF
+    )
+    assert put.status_code == 200, put.text
+    create_ticket("Blank ticket", repo="bare")
+    # Manual base branch (set_by), then locked by its first run.
+    repo = create_ticket(
+        "Repo ticket", labels=["x"], owner_id=sam.id, repo="docs", base_branch="develop"
+    )
     no_repo = create_ticket("No-repo ticket", repo=None)
     closed = create_ticket("Closed ticket")
     client.patch(f"/api/tickets/{closed.key}", json={"state": "closed"}, headers=CSRF)
@@ -121,12 +133,18 @@ def test_every_get_matches_its_model(
     assert client.put("/api/settings/runner", json=body, headers=CSRF).status_code == 200
     assert check(client, "/api/settings/runner", RunnerSettings).github_repo == "o/r"
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
-    assert len(summaries) == 4
+    assert len(summaries) == 5
     assert any(s.latest_run is not None for s in summaries)
     assert any(s.resolution is not None for s in summaries)
+    assert any(s.dispatch_block is not None for s in summaries)
+    infos = []
     for summary in summaries:
         key = summary.key
-        check(client, f"/api/tickets/{key}", TicketDetail)
+        infos.append(check(client, f"/api/tickets/{key}", TicketDetail).base_branch_info)
+    assert any(i is not None and i.set_by is not None and i.locked for i in infos)
+    assert any(i is not None and i.reason is not None for i in infos)
+    for summary in summaries:
+        key = summary.key
         for info in check(client, f"/api/tickets/{key}/files", list[FileInfo]):
             check(client, f"/api/tickets/{key}/files/{info.path}", FileContent)
             check(client, f"/api/tickets/{key}/versions/{info.path}", list[FileVersionInfo])

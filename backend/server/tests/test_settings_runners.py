@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from agentos.config import ConfigError, Settings
 from agentos.context import AppContext, runner_target
-from agentos.db import Database
+from agentos.db import Database, migrations
 from agentos.launchers.github import NO_REPO, GitHubActionsLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, Manifest, RunnerSettings, RuntimeSettings, TicketDetail
@@ -469,7 +469,7 @@ def test_the_container_upgrade_from_s1(
         body |= {"name": "Saved", "claim_timeout_s": 900, "base_version": space["version"]}
         assert c.put("/api/settings/space", json=body, headers=CSRF).status_code == 200
     db = Database(settings.db_path)  # rewind to what S1 left: no runtimes or runner rows
-    assert db.user_version() == 6
+    assert db.user_version() == len(migrations())
     with db.tx() as conn:
         conn.execute("DELETE FROM settings WHERE area IN ('runtimes', 'runner')")
 

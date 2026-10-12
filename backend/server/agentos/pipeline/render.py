@@ -148,7 +148,8 @@ def render_scaffold(entries: Sequence[FileEntry], ticket: TicketRef) -> list[Fil
 
 
 # Dummy tickets for checking a template's scaffold when it is saved (SPEC §6): one per workspace
-# mode, with an awkward title, so `{% if ticket.branch %}` paths are exercised both ways.
+# mode, with an awkward title, so `{% if ticket.branch %}` paths are exercised both ways, plus a
+# repo ticket without a base branch (a repo with no default_branch: the ticket is created blank).
 DUMMY_TICKETS = (
     TicketRef(
         key="AOS-1",
@@ -171,6 +172,17 @@ DUMMY_TICKETS = (
         repo_url=None,
         base_branch=None,
         workspace_mode="none",
+    ),
+    TicketRef(
+        key="AOS-1",
+        slug="",
+        title="Example",
+        description="",
+        type="task",
+        source_url=None,
+        repo_url="https://example.com/org/repo.git",
+        base_branch=None,
+        workspace_mode="repo",
     ),
 )
 

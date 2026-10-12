@@ -37,6 +37,7 @@ def list_tickets(
 ) -> list[TicketSummary]:
     return service.list_tickets(
         ctx.db,
+        ctx.space,
         user.id,
         q=q,
         ticket_type=type,

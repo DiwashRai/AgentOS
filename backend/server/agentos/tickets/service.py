@@ -23,6 +23,8 @@ from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
 from agentos.files.service import write_version
 from agentos.models import (
+    BaseBranchInfo,
+    BaseBranchSource,
     ImportRequest,
     ImportResult,
     LogDelivery,
@@ -50,7 +52,7 @@ from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.scaffold import names
 from agentos.pipeline.segment import validate_pipeline
-from agentos.pipeline.space import SpaceConfig
+from agentos.pipeline.space import ResolvedRepo, SpaceConfig
 from agentos.sources.base import (
     SourceNotFound,
     SourceUnauthorized,
@@ -69,9 +71,11 @@ MAX_TITLE_CHARS = 200  # TicketCreate.title max_length: an imported summary is c
 
 _SELECT_TICKETS = (
     "SELECT t.*, o.display_name AS owner_name, o.avatar_url AS owner_avatar, "
-    "rv.display_name AS resolver_name, rv.avatar_url AS resolver_avatar "
+    "rv.display_name AS resolver_name, rv.avatar_url AS resolver_avatar, "
+    "bs.display_name AS base_setter_name, bs.avatar_url AS base_setter_avatar "
     "FROM tickets t LEFT JOIN users o ON o.id = t.owner_id "
     "LEFT JOIN users rv ON rv.id = t.resolved_by "
+    "LEFT JOIN users bs ON bs.id = t.base_branch_set_by "
 )
 # An abandoned ticket (closed with a resolution) is listed like a done one; `include_closed` only
 # adds tickets closed through PATCH `state` (no resolution).
@@ -138,10 +142,16 @@ def workspace_mode(row: Row) -> WorkspaceMode:
     return "repo" if row["repo"] is not None else "none"
 
 
+def resolve_workspace(row: Row, space: SpaceConfig) -> ResolvedRepo:
+    """A `tickets` row's repo and base branch, resolved through the Space's catalog
+    (`SpaceConfig.resolve` → `resolve_base_branch`, the one rule for the base branch)."""
+    return space.resolve(row["repo"], row["base_branch"], source=row["base_branch_source"])
+
+
 def ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
     """The plain values rendering and manifest building need, from a `tickets` row, with the
     repo resolved through the Space's catalog."""
-    repo = space.resolve(row["repo"], row["base_branch"])
+    repo = resolve_workspace(row, space)
     return TicketRef(
         key=row["key"],
         slug=row["slug"],
@@ -157,10 +167,18 @@ def ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
 
 def run_ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
     """`ticket_ref` for a run (dispatch, claim): 422 `validation_error` naming the repo if it is
-    no longer in the catalog."""
+    no longer in the catalog; 409 `base_branch_missing` for a repo ticket whose base branch
+    resolves to nothing (the board's `dispatch_block` says the same)."""
     if row["repo"] is not None:
         space.require_repo(row["repo"])
-    return ticket_ref(row, space)
+    ref = ticket_ref(row, space)
+    if ref.workspace_mode == "repo" and ref.base_branch is None:
+        raise ApiError(
+            409,
+            "base_branch_missing",
+            f"{row['key']} has no base branch to start from; set one first",
+        )
+    return ref
 
 
 def ticket_pipeline(row: Row) -> Pipeline:
@@ -178,6 +196,7 @@ def active_run_id(conn: Conn, ticket_id: int) -> int | None:
 
 def list_tickets(
     db: Database,
+    space: SpaceConfig,
     viewer_id: int,
     *,
     q: str | None = None,
@@ -193,7 +212,7 @@ def list_tickets(
         if needle:
             rows = [r for r in rows if _matches(r, needle)]
         facts = _load_facts(conn, rows)
-    return [TicketSummary(**_summary_fields(r, facts, viewer_id)[0]) for r in rows]
+    return [TicketSummary(**_summary_fields(r, facts, space, viewer_id)[0]) for r in rows]
 
 
 def get_ticket(db: Database, space: SpaceConfig, key: str, viewer_id: int) -> TicketDetail:
@@ -342,7 +361,7 @@ def _resolution(row: Row) -> Resolution | None:
 
 
 def _summary_fields(
-    row: Row, facts: _Facts, viewer_id: int
+    row: Row, facts: _Facts, space: SpaceConfig, viewer_id: int
 ) -> tuple[dict[str, Any], str | None, int | None]:
     """TicketSummary fields, plus `next_stage` and `active_run_id` for the detail."""
     pipeline = ticket_pipeline(row)
@@ -351,6 +370,7 @@ def _summary_fields(
     tasks = _tasks(row)
     plan = facts.plans.get(row["id"])
     owner = _person(row["owner_id"], row["owner_name"], row["owner_avatar"])
+    workspace = resolve_workspace(row, space)
     board = derive(
         TicketFacts(
             state=row["state"],
@@ -362,6 +382,8 @@ def _summary_fields(
             ever_succeeded=frozenset(facts.ever.get(row["id"], ())),
             tasks=tasks,
             next_task=plan.next_item if plan is not None else None,
+            workspace_mode=workspace.mode,
+            base_branch=workspace.base_branch,
         )
     )
     view = for_viewer(board, viewer_id)
@@ -386,6 +408,7 @@ def _summary_fields(
         "source": _source(row),
         "repo_name": row["repo"],
         "pr_url": row["pr_url"],
+        "dispatch_block": board.dispatch_block,
         "updated_at": from_db(row["updated_at"]),
     }
     active = run["id"] if run is not None and run["status"] in ACTIVE else None
@@ -395,9 +418,9 @@ def _summary_fields(
 def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketDetail:
     row = get_ticket_row(conn, key)
     facts = _load_facts(conn, [row], with_plan=True)
-    fields, next_stage, active = _summary_fields(row, facts, viewer_id)
+    fields, next_stage, active = _summary_fields(row, facts, space, viewer_id)
     plan = facts.plans.get(row["id"])
-    repo = space.resolve(row["repo"], row["base_branch"])
+    repo = resolve_workspace(row, space)
     n = names(row["key"], row["slug"], repo.mode)
     return TicketDetail(
         **fields,
@@ -407,6 +430,7 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
         workspace_mode=repo.mode,
         repo_url=repo.url,
         base_branch=repo.base_branch,
+        base_branch_info=_base_branch_info(row, repo),
         branch=n.branch,
         pipeline=ticket_pipeline(row),
         pipeline_version=row["pipeline_version"],
@@ -414,6 +438,33 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
         active_run_id=active,
         created_at=from_db(row["created_at"]),
         plan=list(plan.items) if plan is not None else None,
+    )
+
+
+def _base_branch_info(row: Row, repo: ResolvedRepo) -> BaseBranchInfo | None:
+    """Where the resolved base branch came from (null for a no-repo ticket)."""
+    if repo.mode == "none" or repo.origin is None:
+        return None
+    reason: str | None = None
+    if repo.origin == "none":
+        if row["base_branch_source"] == "mapping":
+            reason = row["base_branch_reason"] or "No mapping rule gave a base branch"
+        elif repo.url is None:  # the repo left the catalog (url is required in the catalog)
+            reason = f"The repo {repo.name} is not in this Space's repo catalog"
+        else:
+            reason = f"The repo {repo.name} has no default branch"
+    locked_by = row["base_branch_locked_by_run"]
+    return BaseBranchInfo(
+        source=repo.origin,
+        source_value=row["base_branch_source_value"],
+        reason=reason,
+        set_by=(
+            _person(row["base_branch_set_by"], row["base_setter_name"], row["base_setter_avatar"])
+            if repo.origin == "manual"
+            else None
+        ),
+        locked=locked_by is not None,
+        locked_by_run=locked_by,
     )
 
 
@@ -427,7 +478,9 @@ def create_ticket(
     bundle v1, all in one transaction (a render error leaves no ticket and no used key).
 
     `repo` omitted → the Space's `default_repo`; null → no-repo mode; not in the catalog → 422.
-    `base_branch` is stored only when given (null = the repo's default_branch)."""
+    `base_branch` given → the ticket's own (`manual`, set by the creator); null → `default`: the
+    repo's default_branch, which may be unset (the ticket is created blank, blocked from
+    dispatch)."""
     title = _title(body.title)
     labels = _labels(body.labels)
     repo = body.repo if "repo" in body.model_fields_set else space.default_repo
@@ -453,6 +506,8 @@ def create_ticket(
                 labels=labels,
                 repo=repo,
                 base_branch=base_branch,
+                base_branch_source="manual" if base_branch is not None else "default",
+                base_branch_set_by=user.id if base_branch is not None else None,
                 owner_id=body.owner_id,
             ),
         )
@@ -472,7 +527,9 @@ class _NewTicket:
     priority: Priority
     labels: list[str]
     repo: str | None  # a catalog name (already checked); None = no-repo mode
-    base_branch: str | None  # the ticket's own; None = the repo's default_branch
+    base_branch: str | None  # the ticket's own; None = none of its own
+    base_branch_source: BaseBranchSource  # `manual` iff base_branch is set by hand
+    base_branch_set_by: int | None  # who set it (`manual` only)
     owner_id: int | None
     source: SourceLink | None = None
 
@@ -480,7 +537,7 @@ class _NewTicket:
 def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) -> int:
     """Insert the ticket with a copy of the current template's pipeline and its rendered scaffold
     as bundle v1 (inside the caller's transaction, so a render error leaves nothing behind)."""
-    resolved = space.resolve(new.repo, new.base_branch)
+    resolved = space.resolve(new.repo, new.base_branch, source=new.base_branch_source)
     now = utcnow()
     slug = ""  # the skill dir is named by the key alone; older tickets keep their title slug
     template = templates.current(conn)
@@ -502,9 +559,10 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     scaffold = render_scaffold(template.template.scaffold, ref)
     cursor = conn.execute(
         "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
-        "workspace_mode, repo, base_branch, template_id, pipeline, pipeline_version, "
-        "owner_id, source, external_id, source_url, created_by, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+        "workspace_mode, repo, base_branch, base_branch_source, base_branch_set_by, template_id, "
+        "pipeline, pipeline_version, owner_id, source, external_id, source_url, created_by, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
         (
             new.key,
             slug,
@@ -516,6 +574,8 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
             resolved.mode,
             new.repo,
             new.base_branch,
+            new.base_branch_source,
+            new.base_branch_set_by,
             template.id,
             pipeline.model_dump_json(),
             new.owner_id,
@@ -600,6 +660,8 @@ def import_ticket(
         labels=_fit_labels(fetched.labels),
         repo=space.default_repo,
         base_branch=None,
+        base_branch_source="default",  # 22B: a `base_branch` mapping sets it here
+        base_branch_set_by=None,
         owner_id=user.id,
         source=SourceLink(source=source.name, external_id=fetched.external_id, url=fetched.url),
     )
@@ -715,6 +777,39 @@ _PATCHABLE = (
 )
 
 
+def _base_branch_provenance(
+    row: Row, values: dict[str, Any], changes: dict[str, Any], user: Me, *, locked: bool
+) -> dict[str, Any]:
+    """The `base_branch_source` / `_set_by` / `_reason` columns after a PATCH (`values`: the
+    patched fields). A locked ticket keeps them (its branch and repo can't change)."""
+    keep = {
+        "base_branch_source": row["base_branch_source"],
+        "base_branch_set_by": row["base_branch_set_by"],
+        "base_branch_reason": row["base_branch_reason"],
+    }
+    if locked:
+        return keep
+    reset = {
+        "base_branch_source": "default",
+        "base_branch_set_by": None,
+        "base_branch_reason": None,
+    }
+    if "base_branch" in changes or values["repo"] is None:
+        own = values["base_branch"]
+        if own is None:
+            return reset
+        if own == row["base_branch"] and row["base_branch_source"] == "manual":
+            return keep  # the same branch again: still set by whoever set it
+        return {
+            "base_branch_source": "manual",
+            "base_branch_set_by": user.id,
+            "base_branch_reason": None,
+        }
+    if values["repo"] != row["repo"]:
+        return reset
+    return keep
+
+
 def patch_ticket(
     db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
@@ -723,8 +818,14 @@ def patch_ticket(
     the resolution (`resolve_ticket` sets it).
 
     `repo` must be a catalog name (422 otherwise); null switches to no-repo mode, which clears
-    `base_branch` and disables the pipeline's `requires_repo` stages (as creation does).
-    `base_branch` null = the repo's default_branch."""
+    `base_branch` and disables the pipeline's `requires_repo` stages (as creation does). Another
+    repo drops the ticket's own base branch (back to `default`) unless the PATCH sets one.
+    `base_branch` "x" → the ticket's own, `manual`, set by `user` (`source_value` is kept for the
+    record); null → `default` (the repo's default_branch).
+
+    Locked (`base_branch_locked_by_run`: a run has started work from the base branch): a change
+    of `repo` or the ticket's own `base_branch` → 409 `base_branch_locked`; sending the current
+    values is fine and changes nothing."""
     changes = body.model_dump(exclude_unset=True)
     with db.tx() as conn:
         row = get_ticket_row(conn, key)
@@ -745,14 +846,35 @@ def patch_ticket(
             if changes.get("base_branch") is not None:
                 raise ApiError(422, "validation_error", "base_branch: a no-repo ticket has none")
             values["base_branch"] = None
+        elif values["repo"] != row["repo"] and "base_branch" not in changes:
+            values["base_branch"] = None  # another repo starts from its own default
+        locked_by = row["base_branch_locked_by_run"]
+        if locked_by is not None and (
+            values["repo"] != row["repo"] or values["base_branch"] != row["base_branch"]
+        ):
+            raise ApiError(
+                409,
+                "base_branch_locked",
+                f"The base branch is locked: run #{locked_by} has started work on it",
+            )
+        base = _base_branch_provenance(row, values, changes, user, locked=locked_by is not None)
         changed = {c for c, v in values.items() if v != row[c]}
+        changed |= {c for c, v in base.items() if v != row[c]}
         if not changed:
             return _detail(conn, space, key, user.id)
         # Repo fields count as changed only if the resolved workspace changes (setting the base
         # branch to the repo's default changes nothing a run sees).
         guarded = changed & {"state"}
-        before = space.resolve(row["repo"], row["base_branch"])
-        if before != space.resolve(values["repo"], values["base_branch"]):
+        before = resolve_workspace(row, space)
+        after = space.resolve(
+            values["repo"], values["base_branch"], source=base["base_branch_source"]
+        )
+        if (before.mode, before.name, before.url, before.base_branch) != (
+            after.mode,
+            after.name,
+            after.url,
+            after.base_branch,
+        ):
             guarded |= changed & {"repo", "base_branch"}
         if guarded and active_run_id(conn, row["id"]) is not None:
             raise ApiError(
@@ -762,10 +884,13 @@ def patch_ticket(
         conn.execute(
             "UPDATE tickets SET title = :title, description = :description, type = :type, "
             "priority = :priority, labels = :labels, state = :state, repo = :repo, "
-            "workspace_mode = :workspace_mode, base_branch = :base_branch, owner_id = :owner_id, "
+            "workspace_mode = :workspace_mode, base_branch = :base_branch, "
+            "base_branch_source = :base_branch_source, base_branch_set_by = :base_branch_set_by, "
+            "base_branch_reason = :base_branch_reason, owner_id = :owner_id, "
             "updated_at = :updated_at WHERE id = :id",
             {
                 **values,
+                **base,
                 "workspace_mode": "repo" if values["repo"] is not None else "none",
                 "updated_at": now,
                 "id": row["id"],
@@ -878,8 +1003,8 @@ def backfill_repos(db: Database, space: SpaceConfig) -> list[str]:
                 continue
             own = row["base_branch"] if row["base_branch"] != spec.default_branch else None
             conn.execute(
-                "UPDATE tickets SET repo = ?, base_branch = ? WHERE id = ?",
-                (spec.name, own, row["id"]),
+                "UPDATE tickets SET repo = ?, base_branch = ?, base_branch_source = ? WHERE id = ?",
+                (spec.name, own, "manual" if own is not None else "default", row["id"]),
             )
     if unmatched:
         log.warning(

@@ -693,6 +693,32 @@ export interface components {
             /** Space Name */
             space_name: string;
         };
+        /**
+         * BaseBranchInfo
+         * @description Where a repo ticket's resolved `base_branch` came from, and whether it can still change.
+         *
+         *     `source_value`: the raw field text a mapping read (several joined with `, `), kept after a
+         *     manual edit for the record; null otherwise. `reason`: a short sentence when the branch is
+         *     blank (`source: none`), else null. `set_by`: who set it by hand (`manual` only). `locked`:
+         *     a run has started work from it (the worker got past checking out the ticket branch), so a
+         *     PATCH of `base_branch` or `repo` → 409 `base_branch_locked`; `locked_by_run` is that run.
+         */
+        BaseBranchInfo: {
+            /** Locked */
+            locked: boolean;
+            /** Locked By Run */
+            locked_by_run: number | null;
+            /** Reason */
+            reason: string | null;
+            set_by: components["schemas"]["Person"] | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "manual" | "mapping" | "repo_default" | "none";
+            /** Source Value */
+            source_value: string | null;
+        };
         /** ChatMessage */
         ChatMessage: {
             author: components["schemas"]["Person"];
@@ -736,6 +762,20 @@ export interface components {
              */
             status: "completed" | "failed" | "cancelled";
         };
+        /**
+         * DispatchBlock
+         * @description Why Dispatch / Continue / Retry / Run from… would be refused now: the 409 `code` the
+         *     dispatch endpoint answers with, and a short UI sentence (e.g. "Set a base branch first").
+         */
+        DispatchBlock: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "in_use" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone" | "base_branch_missing" | "base_branch_locked";
+            /** Text */
+            text: string;
+        };
         /** DispatchRequest */
         DispatchRequest: {
             /** From Stage */
@@ -753,7 +793,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "in_use" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone";
+            code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "in_use" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone" | "base_branch_missing" | "base_branch_locked";
             /** Message */
             message: string;
         };
@@ -1278,7 +1318,7 @@ export interface components {
         /** RepoEntry */
         RepoEntry: {
             /** Default Branch */
-            default_branch: string;
+            default_branch: string | null;
             /** Name */
             name: string;
             /** Open Ticket Count */
@@ -1289,10 +1329,11 @@ export interface components {
         /**
          * RepoEntryIn
          * @description `url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).
+         *     `default_branch`: null or blank = none (then each ticket on the repo needs its own).
          */
         RepoEntryIn: {
             /** Default Branch */
-            default_branch: string;
+            default_branch: string | null;
             /** Name */
             name: string;
             /** Url */
@@ -1304,7 +1345,7 @@ export interface components {
          */
         RepoInfo: {
             /** Default Branch */
-            default_branch: string;
+            default_branch: string | null;
             /** Name */
             name: string;
             /** Url */
@@ -1864,6 +1905,7 @@ export interface components {
             attention_since: string;
             /** Base Branch */
             base_branch: string | null;
+            base_branch_info: components["schemas"]["BaseBranchInfo"] | null;
             /** Branch */
             branch: string | null;
             /** Chat Count */
@@ -1875,6 +1917,7 @@ export interface components {
             created_at: string;
             /** Description */
             description: string;
+            dispatch_block: components["schemas"]["DispatchBlock"] | null;
             /** Key */
             key: string;
             /** Labels */
@@ -1942,7 +1985,10 @@ export interface components {
         /**
          * TicketPatch
          * @description `repo` (null = no-repo mode), `base_branch` (null = the repo's default) and `owner_id` may
-         *     be null; others: omit or set.
+         *     be null; others: omit or set. A `base_branch` sets it by hand (`manual`, by the caller);
+         *     changing `repo` drops the ticket's own base branch. Once a run has started work
+         *     (`base_branch_info.locked`), changing `base_branch` or `repo` → 409 `base_branch_locked`
+         *     (sending the current value is fine).
          */
         TicketPatch: {
             /** Base Branch */
@@ -1987,6 +2033,7 @@ export interface components {
             attention_since: string;
             /** Chat Count */
             chat_count: number;
+            dispatch_block: components["schemas"]["DispatchBlock"] | null;
             /** Key */
             key: string;
             /** Labels */

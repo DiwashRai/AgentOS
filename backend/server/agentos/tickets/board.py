@@ -20,6 +20,7 @@ from typing import Literal, get_args
 
 from agentos.models import (
     Attention,
+    DispatchBlock,
     GateInfo,
     GateState,
     NowInfo,
@@ -35,6 +36,7 @@ from agentos.models import (
     StageRunStatus,
     TaskProgress,
     TicketState,
+    WorkspaceMode,
 )
 
 PHASES: tuple[Phase, ...] = get_args(Phase)
@@ -92,6 +94,9 @@ class TicketFacts:
     ever_succeeded: frozenset[str] = field(default_factory=frozenset)
     tasks: TaskProgress | None = None
     next_task: str | None = None
+    # The resolved workspace (`SpaceConfig.resolve`): a repo ticket needs a base branch to run.
+    workspace_mode: WorkspaceMode = "none"
+    base_branch: str | None = None
 
 
 # ------------------------------------------------------------------ outputs
@@ -115,6 +120,7 @@ class TicketBoard:
     attention_since: datetime
     next_stage: str | None
     now: NowInfo
+    dispatch_block: DispatchBlock | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +153,22 @@ def derive(facts: TicketFacts) -> TicketBoard:
         attention_since=_attention_since(standing, facts),
         next_stage=nxt,
         now=_now(standing, facts, nxt),
+        dispatch_block=dispatch_block(facts.state, facts.workspace_mode, facts.base_branch),
     )
+
+
+BASE_BRANCH_MISSING = DispatchBlock(code="base_branch_missing", text="Set a base branch first")
+
+
+def dispatch_block(
+    state: TicketState, mode: WorkspaceMode, base_branch: str | None
+) -> DispatchBlock | None:
+    """Why the dispatch endpoint would refuse this ticket now, for the UI to disable Dispatch.
+    Only for open tickets (a done/closed one must be reopened first anyway). The dispatch guard
+    (`tickets.service.run_ticket_ref`) refuses on the same rule with the same code."""
+    if state == "open" and mode == "repo" and base_branch is None:
+        return BASE_BRANCH_MISSING
+    return None
 
 
 def for_viewer(board: TicketBoard, viewer_id: int) -> ViewerBoard:

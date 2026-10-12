@@ -382,7 +382,15 @@ def test_patch_repo(authed: TestClient, create_ticket: CreateTicket) -> None:
     t = create_ticket(base_branch="feature/x")
     docs = TicketDetail.model_validate(patch(authed, t.key, repo="docs").json())
     assert (docs.repo_name, docs.repo_url) == ("docs", "git@github.com:o/docs.git")
-    assert docs.base_branch == "feature/x"  # the ticket's own branch is kept
+    # Another repo drops the ticket's own branch: it starts from the new repo's default.
+    assert docs.base_branch == "develop"
+    assert docs.base_branch_info is not None
+    assert (docs.base_branch_info.source, docs.base_branch_info.set_by) == ("repo_default", None)
+    # ... unless the same PATCH sets one.
+    both = TicketDetail.model_validate(patch(authed, t.key, repo="r", base_branch="rel").json())
+    assert (both.repo_name, both.base_branch) == ("r", "rel")
+    assert both.base_branch_info is not None
+    assert both.base_branch_info.source == "manual"
     # Null = no-repo mode: the base branch goes, and so do the enabled requires_repo stages.
     none = TicketDetail.model_validate(patch(authed, t.key, repo=None).json())
     assert (none.workspace_mode, none.repo_name, none.repo_url) == ("none", None, None)
