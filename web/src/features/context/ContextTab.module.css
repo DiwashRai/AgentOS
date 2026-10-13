@@ -147,14 +147,36 @@
   color: var(--ink-3);
 }
 
-.add {
-  align-self: flex-start;
+/* the add chips: "+ Add context" and "+ Add an agent" */
+.adds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .addForm {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* a quiet one-liner under a form or above the editor: a rule, a hint, the lock */
+.note {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+/* the file an agent name becomes */
+.preview {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* kit .ao-input */

@@ -3,13 +3,22 @@
 // human edits the plan between a gate and Approve. Markdown preview, the version list and diffs
 // come later.
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
-import { useBlocker, useSearchParams } from "react-router";
+import { Link as RouterLink, useBlocker, useSearchParams } from "react-router";
 
 import { ApiError } from "../../api/client";
-import { useDeleteFile, useFile, useFiles, useSaveFile } from "../../api/queries";
+import { useDeleteFile, useFile, useFiles, useMe, useSaveFile } from "../../api/queries";
 import { age } from "../../domain/format";
-import { Button, Chip, cx, Kbd, Tag } from "../../ui";
+import { Button, Chip, cx, Kbd, LinkButton, linkClass, Tag } from "../../ui";
 import { useNow } from "../runs/useNow";
+import { ticketPath } from "../ticket/model";
+import {
+  AGENT_NAME_RULE,
+  agentExists,
+  agentNameFromPath,
+  agentNameProblem,
+  agentPath,
+  agentStarter,
+} from "./agents";
 import s from "./ContextTab.module.css";
 import { LOCKED_TEXT, writeProblem, type WriteProblem } from "./errors";
 import { authorLabel, formatSize, isTasksFile, sortFiles, splitPath, type FileInfo } from "./files";
@@ -74,40 +83,37 @@ function FileRow({
   );
 }
 
-function AddFile({ ticketKey, onCreated }: { ticketKey: string; onCreated: (p: string) => void }) {
+/** Which add form is open under the file list, if any. */
+type Adding = "file" | "agent" | null;
+
+function AddFile({
+  ticketKey,
+  runActive,
+  onClose,
+  onCreated,
+}: {
+  ticketKey: string;
+  runActive: boolean;
+  onClose: () => void;
+  onCreated: (p: string) => void;
+}) {
   const create = useSaveFile(ticketKey);
-  const [open, setOpen] = useState(false);
   const [path, setPath] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   // The form opens on an explicit click, so focus moves into it.
   useEffect(() => {
-    if (open) input.current?.focus();
-  }, [open]);
-
-  if (!open) {
-    return (
-      <Chip
-        add
-        className={s.add}
-        onClick={() => {
-          setOpen(true);
-        }}
-      >
-        + Add context
-      </Chip>
-    );
-  }
+    input.current?.focus();
+  }, []);
 
   const close = () => {
-    setOpen(false);
-    setPath("");
-    setProblem(null);
     create.reset();
+    onClose();
   };
 
   const submit = (e: SyntheticEvent) => {
     e.preventDefault();
+    if (runActive) return;
     const p = path.trim();
     if (!p) {
       setProblem("Give the file a path, like notes/approach.md.");
@@ -153,14 +159,167 @@ function AddFile({ ticketKey, onCreated }: { ticketKey: string; onCreated: (p: s
           {problem}
         </p>
       ) : null}
+      {runActive ? (
+        <p className={s.note} role="status">
+          {LOCKED_TEXT}
+        </p>
+      ) : null}
       <span className={s.row}>
-        <Button type="submit" variant="ink" size="sm" disabled={create.isPending}>
+        <Button type="submit" variant="ink" size="sm" disabled={runActive || create.isPending}>
           {create.isPending ? "Creating…" : "Create"}
         </Button>
         <Button variant="quiet" size="sm" onClick={close}>
           Cancel
         </Button>
       </span>
+    </form>
+  );
+}
+
+/** "Set a stage's Agent to reviewer in the Pipeline tab to use it." */
+function AgentHint({ ticketKey, name }: { ticketKey: string; name: string }) {
+  return (
+    <p className={s.note}>
+      {`Set a stage's Agent to ${name} in the `}
+      <RouterLink className={linkClass} to={ticketPath(ticketKey, "pipeline")}>
+        Pipeline tab
+      </RouterLink>
+      {" to use it."}
+    </p>
+  );
+}
+
+/** A shortcut for `.claude/agents/<name>.md`, the file `claude --agent <name>` reads. It asks only
+ *  for the name and writes a starter file through the same PUT as "+ Add context". */
+function AddAgent({
+  ticketKey,
+  files,
+  runActive,
+  onClose,
+  onCreated,
+  onOpen,
+}: {
+  ticketKey: string;
+  files: readonly FileInfo[];
+  runActive: boolean;
+  onClose: () => void;
+  onCreated: (p: string) => void;
+  /** Open a file that's already in the bundle. */
+  onOpen: (p: string) => void;
+}) {
+  const create = useSaveFile(ticketKey);
+  const [name, setName] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
+
+  const n = name.trim();
+  // The rule shows as a hint until something is typed; then an invalid name shows it as the error.
+  const invalid = n === "" ? null : agentNameProblem(n);
+  const path = invalid === null && n !== "" ? agentPath(n) : null;
+  const exists = path !== null && agentExists(files, n);
+
+  const close = () => {
+    create.reset();
+    onClose();
+  };
+
+  const submit = (e: SyntheticEvent) => {
+    e.preventDefault();
+    if (runActive || exists) return;
+    const bad = agentNameProblem(n);
+    if (bad !== null) {
+      setProblem(bad);
+      return;
+    }
+    setProblem(null);
+    const p = agentPath(n);
+    create.mutate(
+      { path: p, content: agentStarter(n), mode: "replace", base_version: 0 },
+      {
+        onSuccess: () => {
+          close();
+          onCreated(p);
+        },
+        onError: (err) => {
+          setProblem(writeProblem(err, "create").text);
+        },
+      },
+    );
+  };
+
+  // Typing clears a submit-time problem; the live checks (rule, exists) take over.
+  const shown = problem ?? invalid;
+
+  return (
+    <form className={s.addForm} onSubmit={submit}>
+      <label className={s.k} htmlFor="context-agent-name">
+        Agent name
+      </label>
+      <input
+        ref={input}
+        id="context-agent-name"
+        className={s.input}
+        value={name}
+        placeholder="reviewer"
+        spellCheck={false}
+        autoComplete="off"
+        aria-describedby="context-agent-rule"
+        aria-invalid={invalid !== null || exists}
+        onChange={(e) => {
+          setName(e.target.value);
+          setProblem(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") close();
+        }}
+      />
+      {shown ? (
+        <p className={s.problem} id="context-agent-rule" role="alert">
+          {shown}
+        </p>
+      ) : (
+        <p className={s.note} id="context-agent-rule">
+          {AGENT_NAME_RULE}
+        </p>
+      )}
+      <p className={s.preview} title={path ?? undefined}>
+        {path ?? agentPath("<name>")}
+      </p>
+      {exists ? (
+        <p className={s.problem} role="alert">
+          {"This agent is already in the bundle. "}
+          <LinkButton
+            onClick={() => {
+              close();
+              onOpen(agentPath(n));
+            }}
+          >
+            Open it
+          </LinkButton>
+        </p>
+      ) : null}
+      {runActive ? (
+        <p className={s.note} role="status">
+          {LOCKED_TEXT}
+        </p>
+      ) : null}
+      <span className={s.row}>
+        <Button
+          type="submit"
+          variant="ink"
+          size="sm"
+          disabled={runActive || exists || create.isPending}
+        >
+          {create.isPending ? "Creating…" : "Create"}
+        </Button>
+        <Button variant="quiet" size="sm" onClick={close}>
+          Cancel
+        </Button>
+      </span>
+      <AgentHint ticketKey={ticketKey} name={path !== null ? n : "its name"} />
     </form>
   );
 }
@@ -280,6 +439,7 @@ function FileEditor({
   };
 
   const { dir, name } = splitPath(path);
+  const agent = agentNameFromPath(path);
 
   return (
     <div className={s.editor}>
@@ -355,6 +515,8 @@ function FileEditor({
         </div>
       ) : null}
 
+      {agent !== null ? <AgentHint ticketKey={ticketKey} name={agent} /> : null}
+
       <textarea
         className={s.textarea}
         aria-label={`Contents of ${path}`}
@@ -389,6 +551,9 @@ function FileEditor({
 
 export function ContextTab({ ticketKey, runActive }: { ticketKey: string; runActive: boolean }) {
   const filesQ = useFiles(ticketKey);
+  const me = useMe();
+  const canWrite = me.data?.role === "writer" || me.data?.role === "admin";
+  const [adding, setAdding] = useState<Adding>(null);
   const [params, setParams] = useSearchParams();
   const now = useNow(30_000);
   // Drafts per path, so switching files keeps edits. Reset when the ticket changes.
@@ -473,6 +638,9 @@ export function ContextTab({ ticketKey, runActive }: { ticketKey: string; runAct
     );
   }
 
+  const closeAdd = () => {
+    setAdding(null);
+  };
   const listed = selected === null ? undefined : files.find((f) => f.path === selected);
   const hasTasks = files.some((f) => isTasksFile(f.path));
 
@@ -504,7 +672,43 @@ export function ContextTab({ ticketKey, runActive }: { ticketKey: string; runAct
         {!hasTasks && files.length > 0 ? (
           <p className={s.emptyNote}>No TASKS.md yet. The plan stage writes it.</p>
         ) : null}
-        <AddFile ticketKey={ticketKey} onCreated={select} />
+        {!canWrite ? null : adding === "file" ? (
+          <AddFile
+            ticketKey={ticketKey}
+            runActive={runActive}
+            onClose={closeAdd}
+            onCreated={select}
+          />
+        ) : adding === "agent" ? (
+          <AddAgent
+            ticketKey={ticketKey}
+            files={files}
+            runActive={runActive}
+            onClose={closeAdd}
+            onCreated={select}
+            onOpen={select}
+          />
+        ) : (
+          <div className={s.adds}>
+            <Chip
+              add
+              onClick={() => {
+                setAdding("file");
+              }}
+            >
+              + Add context
+            </Chip>
+            <Chip
+              add
+              title="A Claude Code agent: .claude/agents/<name>.md"
+              onClick={() => {
+                setAdding("agent");
+              }}
+            >
+              + Add an agent
+            </Chip>
+          </div>
+        )}
       </div>
       <div className={s.main}>
         {selected === null ? (
