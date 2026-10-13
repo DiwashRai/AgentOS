@@ -9,6 +9,18 @@
   font-weight: 400;
   color: var(--ink-3);
 }
+/* No branch: the ticket can't be dispatched until someone sets one, so it reads as your move (blue
+   = you, tokens.css hue rules). */
+.missing {
+  color: var(--you-text);
+}
+/* "Locked by run #12" after a locked value */
+.lock {
+  margin-left: 3px;
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  color: var(--ink-3);
+}
 
 .rest,
 .value {

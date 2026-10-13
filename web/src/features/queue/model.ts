@@ -207,6 +207,17 @@ export function blockedReason(t: Pick<Ticket, "now" | "latest_run">): string {
   return t.now.text !== "" ? t.now.text : (t.latest_run?.error ?? "");
 }
 
+/** A row's second line under its status mark. When the server says a dispatch would be refused
+ *  (`dispatch_block`, e.g. "Set a base branch first"), that comes first and is flagged as needing
+ *  action; otherwise a blocked row's reason, else the status line. */
+export function stateLine(t: Pick<Ticket, "attention" | "now" | "latest_run" | "dispatch_block">): {
+  text: string;
+  flag: boolean;
+} {
+  if (t.dispatch_block) return { text: t.dispatch_block.text, flag: true };
+  return { text: t.attention === "blocked" ? blockedReason(t) : t.now.text, flag: false };
+}
+
 // ------------------------------------------------------------------ the rack
 
 export interface RackGroup<T> {

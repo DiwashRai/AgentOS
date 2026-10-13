@@ -22,10 +22,10 @@ import {
 import { peekItemProps } from "../peek/usePeek";
 import {
   askLabel,
-  blockedReason,
   outcomeLine,
   rowLook,
   sourceWord,
+  stateLine,
   statusMark,
   subLine,
   waitingPerson,
@@ -111,6 +111,18 @@ function RowShell({
   );
 }
 
+/** The line under a status mark (model.stateLine): a dispatch block ("Set a base branch first")
+ *  in the you hue, else the reason or status line. */
+function SecondLine({ ticket: t }: { ticket: Ticket }) {
+  const line = stateLine(t);
+  if (!line.text) return null;
+  return (
+    <div className={cx(s.ask2, line.flag && s.flag)} title={line.text}>
+      {line.text}
+    </div>
+  );
+}
+
 export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
   return (
     <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
@@ -118,11 +130,7 @@ export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
         <div className={s.ask1}>
           <StatusMark kind="you" ask={askLabel(t)} />
         </div>
-        {t.now.text ? (
-          <div className={s.ask2} title={t.now.text}>
-            {t.now.text}
-          </div>
-        ) : null}
+        <SecondLine ticket={t} />
       </div>
       <RowAge ticket={t} now={now} />
       <RowActions ticket={t} />
@@ -141,25 +149,16 @@ function StateCell({ ticket: t }: { ticket: Ticket }) {
           {who ? <Avatar name={who.display_name} id={who.id} /> : null}
           <StatusMark kind="wait" name={mark.name} ask={mark.ask} />
         </div>
-        {t.now.text ? (
-          <div className={s.ask2} title={t.now.text}>
-            {t.now.text}
-          </div>
-        ) : null}
+        <SecondLine ticket={t} />
       </div>
     );
   }
-  const text = t.attention === "blocked" ? blockedReason(t) : t.now.text;
   return (
     <div className={s.ask}>
       <div className={s.ask1}>
         <StatusMark kind={mark.kind} name={mark.name} />
       </div>
-      {text ? (
-        <div className={s.ask2} title={text}>
-          {text}
-        </div>
-      ) : null}
+      <SecondLine ticket={t} />
     </div>
   );
 }

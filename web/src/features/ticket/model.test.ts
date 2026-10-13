@@ -248,6 +248,9 @@ describe("header text", () => {
     expect(actionErrorText(new ApiError(422, "invalid_stage", "No stage after review"))).toBe(
       "No stage after review",
     );
+    expect(actionErrorText(new ApiError(409, "base_branch_missing", "AOS-1 has none"))).toBe(
+      "Set a base branch first",
+    );
     expect(actionErrorText(new Error("boom"))).toBe("boom");
     expect(actionErrorText("?")).toBe("Something went wrong");
   });

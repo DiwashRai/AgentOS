@@ -364,13 +364,20 @@ export function updText(t: Pick<Ticket, "attention" | "attention_since">, now: n
   return t.attention === "running" ? "now" : age(since(t), now);
 }
 
-type NowTicket = Pick<Ticket, "attention" | "rail" | "now" | "latest_run" | "state" | "resolution">;
+type NowTicket = Pick<
+  Ticket,
+  "attention" | "rail" | "now" | "latest_run" | "state" | "resolution" | "dispatch_block"
+>;
 
 export type NowCell =
   /** `BUILDER · step · meter · 3/5` */
   | { kind: "run"; actor: string; text: string; meter: MeterModel | null }
-  /** `YOU Plan sign-off` + ask, `○ Sam · PR review` + text, `■ Blocked` + reason, … */
-  | { kind: "mark"; mark: MarkModel; text: string }
+  /** `YOU Plan sign-off` + ask, `○ Sam · PR review` + text, `■ Blocked` + reason, … The text is
+   *  `flag`ged when it is the server's dispatch block ("Set a base branch first"). */
+  | { kind: "mark"; mark: MarkModel; text: string; flag: boolean }
+  /** An Inbox row the server won't dispatch yet: just the block's text ("Set a base branch
+   *  first"), flagged. Add context covers it on hover / focus / open. */
+  | { kind: "block"; text: string }
   /** A done row: `Complete · merged`, `Abandoned · duplicate of AOS-8` (no glyph: the stage cell
    *  already carries the tick or the crimson stop). */
   | { kind: "outcome"; outcome: Outcome; word: string; text: string }
@@ -389,7 +396,9 @@ export function nowCell(t: NowTicket): NowCell {
       text: t.resolution?.note ?? t.now.text,
     };
   }
-  if (t.attention === "inbox") return { kind: "empty" };
+  if (t.attention === "inbox") {
+    return t.dispatch_block ? { kind: "block", text: t.dispatch_block.text } : { kind: "empty" };
+  }
   if (t.attention === "running") {
     return {
       kind: "run",
@@ -400,8 +409,9 @@ export function nowCell(t: NowTicket): NowCell {
     };
   }
   const mark = statusMark(t);
+  if (t.dispatch_block) return { kind: "mark", mark, text: t.dispatch_block.text, flag: true };
   const text = t.attention === "blocked" ? statusText(t) : t.now.text;
-  return { kind: "mark", mark, text };
+  return { kind: "mark", mark, text, flag: false };
 }
 
 // ------------------------------------------------------------------ the expansion
@@ -429,7 +439,7 @@ export function moveText(t: NowTicket): { label: string; lead: string } {
     }
     // "Add context, then dispatch" is said once, in the Inbox group head.
     case "inbox":
-      return { label: "Now", lead: t.now.text || words.inboxNote };
+      return { label: "Now", lead: t.dispatch_block?.text ?? (t.now.text || words.inboxNote) };
     default:
       return { label: "Now", lead: statusText(t) || attentionWords[t.attention] };
   }

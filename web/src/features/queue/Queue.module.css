@@ -229,6 +229,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* the server's dispatch block ("Set a base branch first"): the owner's move, so the you hue */
+.ask2.flag {
+  color: var(--you-text);
+  font-weight: 500;
+}
 
 .who {
   display: flex;

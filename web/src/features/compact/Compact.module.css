@@ -430,6 +430,15 @@
 .isInbox:is(:hover, :focus-within, .isOpen) .addCtx {
   display: inline-flex;
 }
+/* the server's dispatch block ("Set a base branch first"): the owner's move, so the you hue. On an
+   Inbox row it gives way to Add context, which takes its place. */
+.flag {
+  color: var(--you-text);
+  font-weight: 500;
+}
+.isInbox:is(:hover, :focus-within, .isOpen) .nowBlock {
+  visibility: hidden;
+}
 
 /* ---------- the expansion (DESIGN §6 "Expanded content"; captions sentence case) ---------- */
 .more {

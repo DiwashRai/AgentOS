@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  NEEDS_BRANCH_NOTE,
+  NEEDS_BRANCH_PLACEHOLDER,
   NO_REPO,
+  branchNote,
   branchPlaceholder,
+  needsBranch,
   hasErrors,
   initialForm,
   repoOptions,
@@ -16,6 +20,8 @@ const defaults = { repo: "agentos", meId: 4 };
 const repos = [
   { name: "agentos", url: "https://github.com/o/agentos", default_branch: "main" },
   { name: "scratch", url: "https://github.com/o/scratch", default_branch: "trunk" },
+  { name: "releases", url: "https://github.com/o/releases", default_branch: null },
+  { name: "blank", url: "https://github.com/o/blank", default_branch: "" },
 ];
 
 describe("new ticket form", () => {
@@ -27,7 +33,7 @@ describe("new ticket form", () => {
   });
 
   it("offers the catalog by name, then No repo", () => {
-    expect(repoOptions(repos)).toEqual([
+    expect(repoOptions(repos.slice(0, 2))).toEqual([
       { value: "agentos", label: "agentos" },
       { value: "scratch", label: "scratch" },
       { value: NO_REPO, label: "No repo" },
@@ -38,6 +44,22 @@ describe("new ticket form", () => {
   it("shows the picked repo's default branch as the placeholder", () => {
     expect(branchPlaceholder(repos, "scratch")).toBe("trunk");
     expect(branchPlaceholder(repos, NO_REPO)).toBe("");
+    expect(branchPlaceholder(repos, "gone")).toBe("");
+  });
+
+  it("asks for a branch when the repo has no default, without blocking creation", () => {
+    expect(needsBranch(repos, "releases")).toBe(true);
+    expect(needsBranch(repos, "blank")).toBe(true);
+    expect(needsBranch(repos, "agentos")).toBe(false);
+    expect(needsBranch(repos, NO_REPO)).toBe(false);
+    expect(needsBranch(repos, "gone")).toBe(false);
+    expect(branchPlaceholder(repos, "releases")).toBe(NEEDS_BRANCH_PLACEHOLDER);
+    expect(branchNote(repos, "releases", " ")).toBe(NEEDS_BRANCH_NOTE);
+    expect(branchNote(repos, "releases", "App-1.Latest")).toBeUndefined();
+    expect(branchNote(repos, "agentos", "")).toBeUndefined();
+    const f = { ...initialForm(defaults), title: "T", repo: "releases" };
+    expect(hasErrors(validate(f))).toBe(false);
+    expect(toCreateBody(f)).toMatchObject({ repo: "releases", base_branch: null });
   });
 
   it("requires a title of at most 200 characters", () => {

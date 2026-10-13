@@ -6,6 +6,8 @@
 //   dispatch = POST runs {from_stage} ("Run from…") · cancel = POST cancel ·
 //   complete / abandon = confirm with an optional note, then POST resolve {outcome, note} ·
 //   reopen = PATCH state=open · request_changes = go to the Context tab · open = go to the ticket.
+// The server's `dispatch_block` (e.g. no base branch yet) disables every action that POSTs runs
+// (Approve, Retry, Dispatch run), titled with its text.
 import type { Schemas } from "../api/client";
 import { firstName } from "./format";
 import { words } from "./words";
@@ -48,8 +50,23 @@ export type ActionContext = "row" | "header";
 
 export type ActionTicket = Pick<
   Schemas["TicketSummary"],
-  "attention" | "rail" | "latest_run" | "now"
+  "attention" | "rail" | "latest_run" | "now" | "dispatch_block"
 >;
+
+/** The actions that POST runs, so the server's `dispatch_block` refuses them. */
+const DISPATCHES: ReadonlySet<ActionId> = new Set(["approve", "retry", "dispatch"]);
+
+/** Disable the dispatching actions of `set` while the server says dispatch would be refused. */
+function withBlock(set: ActionSet, block: Schemas["DispatchBlock"] | null): ActionSet {
+  if (!block) return set;
+  const gated = (a: Action): Action =>
+    DISPATCHES.has(a.id) ? { ...a, disabled: true, title: block.text } : a;
+  return {
+    ...set,
+    primary: set.primary && gated(set.primary),
+    secondary: set.secondary.map(gated),
+  };
+}
 
 type Gate = Schemas["GateInfo"];
 
@@ -76,6 +93,10 @@ function waitingTitle(t: ActionTicket): string {
 }
 
 export function ticketActions(t: ActionTicket, ctx: ActionContext): ActionSet {
+  return withBlock(actionsFor(t, ctx), t.dispatch_block);
+}
+
+function actionsFor(t: ActionTicket, ctx: ActionContext): ActionSet {
   const header = ctx === "header";
   const open = act("open", words.open, "default");
   // Abandon is always quiet and leftmost, away from the primary.

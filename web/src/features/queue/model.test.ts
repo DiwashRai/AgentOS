@@ -20,6 +20,7 @@ import {
   runName,
   runSeconds,
   sourceWord,
+  stateLine,
   statusMark,
   subLine,
   waitingPerson,
@@ -105,6 +106,28 @@ describe("row looks", () => {
       "exit 1",
     );
     expect(blockedReason(ticket())).toBe("");
+  });
+
+  it("puts the server's dispatch block on the second line, flagged", () => {
+    const block = { code: "base_branch_missing" as const, text: "Set a base branch first" };
+    expect(stateLine(ticket({ attention: "inbox", dispatch_block: block }))).toEqual({
+      text: "Set a base branch first",
+      flag: true,
+    });
+    const failed = ticket({
+      attention: "blocked",
+      dispatch_block: block,
+      latest_run: run("failed", { error: "exit 1" }),
+    });
+    expect(stateLine(failed)).toEqual({ text: "Set a base branch first", flag: true });
+  });
+
+  it("otherwise shows a blocked row's reason, else the status line", () => {
+    const failed = ticket({ attention: "blocked", latest_run: run("failed", { error: "exit 1" }) });
+    expect(stateLine(failed)).toEqual({ text: "exit 1", flag: false });
+    const inbox = ticket({ attention: "inbox", now: now({ text: "Nobody on it yet" }) });
+    expect(stateLine(inbox)).toEqual({ text: "Nobody on it yet", flag: false });
+    expect(stateLine(ticket({ attention: "waiting" }))).toEqual({ text: "", flag: false });
   });
 });
 

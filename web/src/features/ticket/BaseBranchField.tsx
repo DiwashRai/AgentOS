@@ -1,11 +1,14 @@
-// The byline's "Base branch" (repo tickets only): the resolved branch in mono, "· repo default"
-// when it is the repo's own default. Writers click it to edit inline (Enter / Save saves, Esc or
-// blur cancels); a run locks it. The logic is in `branch.ts`.
+// The byline's "Base branch" (repo tickets only): the resolved branch in mono with the server's
+// source line ("· from Jira · version_1.0", "· set by Sam", "· repo default"), or "Not set · <why>"
+// drawn as needing action. Writers click it to edit inline (Enter / Save saves, Esc or blur
+// cancels). An active run disables it; the server's lock (a run started the ticket branch from
+// it) turns it into plain text with "Locked by run #N". The logic is in `branch.ts`.
 import { useCallback, useId, useState, type MouseEvent } from "react";
+import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useConfig, usePatchTicket } from "../../api/queries";
-import { Button, LinkButton, cx } from "../../ui";
+import { Button, LinkButton, cx, linkClass } from "../../ui";
 import s from "./BaseBranchField.module.css";
 import {
   branchError,
@@ -16,6 +19,7 @@ import {
   branchView,
   canSaveBranch,
   canUseDefault,
+  lockNote,
   repoDefault,
 } from "./branch";
 
@@ -25,6 +29,22 @@ type Detail = Schemas["TicketDetail"];
 const keepFocus = (e: MouseEvent) => {
   e.preventDefault();
 };
+
+function LockNote({ t }: { t: Detail }) {
+  const note = lockNote(t);
+  if (!note) return null;
+  return (
+    <span className={s.lock}>
+      {note.href ? (
+        <RouterLink className={linkClass} to={note.href}>
+          {note.text}
+        </RouterLink>
+      ) : (
+        note.text
+      )}
+    </span>
+  );
+}
 
 export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   const config = useConfig();
@@ -37,19 +57,30 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
   }, []);
 
   const def = repoDefault(t.repo_name, config.data?.repos);
-  const view = branchView(t.base_branch, def);
+  const view = branchView(t);
   const lock = branchLock(t);
+  const locked = t.base_branch_info?.locked === true;
   // A run that starts mid-edit closes the editor.
   if (lock !== null && draft !== null) setDraft(null);
 
   const value = (
     <>
-      <span className={cx(view.named && s.mono)}>{view.text}</span>
-      {view.suffix ? <span className={s.suffix}>{view.suffix}</span> : null}
+      <span className={cx(view.named && s.mono, view.missing && s.missing)}>{view.text}</span>
+      {view.source ? (
+        <span className={cx(s.suffix, view.missing && s.missing)}>{`· ${view.source}`}</span>
+      ) : null}
     </>
   );
 
-  if (readOnly) return <span className={s.rest}>{value}</span>;
+  // Locked (or a viewer): plain text, with the lock note beside it.
+  if (readOnly || locked) {
+    return (
+      <span className={s.rest} title={locked ? (lock ?? undefined) : undefined}>
+        {value}
+        <LockNote t={t} />
+      </span>
+    );
+  }
 
   if (draft === null || lock !== null) {
     return (
@@ -79,7 +110,8 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
       },
     });
   };
-  const invalid = branchError(draft);
+  // An empty input (a blank ticket's editor opens empty) just can't save; no "Required." yet.
+  const invalid = draft.trim() === "" ? undefined : branchError(draft);
   const canSave = canSaveBranch(draft, t.base_branch) && !patch.isPending;
   const hint = branchHint(t);
   const errId = `${ids}-err`;
@@ -124,7 +156,7 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
         <Button type="submit" variant="ink" size="xs" disabled={!canSave} onMouseDown={keepFocus}>
           Save
         </Button>
-        {canUseDefault(t.base_branch, def) ? (
+        {canUseDefault(t.base_branch_info, def) ? (
           <LinkButton
             className={s.useDefault}
             disabled={patch.isPending}

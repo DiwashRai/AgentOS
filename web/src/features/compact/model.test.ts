@@ -279,6 +279,7 @@ describe("the now column", () => {
       kind: "mark",
       mark: { kind: "you", ask: "Plan sign-off" },
       text: "3 tasks",
+      flag: false,
     });
     const wait = ticket({
       attention: "waiting",
@@ -300,6 +301,27 @@ describe("the now column", () => {
     expect(nowCell(ticket({ attention: "inbox" }))).toEqual({ kind: "empty" });
     expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) }))).toEqual({
       kind: "empty",
+    });
+  });
+  it("shows the server's dispatch block, flagged", () => {
+    const dispatch_block = {
+      code: "base_branch_missing" as const,
+      text: "Set a base branch first",
+    };
+    expect(nowCell(ticket({ attention: "inbox", dispatch_block }))).toEqual({
+      kind: "block",
+      text: "Set a base branch first",
+    });
+    const blk = ticket({
+      attention: "blocked",
+      dispatch_block,
+      latest_run: run("failed", { error: "cannot start from origin/x" }),
+    });
+    expect(nowCell(blk)).toEqual({
+      kind: "mark",
+      mark: { kind: "blk", name: "Blocked" },
+      text: "Set a base branch first",
+      flag: true,
     });
   });
   it("words done tickets by outcome, with the note", () => {
@@ -341,6 +363,14 @@ describe("the expansion", () => {
     expect(moveText(ticket({ attention: "inbox" }))).toEqual({
       label: "Now",
       lead: "Nobody on it yet",
+    });
+    const dispatch_block = {
+      code: "base_branch_missing" as const,
+      text: "Set a base branch first",
+    };
+    expect(moveText(ticket({ attention: "inbox", dispatch_block }))).toEqual({
+      label: "Now",
+      lead: "Set a base branch first",
     });
   });
   it("labels a done ticket with its outcome, over the note", () => {

@@ -3,7 +3,8 @@
 // on the line expands it in place (DESIGN §6); the expansion carries the row's actions, Peek and
 // Open ticket. Hover and focus light the row up and never move it. An Inbox row reveals one action,
 // Add context, over its empty Now cell: a sibling of the line (never inside the line's <button>), so
-// Tab from the focused line reaches it. Server fields only.
+// Tab from the focused line reaches it. A ticket the server won't dispatch yet (`dispatch_block`)
+// says why in its Now cell, in the you hue. Server fields only.
 import { useEffect, useId, useRef } from "react";
 import { useNavigate } from "react-router";
 
@@ -71,12 +72,24 @@ function NowCell({ ticket }: { ticket: Ticket }) {
       );
     case "empty":
       return <span className={cx(s.now, s.cNow)} />;
+    case "block":
+      return (
+        <span className={cx(s.now, s.cNow, s.nowBlock)}>
+          <span className={s.flag} title={cell.text}>
+            {cell.text}
+          </span>
+        </span>
+      );
     case "mark": {
       const { mark } = cell;
       return (
         <span className={cx(s.now, s.cNow)}>
           <StatusMark kind={mark.kind} name={mark.name} ask={mark.ask} />
-          {cell.text && <span title={cell.text}>{cell.text}</span>}
+          {cell.text && (
+            <span className={cx(cell.flag && s.flag)} title={cell.text}>
+              {cell.text}
+            </span>
+          )}
         </span>
       );
     }

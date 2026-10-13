@@ -32,9 +32,35 @@ export function repoOptions(
   ];
 }
 
-/** The base branch a blank field means: the picked repo's default branch. */
-export function branchPlaceholder(repos: readonly Schemas["RepoInfo"][], repo: string): string {
+type RepoRef = Pick<Schemas["RepoInfo"], "name" | "default_branch">;
+
+/** True when the picked catalog repo has no default branch (blank = none), so a blank field
+ *  leaves the ticket without a base branch. False for No repo or a repo the catalog doesn't list. */
+export function needsBranch(repos: readonly RepoRef[], repo: string): boolean {
+  if (repo === NO_REPO) return false;
+  const found = repos.find((r) => r.name === repo);
+  return found !== undefined && !found.default_branch;
+}
+
+export const NEEDS_BRANCH_PLACEHOLDER = "Required: this repo has no default";
+export const NEEDS_BRANCH_NOTE =
+  "Leave it blank and the ticket can't be dispatched until one is set.";
+
+/** The base branch a blank field means: the picked repo's default branch, or a prompt to type one
+ *  when the repo has none. */
+export function branchPlaceholder(repos: readonly RepoRef[], repo: string): string {
+  if (needsBranch(repos, repo)) return NEEDS_BRANCH_PLACEHOLDER;
   return repos.find((r) => r.name === repo)?.default_branch ?? "";
+}
+
+/** The note under the base branch field: only while it is blank on a repo with no default. The
+ *  form still creates the ticket (the server allows a blank one; it just can't be dispatched). */
+export function branchNote(
+  repos: readonly RepoRef[],
+  repo: string,
+  value: string,
+): string | undefined {
+  return needsBranch(repos, repo) && value.trim() === "" ? NEEDS_BRANCH_NOTE : undefined;
 }
 
 export interface NewTicketForm {
@@ -83,7 +109,8 @@ export function hasErrors(e: FormErrors): boolean {
   return Object.values(e).some(Boolean);
 }
 
-/** The request body. A blank branch goes as null (the repo's default branch applies). */
+/** The request body. A blank branch goes as null (the repo's default branch applies, if it has
+ *  one; otherwise the ticket is created without one). */
 export function toCreateBody(f: NewTicketForm): Create {
   const repo = f.repo === NO_REPO ? null : f.repo;
   const branch = f.baseBranch.trim();

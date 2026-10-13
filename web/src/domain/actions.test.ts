@@ -161,6 +161,57 @@ describe("ticketActions", () => {
     });
   });
 
+  describe("dispatch blocked (the server's dispatch_block)", () => {
+    const block = { code: "base_branch_missing" as const, text: "Set a base branch first" };
+
+    it("disables the header's Dispatch run, titled with the server's text", () => {
+      const s = ticketActions(ticket({ attention: "inbox", dispatch_block: block }), "header");
+      expect(s.primary).toMatchObject({
+        id: "dispatch",
+        variant: "accent",
+        disabled: true,
+        title: "Set a base branch first",
+      });
+      expect(s.secondary[0]).toMatchObject({ id: "abandon" });
+      expect(s.secondary[0]?.disabled).toBeUndefined();
+    });
+
+    it("disables Retry and Approve (both POST runs), and a waiting ticket's Dispatch run", () => {
+      const blocked = ticket({ attention: "blocked", dispatch_block: block });
+      expect(ticketActions(blocked, "row").primary).toMatchObject({
+        id: "retry",
+        disabled: true,
+        title: block.text,
+      });
+      const approve = ticketActions({ ...parkedOnYou, dispatch_block: block }, "row").primary;
+      expect(approve).toMatchObject({ id: "approve", disabled: true, title: block.text });
+      const waiting = ticketActions(
+        ticket({ attention: "waiting", dispatch_block: block }),
+        "header",
+      );
+      expect(waiting.secondary[0]).toMatchObject({ id: "dispatch", disabled: true });
+    });
+
+    it("leaves the actions that don't dispatch alone", () => {
+      const last = ticket({
+        attention: "needs_you",
+        dispatch_block: block,
+        rail: [step("Plan", "done"), step("Build", "done", { gate: gate("you") })],
+      });
+      const s = ticketActions(last, "header");
+      expect(s.primary?.id).toBe("complete");
+      expect([s.primary, ...s.secondary].some((a) => a?.disabled)).toBe(false);
+      const row = ticketActions(ticket({ attention: "inbox", dispatch_block: block }), "row");
+      expect(row.primary).toEqual({ id: "open", label: "Open", variant: "ink" });
+    });
+
+    it("changes nothing without a block", () => {
+      const s = ticketActions(ticket({ attention: "inbox" }), "header");
+      expect(s.primary?.disabled).toBeUndefined();
+      expect(s.primary?.title).toBeUndefined();
+    });
+  });
+
   it("waiting and running tickets offer no Complete or Abandon", () => {
     for (const attention of ["waiting", "running", "queued"] as const) {
       for (const ctx of ["row", "header"] as const) {

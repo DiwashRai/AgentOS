@@ -14,6 +14,7 @@ import {
   TITLE_MAX,
   NO_REPO,
   TYPES,
+  branchNote,
   branchPlaceholder,
   hasErrors,
   initialForm,
@@ -223,7 +224,11 @@ function TicketForm({
           )}
         </Field>
         {form.repo === NO_REPO ? null : (
-          <Field label="Base branch" error={errors.baseBranch}>
+          <Field
+            label="Base branch"
+            error={errors.baseBranch}
+            hint={branchNote(repos, form.repo, form.baseBranch)}
+          >
             {({ id, describedBy, invalid }) => (
               <input
                 id={id}

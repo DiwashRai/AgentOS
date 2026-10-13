@@ -151,6 +151,8 @@ export function actionErrorText(e: unknown): string {
       return "A run is already active";
     case "stale_version":
       return "Changed by someone else · reload and try again";
+    case "base_branch_missing":
+      return "Set a base branch first";
     case "forbidden":
       return "You don't have permission to do that";
     case "unauthorized":
