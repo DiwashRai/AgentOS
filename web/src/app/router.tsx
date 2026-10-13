@@ -10,6 +10,7 @@ import { Shell } from "./Shell";
 import { TeamsView } from "./views/placeholders";
 import {
   IntakeSettingsView,
+  MappingsView,
   RunnersView,
   SettingsIndex,
   SpaceView,
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
       { path: "settings", element: <SettingsIndex /> },
       { path: "settings/space", element: <SpaceView /> },
       { path: "settings/intake", element: <IntakeSettingsView /> },
+      { path: "settings/mappings", element: <MappingsView /> },
       { path: "settings/template", element: <TemplateView /> },
       { path: "settings/runners", element: <RunnersView /> },
       { path: "settings/users", element: <UsersView /> },

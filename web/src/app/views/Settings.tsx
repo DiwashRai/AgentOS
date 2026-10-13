@@ -1,12 +1,13 @@
-// Settings: Space, Intake, Template, Runners, Users; one top bar with the section pills (kit
-// .ao-pills, as links). Everything but Template is admin-only (those pages say so to others).
+// Settings: Space, Intake, Field mappings, Template, Runners, Users; one top bar with the section
+// pills (kit .ao-pills, as links). Everything but Template is admin-only (those pages say so to
+// others).
 // Sign out lives here until the avatar gets a menu.
 import type { ReactNode } from "react";
 import { Navigate, NavLink } from "react-router";
 
 import { useLogout, useMe } from "../../api/queries";
 import { TemplatePage } from "../../features/pipeline";
-import { IntakeSettingsPage, RunnersPage, SpacePage } from "../../features/settings";
+import { IntakeSettingsPage, MappingsPage, RunnersPage, SpacePage } from "../../features/settings";
 import { UsersPage } from "../../features/users";
 import { cx } from "../../ui";
 import { Quiet } from "../Quiet";
@@ -18,6 +19,7 @@ import v from "./views.module.css";
 const SECTIONS = [
   { to: "/settings/space", label: "Space" },
   { to: "/settings/intake", label: "Intake" },
+  { to: "/settings/mappings", label: "Field mappings" },
   { to: "/settings/template", label: "Template" },
   { to: "/settings/runners", label: "Runners" },
   { to: "/settings/users", label: "Users" },
@@ -90,6 +92,15 @@ export function IntakeSettingsView() {
   return (
     <SettingsView>
       <IntakeSettingsPage />
+    </SettingsView>
+  );
+}
+
+/** Settings › Field mappings: Jira fields → ticket fields by rules, e.g. the base branch (admin only). */
+export function MappingsView() {
+  return (
+    <SettingsView>
+      <MappingsPage />
     </SettingsView>
   );
 }

@@ -25,10 +25,12 @@ export const keys = {
   manifest: (id: number) => [...keys.run(id), "manifest"] as const,
   intake: () => [...keys.all, "intake"] as const,
   settings: (area: SettingsArea) => [...keys.all, "settings", area] as const,
+  /** Jira's fields for the Field mappings picker (not a Settings document). */
+  jiraFields: () => [...keys.all, "jira-fields"] as const,
 };
 
 /** The admin Settings documents (GET/PUT /api/settings/{area}). */
-export type SettingsArea = "space" | "repos" | "intake" | "runtimes" | "runner";
+export type SettingsArea = "space" | "repos" | "intake" | "runtimes" | "runner" | "mappings";
 
 /** Public app config (auth mode, Space name, repos, key prefix, runtimes, defaults). Read from the
  *  Settings documents, so it changes rarely: cached until a Settings or Template save here
@@ -267,6 +269,49 @@ export function useSaveRunnerSettings() {
     onSuccess: (data) => {
       queryClient.setQueryData(keys.settings("runner"), data);
     },
+  });
+}
+
+export function useMappingSettings(enabled = true) {
+  return useQuery({
+    queryKey: keys.settings("mappings"),
+    queryFn: () => unwrap(api.GET("/api/settings/mappings")),
+    enabled,
+  });
+}
+
+/** Saving re-applies a `base_branch` mapping to the unlocked tickets it set, so every ticket read
+ *  (the board and each ticket's base branch) refetches. */
+export function useSaveMappingSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["FieldMappingsUpdate"]) =>
+      unwrap(api.PUT("/api/settings/mappings", { body })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.settings("mappings"), data);
+      return queryClient.invalidateQueries({ queryKey: keys.tickets() });
+    },
+  });
+}
+
+/** Jira's fields for the mapping picker (the server caches them ~10 min). 501 `not_implemented`
+ *  without the Jira service account, 502 `upstream_error` when Jira fails: shown at once, never
+ *  retried on its own (Retry refetches). Fetched only while the page that asks is open. */
+export function useJiraFields(enabled = true) {
+  return useQuery({
+    queryKey: keys.jiraFields(),
+    queryFn: () => unwrap(api.GET("/api/settings/mappings/jira-fields")),
+    enabled,
+    retry: false,
+    staleTime: 10 * 60_000,
+  });
+}
+
+/** "Try it": runs an unsaved mapping on typed values or on an issue's field. Nothing is saved. */
+export function usePreviewMapping() {
+  return useMutation({
+    mutationFn: (body: Schemas["MappingPreviewRequest"]) =>
+      unwrap(api.POST("/api/settings/mappings/preview", { body })),
   });
 }
 
