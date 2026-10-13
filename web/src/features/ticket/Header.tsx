@@ -1,7 +1,7 @@
 // The ticket header (DESIGN §7.1 in the visual refresh's form, mock "Ticket page (header)"):
 // kicker (key chip, source, type, priority, repo) + the action group, h1, lead, byline (owner
-// picker, base branch, runner, opened, the pipeline count) and the full-width stepper. The now band
-// and the plan under it are the Strip.
+// picker, repo picker, base branch for a repo ticket, runner, opened, the pipeline count) and the
+// full-width stepper. The now band and the plan under it are the Strip.
 import { useMemo } from "react";
 
 import type { Schemas } from "../../api/client";
@@ -25,6 +25,7 @@ import { useNow } from "../runs/useNow";
 import { BaseBranchField } from "./BaseBranchField";
 import s from "./Header.module.css";
 import { PrLink } from "./PrLink";
+import { RepoPicker } from "./RepoPicker";
 import {
   actionErrorText,
   firstParagraph,
@@ -164,8 +165,14 @@ export function Header({ t }: { t: Detail }) {
             <OwnerPicker t={t} readOnly={readOnly} />
           </dd>
         </div>
+        <div className={s.grows}>
+          <dt>Repo</dt>
+          <dd>
+            <RepoPicker t={t} readOnly={readOnly} />
+          </dd>
+        </div>
         {t.repo_name ? (
-          <div className={s.branch}>
+          <div className={s.grows}>
             <dt>Base branch</dt>
             <dd>
               <BaseBranchField t={t} readOnly={readOnly} />

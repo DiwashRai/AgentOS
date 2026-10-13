@@ -83,10 +83,12 @@
 }
 
 /* Byline: labels 12 --ink-3, values 600 --ink-1. */
+/* Items top-aligned, so one that grows lines under its value (the repo's confirm, the base branch
+   editor) doesn't push its neighbours down. */
 .byline {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px 24px;
   margin: 0;
   font-size: var(--fs-meta);
@@ -107,8 +109,9 @@
   font-weight: 600;
   color: var(--ink-1);
 }
-/* The base branch grows a message and a hint while editing: keep its label on the input's line. */
-.byline > .branch {
+/* The repo (a confirm, an error) and the base branch (a message and a hint while editing) grow
+   lines under their value: keep the label on the value's line. */
+.byline > .grows {
   align-items: baseline;
 }
 

@@ -1,0 +1,34 @@
+/* The byline's repo: the select (Header.module.css .pick, like the owner), then a confirm line and
+   an error line under it, like the base branch's message (BaseBranchField.module.css .err). */
+.repo {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  max-width: 52ch;
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+/* The buttons stay together; the text wraps first. */
+.buttons {
+  display: inline-flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.err {
+  max-width: 52ch;
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--blocked);
+}
