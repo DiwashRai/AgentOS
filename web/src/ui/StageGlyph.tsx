@@ -1,4 +1,4 @@
-import type { GateState, GlyphModel, StepState } from "../domain/stage";
+import { roundText, type GateState, type GlyphModel, type StepState } from "../domain/stage";
 import { cx } from "./cx";
 import { fitGlyphSize, glyphItems, glyphTitle, isFinished, parkedGate } from "./glyph";
 import s from "./StageGlyph.module.css";
@@ -39,6 +39,9 @@ export function StageGlyph({ model, size = "sm", label = true, className }: Stag
   const finished = isFinished(model);
   const title = glyphTitle(model);
   const text = label ? model.label : "";
+  const round = model.round;
+  const named =
+    model.label && round ? `${model.label}, ${roundText(round).toLowerCase()}` : model.label;
   const drawn = size === "sm" ? fitGlyphSize(model) : size;
   return (
     <span
@@ -54,7 +57,7 @@ export function StageGlyph({ model, size = "sm", label = true, className }: Stag
         className,
       )}
       role="img"
-      aria-label={model.label ? `${model.label}: ${title}` : title}
+      aria-label={named ? `${named}: ${title}` : title}
       title={title}
     >
       <span className={s.segs}>
@@ -73,7 +76,14 @@ export function StageGlyph({ model, size = "sm", label = true, className }: Stag
             {text}
           </b>
         ) : (
-          <b>{text}</b>
+          <b>
+            {text}
+            {round ? (
+              <span className={s.round} title={roundText(round)}>
+                {roundText(round, true)}
+              </span>
+            ) : null}
+          </b>
         )
       ) : null}
     </span>

@@ -7,11 +7,13 @@ import {
   dispatchesWorkflow,
   effortArgs,
   fixFirst,
+  hasSessions,
   launcherLabel,
   linesToArgs,
   moveRuntime,
   patchRuntime,
   placeholderNotes,
+  previewCalls,
   previewLine,
   removeRuntime,
   rowsFrom,
@@ -29,6 +31,7 @@ import {
   type RuntimeEntry,
 } from "./model";
 
+// The built-in runtimes (runtime.py), loop groups included.
 const CLAUDE: RuntimeEntry = {
   name: "claude",
   argv: ["claude", "-p", "--output-format", "stream-json"],
@@ -37,6 +40,10 @@ const CLAUDE: RuntimeEntry = {
   agent_args: ["--agent", "{agent}"],
   prompt_via: "stdin",
   prompt_args: [],
+  session_args: ["--session-id", "{session}"],
+  resume_args: ["--resume", "{session}"],
+  verdict_args: ["--json-schema", "{verdict_schema}"],
+  verdict_from: "structured_output",
 };
 const COPILOT: RuntimeEntry = {
   name: "copilot",
@@ -46,7 +53,20 @@ const COPILOT: RuntimeEntry = {
   agent_args: ["--agent", "{agent}"],
   prompt_via: "arg",
   prompt_args: ["-p", "{prompt}"],
+  session_args: ["--resume={session}"],
+  resume_args: ["--resume={session}"],
+  verdict_args: [],
+  verdict_from: "file",
 };
+
+/** A runtime with no loop groups (as saved before sessions existed: the keys are missing). */
+function withoutLoopArgs(e: RuntimeEntry): RuntimeEntry {
+  const out = { ...e, verdict_from: "file" as const };
+  delete out.session_args;
+  delete out.resume_args;
+  delete out.verdict_args;
+  return out;
+}
 
 /** A runtime as saved before `effort_args` existed (the key is missing). */
 function withoutEffortArgs(e: RuntimeEntry): RuntimeEntry {
@@ -136,6 +156,10 @@ describe("runtime rows", () => {
       agent_args: [],
       prompt_via: "stdin",
       prompt_args: [],
+      session_args: [],
+      resume_args: [],
+      verdict_args: [],
+      verdict_from: "file",
     });
     expect(two[3]?.key).toBe("n:2");
     expect(two[3]?.entry.name).toBe("runtime-2");
@@ -222,6 +246,30 @@ describe("validateRuntimes", () => {
     expect(check({ ...CLAUDE, prompt_args: ["-p"] }).rows[0]?.prompt_args).toBeDefined();
   });
 
+  it("prompt_via arg takes {prompt} exactly once", () => {
+    expect(
+      check({ ...COPILOT, prompt_args: ["-p", "{prompt}", "{prompt}"] }).rows[0]?.prompt_args,
+    ).toBeDefined();
+  });
+
+  it("a non-empty session or resume group needs {session}, alone or inside an argument", () => {
+    expect(check(withoutLoopArgs(CLAUDE)).rows[0]).toEqual({});
+    for (const field of ["session_args", "resume_args"] as const) {
+      expect(check({ ...CLAUDE, [field]: ["--resume"] }).rows[0]?.[field]).toBeDefined();
+      expect(check({ ...CLAUDE, [field]: ["--resume={session}"] }).rows[0]).toEqual({});
+      expect(check({ ...CLAUDE, [field]: [] }).rows[0]?.[field]).toBeUndefined();
+      expect(check({ ...CLAUDE, [field]: ["a\0{session}"] }).rows[0]?.[field]).toBeDefined();
+    }
+  });
+
+  it("structured output needs verdict arguments; the file channel doesn't", () => {
+    const bare = { ...CLAUDE, verdict_args: [] };
+    expect(check(bare).rows[0]?.verdict_from).toBeDefined();
+    expect(check({ ...bare, verdict_from: "file" }).rows[0]).toEqual({});
+    const many = Array.from({ length: 51 }, (_, i) => `a${String(i)}`);
+    expect(check({ ...CLAUDE, verdict_args: many }).rows[0]?.verdict_args).toBeDefined();
+  });
+
   it("needs at least one runtime and at most 20", () => {
     expect(validateRuntimes([]).form).toHaveLength(1);
     const many = Array.from({ length: 21 }, (_, i) => ({ ...CLAUDE, name: `r${String(i)}` }));
@@ -266,6 +314,57 @@ describe("placeholderNotes", () => {
     // No effort flag at all is fine (efforts are then ignored).
     expect(placeholderNotes({ ...CLAUDE, effort_args: [] })).toEqual([]);
   });
+
+  it("checks the loop groups: {session} inside an argument is fine, elsewhere it stays", () => {
+    expect(placeholderNotes(withoutLoopArgs(CLAUDE))).toEqual([]);
+    expect(placeholderNotes({ ...CLAUDE, argv: ["claude", "--resume={session}"] })).toHaveLength(1);
+    expect(
+      placeholderNotes({ ...CLAUDE, verdict_args: ["--json-schema={verdict_schema}"] }),
+    ).toHaveLength(2); // not a whole line, and so no {verdict_schema} line
+    expect(
+      placeholderNotes({ ...CLAUDE, model_args: ["--model", "{model}", "{session}"] }),
+    ).toHaveLength(1);
+  });
+
+  it("notes a session group without its partner (sessions need both)", () => {
+    expect(placeholderNotes({ ...CLAUDE, resume_args: [] })).toHaveLength(1);
+    expect(placeholderNotes({ ...CLAUDE, session_args: [] })).toHaveLength(1);
+    expect(placeholderNotes({ ...CLAUDE, session_args: [], resume_args: [] })).toEqual([]);
+  });
+});
+
+describe("loop groups round-trip", () => {
+  it("are kept as sent; missing (an older shape) read and save as []", () => {
+    expect(runtimesBody(rowsFrom([COPILOT]), 1).runtimes[0]).toEqual(COPILOT);
+    const older = withoutLoopArgs(CLAUDE);
+    const body = runtimesBody(rowsFrom([older]), 1).runtimes[0];
+    expect(body).toMatchObject({ session_args: [], resume_args: [], verdict_args: [] });
+    expect(hasSessions(older)).toBe(false);
+    expect(hasSessions(CLAUDE)).toBe(true);
+  });
+
+  it("count as changes", () => {
+    const rows = rowsFrom([CLAUDE]);
+    const edits = [
+      { session_args: [] },
+      { resume_args: ["--continue={session}"] },
+      { verdict_args: [] },
+      { verdict_from: "file" as const },
+    ];
+    for (const patch of edits) {
+      expect(sameRuntimes(rows, patchRuntime(rows, "s:claude", patch)), JSON.stringify(patch)).toBe(
+        false,
+      );
+    }
+    // Missing and empty are the same list.
+    const older = withoutLoopArgs(CLAUDE);
+    expect(
+      sameRuntimes(
+        rowsFrom([older]),
+        rowsFrom([{ ...older, session_args: [], resume_args: [], verdict_args: [] }]),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("commandPreview", () => {
@@ -304,6 +403,32 @@ describe("commandPreview", () => {
       effort_args: ["{model}"],
     });
     expect(previewLine(p)).toBe("claude {agent} -m={model} {model} --agent <agent>");
+  });
+
+  it("a loop check adds session then verdict arguments before the prompt; a repair resumes", () => {
+    expect(previewLine(commandPreview(CLAUDE, "check"))).toBe(
+      "claude -p --output-format stream-json --model <model> --effort <effort> --agent <agent> --session-id <session> --json-schema <verdict schema>",
+    );
+    expect(previewLine(commandPreview(CLAUDE, "repair"))).toBe(
+      "claude -p --output-format stream-json --model <model> --effort <effort> --agent <agent> --resume <session> --json-schema <verdict schema>",
+    );
+    // {session} inside an argument is a slot too; the prompt arguments stay last.
+    const copilot = commandPreview(COPILOT, "check");
+    expect(previewLine(copilot)).toBe(
+      "copilot --allow-all --model <model> --effort <effort> --agent <agent> --resume=<session> -p <prompt>",
+    );
+    expect(copilot.tokens.filter((t) => t.slot).map((t) => t.text)).toContain("--resume=<session>");
+  });
+
+  it("previews the loop calls a runtime supports", () => {
+    expect(previewCalls(CLAUDE)).toEqual(["stage", "check", "repair"]);
+    expect(previewCalls(COPILOT)).toEqual(["stage", "check", "repair"]);
+    expect(previewCalls(withoutLoopArgs(CLAUDE))).toEqual(["stage"]);
+    // Verdict arguments alone: a check's call differs, but nothing can resume.
+    expect(previewCalls({ ...withoutLoopArgs(CLAUDE), verdict_args: ["--json"] })).toEqual([
+      "stage",
+      "check",
+    ]);
   });
 
   it("quotes arguments with spaces or quotes, and empty ones", () => {

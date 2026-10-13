@@ -38,7 +38,16 @@ export function gate(state: Gate["state"], over: Partial<Gate> = {}): Gate {
 
 /** A rail step; the stage id is the lowercased name. */
 export function step(name: string, state: Step["state"], over: Partial<Step> = {}): Step {
-  return { name, state, stage_id: name.toLowerCase(), phase: "build", gate: null, ...over };
+  return {
+    name,
+    state,
+    stage_id: name.toLowerCase(),
+    phase: "build",
+    gate: null,
+    round: null,
+    max_rounds: null,
+    ...over,
+  };
 }
 
 export function ticket(over: Partial<Ticket> = {}): Ticket {

@@ -106,7 +106,9 @@ type RunEvent =
   | Schemas["StageStartedEvent"]
   | Schemas["StageFinishedEvent"]
   | Schemas["LogEvent"]
-  | Schemas["WarningEvent"];
+  | Schemas["WarningEvent"]
+  | Schemas["VerdictEvent"]
+  | Schemas["VerdictRepairEvent"];
 
 /** Mutations change server-derived state everywhere (attention, rail, now): refetch the ticket,
  *  its children and the board. Never patch the cache by hand. */

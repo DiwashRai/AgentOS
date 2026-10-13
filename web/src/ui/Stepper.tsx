@@ -7,6 +7,7 @@ import {
   isAhead,
   isBareGate,
   isFinished,
+  roundCaption,
   stageCaption,
   YOUR_MOVE,
   type StepperModel,
@@ -82,6 +83,7 @@ export function Stepper({ model, compact = false, className }: StepperProps) {
         const isLast = it.index === last;
         const final = isLast && finished;
         const caption = stageCaption(stage, isLast, model.live, finished, model.closed);
+        const round = roundCaption(stage);
         return (
           <li
             key={`s${String(it.index)}`}
@@ -91,7 +93,9 @@ export function Stepper({ model, compact = false, className }: StepperProps) {
               stage.state === "skipped" && isAhead(model, it.index) && s.isAhead,
               final && s.isFinal,
             )}
-            title={stage.name + (caption ? ` · ${caption.toLowerCase()}` : "")}
+            title={[stage.name, caption.toLowerCase(), round.toLowerCase()]
+              .filter(Boolean)
+              .join(" · ")}
             aria-current={
               stage.state === "current" || stage.state === "failed" ? "step" : undefined
             }
@@ -102,6 +106,7 @@ export function Stepper({ model, compact = false, className }: StepperProps) {
               {stage.name}
             </span>
             {caption ? <span className={s.st}>{caption}</span> : null}
+            {round ? <span className={cx(s.st, s.round)}>{round}</span> : null}
           </li>
         );
       })}

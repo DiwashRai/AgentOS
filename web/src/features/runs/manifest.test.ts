@@ -3,8 +3,13 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import {
   argChips,
+  checkMeta,
   commandTokens,
+  ERROR_PLACEHOLDER,
+  FEEDBACK_PLACEHOLDER,
   filePaths,
+  laterCalls,
+  laterLabel,
   manifestErrorText,
   PROMPT_PLACEHOLDER,
   promptIndex,
@@ -22,6 +27,8 @@ const CLAUDE: ManifestStage = {
   name: "Review",
   kind: "agent",
   timeout_s: 1800,
+  check: false,
+  verdict_repairs: 0,
   argv: [
     "claude",
     "-p",
@@ -43,6 +50,8 @@ const COPILOT: ManifestStage = {
   name: "Build",
   kind: "agent",
   timeout_s: 3600,
+  check: false,
+  verdict_repairs: 0,
   argv: ["copilot", "--allow-all", "--model", "gpt-5", "-p", PROMPT],
   stdin: null,
   command: null,
@@ -53,6 +62,8 @@ const SHELL: ManifestStage = {
   name: "Test",
   kind: "shell",
   timeout_s: 600,
+  check: false,
+  verdict_repairs: 0,
   argv: null,
   stdin: null,
   command: "npm test",
@@ -143,6 +154,66 @@ describe("stageCall", () => {
       prompt: null,
       chips: [],
     });
+  });
+});
+
+describe("loop stages", () => {
+  const inv = (stdin: string | null, argv: string[], at: number | null, tail: string) => ({
+    argv,
+    stdin,
+    prompt_arg: at,
+    tail,
+  });
+
+  it("lists later rounds from round 2, then one repair per round", () => {
+    const calls = laterCalls({
+      rounds: [
+        inv("R2", ["claude", "--resume", "s1"], null, "!"),
+        inv("R3", ["claude"], null, "!"),
+      ],
+      repairs: [inv("Fix", ["claude"], null, "?")],
+    });
+    expect(calls.map((c) => [c.kind, c.round])).toEqual([
+      ["round", 2],
+      ["round", 3],
+      ["repair", 1],
+    ]);
+    expect(new Set(calls.map((c) => c.key)).size).toBe(3);
+    expect(calls[0]?.tokens.map((t) => t.text)).toEqual(["claude", "--resume", "s1"]);
+  });
+
+  it("shows where the worker appends its text: after the prompt, before the tail", () => {
+    const [round, repair] = laterCalls({
+      rounds: [inv("Again.", ["claude"], null, " END")],
+      repairs: [inv(null, ["copilot", "-p", "Redo."], 2, " END")],
+    });
+    expect(round?.prompt).toBe(`Again.${FEEDBACK_PLACEHOLDER} END`);
+    expect(repair?.prompt).toBe(`Redo.${ERROR_PLACEHOLDER} END`);
+    expect(repair?.tokens.at(-1)?.kind).toBe("prompt");
+  });
+
+  it("labels the fold-out with what it holds", () => {
+    const round = { kind: "round" as const };
+    const repair = { kind: "repair" as const };
+    expect(laterLabel([round, round])).toContain("2");
+    expect(laterLabel([round, round])).not.toMatch(/repair/i);
+    expect(laterLabel([repair])).toMatch(/repair/i);
+    expect(laterLabel([round, round, repair, repair, repair])).toMatch(/2.*3/);
+  });
+
+  it("has no later calls outside a loop", () => {
+    expect(laterCalls(CLAUDE)).toEqual([]);
+    expect(stageCall(SHELL).later).toEqual([]);
+  });
+
+  it("describes how a check decides", () => {
+    expect(checkMeta(CLAUDE)).toEqual([]);
+    expect(checkMeta({ ...SHELL, check: true })).toHaveLength(2);
+    const agent = { ...CLAUDE, check: true, verdict_from: "file" as const };
+    expect(checkMeta({ ...agent, verdict_repairs: 2 })[2]).toContain("2");
+    expect(checkMeta({ ...agent, verdict_repairs: 0 })).not.toEqual(
+      checkMeta({ ...agent, verdict_repairs: 1 }),
+    );
   });
 });
 

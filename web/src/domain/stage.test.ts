@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Schemas } from "../api/client";
 import { gate, person, run, step, ticket } from "./fixtures";
-import { stageModel } from "./stage";
+import { roundText, stageModel } from "./stage";
 
 type Phase = Schemas["PhaseStep"]["phase"];
 type PhaseState = Schemas["PhaseStep"]["state"];
@@ -165,6 +165,54 @@ describe("stageModel", () => {
       }),
     );
     expect(m.label).toBe("Build");
+  });
+
+  it("copies a loop stage's round from the server, only for loops of more than one round", () => {
+    const m = stageModel(
+      ticket({
+        rail: [
+          step("Implement", "done", { round: 2, max_rounds: 3 }),
+          step("Review", "current", { round: 2, max_rounds: 3 }),
+          step("Lint", "pending", { round: 1, max_rounds: 1 }),
+          step("Pr", "pending"),
+        ],
+      }),
+    );
+    const [, implement, review, lint, pr] = m.stages;
+    expect(implement?.round).toEqual({ n: 2, of: 3 });
+    expect(review?.round).toEqual({ n: 2, of: 3 });
+    expect(lint?.round).toBeUndefined();
+    expect(pr?.round).toBeUndefined();
+    // the label's round is the labelled (current) stage's
+    expect(m.label).toBe("Review");
+    expect(m.round).toEqual({ n: 2, of: 3 });
+  });
+
+  it("gives the label a round only when it names a current or stopped loop stage", () => {
+    const blocked = stageModel(
+      ticket({ rail: [step("Review", "failed", { round: 3, max_rounds: 3 })] }),
+    );
+    expect(blocked.round).toEqual({ n: 3, of: 3 });
+    const passed = stageModel(
+      ticket({
+        rail: [step("Review", "done", { round: 2, max_rounds: 3 }), step("Pr", "current")],
+      }),
+    );
+    expect(passed.round).toBeUndefined();
+    const parked = stageModel(
+      ticket({
+        rail: [
+          step("Plan", "done", { gate: gate("you") }),
+          step("Review", "current", { round: 1, max_rounds: 3 }),
+        ],
+      }),
+    );
+    expect(parked.round).toBeUndefined();
+  });
+
+  it("writes a round long and short", () => {
+    expect(roundText({ n: 2, of: 3 })).toMatch(/2.*3/);
+    expect(roundText({ n: 2, of: 3 }, true)).toBe("2/3");
   });
 
   it("is live only while the server says running", () => {

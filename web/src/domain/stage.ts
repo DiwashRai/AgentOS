@@ -16,17 +16,27 @@ export interface GlyphGate {
   person?: string | undefined; // short name of who it waits on (state "waiting")
 }
 
+/** Where a loop-block stage is in its loop: round `n` of at most `of` (request 24). */
+export interface StageRound {
+  n: number;
+  of: number;
+}
+
 export interface GlyphStage {
   name: string;
   state: StepState;
   /** Gate after this stage, if any. */
   gate?: GlyphGate | undefined;
+  /** A loop stage's latest round in the latest run (server `RailStep.round` / `max_rounds`). */
+  round?: StageRound | undefined;
 }
 
 export interface GlyphModel {
   stages: GlyphStage[];
   /** The mono label: the parked gate's short name, else the current stage's name. */
   label: string;
+  /** The labelled stage's round, when the label is a loop stage that is current or stopped. */
+  round?: StageRound | undefined;
   /** A run is on a runner: the current segment and label use the live colour. */
   live: boolean;
   /** The ticket was abandoned: its `failed` stage is where it stopped ("Closed"), not a block. */
@@ -65,6 +75,20 @@ function glyphGate(g: Schemas["GateInfo"]): GlyphGate {
   };
 }
 
+/** A rail step's round, as the server sends it. Only a loop that can go round more than once has
+ *  one worth showing: a one-round block runs straight through. */
+export function stageRound(
+  step: Pick<Schemas["RailStep"], "round" | "max_rounds">,
+): StageRound | undefined {
+  if (step.round === null || step.max_rounds === null || step.max_rounds <= 1) return undefined;
+  return { n: step.round, of: step.max_rounds };
+}
+
+/** "Round 2 of 3" (`short`: "2/3", for the row glyph's label). */
+export function roundText(r: StageRound, short = false): string {
+  return short ? `${String(r.n)}/${String(r.of)}` : `Round ${String(r.n)} of ${String(r.of)}`;
+}
+
 function bookend(t: Ticket, phase: "inbox" | "done", name: string): GlyphStage {
   const step = t.phase_track.find((p) => p.phase === phase);
   return { name, state: step ? BOOKEND[step.state] : "upcoming" };
@@ -77,6 +101,7 @@ export function stageModel(t: Ticket): GlyphModel {
       name: s.name,
       state: RAIL[s.state],
       gate: s.gate ? glyphGate(s.gate) : undefined,
+      round: stageRound(s),
     })),
     bookend(t, "done", "Done"),
   ];
@@ -107,6 +132,7 @@ export function stageModel(t: Ticket): GlyphModel {
       current?.name ??
       stages.findLast((s) => s.state === "done")?.name ??
       "",
+    round: parked ? undefined : current?.round,
     live: t.attention === "running",
   };
 }

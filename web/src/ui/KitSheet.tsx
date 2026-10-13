@@ -120,6 +120,38 @@ const CASES: { title: string; model: StepperModel }[] = [
   },
 
   {
+    title: "Review loop, live in round 2 of 3",
+    model: {
+      live: true,
+      label: "Review",
+      round: { n: 2, of: 3 },
+      stages: [
+        { name: "Inbox", state: "done" },
+        { name: "Plan", state: "done", gate: gate("Plan sign-off", "Sign-off", "passed") },
+        { name: "Implement", state: "done", round: { n: 2, of: 3 } },
+        { name: "Review", state: "current", round: { n: 2, of: 3 } },
+        { name: "Open PR", state: "upcoming" },
+        { name: "Done", state: "upcoming" },
+      ],
+    },
+  },
+  {
+    title: "Review loop, checks still failing",
+    model: {
+      live: false,
+      label: "Review",
+      round: { n: 3, of: 3 },
+      stages: [
+        { name: "Inbox", state: "done" },
+        { name: "Plan", state: "done", gate: gate("Plan sign-off", "Sign-off", "passed") },
+        { name: "Implement", state: "done", round: { n: 3, of: 3 } },
+        { name: "Review", state: "failed", round: { n: 3, of: 3 } },
+        { name: "Open PR", state: "upcoming" },
+        { name: "Done", state: "upcoming" },
+      ],
+    },
+  },
+  {
     title: "Three gates, parked on you",
     model: {
       live: false,
@@ -201,6 +233,13 @@ const ROW_GLYPHS: { title: string; model: StepperModel }[] = [
   {
     title: "Done",
     model: mockPipe(["done", "done", "done", "skipped", "done", "done", "current"], "passed"),
+  },
+  {
+    title: "Review loop, round 2 of 3",
+    model: {
+      ...mockPipe(["done", "done", "done", "skipped", "current"], "passed", true),
+      round: { n: 2, of: 3 },
+    },
   },
   {
     title: "Long pipeline (auto xs)",

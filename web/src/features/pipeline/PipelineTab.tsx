@@ -12,7 +12,7 @@ import {
   describeSaveError,
   issueCount,
   runnableStages,
-  validatePipeline,
+  pipelineIssues,
 } from "./model";
 import s from "./pages.module.css";
 import { PipelineEditor } from "./PipelineEditor";
@@ -49,7 +49,7 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
   const canWrite = me.data?.role === "writer" || me.data?.role === "admin";
   const active = ticket.data.active_run_id !== null;
   const readOnly = !canWrite || active || save.isPending;
-  const issues = issueCount(validatePipeline(value.stages, runtimes));
+  const issues = issueCount(pipelineIssues(value, runtimes));
 
   // "Run from…" offers the saved pipeline's enabled stages; the server's next stage is the default.
   const runnable = runnableStages(ticket.data.pipeline);

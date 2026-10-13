@@ -7,10 +7,12 @@ import { useManifest } from "../../api/queries";
 import { ChevronIcon, cx, Tag } from "../../ui";
 import {
   filePaths,
+  laterLabel,
   manifestErrorText,
   promptLabel,
   stageCall,
   timeoutText,
+  type LaterCall,
   type Manifest,
   type StageCall,
   type TokenKind,
@@ -42,8 +44,13 @@ function CallItem({ call }: { call: StageCall }) {
       <div className={s.callHead}>
         <span className={s.callName}>{call.name}</span>
         <span className={s.mono}>
-          {call.kind === "shell" ? "shell · " : ""}
-          {timeoutText(call.timeoutS)} limit
+          {[
+            call.kind === "shell" ? "shell" : "",
+            ...call.check,
+            `${timeoutText(call.timeoutS)} limit`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </span>
       </div>
       {call.chips.length > 0 ? (
@@ -76,7 +83,37 @@ function CallItem({ call }: { call: StageCall }) {
           <pre className={s.pre}>{call.prompt.text}</pre>
         </details>
       ) : null}
+      {call.later.length > 0 ? <LaterCalls calls={call.later} /> : null}
     </li>
+  );
+}
+
+/** A loop stage's later-round and repair calls, folded: each its command and prompt. */
+function LaterCalls({ calls }: { calls: LaterCall[] }) {
+  return (
+    <details className={s.fold}>
+      <Summary>{laterLabel(calls)}</Summary>
+      <ol className={s.later}>
+        {calls.map((c) => (
+          <li key={c.key} className={s.laterItem}>
+            <span className={s.k}>
+              {c.kind === "round"
+                ? `Round ${String(c.round)}`
+                : `Repair in round ${String(c.round)}`}
+            </span>
+            <code className={s.cmd}>
+              {c.tokens.map((t, i) => (
+                <span key={i}>
+                  {i > 0 ? " " : ""}
+                  <span className={TOKEN_CLASS[t.kind]}>{t.text}</span>
+                </span>
+              ))}
+            </code>
+            <pre className={s.pre}>{c.prompt}</pre>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -85,6 +122,11 @@ export function ManifestBody({ manifest }: { manifest: Manifest }) {
   const paths = filePaths(manifest);
   return (
     <div className={s.calls}>
+      {(manifest.warnings ?? []).map((w, i) => (
+        <p key={i} className={s.callWarning} role="note">
+          {w}
+        </p>
+      ))}
       <ol className={s.callList} aria-label="Stage calls">
         {manifest.stages.map((st) => (
           <CallItem key={st.id} call={stageCall(st)} />

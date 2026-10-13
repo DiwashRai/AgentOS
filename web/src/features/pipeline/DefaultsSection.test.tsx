@@ -127,12 +127,17 @@ describe("DefaultsSection", () => {
 });
 
 describe("StageRow Space defaults", () => {
-  function row(over: Partial<StageRowProps["row"]["stage"]>, onPatch = vi.fn()) {
+  function row(
+    over: Partial<StageRowProps["row"]["stage"]>,
+    onPatch = vi.fn(),
+    role: StageRowProps["role"] = null,
+  ) {
     const props: StageRowProps = {
       row: { uid: 1, fresh: false, stage: { ...newStage("agent", []), id: "plan", ...over } },
       index: 0,
       count: 1,
       issues: {},
+      role,
       open: true,
       readOnly: false,
       runtimes: RT,
@@ -181,5 +186,66 @@ describe("StageRow Space defaults", () => {
   it("a shell stage has no effort field", () => {
     const { el } = row({ kind: "shell", command: "make" });
     expect(() => effortInput(el)).toThrow();
+  });
+});
+
+describe("StageRow loop settings", () => {
+  function row(over: Partial<StageRowProps["row"]["stage"]>) {
+    const onPatch = vi.fn();
+    const props: StageRowProps = {
+      row: { uid: 1, fresh: false, stage: { ...newStage("agent", []), id: "review", ...over } },
+      index: 0,
+      count: 1,
+      issues: {},
+      role: null,
+      open: true,
+      readOnly: false,
+      runtimes: RT,
+      space: { runtime: "claude", model: null, effort: null },
+      focusName: false,
+      moveId: () => "m",
+      onToggleOpen: () => undefined,
+      onMove: () => undefined,
+      onPatch,
+      onSetId: () => undefined,
+      onRemove: () => undefined,
+    };
+    return { el: mount(<StageRow {...props} />), onPatch };
+  }
+  const checkBox = (el: HTMLElement) => {
+    const box = el.querySelector('input[type="checkbox"][aria-label$="is a check"]');
+    if (!(box instanceof HTMLInputElement)) throw new Error("no Check toggle");
+    return box;
+  };
+  const repairs = (el: HTMLElement) => byLabel(el, "Verdict repairs", HTMLSelectElement);
+  const resume = (el: HTMLElement) =>
+    byLabel(el, "Resume its session each round", HTMLSelectElement);
+
+  it("a maker toggles Check on; verdict repairs only show on a check", () => {
+    const { el, onPatch } = row({});
+    expect(checkBox(el).checked).toBe(false);
+    expect(() => repairs(el)).toThrow();
+    act(() => {
+      checkBox(el).click();
+    });
+    expect(onPatch).toHaveBeenLastCalledWith({ check: true });
+  });
+
+  it("a check edits its repairs (0–3) and its resume choice (null by role)", () => {
+    const { el, onPatch } = row({ check: true });
+    expect(repairs(el).value).toBe("2");
+    expect([...repairs(el).options].map((o) => o.value)).toEqual(["0", "1", "2", "3"]);
+    change(repairs(el), "0");
+    expect(onPatch).toHaveBeenLastCalledWith({ verdict_repairs: 0 });
+    expect(resume(el).value).toBe("");
+    change(resume(el), "yes");
+    expect(onPatch).toHaveBeenLastCalledWith({ resume: true });
+    change(resume(el), "no");
+    expect(onPatch).toHaveBeenLastCalledWith({ resume: false });
+  });
+
+  it("a shell stage has no Check toggle (it is always a check in a loop)", () => {
+    const { el } = row({ kind: "shell", command: "make" });
+    expect(() => checkBox(el)).toThrow();
   });
 });

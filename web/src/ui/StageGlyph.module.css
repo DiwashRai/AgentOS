@@ -103,6 +103,15 @@
   font-weight: 500;
   color: var(--ink-2);
 }
+/* a loop stage's round beside its name ("2/3"): mono, quiet */
+.stg > b > .round {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
 .stg.isGateYou > b {
   color: var(--you-text);
   font-weight: 600;

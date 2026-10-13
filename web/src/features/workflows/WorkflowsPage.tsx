@@ -19,7 +19,7 @@ import {
 import { Button, Tag, ZoneHead } from "../../ui";
 import { withoutParam, withParam } from "../peek/params";
 import { Field, fieldStyles as f } from "../pipeline/fields";
-import { configDefaults, issueCount, validatePipeline } from "../pipeline/model";
+import { configDefaults, issueCount, pipelineIssues } from "../pipeline/model";
 import pages from "../pipeline/pages.module.css";
 import { PipelineEditor } from "../pipeline/PipelineEditor";
 import { SaveBar } from "../pipeline/SaveBar";
@@ -232,7 +232,7 @@ function WorkflowEditor({
   const readOnly = !isAdmin || busy;
   const formIssues = validateWorkflowForm(value, all, workflow?.id ?? null);
   const issues =
-    issueCount(validatePipeline(value.pipeline.stages, runtimes)) + Object.keys(formIssues).length;
+    issueCount(pipelineIssues(value.pipeline, runtimes)) + Object.keys(formIssues).length;
   const isNew = workflow === null;
   const mutation = isNew ? create : save;
   const problem = mutation.error ?? remove.error;

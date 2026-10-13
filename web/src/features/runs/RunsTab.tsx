@@ -5,19 +5,23 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
 import { ApiError, type Schemas } from "../../api/client";
-import { useCancelRun, useRun, useRuns } from "../../api/queries";
+import { useCancelRun, useRun, useRunEvents, useRuns } from "../../api/queries";
 import { age } from "../../domain/format";
-import { Button, cx, StatusMark } from "../../ui";
-import { RunLog } from "./RunLog";
+import { Button, ChevronIcon, cx, StatusMark } from "../../ui";
 import {
-  duration,
-  isActiveRun,
-  launchRef,
-  runMark,
-  spanSeconds,
-  stageMark,
-  type MarkInfo,
-} from "./runFormat";
+  checkFold,
+  checkMark,
+  foldChecks,
+  groupByRound,
+  roundCounts,
+  roundKey,
+  roundMeta,
+  verdictWord,
+  type CheckOutcome,
+  type StageRun,
+} from "./rounds";
+import { RunLog } from "./RunLog";
+import { duration, isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
 import s from "./RunsTab.module.css";
 import { StageCalls } from "./StageCalls";
 import { useNow } from "./useNow";
@@ -120,41 +124,111 @@ function RunRow({
   );
 }
 
-function StageList({ detail, now }: { detail: RunDetail; now: number }) {
-  if (detail.stage_runs.length === 0) return null;
+/** A check's notes and repairs, folded under its row. */
+function CheckFold({ check }: { check: CheckOutcome }) {
+  const fold = checkFold(check);
+  if (!fold) return null;
+  return (
+    <details className={cx(s.fold, s.checkFold)}>
+      <summary className={s.foldHead}>
+        <span className={s.chev}>
+          <ChevronIcon />
+        </span>
+        {fold.label}
+        {fold.meta ? <span className={s.foldMeta}>· {fold.meta}</span> : null}
+      </summary>
+      {check.notes ? <pre className={s.pre}>{check.notes}</pre> : null}
+      {check.repairs.length > 0 ? (
+        <ol className={s.repairs} aria-label="Repairs">
+          {check.repairs.map((r) => (
+            <li key={r.attempt}>
+              <span className={s.k}>Repair {r.attempt}</span> {r.error}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </details>
+  );
+}
+
+function StageRow({
+  st,
+  check,
+  now,
+}: {
+  st: StageRun;
+  check: CheckOutcome | undefined;
+  now: number;
+}) {
+  const mark = checkMark(st);
+  const secs = spanSeconds(st.started_at, st.finished_at, now);
+  const verdict = st.verdict;
+  // A check with a verdict ran fine: its exit code says nothing the verdict doesn't.
+  const note = [
+    st.exit_code !== null && st.status !== "succeeded" && !verdict
+      ? `exit ${String(st.exit_code)}`
+      : "",
+    st.reason ?? "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <li className={s.stageItem}>
+      <div className={s.stage}>
+        <StatusMark kind={mark.kind} glyphOnly title={mark.word} />
+        <span className={s.stageName}>{st.name}</span>
+        <span className={s.noteCell}>
+          {verdict ? (
+            <span className={cx(s.verdict, verdict === "pass" ? s.vPass : s.vFail)}>
+              {verdictWord(verdict)}
+            </span>
+          ) : null}
+          {verdict && !note ? null : (
+            <span
+              className={cx(
+                s.stageNote,
+                !verdict && mark.kind === "blk" && s.bad,
+                !verdict && mark.kind === "done" && s.ok,
+              )}
+              title={note}
+            >
+              {note || mark.word}
+            </span>
+          )}
+        </span>
+        <span className={s.mono}>{secs !== null ? duration(secs) : ""}</span>
+      </div>
+      {check ? <CheckFold check={check} /> : null}
+    </li>
+  );
+}
+
+function StageList({ detail, now, active }: { detail: RunDetail; now: number; active: boolean }) {
+  // The same query as the log below (one fetch): the verdicts' notes and repairs.
+  const events = useRunEvents(detail.id, active);
+  const checks = useMemo(() => foldChecks(events.data ?? []), [events.data]);
+  const items = useMemo(() => groupByRound(detail.stage_runs), [detail.stage_runs]);
+  if (items.length === 0) return null;
+  const row = (st: StageRun) => (
+    <StageRow key={st.idx} st={st} check={checks.get(roundKey(st.stage_id, st.round))} now={now} />
+  );
   return (
     <ol className={s.stages} aria-label="Stages">
-      {[...detail.stage_runs]
-        .sort((a, b) => a.idx - b.idx)
-        .map((st) => {
-          const mark = stageMark(st.status);
-          const secs = spanSeconds(st.started_at, st.finished_at, now);
-          const note = [
-            st.exit_code !== null && st.status !== "succeeded"
-              ? `exit ${String(st.exit_code)}`
-              : "",
-            st.reason ?? "",
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          return (
-            <li key={st.idx} className={s.stage}>
-              <StatusMark kind={mark.kind} glyphOnly title={mark.word} />
-              <span className={s.stageName}>{st.name}</span>
-              <span
-                className={cx(
-                  s.stageNote,
-                  mark.kind === "blk" && s.bad,
-                  mark.kind === "done" && s.ok,
-                )}
-                title={note}
-              >
-                {note || mark.word}
-              </span>
-              <span className={s.mono}>{secs !== null ? duration(secs) : ""}</span>
-            </li>
-          );
-        })}
+      {items.map((it) => {
+        if (it.type === "stage") return row(it.run);
+        const meta = roundMeta(roundCounts(it.runs));
+        return (
+          <li key={it.key} className={s.round}>
+            <div className={s.roundHead}>
+              <span>Round {it.round}</span>
+              {meta ? <span className={s.roundMeta}>{meta}</span> : null}
+            </div>
+            <ol className={s.roundRows} aria-label={`Round ${String(it.round)}`}>
+              {it.runs.map(row)}
+            </ol>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -193,7 +267,7 @@ function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
           {`Can't load stages · ${detailQ.error.message}`}
         </p>
       ) : detailQ.data ? (
-        <StageList detail={detailQ.data} now={now} />
+        <StageList detail={detailQ.data} now={now} active={active} />
       ) : null}
       <StageCalls runId={run.id} status={run.status} />
       <RunLog

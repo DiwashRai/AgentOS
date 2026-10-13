@@ -17,17 +17,23 @@ import {
   moveRuntime,
   patchRuntime,
   placeholderNotes,
+  previewCalls,
   previewLine,
   removeRuntime,
+  resumeArgs,
   sameArgs,
+  sessionArgs,
   setPromptVia,
   shownArg,
+  verdictArgs,
+  type PreviewCall,
   type PromptVia,
   type RuntimeEntry,
   type RuntimeIssues,
   type RuntimePatch,
   type RuntimeRow,
   type RuntimesIssues,
+  type VerdictFrom,
 } from "./model";
 import s from "./Runners.module.css";
 
@@ -35,6 +41,17 @@ const PROMPT_VIA_OPTIONS: readonly { value: PromptVia; label: string }[] = [
   { value: "stdin", label: "On stdin" },
   { value: "arg", label: "As an argument" },
 ];
+
+const VERDICT_FROM_OPTIONS: readonly { value: VerdictFrom; label: string }[] = [
+  { value: "file", label: "A file the check writes" },
+  { value: "structured_output", label: "The CLI's structured output" },
+];
+
+const CALL_LABEL: Record<PreviewCall, string> = {
+  stage: "A stage",
+  check: "A check in a loop, round 1",
+  repair: "A verdict repair",
+};
 
 export interface RuntimesEditorProps {
   rows: readonly RuntimeRow[];
@@ -336,6 +353,77 @@ function RuntimeItem(props: RuntimeItemProps) {
             ) : null}
           </div>
 
+          <section className={s.loopArgs} aria-label="Loops">
+            <span className={s.k}>Loops</span>
+            <p className={s.lead}>
+              Loop stages run again each round. With sessions, a maker resumes its own session and
+              an invalid verdict is repaired by resuming the check; without them, every round starts
+              fresh and there is no repair.
+            </p>
+            <div className={s.args}>
+              <LinesField
+                label="Session arguments"
+                value={sessionArgs(e)}
+                rows={3}
+                error={issues.session_args}
+                hint="Start a session with a known id. {session} becomes that id, alone or inside an argument."
+                placeholder={"--session-id\n{session}"}
+                readOnly={readOnly}
+                onChange={(session_args) => {
+                  onPatch({ session_args });
+                }}
+              />
+              <LinesField
+                label="Resume arguments"
+                value={resumeArgs(e)}
+                rows={3}
+                error={issues.resume_args}
+                hint="Resume that session in a later round or a repair. {session} as above."
+                placeholder={"--resume\n{session}"}
+                readOnly={readOnly}
+                onChange={(resume_args) => {
+                  onPatch({ resume_args });
+                }}
+              />
+              <LinesField
+                label="Verdict arguments"
+                value={verdictArgs(e)}
+                rows={3}
+                error={issues.verdict_args}
+                hint="Added to a check's calls to ask for schema-checked output; a {verdict_schema} line becomes the verdict's JSON Schema. Empty: none."
+                placeholder={"--json-schema\n{verdict_schema}"}
+                readOnly={readOnly}
+                onChange={(verdict_args) => {
+                  onPatch({ verdict_args });
+                }}
+              />
+              <Field
+                label="Verdict from"
+                error={issues.verdict_from}
+                hint={
+                  e.verdict_from === "file"
+                    ? "The check writes its verdict to .agentos/verdict.json; works with any CLI."
+                    : "Read from the CLI's final result line (needs verdict arguments)."
+                }
+              >
+                {({ id, describedBy, invalid }) => (
+                  <Select
+                    id={id}
+                    aria-describedby={describedBy}
+                    aria-invalid={invalid}
+                    value={e.verdict_from}
+                    disabled={readOnly}
+                    options={VERDICT_FROM_OPTIONS}
+                    onChange={(v) => {
+                      const from = VERDICT_FROM_OPTIONS.find((o) => o.value === v)?.value;
+                      if (from) onPatch({ verdict_from: from });
+                    }}
+                  />
+                )}
+              </Field>
+            </div>
+          </section>
+
           <Preview entry={e} />
 
           {readOnly ? null : (
@@ -360,32 +448,40 @@ function RuntimeItem(props: RuntimeItemProps) {
 /** What a stage with a model, an effort and an agent would run, and placeholders that won't be
  *  replaced. */
 function Preview({ entry }: { entry: RuntimeEntry }) {
-  const preview = commandPreview(entry);
+  const calls = previewCalls(entry);
   const notes = placeholderNotes(entry);
   return (
     <section className={s.preview} aria-label="Command preview">
       <span className={s.k}>Command preview</span>
-      {preview.tokens.length === 0 ? (
+      {entry.argv.length === 0 ? (
         <span className={s.stdin}>No command yet.</span>
       ) : (
-        <p className={s.cmd}>
-          {preview.tokens.map((t, i) => (
-            // Tokens are positional and may repeat, so the index is their identity.
-            <Fragment key={i}>
-              {i > 0 ? " " : null}
-              <span className={cx(s.tok, t.slot && s.slot)}>
-                {t.slot ? t.text : shownArg(t.text)}
-              </span>
-            </Fragment>
-          ))}
-        </p>
+        calls.map((call) => (
+          <div key={call} className={s.call}>
+            {calls.length > 1 ? <span className={s.callLabel}>{CALL_LABEL[call]}</span> : null}
+            <p className={s.cmd}>
+              {commandPreview(entry, call).tokens.map((t, i) => (
+                // Tokens are positional and may repeat, so the index is their identity.
+                <Fragment key={i}>
+                  {i > 0 ? " " : null}
+                  <span className={cx(s.tok, t.slot && s.slot)}>
+                    {t.slot ? t.text : shownArg(t.text)}
+                  </span>
+                </Fragment>
+              ))}
+            </p>
+          </div>
+        ))
       )}
       <span className={s.stdin}>
-        {preview.stdin
+        {entry.prompt_via === "stdin"
           ? "The prompt goes to stdin."
           : "The prompt is passed as an argument (no stdin)."}{" "}
         For a stage with a model, an effort and an agent; without them, their arguments are left
         out.
+        {calls.includes("repair")
+          ? " A maker's later rounds resume like a repair, without the verdict arguments."
+          : null}
       </span>
       {notes.length > 0 ? (
         <ul className={s.notes}>

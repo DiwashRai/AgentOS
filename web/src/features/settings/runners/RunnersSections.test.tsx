@@ -80,6 +80,7 @@ const SEED = rowsFrom([
     agent_args: ["--agent", "{agent}"],
     prompt_via: "stdin",
     prompt_args: [],
+    verdict_from: "file",
   },
   {
     name: "copilot",
@@ -88,6 +89,9 @@ const SEED = rowsFrom([
     agent_args: [],
     prompt_via: "arg",
     prompt_args: ["-p", "{prompt}"],
+    session_args: ["--resume={session}"],
+    resume_args: ["--resume={session}"],
+    verdict_from: "file",
   },
 ]);
 

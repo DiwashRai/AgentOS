@@ -47,6 +47,8 @@
   color: var(--ink-3);
   margin-top: -3px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* past */
 .stepper .isDone .bar {
@@ -160,4 +162,10 @@
 }
 .stepper.isCompact .g:not(.isBare) {
   padding: 0 6px;
+}
+/* a loop stage's round (request 24): its own quiet line under the caption, never clipped into it */
+.stepper .s > .st.round {
+  margin-top: -6px;
+  color: var(--ink-3);
+  font-weight: 400;
 }

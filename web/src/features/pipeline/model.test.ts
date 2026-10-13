@@ -2,29 +2,42 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../api/client";
 import {
+  blockRoles,
   CLI_DEFAULT,
   configDefaults,
   defaultsBody,
   describeSaveError,
   draftFrom,
+  drawnBlocks,
   formatTimeout,
   freshId,
   idEditable,
+  isCheck,
   issueCount,
+  loopLabel,
+  loopRole,
+  loopStageOptions,
   MAX_STAGES,
   newStage,
   optional,
+  pipelineIssues,
   previewModel,
   reduce,
   agentHint,
+  resumeChoice,
+  resumeFromChoice,
+  resumeOptions,
+  resumes,
   runnableStages,
   runtimeOptions,
   sameDefaults,
   samePipeline,
+  segments,
   serverRuntimeLabel,
   stageEffortPlaceholder,
   stageModelPlaceholder,
   stageRuntimeOptions,
+  suggestLoop,
   toPipeline,
   unsetIfEmpty,
   validateDefaults,
@@ -189,6 +202,7 @@ describe("validatePipeline", () => {
     expect(validatePipeline([stage("a"), stage("a-1"), stage("x".repeat(32))], RT)).toEqual({
       form: [],
       stages: [{}, {}, {}],
+      loops: [],
     });
     const dup = validatePipeline([stage("plan"), stage("build"), stage("plan")], RT);
     expect(dup.stages[0]?.id).toMatch(/already/);
@@ -453,6 +467,307 @@ describe("Space defaults", () => {
     expect(sameDefaults({ model: "x" }, { model: null })).toBe(false);
     expect(sameDefaults({ effort: "high" }, {})).toBe(false);
     expect(sameDefaults({ effort: "high" }, { effort: "high", runtime: null })).toBe(true);
+  });
+});
+
+// ------------------------------------------------------------------ loops
+
+/** implement → lint (shell) → review, inside plan … open-pr. */
+const LOOPY: Pipeline = {
+  stages: [
+    stage("plan", { gate_after: true }),
+    stage("implement"),
+    stage("lint", { kind: "shell", command: "make lint" }),
+    stage("review", { check: true }),
+    stage("open-pr"),
+  ],
+  loops: [{ start: "implement", end: "review", max_rounds: 3 }],
+};
+
+const loopsOf = (d: Draft) => d.loops.map((l) => `${l.start}..${l.end}`);
+const loopIssues = (p: Pipeline) => validatePipeline(p.stages, ["claude"], p.loops ?? []);
+
+describe("loop roles", () => {
+  it("a shell stage is always a check; an agent stage only with check", () => {
+    expect(isCheck(stage("lint", { kind: "shell" }))).toBe(true);
+    expect(isCheck(stage("lint", { kind: "shell", check: false }))).toBe(true);
+    expect(isCheck(stage("review", { check: true }))).toBe(true);
+    expect(loopRole(stage("implement"))).toBe("maker");
+    expect(loopRole(stage("review", { check: true }))).toBe("check");
+  });
+
+  it("resume is the stage's choice, else by role: makers resume, checks start fresh", () => {
+    expect(resumes(stage("implement"))).toBe(true);
+    expect(resumes(stage("review", { check: true }))).toBe(false);
+    expect(resumes(stage("implement", { resume: false }))).toBe(false);
+    expect(resumes(stage("review", { check: true, resume: true }))).toBe(true);
+    expect(resumeOptions(stage("implement"))[0]?.label).toContain("resume");
+    expect(resumeOptions(stage("review", { check: true }))[0]?.label).toContain("start fresh");
+  });
+
+  it("the resume select maps to null / true / false and back", () => {
+    for (const v of [null, true, false]) expect(resumeFromChoice(resumeChoice(v))).toBe(v);
+    expect(resumeChoice(undefined)).toBe("");
+  });
+
+  it("blockRoles splits a block's stages, disabled ones included", () => {
+    const p = { ...LOOPY, stages: LOOPY.stages.map((s) => ({ ...s, enabled: false })) };
+    expect(blockRoles(p.stages, { start: "implement", end: "review", max_rounds: 3 })).toEqual({
+      makers: ["Implement"],
+      checks: ["Lint", "Review"],
+    });
+    expect(blockRoles(p.stages, { start: "review", end: "implement", max_rounds: 3 })).toBeNull();
+    expect(blockRoles(p.stages, { start: "nope", end: "review", max_rounds: 3 })).toBeNull();
+  });
+
+  it("new stages are plain makers with the default repairs and resume by role", () => {
+    expect(newStage("agent", [])).toMatchObject({ check: false, verdict_repairs: 2, resume: null });
+  });
+});
+
+describe("loops: draft", () => {
+  it("round-trips loops, and leaves the key out when there were none", () => {
+    expect(toPipeline(draftFrom(LOOPY))).toEqual(LOOPY);
+    expect("loops" in toPipeline(draftFrom(SEED))).toBe(false);
+    const added = reduce(draftFrom(SEED), { type: "addLoop" });
+    expect(toPipeline(added).loops).toHaveLength(1);
+  });
+
+  it("samePipeline compares loops (missing = none) and the loop stage fields", () => {
+    expect(samePipeline(SEED, { ...SEED, loops: [] })).toBe(true);
+    expect(samePipeline(LOOPY, { ...LOOPY, loops: [] })).toBe(false);
+    expect(
+      samePipeline(LOOPY, {
+        ...LOOPY,
+        loops: [{ start: "implement", end: "review", max_rounds: 4 }],
+      }),
+    ).toBe(false);
+    const withStage = (over: Partial<Stage>) => ({
+      ...LOOPY,
+      stages: LOOPY.stages.map((s) => (s.id === "review" ? { ...s, ...over } : s)),
+    });
+    expect(samePipeline(LOOPY, withStage({ check: false }))).toBe(false);
+    expect(samePipeline(LOOPY, withStage({ verdict_repairs: 0 }))).toBe(false);
+    expect(samePipeline(LOOPY, withStage({ resume: true }))).toBe(false);
+    expect(samePipeline(LOOPY, withStage({ resume: null }))).toBe(true);
+  });
+
+  it("adds, patches and removes loops", () => {
+    let d = draftFrom({ ...LOOPY, loops: [] });
+    d = reduce(d, { type: "addLoop" });
+    expect(d.loops).toEqual([{ start: "implement", end: "lint", max_rounds: 3 }]);
+    d = reduce(d, { type: "patchLoop", index: 0, patch: { end: "review", max_rounds: 5 } });
+    expect(d.loops).toEqual([{ start: "implement", end: "review", max_rounds: 5 }]);
+    expect(reduce(d, { type: "patchLoop", index: 3, patch: { max_rounds: 1 } })).toBe(d);
+    expect(reduce(d, { type: "removeLoop", index: 0 }).loops).toEqual([]);
+    expect(reduce(d, { type: "removeLoop", index: 1 })).toBe(d);
+  });
+
+  it("a move keeps each block's positions: a stage crosses its edge, never drags it", () => {
+    const d = draftFrom(LOOPY);
+    // Within the block: still implement's slot .. review's slot.
+    const inside = reduce(d, { type: "move", uid: uidOf(d, "lint"), delta: -1 });
+    expect(ids(inside)).toEqual(["plan", "lint", "implement", "review", "open-pr"]);
+    expect(loopsOf(inside)).toEqual(["lint..review"]);
+    // The last stage moves out, and the one after it moves in.
+    const out = reduce(d, { type: "move", uid: uidOf(d, "review"), delta: 1 });
+    expect(loopsOf(out)).toEqual(["implement..open-pr"]);
+    // A stage from before moves in at the top.
+    const into = reduce(d, { type: "move", uid: uidOf(d, "plan"), delta: 1 });
+    expect(loopsOf(into)).toEqual(["plan..review"]);
+  });
+
+  it("removing a block's edge stage shrinks it; removing its only stage drops it", () => {
+    const d = draftFrom(LOOPY);
+    expect(loopsOf(reduce(d, { type: "remove", uid: uidOf(d, "implement") }))).toEqual([
+      "lint..review",
+    ]);
+    expect(loopsOf(reduce(d, { type: "remove", uid: uidOf(d, "review") }))).toEqual([
+      "implement..lint",
+    ]);
+    expect(loopsOf(reduce(d, { type: "remove", uid: uidOf(d, "lint") }))).toEqual([
+      "implement..review",
+    ]);
+    expect(loopsOf(reduce(d, { type: "remove", uid: uidOf(d, "plan") }))).toEqual([
+      "implement..review",
+    ]);
+    const single = draftFrom({ ...LOOPY, loops: [{ start: "lint", end: "lint", max_rounds: 3 }] });
+    expect(reduce(single, { type: "remove", uid: uidOf(single, "lint") }).loops).toEqual([]);
+  });
+
+  it("a new stage's loop follows its id while it is typed", () => {
+    let d = draftFrom(LOOPY);
+    d = reduce(d, { type: "add", kind: "agent" });
+    const uid = d.rows.at(-1)?.uid ?? 0;
+    d = reduce(d, { type: "patchLoop", index: 0, patch: { end: "stage" } });
+    d = reduce(d, { type: "setId", uid, id: "fix" });
+    expect(loopsOf(d)).toEqual(["implement..fix"]);
+    // Typing an id another stage has, then away from it, leaves that stage's loop alone.
+    d = reduce(d, { type: "patchLoop", index: 0, patch: { end: "review" } });
+    d = reduce(d, { type: "setId", uid, id: "review" });
+    d = reduce(d, { type: "setId", uid, id: "reviewx" });
+    expect(loopsOf(d)).toEqual(["implement..review"]);
+  });
+});
+
+describe("loops: suggestLoop", () => {
+  it("starts at the first free, ungated maker and ends at the next enabled check", () => {
+    expect(suggestLoop(LOOPY.stages, [])).toEqual({
+      start: "implement",
+      end: "lint",
+      max_rounds: 3,
+    });
+  });
+
+  it("with no enabled check, ends at the next enabled agent stage (the default pipeline)", () => {
+    expect(suggestLoop(SEED.stages, [])).toMatchObject({ start: "implement", end: "review" });
+  });
+
+  it("skips stages already in a loop, and gives up when no two free stages are adjacent", () => {
+    // Free: plan (gated), review (a check), open-pr. No free maker leads a run, so any free pair.
+    expect(
+      suggestLoop(LOOPY.stages, [{ start: "implement", end: "lint", max_rounds: 3 }]),
+    ).toMatchObject({ start: "review", end: "open-pr" });
+    expect(suggestLoop(LOOPY.stages, LOOPY.loops ?? [])).toBeNull();
+    const two = [stage("a"), stage("b")];
+    expect(suggestLoop(two, [{ start: "a", end: "b", max_rounds: 3 }])).toBeNull();
+    expect(suggestLoop([stage("a")], [])).toBeNull();
+  });
+});
+
+describe("loops: blocks to draw", () => {
+  it("cuts the rows into single rows and blocks", () => {
+    expect(segments(LOOPY.stages, LOOPY.loops ?? [])).toEqual([
+      { kind: "row", index: 0 },
+      { kind: "block", block: { loop: 0, from: 1, to: 3 }, indexes: [1, 2, 3] },
+      { kind: "row", index: 4 },
+    ]);
+  });
+
+  it("draws only blocks with known ids in order, and the first of overlapping ones", () => {
+    const loops = [
+      { start: "review", end: "open-pr", max_rounds: 3 },
+      { start: "plan", end: "lint", max_rounds: 3 },
+      { start: "lint", end: "review", max_rounds: 3 }, // overlaps the one above
+      { start: "nope", end: "plan", max_rounds: 3 },
+      { start: "lint", end: "implement", max_rounds: 3 }, // backwards
+    ];
+    expect(drawnBlocks(LOOPY.stages, loops)).toEqual([
+      { loop: 1, from: 0, to: 2 },
+      { loop: 0, from: 3, to: 4 },
+    ]);
+  });
+
+  it("loopLabel says the cap", () => {
+    expect(loopLabel(3)).toContain("3");
+    expect(loopLabel(1)).not.toBe(loopLabel(2));
+  });
+
+  it("loopStageOptions keeps a missing stage selectable and lists a duplicate id once", () => {
+    const stages = [stage("a"), stage("a"), stage("b")];
+    expect(loopStageOptions(stages, "a").map((o) => o.value)).toEqual(["a", "b"]);
+    expect(loopStageOptions(stages, "gone").map((o) => o.value)).toEqual(["a", "b", "gone"]);
+  });
+});
+
+describe("loops: validation mirrors the server", () => {
+  it("accepts a block with a maker and a check (a shell stage counts as one)", () => {
+    expect(issueCount(loopIssues(LOOPY))).toBe(0);
+    const shellOnly = { ...LOOPY, stages: LOOPY.stages.map((s) => ({ ...s, check: false })) };
+    expect(issueCount(loopIssues(shellOnly))).toBe(0);
+  });
+
+  it("names unknown stages", () => {
+    const issues = loopIssues({ ...LOOPY, loops: [{ start: "x", end: "y", max_rounds: 3 }] });
+    expect(Object.keys(issues.loops[0] ?? {}).sort()).toEqual(["end", "start"]);
+  });
+
+  it("start after end", () => {
+    const issues = loopIssues({
+      ...LOOPY,
+      loops: [{ start: "review", end: "implement", max_rounds: 3 }],
+    });
+    expect(Object.keys(issues.loops[0] ?? {})).toEqual(["end"]);
+  });
+
+  it("needs a check, and a maker", () => {
+    const noCheck = loopIssues({
+      ...LOOPY,
+      loops: [{ start: "plan", end: "implement", max_rounds: 3 }],
+    });
+    const allChecks = loopIssues({
+      ...LOOPY,
+      loops: [{ start: "lint", end: "review", max_rounds: 3 }],
+    });
+    expect(noCheck.loops[0]?.block).toBeDefined();
+    expect(allChecks.loops[0]?.block).toBeDefined();
+    expect(noCheck.loops[0]?.block).not.toBe(allChecks.loops[0]?.block);
+  });
+
+  it("counts disabled stages, like a save", () => {
+    const p = {
+      ...LOOPY,
+      stages: LOOPY.stages.map((s) =>
+        s.id === "lint" || s.id === "review" ? { ...s, enabled: false } : s,
+      ),
+    };
+    expect(issueCount(loopIssues(p))).toBe(0);
+  });
+
+  it("only the block's last stage may have a sign-off (flagged on the stage)", () => {
+    const gated = (id: string) => ({
+      ...LOOPY,
+      stages: LOOPY.stages.map((s) => (s.id === id ? { ...s, gate_after: true } : s)),
+    });
+    const inside = loopIssues(gated("lint"));
+    expect(inside.stages[2]?.gate_after).toBeDefined();
+    expect(issueCount(inside)).toBe(1);
+    expect(issueCount(loopIssues(gated("review")))).toBe(0);
+    // plan's own gate is outside the block.
+    expect(loopIssues(LOOPY).stages[0]?.gate_after).toBeUndefined();
+  });
+
+  it("blocks can't overlap (the later one is flagged)", () => {
+    const issues = loopIssues({
+      ...LOOPY,
+      loops: [
+        { start: "lint", end: "open-pr", max_rounds: 3 },
+        { start: "implement", end: "review", max_rounds: 3 },
+      ],
+    });
+    expect(issues.loops[0]?.block).toBeDefined();
+    expect(issues.loops[1]).toEqual({});
+  });
+
+  it("max_rounds 1–5, verdict_repairs 0–3", () => {
+    for (const [n, ok] of [
+      [0, false],
+      [1, true],
+      [5, true],
+      [6, false],
+      [2.5, false],
+    ] as const) {
+      const issues = loopIssues({
+        ...LOOPY,
+        loops: [{ start: "implement", end: "review", max_rounds: n }],
+      });
+      expect(issues.loops[0]?.max_rounds === undefined, String(n)).toBe(ok);
+    }
+    for (const [n, ok] of [
+      [-1, false],
+      [0, true],
+      [3, true],
+      [4, false],
+    ] as const) {
+      const issues = validatePipeline([stage("a", { verdict_repairs: n })], []);
+      expect(issues.stages[0]?.verdict_repairs === undefined, String(n)).toBe(ok);
+    }
+  });
+
+  it("pipelineIssues reads the pipeline's own loops", () => {
+    const bad = { ...LOOPY, loops: [{ start: "plan", end: "implement", max_rounds: 3 }] };
+    expect(issueCount(pipelineIssues(bad, ["claude"]))).toBeGreaterThan(0);
+    expect(issueCount(validatePipeline(bad.stages, ["claude"]))).toBe(0);
   });
 });
 

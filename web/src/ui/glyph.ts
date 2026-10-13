@@ -1,6 +1,12 @@
 // Pure display helpers for StageGlyph and Stepper. They only lay out the GlyphModel the domain
 // built (src/domain/stage.ts); they never decide a stage's or gate's state.
-import type { GateState, GlyphGate, GlyphModel, GlyphStage } from "../domain/stage";
+import {
+  roundText,
+  type GateState,
+  type GlyphGate,
+  type GlyphModel,
+  type GlyphStage,
+} from "../domain/stage";
 
 /** A stage the stepper can caption "ADDED". GlyphModel has no `added` flag yet; extra field is optional. */
 export type StepperStage = GlyphStage & { added?: boolean | undefined };
@@ -111,6 +117,15 @@ export function gateTitle(gate: GlyphGate, bare: boolean): string {
 
 /** The caption under a gate the ticket is parked at on you (refresh stepper). */
 export const YOUR_MOVE = "Your move";
+
+/**
+ * A loop stage's round, captioned on its own line under the stage the ticket is at (current or
+ * stopped): "Round 2 of 3". Empty elsewhere, and for stages outside a loop.
+ */
+export function roundCaption(stage: StepperStage): string {
+  if (!stage.round || (stage.state !== "current" && stage.state !== "failed")) return "";
+  return roundText(stage.round);
+}
 
 /**
  * The stepper's caption under a stage (sentence case). The final stage (the Done bookend) is reached

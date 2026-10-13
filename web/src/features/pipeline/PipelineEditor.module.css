@@ -172,6 +172,44 @@
   box-shadow: none;
 }
 
+/* a loop block: its stage rows inside a bracket, under "Loop · up to N rounds". Neutral ink: no
+   hue means "loop". */
+.block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 2px 18px;
+}
+.block::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 9px;
+  bottom: 2px;
+  width: 7px;
+  border: 1.5px solid var(--ink-3);
+  border-right: 0;
+  border-radius: 4px 0 0 4px;
+}
+.blockHead {
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+
+/* a stage's role in its block */
+.tags .role {
+  color: var(--ink-2);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+.tags .isCheck {
+  color: var(--ink-1);
+  box-shadow: inset 0 0 0 1.4px var(--ink-3);
+}
+
 /* expanded settings */
 .body {
   display: flex;
@@ -202,6 +240,78 @@
   justify-content: flex-end;
   margin: -4px -6px 0 0;
 }
+.stageError {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--blocked);
+}
+.loopNote {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.checkToggle {
+  height: 34px;
+}
+
+/* the Loops zone: one sheet per loop */
+.loopsZone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.loopsEmpty {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.loops {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.loop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+.loopLine {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) 120px auto;
+  align-items: start;
+  gap: 12px;
+}
+.loopName {
+  padding-top: 26px;
+  font-size: var(--fs-row-title);
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+.loopRemove {
+  margin-top: 21px;
+}
+.loopRoles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
 
 @media (max-width: 900px) {
   .line {
@@ -212,5 +322,16 @@
   .grid3,
   .grid4 {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .loopLine {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .loopName {
+    grid-column: 1 / -1;
+    padding-top: 0;
+  }
+  .loopRemove {
+    margin-top: 0;
+    justify-self: start;
   }
 }

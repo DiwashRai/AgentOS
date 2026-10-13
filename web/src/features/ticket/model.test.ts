@@ -42,6 +42,8 @@ function stage(id: string, over: Partial<Stage> = {}): Stage {
     command: "",
     requires_repo: false,
     timeout_s: 3600,
+    check: false,
+    verdict_repairs: 2,
     ...over,
   };
 }

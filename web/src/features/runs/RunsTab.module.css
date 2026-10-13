@@ -204,14 +204,99 @@
   border-top: 1px solid var(--rule);
 }
 
+.stageItem {
+  border-bottom: 1px solid var(--rule-soft);
+}
+
 .stage {
   display: grid;
   grid-template-columns: 14px minmax(90px, 160px) minmax(0, 1fr) 56px;
   gap: 10px;
   align-items: center;
   height: 30px;
-  border-bottom: 1px solid var(--rule-soft);
   font-size: var(--fs-meta);
+}
+
+.noteCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* a check's verdict: green = done (pass), crimson = blocked (fail), per the hue rules */
+.verdict {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.vPass {
+  color: var(--done);
+  background: var(--done-tint);
+}
+
+.vFail {
+  color: var(--blocked);
+  background: color-mix(in srgb, var(--blocked) 12%, transparent);
+}
+
+/* the fold under a check's row, indented to the stage name */
+.checkFold {
+  margin: -4px 0 8px 24px;
+}
+
+.foldMeta {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.repairs {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.45;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.repairs > li + li {
+  margin-top: 3px;
+}
+
+/* one round of a loop block: a quiet head, then its rows behind a bracket */
+.round {
+  padding: 8px 0 2px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.roundHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.roundMeta {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.roundRows {
+  list-style: none;
+  margin: 4px 0 0 4px;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--rule);
+}
+
+.roundRows > .stageItem:last-child {
+  border-bottom: 0;
 }
 
 .stageName {
@@ -293,6 +378,37 @@
   flex-direction: column;
   gap: 12px;
   margin-top: 8px;
+}
+
+.callWarning {
+  margin: 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border-left: 2px solid var(--rule-strong);
+  background: var(--field);
+  font-size: var(--fs-meta);
+  color: var(--ink-1);
+}
+
+.later {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.laterItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.laterItem > .pre {
+  margin: 0;
+  max-height: 200px;
 }
 
 .callList {
@@ -476,9 +592,36 @@
   color: var(--ink-1);
 }
 
-/* stage separators: a sentence-case label over a hairline; ended green, failed crimson */
+/* a check's verdict and its notes */
+.verdictPass,
+.verdictFail {
+  margin: 6px 0 2px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.verdictPass {
+  color: var(--done);
+}
+
+.verdictFail {
+  color: var(--blocked);
+}
+
+.notes {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink-1);
+}
+
+/* stage separators: a sentence-case label over a hairline; ended green, failed crimson; a check
+   that said "fail" with rounds left ends quiet */
 .stageStart,
 .stageEnd,
+.stageDone,
 .stageFail {
   margin: 10px 0 6px;
   padding-top: 6px;

@@ -12,6 +12,7 @@ import {
   isBareGate,
   isFinished,
   parkedGate,
+  roundCaption,
   stageCaption,
 } from "./glyph";
 
@@ -145,6 +146,21 @@ describe("stageCaption", () => {
     expect(stageCaption({ name: "Build", state: "failed" }, false, false, false, true)).toBe(
       "Closed",
     );
+  });
+});
+
+describe("roundCaption", () => {
+  const round = { n: 2, of: 3 };
+
+  it("captions the round on the stage the ticket is at, current or stopped", () => {
+    expect(roundCaption({ name: "Review", state: "current", round })).toMatch(/2.*3/);
+    expect(roundCaption({ name: "Review", state: "failed", round })).toMatch(/2.*3/);
+  });
+
+  it("is empty on other stages and on stages without a round", () => {
+    expect(roundCaption({ name: "Implement", state: "done", round })).toBe("");
+    expect(roundCaption({ name: "Implement", state: "upcoming", round })).toBe("");
+    expect(roundCaption({ name: "Build", state: "current" })).toBe("");
   });
 });
 

@@ -22,6 +22,8 @@ const MANIFEST: Manifest = {
       name: "Review",
       kind: "agent",
       timeout_s: 1800,
+      check: false,
+      verdict_repairs: 0,
       argv: ["claude", "-p", "--agent", "reviewer", "--model", "claude-haiku-5-5"],
       stdin: PROMPT,
     },
@@ -30,10 +32,20 @@ const MANIFEST: Manifest = {
       name: "Build",
       kind: "agent",
       timeout_s: 600,
+      check: false,
+      verdict_repairs: 0,
       argv: ["copilot", "-p", PROMPT],
       stdin: null,
     },
-    { id: "test", name: "Test", kind: "shell", timeout_s: 60, command: "npm test" },
+    {
+      id: "test",
+      name: "Test",
+      kind: "shell",
+      timeout_s: 60,
+      command: "npm test",
+      check: false,
+      verdict_repairs: 0,
+    },
   ],
 };
 
@@ -47,6 +59,31 @@ describe("ManifestBody", () => {
     expect(html).toContain("Prompt (stdin)");
     expect(html).toContain("‹prompt›");
     expect(html).toContain("npm test");
+  });
+
+  it("shows the manifest's warnings and a loop stage's later calls", () => {
+    const stage = MANIFEST.stages[0];
+    if (!stage) throw new Error("fixture");
+    const loop = renderToStaticMarkup(
+      <ManifestBody
+        manifest={{
+          ...MANIFEST,
+          warnings: ["LOOP-WARNING"],
+          stages: [
+            {
+              ...stage,
+              check: true,
+              verdict_repairs: 2,
+              verdict_from: "structured_output",
+              repairs: [{ argv: ["claude"], stdin: "REPAIR-PROMPT", prompt_arg: null, tail: "" }],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(loop).toContain("LOOP-WARNING");
+    expect(loop).toContain("REPAIR-PROMPT");
+    expect(html).not.toContain("REPAIR-PROMPT");
   });
 
   it("lists file paths without their contents", () => {

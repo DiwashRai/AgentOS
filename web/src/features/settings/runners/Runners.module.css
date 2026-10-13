@@ -232,6 +232,29 @@
   color: var(--ink-1);
   font-weight: 600;
 }
+/* one call in the preview (a stage, a loop check, a repair) */
+.call {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.callLabel {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+/* the runtime's loop groups: sessions and the verdict channel */
+.loopArgs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+.loopArgs .lead {
+  max-width: none;
+}
 .stdin {
   font-size: var(--fs-meta);
   color: var(--ink-3);

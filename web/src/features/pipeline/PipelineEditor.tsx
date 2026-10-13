@@ -3,15 +3,21 @@
 import { useId, useMemo, useState } from "react";
 
 import { Button, Stepper, ZoneHead } from "../../ui";
+import { LoopsSection } from "./LoopsSection";
 import {
   draftFrom,
+  loopLabel,
+  loopRole,
   MAX_STAGES,
   previewModel,
   reduce,
+  segments,
+  suggestLoop,
   toPipeline,
   validatePipeline,
   type Action,
   type Draft,
+  type LoopRole,
   type Pipeline,
   type SpaceDefaults,
 } from "./model";
@@ -59,8 +65,14 @@ export function PipelineEditor({
     `${prefix}-${String(uid)}-${delta < 0 ? "up" : "down"}`;
 
   const stages = useMemo(() => draft.rows.map((r) => r.stage), [draft]);
-  const issues = useMemo(() => validatePipeline(stages, runtimes), [stages, runtimes]);
+  const loops = draft.loops;
+  const issues = useMemo(
+    () => validatePipeline(stages, runtimes, loops),
+    [stages, runtimes, loops],
+  );
   const preview = useMemo(() => previewModel({ stages }), [stages]);
+  const segs = useMemo(() => segments(stages, loops), [stages, loops]);
+  const canAddLoop = useMemo(() => suggestLoop(stages, loops) !== null, [stages, loops]);
 
   const apply = (a: Action) => {
     const next = reduce(draft, a);
@@ -96,6 +108,47 @@ export function PipelineEditor({
   };
 
   const atLimit = draft.rows.length >= MAX_STAGES;
+
+  const renderRow = (index: number, role: LoopRole | null) => {
+    const row = draft.rows[index];
+    if (!row) return null;
+    const name = row.stage.name.trim() || row.stage.id;
+    return (
+      <StageRow
+        key={row.uid}
+        row={row}
+        index={index}
+        count={draft.rows.length}
+        issues={issues.stages[index] ?? {}}
+        role={role}
+        open={open.has(row.uid)}
+        readOnly={readOnly}
+        runtimes={runtimes}
+        space={space}
+        focusName={focusUid === row.uid}
+        moveId={moveId}
+        onToggleOpen={() => {
+          setOpen((o) => {
+            const next = new Set(o);
+            if (!next.delete(row.uid)) next.add(row.uid);
+            return next;
+          });
+        }}
+        onMove={(delta) => {
+          move(row.uid, delta, index);
+        }}
+        onPatch={(patch) => {
+          apply({ type: "patch", uid: row.uid, patch });
+        }}
+        onSetId={(id) => {
+          apply({ type: "setId", uid: row.uid, id });
+        }}
+        onRemove={() => {
+          remove(row.uid, name);
+        }}
+      />
+    );
+  };
 
   return (
     <div className={s.editor}>
@@ -143,44 +196,39 @@ export function PipelineEditor({
       ))}
 
       <ol className={s.list}>
-        {draft.rows.map((row, index) => {
-          const name = row.stage.name.trim() || row.stage.id;
+        {segs.map((seg) => {
+          if (seg.kind === "row") return renderRow(seg.index, null);
+          const loop = loops[seg.block.loop];
           return (
-            <StageRow
-              key={row.uid}
-              row={row}
-              index={index}
-              count={draft.rows.length}
-              issues={issues.stages[index] ?? {}}
-              open={open.has(row.uid)}
-              readOnly={readOnly}
-              runtimes={runtimes}
-              space={space}
-              focusName={focusUid === row.uid}
-              moveId={moveId}
-              onToggleOpen={() => {
-                setOpen((o) => {
-                  const next = new Set(o);
-                  if (!next.delete(row.uid)) next.add(row.uid);
-                  return next;
-                });
-              }}
-              onMove={(delta) => {
-                move(row.uid, delta, index);
-              }}
-              onPatch={(patch) => {
-                apply({ type: "patch", uid: row.uid, patch });
-              }}
-              onSetId={(id) => {
-                apply({ type: "setId", uid: row.uid, id });
-              }}
-              onRemove={() => {
-                remove(row.uid, name);
-              }}
-            />
+            <li key={`loop-${String(seg.block.loop)}`} className={s.block}>
+              <span className={s.blockHead}>{loop ? loopLabel(loop.max_rounds) : null}</span>
+              <ol className={s.list}>
+                {seg.indexes.map((i) => {
+                  const st = stages[i];
+                  return st ? renderRow(i, loopRole(st)) : null;
+                })}
+              </ol>
+            </li>
           );
         })}
       </ol>
+
+      <LoopsSection
+        loops={loops}
+        stages={stages}
+        issues={issues.loops}
+        readOnly={readOnly}
+        canAdd={canAddLoop}
+        onAdd={() => {
+          apply({ type: "addLoop" });
+        }}
+        onPatch={(index, patch) => {
+          apply({ type: "patchLoop", index, patch });
+        }}
+        onRemove={(index) => {
+          apply({ type: "removeLoop", index });
+        }}
+      />
     </div>
   );
 }

@@ -6,18 +6,25 @@ import { Button, ChevronIcon, cx, IconButton, Tag } from "../../ui";
 import { Field, fieldStyles as f, Select, Toggle } from "./fields";
 import {
   agentHint,
+  countOptions,
   formatTimeout,
   idEditable,
   optional,
   PHASES,
+  resumeChoice,
+  resumeFromChoice,
+  resumeOptions,
   stageEffortPlaceholder,
   stageModelPlaceholder,
   stageRuntimeOptions,
   TIMEOUT_MAX,
   TIMEOUT_MIN,
   unsetIfEmpty,
+  VERDICT_REPAIRS_MAX,
+  type LoopRole,
   type Row,
   type SpaceDefaults,
+  type Stage,
   type StageIssues,
   type StagePatch,
 } from "./model";
@@ -28,11 +35,23 @@ const PHASE_OPTIONS = PHASES.map((p) => ({
   label: p.charAt(0).toUpperCase() + p.slice(1),
 }));
 
+const REPAIR_OPTIONS = countOptions(0, VERDICT_REPAIRS_MAX).map((o) =>
+  o.value === "0" ? { ...o, label: "0 (no repair)" } : o,
+);
+
+const ROLE_TITLE: Record<LoopRole | "exit", string> = {
+  check: "Check: passes or fails each round with a verdict",
+  exit: "Check: passes or fails each round by its exit code",
+  maker: "Maker: changes the code, and gets the checks' notes in later rounds",
+};
+
 export interface StageRowProps {
   row: Row;
   index: number;
   count: number;
   issues: StageIssues;
+  /** The stage's role in the loop block drawn around it; null outside a block. */
+  role: LoopRole | null;
   open: boolean;
   readOnly: boolean;
   runtimes: readonly string[];
@@ -119,6 +138,16 @@ export function StageRow(props: StageRowProps) {
         </button>
 
         <span className={s.tags}>
+          {props.role ? (
+            <Tag
+              className={cx(s.role, props.role === "check" && s.isCheck)}
+              title={
+                ROLE_TITLE[props.role === "check" && stage.kind === "shell" ? "exit" : props.role]
+              }
+            >
+              {props.role === "check" ? "Check" : "Maker"}
+            </Tag>
+          ) : null}
           <Tag>{stage.kind}</Tag>
           {stage.requires_repo ? (
             <Tag title="Needs a repo: off on tickets without one">Repo</Tag>
@@ -166,6 +195,11 @@ export function StageRow(props: StageRowProps) {
 
       {open ? (
         <div id={bodyId} className={s.body}>
+          {issues.gate_after ? (
+            <p className={s.stageError} role="alert">
+              {issues.gate_after}
+            </p>
+          ) : null}
           <div className={s.grid2}>
             <Field label="Name" error={issues.name}>
               {({ id, describedBy, invalid }) => (
@@ -312,6 +346,13 @@ export function StageRow(props: StageRowProps) {
                   }}
                 />
               </div>
+              <LoopSettings
+                stage={stage}
+                label={label}
+                issues={issues}
+                readOnly={readOnly}
+                onPatch={onPatch}
+              />
             </>
           ) : (
             <>
@@ -347,6 +388,12 @@ export function StageRow(props: StageRowProps) {
                   }}
                 />
               </div>
+              {props.role ? (
+                <p className={s.loopNote}>
+                  In its loop this stage is a check: exit code 0 passes the round; anything else
+                  fails it, and the end of its output becomes the notes.
+                </p>
+              ) : null}
             </>
           )}
 
@@ -366,6 +413,77 @@ export function StageRow(props: StageRowProps) {
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** An agent stage's loop settings: Check (+ verdict repairs) and whether it resumes its session.
+ *  They only matter inside a loop block. */
+function LoopSettings(props: {
+  stage: Stage;
+  label: string;
+  issues: StageIssues;
+  readOnly: boolean;
+  onPatch: (patch: StagePatch) => void;
+}) {
+  const { stage, issues, readOnly, onPatch } = props;
+  return (
+    <div className={s.grid3}>
+      <div className={f.field}>
+        <span className={f.label}>In a loop</span>
+        <Toggle
+          checked={stage.check}
+          disabled={readOnly}
+          aria-label={`${props.label} is a check`}
+          className={s.checkToggle}
+          onChange={(check) => {
+            onPatch({ check });
+          }}
+        >
+          Check
+        </Toggle>
+        <span className={f.note}>
+          Inside a loop, this stage passes or fails the round with a verdict.
+        </span>
+      </div>
+      {stage.check ? (
+        <Field
+          label="Verdict repairs"
+          error={issues.verdict_repairs}
+          hint="How often an invalid verdict is asked for again before the run fails."
+        >
+          {({ id, describedBy, invalid }) => (
+            <Select
+              id={id}
+              aria-describedby={describedBy}
+              aria-invalid={invalid}
+              value={String(stage.verdict_repairs)}
+              disabled={readOnly}
+              options={REPAIR_OPTIONS}
+              onChange={(v) => {
+                onPatch({ verdict_repairs: Number(v) });
+              }}
+            />
+          )}
+        </Field>
+      ) : null}
+      <Field
+        label="Resume its session each round"
+        hint="Needs a runtime with session arguments; otherwise every round starts fresh."
+      >
+        {({ id, describedBy }) => (
+          <Select
+            id={id}
+            aria-describedby={describedBy}
+            value={resumeChoice(stage.resume)}
+            disabled={readOnly}
+            options={resumeOptions(stage)}
+            onChange={(v) => {
+              onPatch({ resume: resumeFromChoice(v) });
+            }}
+          />
+        )}
+      </Field>
+    </div>
   );
 }
 

@@ -84,6 +84,69 @@ export function commandTokens(argv: readonly string[], prompt: number | null): C
   });
 }
 
+export type ManifestInvocation = Schemas["ManifestInvocation"];
+
+/** Stands in for what the worker appends to a later call's prompt before its `tail`. */
+export const FEEDBACK_PLACEHOLDER = "‹the failing checks' notes›";
+export const ERROR_PLACEHOLDER = "‹why the verdict was invalid›";
+
+/** Another call of a loop stage: a later round, or a verdict repair (request 24). */
+export interface LaterCall {
+  key: string;
+  kind: "round" | "repair";
+  /** The round it runs in. */
+  round: number;
+  tokens: CommandToken[];
+  /** The prompt as the worker sends it, with the text it appends shown as a placeholder. */
+  prompt: string;
+}
+
+function laterCall(inv: ManifestInvocation, kind: LaterCall["kind"], round: number): LaterCall {
+  const at = inv.stdin === null ? inv.prompt_arg : null;
+  const base = inv.stdin ?? (at === null ? "" : (inv.argv[at] ?? ""));
+  const added = kind === "round" ? FEEDBACK_PLACEHOLDER : ERROR_PLACEHOLDER;
+  return {
+    key: `${kind}${String(round)}`,
+    kind,
+    round,
+    tokens: commandTokens(inv.argv, at),
+    prompt: `${base}${added}${inv.tail}`,
+  };
+}
+
+/** A loop stage's later calls: rounds 2..max (`rounds`), then one repair call per round. */
+export function laterCalls(stage: Pick<ManifestStage, "rounds" | "repairs">): LaterCall[] {
+  return [
+    ...(stage.rounds ?? []).map((inv, i) => laterCall(inv, "round", i + 2)),
+    ...(stage.repairs ?? []).map((inv, i) => laterCall(inv, "repair", i + 1)),
+  ];
+}
+
+/** The later calls' fold-out label: "Later rounds (2)", "Repairs (3)", or both. */
+export function laterLabel(calls: readonly Pick<LaterCall, "kind">[]): string {
+  const rounds = calls.filter((c) => c.kind === "round").length;
+  const repairs = calls.length - rounds;
+  if (rounds === 0) return `Repairs (${String(repairs)})`;
+  const head = `Later rounds (${String(rounds)})`;
+  return repairs === 0 ? head : `${head} and repairs (${String(repairs)})`;
+}
+
+/** How a loop stage decides a round, as short meta words ("check · verdict file · 2 repairs");
+ *  empty for a stage that isn't a check. */
+export function checkMeta(
+  stage: Pick<ManifestStage, "check" | "kind" | "verdict_from" | "verdict_repairs">,
+): string[] {
+  if (!stage.check) return [];
+  if (stage.kind === "shell") return ["check", "exit code"];
+  const from = stage.verdict_from ?? null;
+  const n = stage.verdict_repairs;
+  return [
+    "check",
+    from === "structured_output" ? "structured output" : from === "file" ? "verdict file" : "",
+    n > 0 ? `up to ${String(n)} repair${n === 1 ? "" : "s"}` : "no repair",
+  ].filter(Boolean);
+}
+
 export interface StageCall {
   id: string;
   name: string;
@@ -96,10 +159,21 @@ export interface StageCall {
   prompt: { text: string; via: "stdin" | "arg" } | null;
   /** A shell stage's command. */
   command: string | null;
+  /** A check's meta words (empty otherwise). */
+  check: string[];
+  /** A loop stage's later-round and repair calls. */
+  later: LaterCall[];
 }
 
 export function stageCall(stage: ManifestStage): StageCall {
-  const base = { id: stage.id, name: stage.name, kind: stage.kind, timeoutS: stage.timeout_s };
+  const base = {
+    id: stage.id,
+    name: stage.name,
+    kind: stage.kind,
+    timeoutS: stage.timeout_s,
+    check: checkMeta(stage),
+    later: laterCalls(stage),
+  };
   if (stage.kind === "shell") {
     return { ...base, chips: [], tokens: null, prompt: null, command: stage.command ?? "" };
   }
