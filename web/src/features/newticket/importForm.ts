@@ -7,10 +7,14 @@ export function offersJiraImport(sources: Readonly<Schemas["AppConfig"]["sources
   return sources.includes("jira");
 }
 
-/** The request body, or null for a blank ref (which doesn't submit). The server parses the ref. */
-export function toImportBody(ref: string): Schemas["ImportRequest"] | null {
+/** The request body, or null for a blank ref (which doesn't submit). The server parses the ref.
+ *  `workflowId` null = the default workflow (a re-import ignores it and returns the ticket as is). */
+export function toImportBody(
+  ref: string,
+  workflowId: number | null = null,
+): Schemas["ImportRequest"] | null {
   const trimmed = ref.trim();
-  return trimmed ? { ref: trimmed } : null;
+  return trimmed ? { ref: trimmed, workflow_id: workflowId } : null;
 }
 
 /** A failed import, in words for the line under the row. */

@@ -1,9 +1,11 @@
-// The ticket page's Pipeline tab: this ticket's copy of the template pipeline. Toggle stages and
-// sign-offs, tweak prompts, Save (PUT pipeline with base_version), then "Run from…" a stage.
+// The ticket page's Pipeline tab: this ticket's copy of a workflow's pipeline. Toggle stages and
+// sign-offs, tweak prompts, Save (PUT pipeline with base_version), then "Run from…" a stage. The
+// workflow strip (features/workflows) switches workflow or saves this pipeline as a new one.
 import { useState } from "react";
 
 import { useConfig, useDispatch, useMe, useSavePipeline, useTicket } from "../../api/queries";
 import { Button } from "../../ui";
+import { WorkflowStrip } from "../workflows";
 import { Select } from "./fields";
 import {
   configDefaults,
@@ -124,6 +126,13 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
             </span>
           ) : null
         }
+      />
+
+      <WorkflowStrip
+        ticket={ticket.data}
+        canWrite={canWrite}
+        isAdmin={me.data?.role === "admin"}
+        dirty={draft.dirty}
       />
 
       {dispatch.error ? (

@@ -7,7 +7,6 @@ import {
   defaultsBody,
   describeSaveError,
   draftFrom,
-  effectiveDefaults,
   formatTimeout,
   freshId,
   idEditable,
@@ -22,8 +21,8 @@ import {
   runtimeOptions,
   sameDefaults,
   samePipeline,
-  sameTemplateForm,
   serverRuntimeLabel,
+  stageEffortPlaceholder,
   stageModelPlaceholder,
   stageRuntimeOptions,
   toPipeline,
@@ -236,21 +235,44 @@ describe("validatePipeline", () => {
     ).toBeUndefined();
   });
 
-  it("checks agent, model, runtime and prompt size", () => {
-    const ok = stage("a", { agent: "planner", model: "claude-opus-4.1", runtime: "copilot" });
+  it("checks agent, model, effort, runtime and prompt size", () => {
+    const ok = stage("a", {
+      agent: "planner",
+      model: "claude-opus-4.1",
+      effort: "high",
+      runtime: "copilot",
+    });
     expect(validatePipeline([ok], RT).stages[0]).toEqual({});
     const bad = stage("a", {
       agent: "has space",
       model: "x".repeat(101),
+      effort: "very high",
       runtime: "gemini",
       prompt: "x".repeat(65537),
     });
     expect(Object.keys(validatePipeline([bad], RT).stages[0] ?? {}).sort()).toEqual([
       "agent",
+      "effort",
       "model",
       "prompt",
       "runtime",
     ]);
+  });
+
+  it("checks the effort pattern: a free token of letters, digits and . _ -, at most 32", () => {
+    const effortIssue = (effort: string | null) =>
+      validatePipeline([stage("a", { effort })], RT).stages[0]?.effort;
+    for (const ok of [null, "low", "xhigh", "Max", "v1.2_x-y", "x".repeat(32)]) {
+      expect(effortIssue(ok), String(ok)).toBeUndefined();
+    }
+    for (const bad of ["", "very high", "a:b", "a/b", "x".repeat(33)]) {
+      expect(effortIssue(bad), bad).toBe("Letters, digits and . _ - only; at most 32.");
+    }
+  });
+
+  it("ignores effort on a shell stage, like model", () => {
+    const shell = stage("lint", { kind: "shell", command: "make", effort: "not valid" });
+    expect(validatePipeline([shell], RT).stages[0]).toEqual({});
   });
 });
 
@@ -300,8 +322,14 @@ describe("helpers", () => {
     delete bare.agent;
     delete bare.model;
     delete bare.runtime;
+    delete bare.effort;
     expect(samePipeline(a, { stages: [bare] })).toBe(true);
     expect(samePipeline(a, { stages: [stage("a", { enabled: false })] })).toBe(false);
+    expect(samePipeline(a, { stages: [stage("a", { effort: "high" })] })).toBe(false);
+  });
+
+  it("a new agent stage has no effort (the Space default)", () => {
+    expect(newStage("agent", []).effort).toBeNull();
   });
 
   it("optional and unsetIfEmpty blank to null", () => {
@@ -333,7 +361,7 @@ describe("helpers", () => {
 
 describe("Space defaults", () => {
   const RT = ["claude", "copilot"];
-  const space = { runtime: "claude", model: "claude-sonnet-4" };
+  const space = { runtime: "claude", model: "claude-sonnet-4", effort: "high" };
 
   it("stage runtime: the unset option names the Space runtime", () => {
     expect(stageRuntimeOptions(RT, space, null)).toEqual([
@@ -341,9 +369,9 @@ describe("Space defaults", () => {
       { value: "claude", label: "claude" },
       { value: "copilot", label: "copilot" },
     ]);
-    expect(stageRuntimeOptions(RT, { runtime: null, model: null }, null)[0]?.label).toBe(
-      "Space default",
-    );
+    expect(
+      stageRuntimeOptions(RT, { runtime: null, model: null, effort: null }, null)[0]?.label,
+    ).toBe("Space default");
     // An unknown current runtime stays selectable (and fails validation).
     expect(stageRuntimeOptions(RT, space, "gemini").map((o) => o.value)).toEqual([
       "",
@@ -369,31 +397,34 @@ describe("Space defaults", () => {
     expect(stageModelPlaceholder(undefined, space)).toBe("Space default (claude-sonnet-4)");
     expect(stageModelPlaceholder("claude", space)).toBe("Space default (claude-sonnet-4)");
     expect(stageModelPlaceholder("copilot", space)).toBe(CLI_DEFAULT);
-    expect(stageModelPlaceholder(null, { runtime: "claude", model: null })).toBe(CLI_DEFAULT);
+    expect(stageModelPlaceholder(null, { ...space, model: null })).toBe(CLI_DEFAULT);
     expect(CLI_DEFAULT).toBe("The CLI's default");
   });
 
-  it("configDefaults reads /api/config's effective defaults", () => {
-    expect(configDefaults({ default_runtime: "claude", default_model: null })).toEqual({
-      runtime: "claude",
-      model: null,
-    });
+  it("stage effort: the Space effort only on the Space runtime, else the CLI's default", () => {
+    expect(stageEffortPlaceholder(null, space)).toBe("Space default (high)");
+    expect(stageEffortPlaceholder(undefined, space)).toBe("Space default (high)");
+    expect(stageEffortPlaceholder("claude", space)).toBe("Space default (high)");
+    expect(stageEffortPlaceholder("copilot", space)).toBe(CLI_DEFAULT);
+    expect(stageEffortPlaceholder(null, { ...space, effort: null })).toBe(CLI_DEFAULT);
+    // Independent of the model: a Space effort with no Space model, and the other way round.
+    expect(stageEffortPlaceholder(null, { ...space, model: null })).toBe("Space default (high)");
+    expect(stageModelPlaceholder(null, { ...space, effort: null })).toBe(
+      "Space default (claude-sonnet-4)",
+    );
   });
 
-  it("effectiveDefaults follows the draft, else the server's", () => {
-    const config = { server_default_runtime: "claude" };
-    // Nothing set: the server's runtime, no model.
-    expect(effectiveDefaults({}, config)).toEqual({ runtime: "claude", model: null });
-    // The draft wins.
-    expect(effectiveDefaults({ runtime: "copilot", model: "gpt-5" }, config)).toEqual({
-      runtime: "copilot",
-      model: "gpt-5",
-    });
-    // Cleared in the draft: the server's own runtime, even while the saved template sets one.
-    expect(effectiveDefaults({ runtime: null }, config)).toEqual({
-      runtime: "claude",
-      model: null,
-    });
+  it("configDefaults reads /api/config's effective defaults", () => {
+    expect(
+      configDefaults({ default_runtime: "claude", default_model: null, default_effort: null }),
+    ).toEqual({ runtime: "claude", model: null, effort: null });
+    expect(
+      configDefaults({
+        default_runtime: "copilot",
+        default_model: "gpt-5",
+        default_effort: "xhigh",
+      }),
+    ).toEqual({ runtime: "copilot", model: "gpt-5", effort: "xhigh" });
   });
 
   it("serverRuntimeLabel names the server's own runtime", () => {
@@ -404,47 +435,67 @@ describe("Space defaults", () => {
 
   it("validateDefaults mirrors TemplateDefaults", () => {
     expect(validateDefaults({}, RT)).toEqual({});
-    expect(validateDefaults({ runtime: "copilot", model: "claude-opus-4.1" }, RT)).toEqual({});
-    expect(Object.keys(validateDefaults({ runtime: "gemini", model: "has space" }, RT))).toEqual([
-      "runtime",
-      "model",
-    ]);
+    expect(
+      validateDefaults({ runtime: "copilot", model: "claude-opus-4.1", effort: "medium" }, RT),
+    ).toEqual({});
+    expect(
+      Object.keys(
+        validateDefaults({ runtime: "gemini", model: "has space", effort: "x".repeat(33) }, RT),
+      ),
+    ).toEqual(["runtime", "model", "effort"]);
+    expect(validateDefaults({ effort: "a b" }, RT).effort).toBe(
+      "Letters, digits and . _ - only; at most 32.",
+    );
   });
 
-  it("sameDefaults / sameTemplateForm treat missing as null", () => {
-    expect(sameDefaults({}, { runtime: null, model: null })).toBe(true);
+  it("sameDefaults treats missing as null and compares the effort", () => {
+    expect(sameDefaults({}, { runtime: null, model: null, effort: null })).toBe(true);
     expect(sameDefaults({ model: "x" }, { model: null })).toBe(false);
-    const form = { pipeline: SEED, defaults: {} };
-    expect(sameTemplateForm(form, { pipeline: SEED, defaults: { runtime: null } })).toBe(true);
-    expect(sameTemplateForm(form, { pipeline: SEED, defaults: { runtime: "claude" } })).toBe(false);
-    expect(
-      sameTemplateForm(form, { pipeline: { stages: SEED.stages.slice(1) }, defaults: {} }),
-    ).toBe(false);
+    expect(sameDefaults({ effort: "high" }, {})).toBe(false);
+    expect(sameDefaults({ effort: "high" }, { effort: "high", runtime: null })).toBe(true);
   });
 });
 
 describe("unset is null in PUT bodies", () => {
-  it("defaultsBody always sends both keys, unset as null", () => {
-    expect(defaultsBody({})).toEqual({ runtime: null, model: null });
-    expect(defaultsBody({ runtime: "claude", model: null })).toEqual({
+  it("defaultsBody always sends every key, unset as null", () => {
+    expect(defaultsBody({})).toEqual({ runtime: null, model: null, effort: null });
+    expect(defaultsBody({ runtime: "claude", model: null, effort: "high" })).toEqual({
       runtime: "claude",
       model: null,
+      effort: "high",
     });
-    expect(JSON.stringify(defaultsBody({ model: "opus" }))).toBe('{"runtime":null,"model":"opus"}');
+    expect(JSON.stringify(defaultsBody({ model: "opus" }))).toBe(
+      '{"runtime":null,"model":"opus","effort":null}',
+    );
   });
 
-  it("a stage's cleared runtime/model/agent are null in the pipeline, never empty", () => {
+  it("a stage's cleared runtime/model/effort/agent are null in the pipeline, never empty", () => {
     let d = draftFrom({
-      stages: [stage("a", { runtime: "copilot", model: "gpt-5", agent: "planner" })],
+      stages: [
+        stage("a", { runtime: "copilot", model: "gpt-5", effort: "high", agent: "planner" }),
+      ],
     });
     const uid = d.rows[0]?.uid ?? 0;
     // What the fields send when blanked: the select's "" and an empty text input.
     d = reduce(d, {
       type: "patch",
       uid,
-      patch: { runtime: unsetIfEmpty(""), model: optional(""), agent: optional("   ") },
+      patch: {
+        runtime: unsetIfEmpty(""),
+        model: optional(""),
+        effort: optional("  "),
+        agent: optional("   "),
+      },
     });
     const body = JSON.parse(JSON.stringify(toPipeline(d))) as Pipeline;
-    expect(body.stages[0]).toMatchObject({ runtime: null, model: null, agent: null });
+    expect(body.stages[0]).toMatchObject({ runtime: null, model: null, effort: null, agent: null });
+  });
+
+  it("a stage's effort round-trips through the draft", () => {
+    const p: Pipeline = { stages: [stage("a", { effort: "xhigh" }), stage("b")] };
+    const d = draftFrom(p);
+    expect(toPipeline(d)).toEqual(p);
+    const set = reduce(d, { type: "patch", uid: d.rows[1]?.uid ?? 0, patch: { effort: "low" } });
+    expect(toPipeline(set).stages.map((st) => st.effort)).toEqual(["xhigh", "low"]);
   });
 });

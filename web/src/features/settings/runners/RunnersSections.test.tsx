@@ -76,6 +76,7 @@ const SEED = rowsFrom([
     name: "claude",
     argv: ["claude", "-p"],
     model_args: ["--model", "{model}"],
+    effort_args: ["--effort", "{effort}"],
     agent_args: ["--agent", "{agent}"],
     prompt_via: "stdin",
     prompt_args: [],
@@ -111,7 +112,9 @@ describe("RuntimesEditor", () => {
     const items = [...el.querySelectorAll("li")];
     expect(items).toHaveLength(2);
     expect(items[0]?.textContent).toContain("Server default");
-    expect(items[0]?.textContent).toContain("claude -p --model <model> --agent <agent>");
+    expect(items[0]?.textContent).toContain(
+      "claude -p --model <model> --effort <effort> --agent <agent>",
+    );
     expect(items[1]?.textContent).not.toContain("Server default");
   });
 
@@ -143,8 +146,37 @@ describe("RuntimesEditor", () => {
       "--verbose",
     ]);
     const preview = el.querySelector('[aria-label="Command preview"]');
-    expect(preview?.textContent).toContain("claude -p --verbose --model <model> --agent <agent>");
+    expect(preview?.textContent).toContain(
+      "claude -p --verbose --model <model> --effort <effort> --agent <agent>",
+    );
     expect(preview?.textContent).toContain("The prompt goes to stdin.");
+  });
+
+  it("edits effort arguments one per line, and a runtime without them starts empty", () => {
+    const spy = vi.fn();
+    const el = mount(<Harness initial={SEED} spy={spy} />);
+    const toggles = el.querySelectorAll("li button[aria-expanded]");
+    click(toggles[0]);
+    const effort = byLabel(el, "Effort arguments", HTMLTextAreaElement);
+    expect(effort.value).toBe("--effort\n{effort}");
+
+    type(effort, "--reasoning-effort\n{effort}");
+    expect((spy.mock.lastCall?.[0] as RuntimeRow[])[0]?.entry.effort_args).toEqual([
+      "--reasoning-effort",
+      "{effort}",
+    ]);
+    expect(el.querySelector('[aria-label="Command preview"]')?.textContent).toContain(
+      "--model <model> --reasoning-effort <effort> --agent <agent>",
+    );
+
+    type(effort, "--effort={effort}");
+    expect(el.textContent).toContain(
+      "Effort arguments have no {effort} line, so the effort isn't passed.",
+    );
+
+    click(toggles[0]);
+    click(el.querySelectorAll("li button[aria-expanded]")[1]);
+    expect(byLabel(el, "Effort arguments", HTMLTextAreaElement).value).toBe("");
   });
 
   it("shows prompt arguments only when the prompt is an argument, and flags a missing {prompt}", () => {

@@ -185,11 +185,17 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
+.grid3,
 .grid4 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
+}
+/* an agent stage's settings: runtime, model, effort, then agent and timeout (three columns keep
+   the "Space default (…)" placeholders readable in the Pipeline tab's column) */
+.grid3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .foot {
   display: flex;
@@ -203,6 +209,7 @@
     row-gap: 6px;
     padding-bottom: 8px;
   }
+  .grid3,
   .grid4 {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }

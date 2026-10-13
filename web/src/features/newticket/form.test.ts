@@ -91,7 +91,13 @@ describe("new ticket form", () => {
       repo: "agentos",
       base_branch: "dev",
       owner_id: 4,
+      workflow_id: null,
     });
+  });
+
+  it("sends the picked workflow", () => {
+    const f = { ...initialForm(defaults), title: "T" };
+    expect(toCreateBody(f, 7)).toMatchObject({ workflow_id: 7 });
   });
 
   it("sends nulls for a blank branch, no repo and unassigned", () => {

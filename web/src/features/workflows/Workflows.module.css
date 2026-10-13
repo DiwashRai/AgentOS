@@ -1,0 +1,170 @@
+/* Settings › Workflows and the Pipeline tab's workflow strip, in kit values. */
+
+/* the list: one sheet, a row per workflow (like the Template page's scaffold list) */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+  overflow: hidden;
+}
+.list > li + li {
+  border-top: 1px solid var(--rule-soft);
+}
+.row {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 14px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row:hover {
+  background: var(--row-hover);
+}
+.row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.row[aria-current="true"] {
+  background: var(--row-hover);
+  box-shadow: inset 3px 0 0 var(--row-selected-edge);
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.name {
+  font-size: var(--fs-row-title);
+  font-weight: 500;
+  color: var(--ink-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desc {
+  grid-column: 1;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+/* the editor's name + description sheet */
+.sheet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+@media (max-width: 700px) {
+  .sheet {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.oneLine {
+  font-family: inherit;
+  font-size: 13px;
+  min-height: 34px;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.problem {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--blocked);
+}
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* the Pipeline tab's strip: "From Standard · v3", Switch workflow…, Save as workflow… */
+.strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.from {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spacer {
+  flex: 1;
+}
+
+/* an inline panel under the strip (pick + confirm, or name + save): a quiet card */
+.panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--ink-1);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+.panelHead {
+  margin: 0;
+  font-size: var(--fs-control);
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.text {
+  margin: 0;
+  font-size: var(--fs-control);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.done {
+  margin: 0;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}

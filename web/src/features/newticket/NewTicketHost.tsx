@@ -5,10 +5,19 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import type { Schemas } from "../../api/client";
-import { useConfig, useCreateTicket, useImportTicket, useMe, usePeople } from "../../api/queries";
+import {
+  useConfig,
+  useCreateTicket,
+  useImportTicket,
+  useMe,
+  usePeople,
+  useWorkflows,
+} from "../../api/queries";
 import { words } from "../../domain/words";
 import { Button, CloseIcon, IconButton, cx } from "../../ui";
 import { Field, Select, fieldStyles as f } from "../pipeline/fields";
+import { WorkflowPicker } from "../workflows";
+import { defaultWorkflow, workflowIdOf } from "../workflows/model";
 import {
   PRIORITIES,
   TITLE_MAX,
@@ -35,14 +44,16 @@ const FOCUSABLE =
  *  Enter in the field imports instead of creating. */
 function ImportRow({
   focusFirst,
+  workflowId,
   onImported,
 }: {
   focusFirst: boolean;
+  workflowId: number | null;
   onImported: (key: string) => void;
 }) {
   const imp = useImportTicket();
   const [ref, setRef] = useState("");
-  const body = toImportBody(ref);
+  const body = toImportBody(ref, workflowId);
   return (
     <form
       className={s.import}
@@ -95,12 +106,14 @@ function TicketForm({
   repos,
   people,
   focusFirst,
+  workflowId,
   onCreated,
 }: {
   defaults: Defaults;
   repos: readonly Schemas["RepoInfo"][];
   people: readonly Schemas["Person"][];
   focusFirst: boolean;
+  workflowId: number | null;
   onCreated: (key: string) => void;
 }) {
   const create = useCreateTicket();
@@ -126,7 +139,7 @@ function TicketForm({
             ?.focus();
           return;
         }
-        create.mutate(toCreateBody(form), {
+        create.mutate(toCreateBody(form, workflowId), {
           onSuccess: (t) => {
             onCreated(t.key);
           },
@@ -268,6 +281,10 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
   const config = useConfig();
   const me = useMe();
   const people = usePeople();
+  const workflows = useWorkflows();
+  // null = not picked: the default workflow, preselected. If the list fails to load, the picker
+  // stays hidden and the server applies the default.
+  const [picked, setPicked] = useState<string | null>(null);
   const panel = useRef<HTMLDivElement>(null);
 
   // Focus the first field on open; give focus back to the opener on close.
@@ -280,7 +297,10 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  const ready = !config.isPending && !me.isPending;
+  const ready = !config.isPending && !me.isPending && !workflows.isPending;
+  const workflowList = workflows.data ?? [];
+  const workflowValue = picked ?? String(defaultWorkflow(workflowList)?.id ?? "");
+  const workflowId = workflowIdOf(workflowValue);
   const canImport = offersJiraImport(config.data?.sources ?? []);
   const open = (key: string) => {
     void navigate(`/t/${encodeURIComponent(key)}`);
@@ -335,9 +355,17 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
         </div>
         {ready ? (
           <>
+            {workflowList.length > 0 ? (
+              <WorkflowPicker
+                className={s.workflow}
+                workflows={workflowList}
+                value={workflowValue}
+                onChange={setPicked}
+              />
+            ) : null}
             {canImport ? (
               <>
-                <ImportRow focusFirst onImported={open} />
+                <ImportRow focusFirst workflowId={workflowId} onImported={open} />
                 <p className={s.or} aria-hidden="true">
                   or create one here
                 </p>
@@ -351,6 +379,7 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
               repos={config.data?.repos ?? []}
               people={people.data ?? (me.data ? [me.data] : [])}
               focusFirst={!canImport}
+              workflowId={workflowId}
               onCreated={open}
             />
           </>

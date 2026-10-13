@@ -108,7 +108,7 @@
   color: var(--ink-1);
 }
 
-/* Template page: Space defaults, a sheet with two fields (kit .ao-sheet) */
+/* Space defaults page: a sheet with three fields (kit .ao-sheet) */
 .defaults {
   display: flex;
   flex-direction: column;
@@ -116,10 +116,10 @@
 }
 .sheet {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
-  max-width: 560px;
+  max-width: 760px;
   padding: 14px 16px;
   background: var(--surface);
   border: 1px solid var(--rule);

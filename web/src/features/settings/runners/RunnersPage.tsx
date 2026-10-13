@@ -143,8 +143,8 @@ export function RunnersPage() {
         />
         <p className={s.lead} role="note">
           Agent stages run one of these commands. The first is the server default: stages use it
-          when neither they nor the template&apos;s Space defaults name a runtime. Move a runtime to
-          the top to make it the default. Removing one the template uses is refused.
+          when neither they nor the Space defaults name a runtime. Move a runtime to the top to make
+          it the default. Removing one a workflow or the Space defaults use is refused.
         </p>
         <RuntimesEditor
           rows={rows}

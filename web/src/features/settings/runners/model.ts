@@ -25,10 +25,19 @@ export const GIT_REF_MAX = 255;
 /** The placeholder each argument group replaces (manifest.py `_substitute`). argv has none. */
 export const PLACEHOLDER = {
   model_args: "{model}",
+  effort_args: "{effort}",
   agent_args: "{agent}",
   prompt_args: "{prompt}",
 } as const;
 const PLACEHOLDERS = Object.values(PLACEHOLDER);
+
+const NO_ARGS: readonly string[] = Object.freeze([]);
+
+/** A runtime's effort arguments. Optional in the schema (an older PUT may omit them; GET always
+ *  sends them), so missing reads as none (one shared empty list, so the value is stable). */
+export function effortArgs(e: RuntimeEntry): readonly string[] {
+  return e.effort_args ?? NO_ARGS;
+}
 
 // ------------------------------------------------------------------ runner
 
@@ -104,14 +113,15 @@ export interface RuntimeRow {
   entry: RuntimeEntry;
 }
 
-/** Rows for the server's list. Saved rows are keyed by name (unique on the server). */
+/** Rows for the server's list. Saved rows are keyed by name (unique on the server). Every entry
+ *  carries `effort_args` (missing = none), so the PUT body always sends them. */
 export function rowsFrom(entries: readonly RuntimeEntry[]): RuntimeRow[] {
   const seen = new Set<string>();
   return entries.map((entry, i) => {
     let key = `s:${entry.name}`;
     if (seen.has(key)) key = `s:${entry.name}#${String(i)}`;
     seen.add(key);
-    return { key, entry };
+    return { key, entry: entry.effort_args ? entry : { ...entry, effort_args: [] } };
   });
 }
 
@@ -134,6 +144,7 @@ function canonical(rows: readonly RuntimeRow[]): string {
       e.name,
       e.argv,
       e.model_args,
+      effortArgs(e),
       e.agent_args,
       e.prompt_via,
       e.prompt_args,
@@ -169,6 +180,7 @@ export function newRuntime(rows: readonly RuntimeRow[]): RuntimeRow {
       name: freshName(rows.map((r) => r.entry.name)),
       argv: [],
       model_args: [],
+      effort_args: [],
       agent_args: [],
       prompt_via: "stdin",
       prompt_args: [],
@@ -245,7 +257,8 @@ export function sameArgs(a: readonly string[], b: readonly string[]): boolean {
 
 // ------------------------------------------------------------------ validation
 
-export type RuntimeField = "name" | "argv" | "model_args" | "agent_args" | "prompt_args";
+export type RuntimeField =
+  "name" | "argv" | "model_args" | "effort_args" | "agent_args" | "prompt_args";
 export type RuntimeIssues = Partial<Record<RuntimeField, string>>;
 
 export interface RuntimesIssues {
@@ -290,6 +303,8 @@ export function validateRuntimes(rows: readonly RuntimeRow[]): RuntimesIssues {
     }
     const model = argsIssue(e.model_args);
     if (model) out.model_args = model;
+    const effort = argsIssue(effortArgs(e));
+    if (effort) out.effort_args = effort;
     const agent = argsIssue(e.agent_args);
     if (agent) out.agent_args = agent;
 
@@ -318,13 +333,16 @@ export function fixFirst(n: number): string | undefined {
 /**
  * Placeholders that won't be replaced, as advice (the server accepts them; they'd reach the CLI
  * literally). A placeholder is replaced only as a whole line, and only in its own group:
- * `{model}` in model arguments, `{agent}` in agent arguments, `{prompt}` in prompt arguments.
+ * `{model}` in model arguments, `{effort}` in effort arguments, `{agent}` in agent arguments,
+ * `{prompt}` in prompt arguments.
  */
 export function placeholderNotes(e: RuntimeEntry): string[] {
   const notes: string[] = [];
+  const effort = effortArgs(e);
   const groups: [keyof typeof GROUP_LABEL, readonly string[]][] = [
     ["argv", e.argv],
     ["model_args", e.model_args],
+    ["effort_args", effort],
     ["agent_args", e.agent_args],
     ["prompt_args", e.prompt_via === "arg" ? e.prompt_args : []],
   ];
@@ -345,6 +363,9 @@ export function placeholderNotes(e: RuntimeEntry): string[] {
   if (e.model_args.length > 0 && !e.model_args.includes(PLACEHOLDER.model_args)) {
     notes.push("Model arguments have no {model} line, so the model isn't passed.");
   }
+  if (effort.length > 0 && !effort.includes(PLACEHOLDER.effort_args)) {
+    notes.push("Effort arguments have no {effort} line, so the effort isn't passed.");
+  }
   if (e.agent_args.length > 0 && !e.agent_args.includes(PLACEHOLDER.agent_args)) {
     notes.push("Agent arguments have no {agent} line, so the agent isn't passed.");
   }
@@ -354,12 +375,14 @@ export function placeholderNotes(e: RuntimeEntry): string[] {
 const GROUP_LABEL = {
   argv: "the command",
   model_args: "model arguments",
+  effort_args: "effort arguments",
   agent_args: "agent arguments",
   prompt_args: "prompt arguments",
 } as const;
 
 function placeholderGroup(ph: string): keyof typeof PLACEHOLDER {
   if (ph === PLACEHOLDER.model_args) return "model_args";
+  if (ph === PLACEHOLDER.effort_args) return "effort_args";
   if (ph === PLACEHOLDER.agent_args) return "agent_args";
   return "prompt_args";
 }
@@ -368,7 +391,7 @@ function placeholderGroup(ph: string): keyof typeof PLACEHOLDER {
 
 export interface PreviewToken {
   text: string;
-  /** A value filled in at dispatch (the stage's model, agent or prompt). */
+  /** A value filled in at dispatch (the stage's model, effort, agent or prompt). */
   slot: boolean;
 }
 
@@ -378,12 +401,18 @@ export interface CommandPreview {
   stdin: boolean;
 }
 
-const SLOT = { "{model}": "<model>", "{agent}": "<agent>", "{prompt}": "<prompt>" } as const;
+const SLOT = {
+  "{model}": "<model>",
+  "{effort}": "<effort>",
+  "{agent}": "<agent>",
+  "{prompt}": "<prompt>",
+} as const;
 
 /**
- * The argv a stage with a model and an agent would run (manifest.py `resolve_agent`): `argv`,
- * then `model_args`, then `agent_args`, then `prompt_args` when the prompt is an argument. Each
- * group's own placeholder, as a whole element, stands for the value; anything else is literal.
+ * The argv a stage with a model, an effort and an agent would run (manifest.py `resolve_agent`):
+ * `argv`, then `model_args`, then `effort_args`, then `agent_args`, then `prompt_args` when the
+ * prompt is an argument. Each group's own placeholder, as a whole element, stands for the value;
+ * anything else is literal.
  */
 export function commandPreview(e: RuntimeEntry): CommandPreview {
   const lit = (args: readonly string[]) => args.map((text) => ({ text, slot: false }));
@@ -392,6 +421,7 @@ export function commandPreview(e: RuntimeEntry): CommandPreview {
   const tokens = [
     ...lit(e.argv),
     ...sub(e.model_args, "{model}"),
+    ...sub(effortArgs(e), "{effort}"),
     ...sub(e.agent_args, "{agent}"),
     ...(e.prompt_via === "arg" ? sub(e.prompt_args, "{prompt}") : []),
   ];

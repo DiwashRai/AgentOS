@@ -110,8 +110,8 @@ export function hasErrors(e: FormErrors): boolean {
 }
 
 /** The request body. A blank branch goes as null (the repo's default branch applies, if it has
- *  one; otherwise the ticket is created without one). */
-export function toCreateBody(f: NewTicketForm): Create {
+ *  one; otherwise the ticket is created without one). `workflowId` null = the default workflow. */
+export function toCreateBody(f: NewTicketForm, workflowId: number | null = null): Create {
   const repo = f.repo === NO_REPO ? null : f.repo;
   const branch = f.baseBranch.trim();
   return {
@@ -122,6 +122,7 @@ export function toCreateBody(f: NewTicketForm): Create {
     repo,
     base_branch: repo && branch ? branch : null,
     owner_id: f.ownerId === "" ? null : Number(f.ownerId),
+    workflow_id: workflowId,
   };
 }
 

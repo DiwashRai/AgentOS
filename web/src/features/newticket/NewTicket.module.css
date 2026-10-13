@@ -54,6 +54,18 @@
   padding: 18px 24px 20px;
 }
 
+/* Workflow: one select above both import and create, since it applies to either. */
+.workflow {
+  padding: 18px 24px 0;
+}
+.workflow select {
+  width: 100%;
+}
+.workflow + .import,
+.workflow + .form {
+  padding-top: 14px;
+}
+
 /* Import from Jira: one compact row above the create form, then a quiet "or" rule. */
 .import {
   display: flex;

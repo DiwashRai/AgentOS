@@ -10,6 +10,7 @@ import {
   addRuntime,
   argsToLines,
   commandPreview,
+  effortArgs,
   freshKey,
   linesToArgs,
   MAX_RUNTIMES,
@@ -205,7 +206,7 @@ function RuntimeItem(props: RuntimeItemProps) {
           </span>
           <span className={s.name}>{label}</span>
           {isDefault ? (
-            <Tag title="Stages use it when neither they nor the template name a runtime">
+            <Tag title="Stages use it when neither they nor the Space defaults name a runtime">
               Server default
             </Tag>
           ) : null}
@@ -226,7 +227,7 @@ function RuntimeItem(props: RuntimeItemProps) {
             <Field
               label="Name"
               error={issues.name}
-              hint="Stages and the template refer to the runtime by this name."
+              hint="Stages and the Space defaults refer to the runtime by this name."
             >
               {({ id, describedBy, invalid }) => (
                 <input
@@ -296,6 +297,18 @@ function RuntimeItem(props: RuntimeItemProps) {
               }}
             />
             <LinesField
+              label="Effort arguments"
+              value={effortArgs(e)}
+              rows={3}
+              error={issues.effort_args}
+              hint="Added when an effort resolves; an {effort} line becomes the effort. Empty: efforts are ignored."
+              placeholder={"--effort\n{effort}"}
+              readOnly={readOnly}
+              onChange={(effort_args) => {
+                onPatch({ effort_args });
+              }}
+            />
+            <LinesField
               label="Agent arguments"
               value={e.agent_args}
               rows={3}
@@ -344,7 +357,8 @@ function RuntimeItem(props: RuntimeItemProps) {
   );
 }
 
-/** What a stage with a model and an agent would run, and placeholders that won't be replaced. */
+/** What a stage with a model, an effort and an agent would run, and placeholders that won't be
+ *  replaced. */
 function Preview({ entry }: { entry: RuntimeEntry }) {
   const preview = commandPreview(entry);
   const notes = placeholderNotes(entry);
@@ -370,7 +384,8 @@ function Preview({ entry }: { entry: RuntimeEntry }) {
         {preview.stdin
           ? "The prompt goes to stdin."
           : "The prompt is passed as an argument (no stdin)."}{" "}
-        For a stage with a model and an agent; without them, their arguments are left out.
+        For a stage with a model, an effort and an agent; without them, their arguments are left
+        out.
       </span>
       {notes.length > 0 ? (
         <ul className={s.notes}>

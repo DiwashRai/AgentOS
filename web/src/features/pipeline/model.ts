@@ -15,6 +15,8 @@ export const PHASES: readonly StagePhase[] = ["plan", "build", "verify", "review
 // Limits from models.py (Stage, Pipeline).
 export const ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
 export const AGENT_RE = /^[A-Za-z0-9._:/-]{1,100}$/;
+/** A reasoning effort: a free per-CLI token (Claude takes low|medium|high|…, others differ). */
+export const EFFORT_RE = /^[A-Za-z0-9._-]{1,32}$/;
 export const NAME_MAX = 60;
 export const PROMPT_MAX = 65536; // characters (pydantic max_length)
 export const MIN_STAGES = 1;
@@ -102,6 +104,7 @@ export function newStage(kind: StageKind, taken: Iterable<string>): Stage {
     runtime: null,
     agent: null,
     model: null,
+    effort: null,
     command: "",
     timeout_s: TIMEOUT_DEFAULT,
   };
@@ -163,7 +166,7 @@ export function idEditable(row: Row): boolean {
 // ------------------------------------------------------------------ validation
 
 export type StageField =
-  "id" | "name" | "prompt" | "runtime" | "agent" | "model" | "command" | "timeout_s";
+  "id" | "name" | "prompt" | "runtime" | "agent" | "model" | "effort" | "command" | "timeout_s";
 export type StageIssues = Partial<Record<StageField, string>>;
 
 export interface Issues {
@@ -209,6 +212,7 @@ export function validatePipeline(stages: readonly Stage[], runtimes: readonly st
       }
       if (st.agent != null && !AGENT_RE.test(st.agent)) out.agent = PATTERN_HINT;
       if (st.model != null && !AGENT_RE.test(st.model)) out.model = PATTERN_HINT;
+      if (st.effort != null && !EFFORT_RE.test(st.effort)) out.effort = EFFORT_HINT;
     }
     return out;
   });
@@ -216,6 +220,7 @@ export function validatePipeline(stages: readonly Stage[], runtimes: readonly st
 }
 
 const PATTERN_HINT = "Letters, digits and . _ : / - only; at most 100.";
+const EFFORT_HINT = "Letters, digits and . _ - only; at most 32.";
 
 export function issueCount(issues: Issues): number {
   return issues.form.length + issues.stages.reduce((n, st) => n + Object.keys(st).length, 0);
@@ -282,6 +287,7 @@ function canonical(p: Pipeline): string {
       st.runtime ?? null,
       st.agent ?? null,
       st.model ?? null,
+      st.effort ?? null,
       st.command,
       st.timeout_s,
     ]),
@@ -316,57 +322,45 @@ export type Defaults = Schemas["TemplateDefaults"];
 export interface DefaultsBody {
   runtime: string | null;
   model: string | null;
+  effort: string | null;
 }
 
 /**
- * The effective Space defaults a stage with an unset runtime/model falls back to.
- * `runtime: null` = a default whose name isn't known; `model: null` = no Space model (the CLI's
- * own default).
+ * The effective Space defaults a stage with an unset runtime/model/effort falls back to.
+ * `runtime: null` = a default whose name isn't known; `model: null` / `effort: null` = no Space
+ * model / effort (the CLI's own default).
  */
 export interface SpaceDefaults {
   runtime: string | null;
   model: string | null;
-}
-
-/** What the Template page edits and saves in one go. */
-export interface TemplateForm {
-  pipeline: Pipeline;
-  defaults: Defaults;
+  effort: string | null;
 }
 
 export const CLI_DEFAULT = "The CLI's default";
 
 export function defaultsBody(d: Defaults): DefaultsBody {
-  return { runtime: d.runtime ?? null, model: d.model ?? null };
+  return { runtime: d.runtime ?? null, model: d.model ?? null, effort: d.effort ?? null };
 }
 
 export function sameDefaults(a: Defaults, b: Defaults): boolean {
-  return (a.runtime ?? null) === (b.runtime ?? null) && (a.model ?? null) === (b.model ?? null);
+  return (
+    (a.runtime ?? null) === (b.runtime ?? null) &&
+    (a.model ?? null) === (b.model ?? null) &&
+    (a.effort ?? null) === (b.effort ?? null)
+  );
 }
 
-export function sameTemplateForm(a: TemplateForm, b: TemplateForm): boolean {
-  return sameDefaults(a.defaults, b.defaults) && samePipeline(a.pipeline, b.pipeline);
-}
-
-/** /api/config's effective defaults (the template's, else the server's runtime and no model). */
+/** /api/config's effective defaults (the template's, else the server's runtime, no model and no
+ *  effort). The way every pipeline editor builds its `space` prop. */
 export function configDefaults(config: {
   default_runtime: string;
   default_model: string | null;
+  default_effort: string | null;
 }): SpaceDefaults {
-  return { runtime: config.default_runtime, model: config.default_model };
-}
-
-/**
- * The defaults stages fall back to while the Template page's form is being edited: the draft's,
- * else the server's own runtime (the first in Settings › Runners) and no model.
- */
-export function effectiveDefaults(
-  draft: Defaults,
-  config: { server_default_runtime: string },
-): SpaceDefaults {
   return {
-    runtime: draft.runtime ?? config.server_default_runtime,
-    model: draft.model ?? null,
+    runtime: config.default_runtime,
+    model: config.default_model,
+    effort: config.default_effort,
   };
 }
 
@@ -402,9 +396,26 @@ export function stageModelPlaceholder(
   stageRuntime: string | null | undefined,
   space: SpaceDefaults,
 ): string {
-  if (space.model == null) return CLI_DEFAULT;
+  return spacePlaceholder(space.model, stageRuntime, space);
+}
+
+/** A stage's unset-effort placeholder: like the model, the Space effort only applies to stages
+ *  on the Space runtime. */
+export function stageEffortPlaceholder(
+  stageRuntime: string | null | undefined,
+  space: SpaceDefaults,
+): string {
+  return spacePlaceholder(space.effort, stageRuntime, space);
+}
+
+function spacePlaceholder(
+  value: string | null,
+  stageRuntime: string | null | undefined,
+  space: SpaceDefaults,
+): string {
+  if (value == null) return CLI_DEFAULT;
   const onSpaceRuntime = stageRuntime == null || stageRuntime === space.runtime;
-  return onSpaceRuntime ? `Space default (${space.model})` : CLI_DEFAULT;
+  return onSpaceRuntime ? `Space default (${value})` : CLI_DEFAULT;
 }
 
 /** The Agent field's hint: the runtime passes the name on (`--agent`), and Claude Code reads the
@@ -417,15 +428,16 @@ export function agentHint(agent: string | null | undefined): string {
     : `Needs ${file}: in the repo, or added on the ticket's Context tab.`;
 }
 
-export type DefaultsIssues = Partial<Record<"runtime" | "model", string>>;
+export type DefaultsIssues = Partial<Record<"runtime" | "model" | "effort", string>>;
 
-/** Mirrors models.py `TemplateDefaults` (runtime must be configured; model pattern). */
+/** Mirrors models.py `TemplateDefaults` (runtime must be configured; model and effort patterns). */
 export function validateDefaults(d: Defaults, runtimes: readonly string[]): DefaultsIssues {
   const out: DefaultsIssues = {};
   if (d.runtime != null && !runtimes.includes(d.runtime)) {
     out.runtime = `Unknown runtime "${d.runtime}".`;
   }
   if (d.model != null && !AGENT_RE.test(d.model)) out.model = PATTERN_HINT;
+  if (d.effort != null && !EFFORT_RE.test(d.effort)) out.effort = EFFORT_HINT;
   return out;
 }
 

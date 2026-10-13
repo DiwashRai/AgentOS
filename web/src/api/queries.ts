@@ -12,6 +12,7 @@ export const keys = {
   people: () => [...keys.all, "people"] as const,
   users: () => [...keys.all, "users"] as const,
   template: () => [...keys.all, "template"] as const,
+  workflows: () => [...keys.all, "workflows"] as const,
   tickets: () => [...keys.all, "tickets"] as const,
   ticket: (key: string) => [...keys.tickets(), key] as const,
   // Everything below hangs off its ticket, so invalidating a ticket refreshes all of it.
@@ -144,6 +145,64 @@ export function useSaveTemplate() {
   });
 }
 
+// ------------------------------------------------------------------ workflows
+// Named pipeline presets. Anyone signed in reads them (New ticket, the Pipeline tab); admins
+// create, edit and delete them. Applying one copies it into a ticket, so a workflow save never
+// touches a ticket. The default is the Space's `default_workflow_id` (useSaveSpaceSettings).
+
+/** Every workflow, by name, with its full pipeline. */
+export function useWorkflows() {
+  return useQuery({ queryKey: keys.workflows(), queryFn: () => unwrap(api.GET("/api/workflows")) });
+}
+
+/** POST a new workflow (admin). 422 `validation_error` (name), `invalid_pipeline`, `render_error`. */
+export function useCreateWorkflow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["WorkflowCreate"]) => unwrap(api.POST("/api/workflows", { body })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.workflows() }),
+  });
+}
+
+/** PUT one workflow whole with `base_version` (admin; 409 `stale_version`). Renaming the default
+ *  changes nothing in /api/config (it carries only the id). */
+export function useSaveWorkflow(id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["WorkflowUpdate"]) =>
+      unwrap(
+        api.PUT("/api/workflows/{workflow_id}", { params: { path: { workflow_id: id } }, body }),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.workflows() }),
+  });
+}
+
+/** DELETE a workflow (admin; 409 `in_use` for the default). Tickets copied from it keep their
+ *  pipeline; their `workflow.id` becomes null, so open ticket reads refetch. */
+export function useDeleteWorkflow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      unwrap(api.DELETE("/api/workflows/{workflow_id}", { params: { path: { workflow_id: id } } })),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.workflows() }),
+        queryClient.invalidateQueries({ queryKey: keys.tickets() }),
+      ]),
+  });
+}
+
+/** Replace a ticket's pipeline with a copy of a workflow's (writer). 409 `run_active` /
+ *  `stale_version`, 404 `not_found`, 422 `invalid_pipeline` / `render_error`. */
+export function useSwitchWorkflow(key: string) {
+  const invalidate = useInvalidateTicket();
+  return useMutation({
+    mutationFn: (body: Schemas["WorkflowSwitch"]) =>
+      unwrap(api.POST("/api/tickets/{key}/workflow", { params: { path: { key } }, body })),
+    onSuccess: () => invalidate(key),
+  });
+}
+
 // ------------------------------------------------------------------ settings (admin)
 // One document per area: GET it whole, PUT it back whole with `base_version` (409 `stale_version`
 // if someone saved first; 409 `in_use` when a removal would break something). Admin only, so
@@ -157,7 +216,8 @@ export function useSpaceSettings(enabled = true) {
   });
 }
 
-/** Saving the Space changes /api/config (name, default repo, key prefix). */
+/** Saving the Space changes /api/config (name, default repo, key prefix, default workflow), and
+ *  `default_workflow_id` moves each workflow's `default` flag. */
 export function useSaveSpaceSettings() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -168,6 +228,7 @@ export function useSaveSpaceSettings() {
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.config() }),
         queryClient.invalidateQueries({ queryKey: keys.intake() }),
+        queryClient.invalidateQueries({ queryKey: keys.workflows() }),
       ]);
     },
   });

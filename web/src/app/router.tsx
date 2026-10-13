@@ -16,6 +16,7 @@ import {
   SpaceView,
   TemplateView,
   UsersView,
+  WorkflowsView,
 } from "./views/Settings";
 
 export const router = createBrowserRouter([
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: "settings/space", element: <SpaceView /> },
       { path: "settings/intake", element: <IntakeSettingsView /> },
       { path: "settings/mappings", element: <MappingsView /> },
+      { path: "settings/workflows", element: <WorkflowsView /> },
       { path: "settings/template", element: <TemplateView /> },
       { path: "settings/runners", element: <RunnersView /> },
       { path: "settings/users", element: <UsersView /> },

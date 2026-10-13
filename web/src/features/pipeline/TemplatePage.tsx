@@ -1,68 +1,53 @@
-// The Template page (SPEC §13 "Other pages"): the Space defaults (runtime, model) and the pipeline
-// every new ticket starts from, edited with the same PipelineEditor and saved together (admins
-// save; everyone else reads), plus the scaffold files listed read-only. Renders a content column;
-// the route wraps it in the shell's TopBar + Surface.
-import { useMemo } from "react";
+// Settings › Space defaults & scaffold (the template, SPEC §13 "Other pages"): the Space defaults
+// (runtime, model, effort) every agent stage falls back to, saved here (admins save; everyone else
+// reads), plus the scaffold files listed read-only. A new ticket's pipeline comes from a workflow
+// (Settings › Workflows), not from here. Renders a content column; the route wraps it in the
+// shell's TopBar + Surface.
+import { Link as RouterLink } from "react-router";
 
 import { useConfig, useMe, useSaveTemplate, useTemplate } from "../../api/queries";
-import { Tag, ZoneHead } from "../../ui";
+import { linkClass, Tag, ZoneHead } from "../../ui";
 import { DefaultsSection } from "./DefaultsSection";
-import {
-  defaultsBody,
-  describeSaveError,
-  effectiveDefaults,
-  issueCount,
-  sameTemplateForm,
-  validateDefaults,
-  validatePipeline,
-  type TemplateForm,
-} from "./model";
+import { defaultsBody, describeSaveError, sameDefaults, validateDefaults } from "./model";
 import s from "./pages.module.css";
-import { PipelineEditor } from "./PipelineEditor";
 import { SaveBar } from "./SaveBar";
 import { useDraft } from "./useDraft";
+
+const WORKFLOWS_PATH = "/settings/workflows";
 
 export function TemplatePage() {
   const template = useTemplate();
   const config = useConfig();
   const me = useMe();
   const save = useSaveTemplate();
-  const t = template.data;
-  const saved = useMemo<TemplateForm | undefined>(
-    () => (t ? { pipeline: t.pipeline, defaults: t.defaults } : undefined),
-    [t],
-  );
-  const draft = useDraft(saved, t?.version, sameTemplateForm);
+  const draft = useDraft(template.data?.defaults, template.data?.version, sameDefaults);
 
   if (template.isPending || config.isPending) {
     return (
       <p className={s.quiet} role="status">
-        Loading template
+        Loading Space defaults
       </p>
     );
   }
   if (template.isError || config.isError) {
     return (
       <p className={s.quiet} data-error="" role="alert">
-        {`Can't load the template · ${(template.error ?? config.error)?.message ?? ""}`}
+        {`Can't load the Space defaults · ${(template.error ?? config.error)?.message ?? ""}`}
       </p>
     );
   }
   const data = template.data;
-  const value = draft.value ?? { pipeline: data.pipeline, defaults: data.defaults };
+  const value = draft.value ?? data.defaults;
   const { runtimes, server_default_runtime } = config.data;
   const isAdmin = me.data?.role === "admin";
-  const readOnly = !isAdmin || save.isPending;
-  const defaultsIssues = validateDefaults(value.defaults, runtimes);
-  const issues =
-    issueCount(validatePipeline(value.pipeline.stages, runtimes)) +
-    Object.keys(defaultsIssues).length;
+  const defaultsIssues = validateDefaults(value, runtimes);
+  const issues = Object.keys(defaultsIssues).length;
 
   return (
     <div className={s.page}>
       <SaveBar
-        title="Template pipeline"
-        meta={`${String(value.pipeline.stages.length)} stages · version ${String(data.version)}`}
+        title="Space defaults & scaffold"
+        meta={`version ${String(data.version)}`}
         dirty={draft.dirty}
         readOnly={!isAdmin}
         saveDisabledReason={
@@ -84,9 +69,8 @@ export function TemplatePage() {
         onSave={() => {
           save.mutate(
             {
-              pipeline: value.pipeline,
               scaffold: data.scaffold,
-              defaults: defaultsBody(value.defaults),
+              defaults: defaultsBody(value),
               base_version: draft.baseVersion ?? data.version,
             },
             {
@@ -99,31 +83,25 @@ export function TemplatePage() {
       />
 
       <p className={s.banner} role="note">
-        <span className={s.k}>{isAdmin ? "Template" : "Read-only"}</span>
-        {isAdmin
-          ? "New tickets copy this pipeline when they are created. Existing tickets keep their own copy."
-          : "Only admins can change the template. New tickets copy this pipeline when they are created."}
+        <span className={s.k}>{isAdmin ? "Space-wide" : "Read-only"}</span>
+        <span>
+          {isAdmin ? "" : "Only admins can change these. "}
+          These apply from the next run of every ticket. A new ticket&apos;s pipeline comes from a
+          workflow:{" "}
+          <RouterLink className={linkClass} to={WORKFLOWS_PATH}>
+            Settings › Workflows
+          </RouterLink>
+          .
+        </span>
       </p>
 
       <DefaultsSection
-        value={value.defaults}
+        value={value}
         runtimes={runtimes}
         serverRuntime={server_default_runtime}
         issues={defaultsIssues}
-        readOnly={readOnly}
-        onChange={(defaults) => {
-          draft.edit({ ...value, defaults });
-        }}
-      />
-
-      <PipelineEditor
-        value={value.pipeline}
-        onChange={(pipeline) => {
-          draft.edit({ ...value, pipeline });
-        }}
-        readOnly={readOnly}
-        runtimes={runtimes}
-        space={effectiveDefaults(value.defaults, config.data)}
+        readOnly={!isAdmin || save.isPending}
+        onChange={draft.edit}
       />
 
       <section className={s.scaffold} aria-labelledby="scaffold-head">

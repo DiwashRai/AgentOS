@@ -12,9 +12,10 @@ describe("import from Jira", () => {
   });
 
   it("sends the trimmed ref and never a blank one", () => {
-    expect(toImportBody("  SCRUM-1 ")).toEqual({ ref: "SCRUM-1" });
-    expect(toImportBody("https://x.atlassian.net/browse/SCRUM-1")).toEqual({
+    expect(toImportBody("  SCRUM-1 ")).toEqual({ ref: "SCRUM-1", workflow_id: null });
+    expect(toImportBody("https://x.atlassian.net/browse/SCRUM-1", 3)).toEqual({
       ref: "https://x.atlassian.net/browse/SCRUM-1",
+      workflow_id: 3,
     });
     expect(toImportBody("")).toBeNull();
     expect(toImportBody("   ")).toBeNull();

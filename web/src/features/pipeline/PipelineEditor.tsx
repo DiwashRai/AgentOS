@@ -1,5 +1,5 @@
-// The shared pipeline editor (SPEC §13 "Pipeline"), used by the per-ticket Pipeline tab and the
-// Template page. Controlled and pure UI: no fetching. The parent owns the draft and saving.
+// The shared pipeline editor (SPEC §13 "Pipeline"), used by the per-ticket Pipeline tab and
+// Settings › Workflows. Controlled and pure UI: no fetching. The parent owns the draft and saving.
 import { useId, useMemo, useState } from "react";
 
 import { Button, Stepper, ZoneHead } from "../../ui";
@@ -24,7 +24,8 @@ export interface PipelineEditorProps {
   readOnly?: boolean | undefined;
   /** Runtime names from /api/config. */
   runtimes: string[];
-  /** What a stage's unset runtime / model falls back to (shown as placeholders). */
+  /** What a stage's unset runtime / model / effort falls back to (shown as placeholders);
+   *  build it with `configDefaults(config)`. */
   space: SpaceDefaults;
 }
 

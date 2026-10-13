@@ -10,6 +10,7 @@ import {
   idEditable,
   optional,
   PHASES,
+  stageEffortPlaceholder,
   stageModelPlaceholder,
   stageRuntimeOptions,
   TIMEOUT_MAX,
@@ -232,7 +233,7 @@ export function StageRow(props: StageRowProps) {
                   />
                 )}
               </Field>
-              <div className={s.grid4}>
+              <div className={s.grid3}>
                 <Field label="Runtime" error={issues.runtime}>
                   {({ id, describedBy, invalid }) => (
                     <Select
@@ -244,24 +245,6 @@ export function StageRow(props: StageRowProps) {
                       options={stageRuntimeOptions(props.runtimes, props.space, stage.runtime)}
                       onChange={(v) => {
                         onPatch({ runtime: unsetIfEmpty(v) });
-                      }}
-                    />
-                  )}
-                </Field>
-                <Field label="Agent" hint={agentHint(stage.agent)} error={issues.agent}>
-                  {({ id, describedBy, invalid }) => (
-                    <input
-                      id={id}
-                      className={cx(f.input, f.mono)}
-                      value={stage.agent ?? ""}
-                      placeholder="none"
-                      readOnly={readOnly}
-                      spellCheck={false}
-                      autoComplete="off"
-                      aria-describedby={describedBy}
-                      aria-invalid={invalid}
-                      onChange={(e) => {
-                        onPatch({ agent: optional(e.target.value) });
                       }}
                     />
                   )}
@@ -280,6 +263,42 @@ export function StageRow(props: StageRowProps) {
                       aria-invalid={invalid}
                       onChange={(e) => {
                         onPatch({ model: optional(e.target.value) });
+                      }}
+                    />
+                  )}
+                </Field>
+                <Field label="Effort" error={issues.effort}>
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id}
+                      className={cx(f.input, f.mono)}
+                      value={stage.effort ?? ""}
+                      placeholder={stageEffortPlaceholder(stage.runtime, props.space)}
+                      readOnly={readOnly}
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      onChange={(e) => {
+                        onPatch({ effort: optional(e.target.value) });
+                      }}
+                    />
+                  )}
+                </Field>
+                <Field label="Agent" hint={agentHint(stage.agent)} error={issues.agent}>
+                  {({ id, describedBy, invalid }) => (
+                    <input
+                      id={id}
+                      className={cx(f.input, f.mono)}
+                      value={stage.agent ?? ""}
+                      placeholder="none"
+                      readOnly={readOnly}
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      onChange={(e) => {
+                        onPatch({ agent: optional(e.target.value) });
                       }}
                     />
                   )}

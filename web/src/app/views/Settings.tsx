@@ -1,6 +1,6 @@
-// Settings: Space, Intake, Field mappings, Template, Runners, Users; one top bar with the section
-// pills (kit .ao-pills, as links). Everything but Template is admin-only (those pages say so to
-// others).
+// Settings: Space, Intake, Field mappings, Workflows, Space defaults, Runners, Users; one top bar
+// with the section pills (kit .ao-pills, as links). Everything but Workflows and Space defaults is
+// admin-only (those pages say so to others; Workflows and Space defaults are read-only to them).
 // Sign out lives here until the avatar gets a menu.
 import type { ReactNode } from "react";
 import { Navigate, NavLink } from "react-router";
@@ -9,6 +9,7 @@ import { useLogout, useMe } from "../../api/queries";
 import { TemplatePage } from "../../features/pipeline";
 import { IntakeSettingsPage, MappingsPage, RunnersPage, SpacePage } from "../../features/settings";
 import { UsersPage } from "../../features/users";
+import { WorkflowsPage } from "../../features/workflows";
 import { cx } from "../../ui";
 import { Quiet } from "../Quiet";
 import { Surface } from "../Surface";
@@ -20,17 +21,18 @@ const SECTIONS = [
   { to: "/settings/space", label: "Space" },
   { to: "/settings/intake", label: "Intake" },
   { to: "/settings/mappings", label: "Field mappings" },
-  { to: "/settings/template", label: "Template" },
+  { to: "/settings/workflows", label: "Workflows" },
+  { to: "/settings/template", label: "Space defaults" },
   { to: "/settings/runners", label: "Runners" },
   { to: "/settings/users", label: "Users" },
 ] as const;
 
-/** /settings: admins land on Space, everyone else on the Template (the one page they can read). */
+/** /settings: admins land on Space, everyone else on Workflows (a page they can read). */
 export function SettingsIndex() {
   const me = useMe();
   if (me.isPending) return null;
   return (
-    <Navigate to={me.data?.role === "admin" ? "/settings/space" : "/settings/template"} replace />
+    <Navigate to={me.data?.role === "admin" ? "/settings/space" : "/settings/workflows"} replace />
   );
 }
 
@@ -114,7 +116,17 @@ export function RunnersView() {
   );
 }
 
-/** Settings › Template: the pipeline every new ticket starts from. */
+/** Settings › Workflows: the named pipelines a new ticket copies from (everyone reads; admins edit). */
+export function WorkflowsView() {
+  return (
+    <SettingsView>
+      <WorkflowsPage />
+    </SettingsView>
+  );
+}
+
+/** Settings › Space defaults: the runtime, model and effort agent stages default to, and the
+ *  scaffold files every new ticket starts with. */
 export function TemplateView() {
   return (
     <SettingsView>

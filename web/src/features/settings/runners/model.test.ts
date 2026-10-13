@@ -5,6 +5,7 @@ import {
   argsToLines,
   commandPreview,
   dispatchesWorkflow,
+  effortArgs,
   fixFirst,
   launcherLabel,
   linesToArgs,
@@ -32,6 +33,7 @@ const CLAUDE: RuntimeEntry = {
   name: "claude",
   argv: ["claude", "-p", "--output-format", "stream-json"],
   model_args: ["--model", "{model}"],
+  effort_args: ["--effort", "{effort}"],
   agent_args: ["--agent", "{agent}"],
   prompt_via: "stdin",
   prompt_args: [],
@@ -40,10 +42,18 @@ const COPILOT: RuntimeEntry = {
   name: "copilot",
   argv: ["copilot", "--allow-all"],
   model_args: ["--model", "{model}"],
+  effort_args: ["--effort", "{effort}"],
   agent_args: ["--agent", "{agent}"],
   prompt_via: "arg",
   prompt_args: ["-p", "{prompt}"],
 };
+
+/** A runtime as saved before `effort_args` existed (the key is missing). */
+function withoutEffortArgs(e: RuntimeEntry): RuntimeEntry {
+  const out = { ...e };
+  delete out.effort_args;
+  return out;
+}
 
 const RUNNER: RunnerSettings = {
   launcher: "github",
@@ -122,6 +132,7 @@ describe("runtime rows", () => {
       name: "runtime",
       argv: [],
       model_args: [],
+      effort_args: [],
       agent_args: [],
       prompt_via: "stdin",
       prompt_args: [],
@@ -146,6 +157,23 @@ describe("runtime rows", () => {
     expect(sameRuntimes(rows, rekeyed)).toBe(true);
     expect(sameRuntimes(rows, moveRuntime(rows, "s:copilot", -1))).toBe(false);
     expect(sameRuntimes(rows, patchRuntime(rows, "s:claude", { argv: ["claude"] }))).toBe(false);
+    expect(sameRuntimes(rows, patchRuntime(rows, "s:claude", { effort_args: [] }))).toBe(false);
+  });
+
+  it("effort_args round-trip: kept as sent, missing (an older shape) reads and saves as []", () => {
+    expect(runtimesBody(rowsFrom([CLAUDE]), 1).runtimes[0]?.effort_args).toEqual([
+      "--effort",
+      "{effort}",
+    ]);
+    const older = withoutEffortArgs(CLAUDE);
+    const olderRows = rowsFrom([older]);
+    expect(olderRows[0]?.entry.effort_args).toEqual([]);
+    expect(runtimesBody(olderRows, 1).runtimes[0]).toEqual({ ...CLAUDE, effort_args: [] });
+    // Missing and empty are the same list.
+    expect(sameRuntimes(olderRows, rowsFrom([{ ...CLAUDE, effort_args: [] }]))).toBe(true);
+    expect(effortArgs(older)).toEqual([]);
+    const edited = patchRuntime(olderRows, "s:claude", { effort_args: ["--effort", "{effort}"] });
+    expect(runtimesBody(edited, 1).runtimes[0]).toEqual(CLAUDE);
   });
 
   it("switching to stdin clears the prompt arguments; to arg starts with {prompt}", () => {
@@ -183,6 +211,8 @@ describe("validateRuntimes", () => {
     const many = Array.from({ length: 51 }, (_, i) => `a${String(i)}`);
     expect(check({ ...CLAUDE, model_args: many }).rows[0]?.model_args).toBeDefined();
     expect(check({ ...CLAUDE, agent_args: ["x".repeat(1001)] }).rows[0]?.agent_args).toBeDefined();
+    expect(check({ ...CLAUDE, effort_args: many }).rows[0]?.effort_args).toBeDefined();
+    expect(check({ ...CLAUDE, effort_args: ["a\0b"] }).rows[0]?.effort_args).toBeDefined();
     expect(check({ ...CLAUDE, argv: ["claude", "a\0b"] }).rows[0]?.argv).toBeDefined();
   });
 
@@ -223,22 +253,47 @@ describe("placeholderNotes", () => {
       "Model arguments have no {model} line, so the model isn't passed.",
     ]);
   });
+
+  it("checks effort arguments like model arguments", () => {
+    expect(placeholderNotes({ ...CLAUDE, effort_args: ["--effort={effort}"] })).toEqual([
+      '"--effort={effort}" stays as typed: {effort} is replaced only when it is a whole line.',
+      "Effort arguments have no {effort} line, so the effort isn't passed.",
+    ]);
+    expect(placeholderNotes({ ...CLAUDE, model_args: ["--model", "{effort}"] })).toEqual([
+      "{effort} in model arguments stays as typed: it is replaced only in effort arguments.",
+      "Model arguments have no {model} line, so the model isn't passed.",
+    ]);
+    // No effort flag at all is fine (efforts are then ignored).
+    expect(placeholderNotes({ ...CLAUDE, effort_args: [] })).toEqual([]);
+  });
 });
 
 describe("commandPreview", () => {
-  it("assembles argv, model, agent (prompt on stdin)", () => {
+  it("assembles argv, model, effort, agent (prompt on stdin)", () => {
     const p = commandPreview(CLAUDE);
     expect(p.stdin).toBe(true);
     expect(previewLine(p)).toBe(
-      "claude -p --output-format stream-json --model <model> --agent <agent>",
+      "claude -p --output-format stream-json --model <model> --effort <effort> --agent <agent>",
     );
-    expect(p.tokens.filter((t) => t.slot).map((t) => t.text)).toEqual(["<model>", "<agent>"]);
+    expect(p.tokens.filter((t) => t.slot).map((t) => t.text)).toEqual([
+      "<model>",
+      "<effort>",
+      "<agent>",
+    ]);
   });
 
   it("puts the prompt arguments last when the prompt is an argument", () => {
     const p = commandPreview(COPILOT);
     expect(p.stdin).toBe(false);
-    expect(previewLine(p)).toBe("copilot --allow-all --model <model> --agent <agent> -p <prompt>");
+    expect(previewLine(p)).toBe(
+      "copilot --allow-all --model <model> --effort <effort> --agent <agent> -p <prompt>",
+    );
+  });
+
+  it("leaves out effort arguments a runtime doesn't have", () => {
+    expect(previewLine(commandPreview(withoutEffortArgs(CLAUDE)))).toBe(
+      "claude -p --output-format stream-json --model <model> --agent <agent>",
+    );
   });
 
   it("keeps placeholders that aren't whole lines (or in another group) literal", () => {
@@ -246,8 +301,9 @@ describe("commandPreview", () => {
       ...CLAUDE,
       argv: ["claude", "{agent}"],
       model_args: ["-m={model}"],
+      effort_args: ["{model}"],
     });
-    expect(previewLine(p)).toBe("claude {agent} -m={model} --agent <agent>");
+    expect(previewLine(p)).toBe("claude {agent} -m={model} {model} --agent <agent>");
   });
 
   it("quotes arguments with spaces or quotes, and empty ones", () => {

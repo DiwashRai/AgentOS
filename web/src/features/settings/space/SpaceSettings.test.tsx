@@ -152,6 +152,7 @@ describe("SpaceFields", () => {
     key_prefix: "AOS",
     jira_projects: ["SCRUM"],
     default_repo: null,
+    default_workflow_id: 1,
     claim_timeout_s: 900,
   });
 
