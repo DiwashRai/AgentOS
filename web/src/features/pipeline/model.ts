@@ -407,6 +407,16 @@ export function stageModelPlaceholder(
   return onSpaceRuntime ? `Space default (${space.model})` : CLI_DEFAULT;
 }
 
+/** The Agent field's hint: the runtime passes the name on (`--agent`), and Claude Code reads the
+ *  agent from `.claude/agents/<name>.md` in the workspace, so say where that file can come from. */
+export function agentHint(agent: string | null | undefined): string {
+  const name = agent?.trim() ?? "";
+  const file = `.claude/agents/${name || "<name>"}.md`;
+  return name === ""
+    ? `Optional. Claude Code reads it from ${file}.`
+    : `Needs ${file}: in the repo, or added on the ticket's Context tab.`;
+}
+
 export type DefaultsIssues = Partial<Record<"runtime" | "model", string>>;
 
 /** Mirrors models.py `TemplateDefaults` (runtime must be configured; model pattern). */

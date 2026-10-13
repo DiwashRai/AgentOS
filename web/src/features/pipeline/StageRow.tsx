@@ -5,6 +5,7 @@ import { useEffect, useId, useRef } from "react";
 import { Button, ChevronIcon, cx, IconButton, Tag } from "../../ui";
 import { Field, fieldStyles as f, Select, Toggle } from "./fields";
 import {
+  agentHint,
   formatTimeout,
   idEditable,
   optional,
@@ -247,7 +248,7 @@ export function StageRow(props: StageRowProps) {
                     />
                   )}
                 </Field>
-                <Field label="Agent" error={issues.agent}>
+                <Field label="Agent" hint={agentHint(stage.agent)} error={issues.agent}>
                   {({ id, describedBy, invalid }) => (
                     <input
                       id={id}

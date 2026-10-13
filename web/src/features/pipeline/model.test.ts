@@ -17,6 +17,7 @@ import {
   optional,
   previewModel,
   reduce,
+  agentHint,
   runnableStages,
   runtimeOptions,
   sameDefaults,
@@ -354,6 +355,13 @@ describe("Space defaults", () => {
       value: "",
       label: "Server default (claude)",
     });
+  });
+
+  it("agent hint: says which file the named agent needs and where it can come from", () => {
+    expect(agentHint(null)).toBe("Optional. Claude Code reads it from .claude/agents/<name>.md.");
+    expect(agentHint(" reviewer ")).toBe(
+      "Needs .claude/agents/reviewer.md: in the repo, or added on the ticket's Context tab.",
+    );
   });
 
   it("stage model: the Space model only on the Space runtime", () => {
