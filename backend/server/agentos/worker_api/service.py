@@ -24,13 +24,12 @@ from agentos.models import (
     ManifestFile,
     RunEvent,
     RunStatus,
-    Stage,
     SyncFile,
     WorkerFinalStatus,
 )
 from agentos.pipeline.manifest import build_manifest
 from agentos.pipeline.runtime import RuntimesConfig
-from agentos.pipeline.segment import completion_status
+from agentos.pipeline.segment import completion_status, plan_run
 from agentos.pipeline.space import SpaceConfig
 from agentos.runs.service import TERMINAL, finish, run_ticket_key, token_hash
 from agentos.templates.service import current_defaults
@@ -128,22 +127,19 @@ def _claim(
 
 
 def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
-    """The run's stages come from the ticket's current pipeline: it is locked while the run is
-    active, so it is the one validated at dispatch. The workspace's repo URL and base branch are
-    resolved from the Space's catalog now; a repo that left it fails the run. Null stage
-    runtimes/models take the Space defaults as they are now (the current template's)."""
+    """The run's plan comes from the ticket's current pipeline: it is locked while the run is
+    active, so it is the one validated at dispatch (the plan must still cover the run's stages).
+    The workspace's repo URL and base branch are resolved from the Space's catalog now; a repo
+    that left it fails the run. Null stage runtimes/models take the Space defaults as they are
+    now (the current template's)."""
     ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
-    pipeline = ticket_pipeline(ticket)
-    by_id = {s.id: s for s in pipeline.stages}
-    stages: list[Stage] = []
-    for stage_id in json.loads(run["stage_ids"]):
-        if stage_id not in by_id:
-            raise ApiError(422, "invalid_stage", f"stage {stage_id}: no longer in the pipeline")
-        stages.append(by_id[stage_id])
+    plan = plan_run(ticket_pipeline(ticket), run["from_stage"])
+    if [s.id for s in plan.stages] != json.loads(run["stage_ids"]):
+        raise ApiError(422, "invalid_stage", "the pipeline changed since the run was dispatched")
     return build_manifest(
         run["id"],
         run_ticket_ref(ticket, space),
-        stages,
+        plan,
         current_bundle(conn, ticket["id"]),
         runtimes,
         defaults=current_defaults(conn),
@@ -182,7 +178,8 @@ def post_events(
     rather than stored, since a server-chosen seq could collide with the worker's).
 
     Stage times are the events' own `ts` (a batch spans up to a second), capped at the server's
-    clock so a skewed runner can't write future times.
+    clock so a skewed runner can't write future times. Only a newly stored event moves stage_runs
+    (a resent batch changes nothing). A `verdict` sets the running stage_run's verdict.
     """
     now_dt = utcnow()
     now = to_db(now_dt)
@@ -195,6 +192,7 @@ def post_events(
         dropped = 0
         stages_moved = 0
         started = False  # a new `stage_started` was stored
+        stage_ids = set(json.loads(run["stage_ids"]))
         for ev in events:
             if ev.type == "log" and stored >= MAX_EVENTS_PER_RUN:
                 dropped += 1
@@ -205,17 +203,12 @@ def post_events(
                 (run_id, ev.seq, to_db(ev.ts), ev.stage_id, ev.type, ev.data.model_dump_json()),
             )
             stored += cursor.rowcount
-            started |= ev.type == "stage_started" and cursor.rowcount > 0
-            if ev.stage_id is None:
-                continue
+            if cursor.rowcount == 0 or ev.stage_id is None or ev.stage_id not in stage_ids:
+                continue  # a resent event, or none of the run's stages: stored only
             at = to_db(min(ev.ts, now_dt))
             if ev.type == "stage_started":
-                stages_moved += conn.execute(
-                    "UPDATE stage_runs SET status = 'running', started_at = ? "
-                    "WHERE run_id = ? AND idx = (SELECT MIN(idx) FROM stage_runs "
-                    "  WHERE run_id = ? AND stage_id = ? AND status = 'pending')",
-                    (at, run_id, run_id, ev.stage_id),
-                ).rowcount
+                started = True
+                stages_moved += _start_stage(conn, run_id, ev.stage_id, ev.data.round, at)
             elif ev.type == "stage_finished":
                 # The running stage_run of that stage (else a pending one: a missed start).
                 stages_moved += conn.execute(
@@ -233,6 +226,12 @@ def post_events(
                         ev.stage_id,
                     ),
                 ).rowcount
+            elif ev.type == "verdict":
+                stages_moved += conn.execute(
+                    "UPDATE stage_runs SET verdict = ? WHERE run_id = ? AND stage_id = ? "
+                    "AND status = 'running'",
+                    (ev.data.verdict, run_id, ev.stage_id),
+                ).rowcount
         if dropped:
             log.warning("run %s: over %s events, dropped %s log events", run_id, stored, dropped)
         locked = started and _lock_base_branch(conn, run)
@@ -241,6 +240,38 @@ def post_events(
     if key is not None:
         broker.run(key, run_id)  # also publishes ticket(key): the lock shows on the ticket
     return run["cancel_requested_at"] is not None
+
+
+def _start_stage(conn: Conn, run_id: int, stage_id: str, round_: int, at: str) -> int:
+    """Mark the stage_run a `stage_started` begins: the stage's planned (pending) row after the
+    last one that started. With none (a later round of a loop block, whose rows aren't planned at
+    dispatch), insert one right after the last started row, moving the pending rows after it one
+    place down, so `idx` stays the execution order. Returns the rows moved (1)."""
+    last: int = conn.execute(
+        "SELECT COALESCE(MAX(idx), -1) FROM stage_runs WHERE run_id = ? AND status != 'pending'",
+        (run_id,),
+    ).fetchone()[0]
+    planned = conn.execute(
+        "SELECT MIN(idx) FROM stage_runs "
+        "WHERE run_id = ? AND stage_id = ? AND status = 'pending' AND idx > ?",
+        (run_id, stage_id, last),
+    ).fetchone()[0]
+    if planned is not None:
+        return conn.execute(
+            "UPDATE stage_runs SET status = 'running', started_at = ?, round = ? "
+            "WHERE run_id = ? AND idx = ?",
+            (at, round_, run_id, planned),
+        ).rowcount
+    # Two steps, as idx is part of the key: k → -k-1 → k+1.
+    conn.execute(
+        "UPDATE stage_runs SET idx = -idx - 1 WHERE run_id = ? AND idx > ?", (run_id, last)
+    )
+    conn.execute("UPDATE stage_runs SET idx = -idx WHERE run_id = ? AND idx < 0", (run_id,))
+    return conn.execute(
+        "INSERT INTO stage_runs(run_id, idx, stage_id, round, status, started_at) "
+        "VALUES (?, ?, ?, ?, 'running', ?)",
+        (run_id, last + 1, stage_id, round_, at),
+    ).rowcount
 
 
 def _lock_base_branch(conn: Conn, run: Row) -> bool:

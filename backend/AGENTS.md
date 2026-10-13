@@ -41,7 +41,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Use `db.tx()` for writes (BEGIN IMMEDIATE, commit or roll back) and `db.read()` for reads (one snapshot; writes raise). Import `Conn`, `Row`, `IntegrityError`, `OperationalError` from `agentos.db`.
 - Timestamps are stored via `clock.to_db` and read via `from_db` / `from_db_opt`; get "now" from `clock.utcnow()`.
 - Migrations are `migrations/NNNN_name.sql`, numbered 1..N with no gaps (`db.migrations()` refuses otherwise). Never edit a shipped migration; add a new one. Before migrating an existing db, `migrate()` backs it up to `{data_dir}/backups/` (5 newest kept). A server refuses a db newer than it knows.
-- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only and tickets pin `template_id` (the template holds the scaffold and agent defaults; a ticket's pipeline is copied from a `workflows` row, recorded as `workflow_id`/`_name`/`_version`); `stage_runs` is keyed by `(run_id, idx)`; a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
+- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only and tickets pin `template_id` (the template holds the scaffold and agent defaults; a ticket's pipeline is copied from a `workflows` row, recorded as `workflow_id`/`_name`/`_version`); `stage_runs` is keyed by `(run_id, idx)`, one row per stage execution in execution order (a loop block's later rounds insert theirs when they start, with `round` and a check's `verdict`); a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
 - Batch-load for lists (one query per table, never one per ticket).
 
 ## Settings and config
@@ -61,6 +61,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - `runs/dispatcher.py` `tick(ctx)` launches queued runs within `launcher.max_concurrency`; `runs/reaper.py` `Reaper(ctx).tick(now)` (injected clock) fails runs whose worker never connects, goes silent or exceeds the time budget (rules in its docstring). `main.py` runs both as loops.
 - Dispatch and worker tokens are stored only as SHA-256 hex digests and never cleared (a token's validity follows the run's status).
 - The ticket's bundle is read-only (409 `bundle_locked`) only while a run is `running`.
+- Loop blocks (`Pipeline.loops`, request 24; `design/review-loop.md` if present): `pipeline/segment.plan_run` gives a run's stages (plus the block's start when dispatched from inside one) and its time budget (every round and repair); `pipeline/manifest` renders every later-round and verdict-repair call, session ids included, so the worker only appends text to prompts. The worker runs the rounds and decides each check by code (exit code, or a JSON verdict it validates, repairs and fails closed on). A check's "fail" fails its stage only in the block's last round, so the board's failure anchor (and Retry) lands on it.
 - Mailbox runs (`runs.launcher = 'mailbox'`): `mailbox/dispatcher.py` claims server-side at launch (`dispatched → running`), and `mailbox/reaper.py` polls the Actions run and replays the outbox through the unchanged `worker_api.service` functions. With a `MailboxLauncher`, `main.py` runs those loops instead of `runs.dispatcher.tick`, and the runs reaper skips its heartbeat, budget and cancel rules for mailbox runs. Stages and logs land when the GitHub job ends.
 - Helpers other features call: `files.service.write_version` / `current_bundle`; `tickets.service.get_ticket_row`, `ticket_ref(row, space)` / `run_ticket_ref`, `ticket_pipeline`, `active_run_id`.
 
@@ -74,6 +75,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Path rules live in one table, `fixtures/path_cases.json`, run against both `validate.validate_path` and `worker.path_error`. Add cases there, not in either suite.
 - Line limits: manifest `limits.max_line_bytes` = `validate.MAX_AGENT_LINE_BYTES` (256 KiB, agent stdout); the worker cuts every other stream at `min(SHELL_LINE_BYTES, max_line_bytes)` (8 KiB).
 - The worker appends `JUNK_PATTERNS` (tool caches only, never `dist/`/`build/`) to `.git/info/exclude`; it never touches tracked files and the repo's `.gitignore` wins.
+- `.agentos/` in the workspace belongs to AgentOS (a check's `verdict.json`): excluded, protected like the context files, never synced or committed.
 - `AGENTOS_PR_LOOKUP=0` skips the end-of-run `gh pr view`.
 
 ## Testing

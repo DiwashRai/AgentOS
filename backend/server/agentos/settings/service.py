@@ -346,6 +346,10 @@ def _runtime_settings(row: AreaRow) -> RuntimeSettings:
                 agent_args=e.agent_args,
                 prompt_via=e.prompt_via,
                 prompt_args=e.prompt_args,
+                session_args=e.session_args,
+                resume_args=e.resume_args,
+                verdict_args=e.verdict_args,
+                verdict_from=e.verdict_from,
             )
             for e in runtime_entries_of(row)
         ],

@@ -101,12 +101,12 @@ def test_repo_run_commits_code_and_never_context(
     assert f"{SKILL_DIR}/notes.md" not in synced(server, "lint")  # unchanged since
 
     # Events: stage lifecycle, seqs, clone output as run-level system logs.
-    started = [e["stage_id"] for e in stage_events(server, "stage_started")]
+    started = [(e["stage_id"], e["data"]) for e in stage_events(server, "stage_started")]
     finished = [(e["stage_id"], e["data"]) for e in stage_events(server, "stage_finished")]
-    assert started == ["implement", "lint"]
+    assert started == [("implement", {"round": 1}), ("lint", {"round": 1})]
     assert finished == [
-        ("implement", {"status": "succeeded", "exit_code": 0, "reason": None}),
-        ("lint", {"status": "succeeded", "exit_code": 0, "reason": None}),
+        ("implement", {"status": "succeeded", "exit_code": 0, "reason": None, "round": 1}),
+        ("lint", {"status": "succeeded", "exit_code": 0, "reason": None, "round": 1}),
     ]
     events = server.events()
     assert [e["seq"] for e in events] == list(range(1, len(events) + 1))
@@ -211,7 +211,12 @@ def test_failed_stage_still_syncs_commits_and_pushes(
     assert "src/app.py" in origin.tree(BRANCH)
     assert [e["stage_id"] for e in stage_events(server, "stage_started")] == ["implement"]
     [finished] = stage_events(server, "stage_finished")
-    assert finished["data"] == {"status": "failed", "exit_code": 3, "reason": "exited with code 3"}
+    assert finished["data"] == {
+        "status": "failed",
+        "exit_code": 3,
+        "reason": "exited with code 3",
+        "round": 1,
+    }
 
 
 def test_run_gone_after_claim_means_no_commit_and_no_push(
@@ -265,7 +270,12 @@ def test_cancel_kills_the_stage_but_still_syncs_and_pushes(
     assert time.monotonic() - started < 15
     assert server.complete() == {"status": "cancelled", "failed_stage": "implement", "error": None}
     [finished] = stage_events(server, "stage_finished")
-    assert finished["data"] == {"status": "cancelled", "exit_code": None, "reason": "cancelled"}
+    assert finished["data"] == {
+        "status": "cancelled",
+        "exit_code": None,
+        "reason": "cancelled",
+        "round": 1,
+    }
     assert synced(server, "implement")[f"{SKILL_DIR}/notes.md"] == ("# Notes\n", "replace")
     assert "src/app.py" in origin.tree(BRANCH)
     assert not workdir.exists(), "the workdir is deleted on cancel"

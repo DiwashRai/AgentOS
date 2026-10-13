@@ -234,10 +234,36 @@ class Stage(ApiModel):
     effort: str | None = Field(default=None, pattern=EFFORT_PATTERN)
     command: str = ""
     timeout_s: int = Field(default=3600, ge=60, le=21600)
+    # Loop blocks (request 24). Inside a block, an agent stage with `check` (and every shell
+    # stage) is a check: it passes or fails the round with a verdict. The other agent stages are
+    # makers: they change the code and get the failing checks' notes in later rounds. Outside a
+    # block `check` has no effect.
+    check: bool = False
+    # How many times an invalid verdict is asked for again (resuming the check's session) before
+    # the run fails. 0 = no repair. Agent checks only.
+    verdict_repairs: int = Field(default=2, ge=0, le=3)
+    # Whether the stage resumes its own session in later rounds. null = by role: makers resume,
+    # checks start fresh. A runtime without `session_args` / `resume_args` always starts fresh.
+    resume: bool | None = None
+
+
+LOOP_MAX_ROUNDS = 5
+
+
+class Loop(ApiModel):
+    """A loop block: the stages from `start` to `end` (ids; pipeline order, `start` at or before
+    `end`) run round after round until every check in it passes, at most `max_rounds` times. A
+    block holds at least one check and one maker; blocks don't overlap; only `end` may have
+    `gate_after` (the gate comes after the loop). 422 `invalid_pipeline` otherwise."""
+
+    start: str
+    end: str
+    max_rounds: int = Field(default=3, ge=1, le=LOOP_MAX_ROUNDS)
 
 
 class Pipeline(ApiModel):
     stages: list[Stage] = Field(min_length=1, max_length=20)
+    loops: list[Loop] = Field(default_factory=list, max_length=10)
     library_sets: list[int] = Field(default_factory=list)
 
 
@@ -296,13 +322,17 @@ class GateInfo(ApiModel):
 
 class RailStep(ApiModel):
     """Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones
-    `skipped`). `gate` is set on every enabled stage with `gate_after`."""
+    `skipped`). `gate` is set on every enabled stage with `gate_after`. `round` / `max_rounds`:
+    for a stage in a loop block that the latest run has reached (current, or run), its latest
+    round and the block's cap ("round 2 of 3"); null otherwise."""
 
     stage_id: str
     name: str
     phase: StagePhase
     state: RailState
     gate: GateInfo | None
+    round: int | None
+    max_rounds: int | None
 
 
 class PhaseStep(ApiModel):
@@ -358,6 +388,8 @@ class RunSummary(ApiModel):
     ticket_key: str
     status: RunStatus
     from_stage: str
+    # The stages the run covers, in order: from `from_stage` on, plus the start of the loop block
+    # `from_stage` is in (those run from round 2 on).
     stage_ids: list[str]
     created_by: Person | None
     created_at: AwareDatetime
@@ -793,6 +825,10 @@ class IntakeSettingsUpdate(ApiModel):
     base_version: int
 
 
+# Where the worker reads a check's verdict: the CLI's schema-checked `structured_output` (its last
+# `{"type": "result"}` stdout line), or the file `VERDICT_FILE` the agent writes.
+VerdictFrom = Literal["structured_output", "file"]
+
 RUNTIME_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,31}$"
 MAX_RUNTIMES = 20
 MAX_RUNTIME_ARGS = 50
@@ -810,11 +846,19 @@ RuntimeArgs = Annotated[
 class RuntimeEntry(ApiModel):
     """One agent runtime: how a stage's argv is built (SPEC §7). `argv`, then `model_args` when a
     model resolves, `effort_args` when an effort resolves, `agent_args` when the stage names an
-    agent, then `prompt_args` when `prompt_via` is "arg" (else the prompt is the stdin). The
-    placeholders `{model}`, `{effort}`, `{agent}` and `{prompt}` replace whole elements; no shell
-    is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then ignored).
-    `prompt_via: "arg"` needs `prompt_args` containing "{prompt}"; "stdin" takes no
-    `prompt_args`."""
+    agent, then (loop stages, request 24) `session_args` or `resume_args` and, for checks,
+    `verdict_args`, then `prompt_args` when `prompt_via` is "arg" (else the prompt is the stdin).
+    The placeholders `{model}`, `{effort}`, `{agent}`, `{verdict_schema}` and `{prompt}` replace
+    whole elements; `{session}` (a session id) may be part of one (`--resume={session}`). No
+    shell is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then
+    ignored). `prompt_via: "arg"` needs `prompt_args` containing "{prompt}" once; "stdin" takes
+    no `prompt_args`.
+
+    Sessions: `session_args` start a session with a known id, `resume_args` resume it, and each
+    non-empty one contains "{session}". Both empty = no sessions: loop stages start fresh each
+    round and an invalid verdict isn't repaired. `verdict_args` ask the CLI for schema-checked
+    output (`{verdict_schema}`); `verdict_from` is where the worker reads a check's verdict
+    ("structured_output" needs `verdict_args`)."""
 
     name: str = Field(pattern=RUNTIME_NAME_PATTERN)
     argv: RuntimeArgs = Field(min_length=1)
@@ -823,6 +867,10 @@ class RuntimeEntry(ApiModel):
     agent_args: RuntimeArgs
     prompt_via: Literal["stdin", "arg"]
     prompt_args: RuntimeArgs
+    session_args: RuntimeArgs = Field(default_factory=list)
+    resume_args: RuntimeArgs = Field(default_factory=list)
+    verdict_args: RuntimeArgs = Field(default_factory=list)
+    verdict_from: VerdictFrom = "file"
 
 
 class RuntimeSettings(ApiModel):
@@ -1070,7 +1118,28 @@ class ManifestFile(ApiModel):
     sync: bool
 
 
+class ManifestInvocation(ApiModel):
+    """Another call of a loop stage's agent: a later round, or a verdict repair (request 24). The
+    prompt is the `stdin`, or `argv[prompt_arg]` when the runtime takes it as an argument (then
+    `stdin` is null). The worker appends its text to the prompt (the round's feedback, or why the
+    verdict was invalid), then `tail`, and changes nothing else."""
+
+    argv: list[str]
+    stdin: str | None
+    prompt_arg: int | None
+    tail: str
+
+
 class ManifestStage(ApiModel):
+    """`argv` / `stdin` (agent) or `command` (shell): the stage's call, in round 1 of a loop.
+
+    Loop block stages only (otherwise the defaults): `check` = the stage decides the round (a
+    shell stage, or an agent check). Agent stages: `rounds` = the calls for rounds 2 to
+    `max_rounds`, in order. Agent checks: `verdict_from` = where the verdict is read,
+    `verdict_repairs` = at most this many repairs per round, and `repairs` = one repair call per
+    round (index 0 = round 1), resuming that round's session; empty = no repair (the runtime has
+    no sessions)."""
+
     id: str
     name: str
     kind: StageKind
@@ -1078,6 +1147,19 @@ class ManifestStage(ApiModel):
     argv: list[str] | None = None
     stdin: str | None = None
     command: str | None = None
+    check: bool = False
+    rounds: list[ManifestInvocation] = Field(default_factory=list)
+    repairs: list[ManifestInvocation] = Field(default_factory=list)
+    verdict_from: VerdictFrom | None = None
+    verdict_repairs: int = 0
+
+
+class ManifestLoop(ApiModel):
+    """A loop block over the manifest's `stages` (ids, `start` at or before `end`)."""
+
+    start: str
+    end: str
+    max_rounds: int
 
 
 class ManifestLimits(ApiModel):
@@ -1094,6 +1176,14 @@ class Manifest(ApiModel):
     sync_dirs: list[str]
     stages: list[ManifestStage]
     limits: ManifestLimits
+    # Loop blocks over `stages`, in order and not overlapping (request 24).
+    loops: list[ManifestLoop] = Field(default_factory=list)
+    # Where round 1 starts (the run's `from_stage`); null = the first stage. Stages before it are
+    # the start of the loop block it is in: they run from round 2 on.
+    start_stage: str | None = None
+    # Lines the worker emits as `warning` events when it starts (e.g. a loop that is ignored
+    # because its enabled stages have no check).
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------ runs & run events
@@ -1103,11 +1193,41 @@ class DispatchRequest(ApiModel):
     from_stage: str | None = None
 
 
+Verdict = Literal["pass", "fail"]
+# Where a verdict came from: the CLI's structured output, the verdict file, or a shell check's
+# exit code (0 = pass).
+VerdictSource = Literal["structured_output", "file", "exit_code"]
+VERDICT_NOTES_MAX = 20_000
+# Where a check on the `file` channel writes its verdict, in the workspace. `.agentos/` belongs to
+# AgentOS: the worker deletes the file before each check call and never commits the directory.
+VERDICT_FILE = ".agentos/verdict.json"
+# The verdict shape, sent to a CLI as `{verdict_schema}` and shown in a check's prompt. The worker
+# checks the same by hand, plus: `notes` at most VERDICT_NOTES_MAX characters, and not blank on a
+# "fail" (left out here: CLIs' structured output supports few keywords).
+VERDICT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["pass", "fail"]},
+        "notes": {"type": "string"},
+    },
+    "required": ["verdict", "notes"],
+    "additionalProperties": False,
+}
+
+
 class StageRunInfo(ApiModel):
+    """One execution of a stage in a run, in execution order (`idx`). A stage in a loop block has
+    one per round it ran (`round`; 1 outside loops). `verdict`: a check's verdict in that round
+    (null for other stages, and until it is known). A check that gave a valid verdict
+    `succeeded`, even a "fail", except a "fail" in the block's last round: that one `failed` (the
+    loop is lost there; the run's error says so)."""
+
     stage_id: str
     name: str
     idx: int
+    round: int
     status: StageRunStatus
+    verdict: Verdict | None
     exit_code: int | None
     reason: str | None
     started_at: AwareDatetime | None
@@ -1119,8 +1239,9 @@ class RunDetail(RunSummary):
     stage_runs: list[StageRunInfo]
 
 
-class EmptyData(ApiModel):
-    pass
+class StageStartedData(ApiModel):
+    # The stage's round in its loop block (1 outside loops).
+    round: int = Field(default=1, ge=1)
 
 
 class LogData(ApiModel):
@@ -1134,10 +1255,31 @@ class StageFinishedData(ApiModel):
     status: StageOutcome
     exit_code: int | None
     reason: str | None
+    round: int = Field(default=1, ge=1)
 
 
 class WarningData(ApiModel):
     message: str
+
+
+class VerdictData(ApiModel):
+    """A check's verdict in a round (sent before its `stage_finished`). `repairs`: how many
+    repairs it took (0 = valid at once)."""
+
+    round: int = Field(ge=1)
+    verdict: Verdict
+    notes: str = Field(max_length=VERDICT_NOTES_MAX)
+    source: VerdictSource
+    repairs: int = Field(ge=0)
+
+
+class VerdictRepairData(ApiModel):
+    """The check's verdict was invalid (`error` says why), so it is asked again: repair
+    `attempt` (1-based) of the round."""
+
+    round: int = Field(ge=1)
+    attempt: int = Field(ge=1)
+    error: str = Field(max_length=2000)
 
 
 class _RunEventBase(ApiModel):
@@ -1148,7 +1290,7 @@ class _RunEventBase(ApiModel):
 
 class StageStartedEvent(_RunEventBase):
     type: Literal["stage_started"]
-    data: EmptyData
+    data: StageStartedData
 
 
 class StageFinishedEvent(_RunEventBase):
@@ -1166,9 +1308,24 @@ class WarningEvent(_RunEventBase):
     data: WarningData
 
 
+class VerdictEvent(_RunEventBase):
+    type: Literal["verdict"]
+    data: VerdictData
+
+
+class VerdictRepairEvent(_RunEventBase):
+    type: Literal["verdict_repair"]
+    data: VerdictRepairData
+
+
 # Discriminated on `type`; the same shape is sent by the worker and served to the UI.
 RunEvent = Annotated[
-    StageStartedEvent | StageFinishedEvent | LogEvent | WarningEvent,
+    StageStartedEvent
+    | StageFinishedEvent
+    | LogEvent
+    | WarningEvent
+    | VerdictEvent
+    | VerdictRepairEvent,
     Field(discriminator="type"),
 ]
 

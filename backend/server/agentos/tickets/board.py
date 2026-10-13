@@ -60,6 +60,7 @@ class StageRunFact:
     status: StageRunStatus
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    round: int = 1  # its round in a loop block
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,13 +332,21 @@ def _parked(state: TicketState, pipeline: Pipeline, run: RunFact | None) -> str 
     return stage.id
 
 
-def _step(stage: Stage, state: RailState, parked: str | None) -> RailStep:
-    """A disabled stage is `skipped` with no gate. A `gate_after` gate is `passed` once its stage
-    is done and the ticket is not parked at it; otherwise `pending` (a parked gate is resolved per
-    viewer by `for_viewer`)."""
+def _step(
+    stage: Stage, state: RailState, parked: str | None, rounds: tuple[int, int] | None
+) -> RailStep:
+    """A disabled stage is `skipped` with no gate and no round. A `gate_after` gate is `passed`
+    once its stage is done and the ticket is not parked at it; otherwise `pending` (a parked gate
+    is resolved per viewer by `for_viewer`). `rounds`: (round, max_rounds) or None."""
     if not stage.enabled:
         return RailStep(
-            stage_id=stage.id, name=stage.name, phase=stage.phase, state="skipped", gate=None
+            stage_id=stage.id,
+            name=stage.name,
+            phase=stage.phase,
+            state="skipped",
+            gate=None,
+            round=None,
+            max_rounds=None,
         )
     gate: GateInfo | None = None
     if stage.gate_after:
@@ -345,7 +354,30 @@ def _step(stage: Stage, state: RailState, parked: str | None) -> RailStep:
         gate = GateInfo(
             label=f"{stage.name} sign-off", short="Sign-off", state=gate_state, person=None
         )
-    return RailStep(stage_id=stage.id, name=stage.name, phase=stage.phase, state=state, gate=gate)
+    return RailStep(
+        stage_id=stage.id,
+        name=stage.name,
+        phase=stage.phase,
+        state=state,
+        gate=gate,
+        round=rounds[0] if rounds else None,
+        max_rounds=rounds[1] if rounds else None,
+    )
+
+
+def _rounds(pipeline: Pipeline, run: RunFact | None) -> dict[str, tuple[int, int]]:
+    """(round, max_rounds) for each stage in a loop block of the pipeline that has a stage_run in
+    the latest run: the round of its latest one (pending included: about to run)."""
+    if run is None or not pipeline.loops:
+        return {}
+    pos = {s.id: i for i, s in enumerate(pipeline.stages)}
+    cap = {
+        s.id: loop.max_rounds
+        for loop in pipeline.loops
+        for s in pipeline.stages[pos[loop.start] : pos[loop.end] + 1]
+    }
+    latest = {sr.stage_id: sr.round for sr in _segment(run)}  # by idx: the last one wins
+    return {sid: (latest[sid], cap[sid]) for sid in cap if sid in latest}
 
 
 def _rail(
@@ -364,13 +396,18 @@ def _rail(
       `pending`. Stages after it: `stale` if they ever succeeded, else `pending`.
     - Run stages that are no longer in the pipeline don't appear. If none of the segment's stages
       exist any more, every other stage counts as "before".
+    - A stage a loop block ran several times: its latest stage_run counts.
     """
+    rounds = _rounds(pipeline, run)
     if state == "done":
-        return [_step(s, "done" if s.id in ever else "pending", parked) for s in pipeline.stages]
+        return [
+            _step(s, "done" if s.id in ever else "pending", parked, rounds.get(s.id))
+            for s in pipeline.stages
+        ]
     status: dict[str, StageRunStatus] = {}
     if run is not None:
         for sr in _segment(run):
-            status[sr.stage_id] = sr.status  # a repeated stage (future loops): the last one wins
+            status[sr.stage_id] = sr.status  # a stage a loop repeated: the last one wins
     focus, focus_state = _focus(run)
     pos = {s.id: i for i, s in enumerate(pipeline.stages)}
     first = min((pos[sid] for sid in status if sid in pos), default=len(pipeline.stages))
@@ -385,7 +422,7 @@ def _rail(
             st = "done" if s.id in ever else "pending"
         else:
             st = "stale" if s.id in ever else "pending"
-        steps.append(_step(s, st, parked))
+        steps.append(_step(s, st, parked, rounds.get(s.id)))
     return steps
 
 

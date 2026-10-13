@@ -13,7 +13,7 @@ from agentos.pipeline.manifest import build_manifest, render_stages, resolve_age
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig, RuntimeSpec
 from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, default_pipeline
-from agentos.pipeline.segment import segment
+from agentos.pipeline.segment import plan_run
 from agentos.validate import MAX_AGENT_LINE_BYTES, MAX_FILE_BYTES
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -158,6 +158,13 @@ def test_render_stages_shell_and_agent() -> None:
         id="lint", name="Lint", kind="shell", phase="verify", command="make lint", timeout_s=600
     )
     stages = render_stages(5, TICKET, [agent(model="sonnet"), lint], RUNTIMES, defaults=NONE)
+    outside_loops = {
+        "check": False,
+        "rounds": [],
+        "repairs": [],
+        "verdict_from": None,
+        "verdict_repairs": 0,
+    }
     assert [s.model_dump() for s in stages] == [
         {
             "id": "implement",
@@ -167,6 +174,7 @@ def test_render_stages_shell_and_agent() -> None:
             "argv": [*CLAUDE_ARGV, "--model", "sonnet"],
             "stdin": "Implement AOS-42.",
             "command": None,
+            **outside_loops,
         },
         {
             "id": "lint",
@@ -176,6 +184,7 @@ def test_render_stages_shell_and_agent() -> None:
             "argv": None,
             "stdin": None,
             "command": "make lint",
+            **outside_loops,
         },
     ]
 
@@ -194,7 +203,7 @@ def _bundle(ticket: TicketRef = TICKET) -> list[FileEntry]:
 
 def test_build_manifest_default_ticket() -> None:
     p = default_pipeline()
-    m = build_manifest(42, TICKET, segment(p, "implement"), _bundle(), RUNTIMES, defaults=NONE)
+    m = build_manifest(42, TICKET, plan_run(p, "implement"), _bundle(), RUNTIMES, defaults=NONE)
     assert Manifest.model_validate_json(m.model_dump_json()) == m
     assert m.protocol == 1
     assert m.run_id == 42
@@ -236,7 +245,7 @@ def test_build_manifest_library_files_are_not_synced_and_bundle_wins() -> None:
     m = build_manifest(
         1,
         TICKET,
-        segment(default_pipeline(), "plan"),
+        plan_run(default_pipeline(), "plan"),
         _bundle(),
         RUNTIMES,
         defaults=NONE,
@@ -255,7 +264,7 @@ def test_build_manifest_library_files_are_not_synced_and_bundle_wins() -> None:
 def test_build_manifest_no_repo_nulls_workspace() -> None:
     t = replace(TICKET, workspace_mode="none")
     m = build_manifest(
-        1, t, segment(default_pipeline(), "plan"), _bundle(t), RUNTIMES, defaults=NONE
+        1, t, plan_run(default_pipeline(), "plan"), _bundle(t), RUNTIMES, defaults=NONE
     )
     assert m.workspace.model_dump() == {
         "mode": "none",
@@ -274,7 +283,7 @@ def test_fixture_shape_matches_builder() -> None:
     assert {f.mode for f in fixture.files} == {"replace", "block"}
     assert {s.kind for s in fixture.stages} == {"agent", "shell"}
     built = build_manifest(
-        42, TICKET, segment(default_pipeline(), "implement"), _bundle(), RUNTIMES, defaults=NONE
+        42, TICKET, plan_run(default_pipeline(), "implement"), _bundle(), RUNTIMES, defaults=NONE
     )
     assert set(built.model_dump()) == set(fixture.model_dump())
     assert built.ticket == fixture.ticket

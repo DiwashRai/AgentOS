@@ -37,7 +37,7 @@ from agentos.models import (
 )
 from agentos.pipeline.manifest import render_stages
 from agentos.pipeline.runtime import RuntimesConfig
-from agentos.pipeline.segment import check_segment, segment
+from agentos.pipeline.segment import check_segment, plan_run
 from agentos.pipeline.space import SpaceConfig
 from agentos.templates.service import current_defaults
 from agentos.tickets.board import RunFact, StageRunFact, next_stage
@@ -71,7 +71,7 @@ _SELECT_RUN = (
 _SQL_RUN = _SELECT_RUN + "WHERE r.id = ?"
 _SQL_TICKET_RUNS = _SELECT_RUN + "WHERE r.ticket_id = ? ORDER BY r.id DESC"
 _SQL_STAGE_RUNS = (
-    "SELECT idx, stage_id, status, exit_code, reason, started_at, finished_at "
+    "SELECT idx, stage_id, round, status, verdict, exit_code, reason, started_at, finished_at "
     "FROM stage_runs WHERE run_id = ? ORDER BY idx"
 )
 
@@ -125,7 +125,9 @@ def _detail(conn: Conn, row: Row) -> RunDetail:
             stage_id=sr["stage_id"],
             name=names.get(sr["stage_id"], sr["stage_id"]),
             idx=sr["idx"],
+            round=sr["round"],
             status=sr["status"],
+            verdict=sr["verdict"],
             exit_code=sr["exit_code"],
             reason=sr["reason"],
             started_at=from_db_opt(sr["started_at"]),
@@ -151,6 +153,7 @@ def _latest_run_fact(conn: Conn, ticket_id: int) -> RunFact | None:
             status=sr["status"],
             started_at=from_db_opt(sr["started_at"]),
             finished_at=from_db_opt(sr["finished_at"]),
+            round=sr["round"],
         )
         for sr in conn.execute(_SQL_STAGE_RUNS, (run["id"],)).fetchall()
     )
@@ -185,6 +188,9 @@ def dispatch(
     "Run from…" passes one. The manifest is built later, at claim. A ticket whose repo is no
     longer in the Space's catalog → 422 `validation_error`; a repo ticket without a base branch
     → 409 `base_branch_missing` (`run_ticket_ref`; the board's `dispatch_block`).
+
+    The run covers `plan_run`'s stages (`stage_ids`): from `from_stage` on, plus the start of the
+    loop block it is in (run from round 2 on), with a time budget for every round.
     """
     now = to_db(utcnow())
     with db.tx() as conn:
@@ -199,8 +205,8 @@ def dispatch(
             from_stage = next_stage(pipeline, _latest_run_fact(conn, ticket["id"]))
             if from_stage is None:
                 raise ApiError(422, "invalid_stage", "nothing to run; pick a stage")
-        stages = segment(pipeline, from_stage)
-        check_segment(stages, ref.workspace_mode)
+        plan = plan_run(pipeline, from_stage)
+        check_segment(plan.stages, ref.workspace_mode)
         try:
             cursor = conn.execute(
                 "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
@@ -213,14 +219,18 @@ def dispatch(
         if run_id is None:  # pragma: no cover - sqlite always sets it after an INSERT
             raise RuntimeError("INSERT INTO runs returned no rowid")
         # Validate now (render errors → 422, rolling the run back); the manifest is built at claim.
-        render_stages(run_id, ref, stages, runtimes, defaults=current_defaults(conn))
+        render_stages(
+            run_id, ref, plan.stages, runtimes, defaults=current_defaults(conn), loops=plan.loops
+        )
+        ids = [s.id for s in plan.stages]
         conn.execute(
             "UPDATE runs SET stage_ids = ?, time_budget_s = ? WHERE id = ?",
-            (json.dumps([s.id for s in stages]), sum(s.timeout_s for s in stages), run_id),
+            (json.dumps(ids), plan.time_budget_s(), run_id),
         )
+        # Round 1's stage_runs; later rounds of a loop get theirs when they start (post_events).
         conn.executemany(
             "INSERT INTO stage_runs(run_id, idx, stage_id, status) VALUES (?, ?, ?, 'pending')",
-            [(run_id, i, s.id) for i, s in enumerate(stages)],
+            [(run_id, i, stage_id) for i, stage_id in enumerate(ids[ids.index(from_stage) :])],
         )
         conn.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (now, ticket["id"]))
         summary = _summary(run_row(conn, run_id))

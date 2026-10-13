@@ -244,6 +244,25 @@ def shell_stage(stage_id: str, command: str) -> dict[str, Any]:
     }
 
 
+def invocation(
+    *actions: str, stdin: str = "", tail: str = "", prompt_in_argv: bool = False
+) -> dict[str, Any]:
+    """A later-round or repair call of the fake agent (a manifest Invocation). The prompt is
+    `stdin`; with `prompt_in_argv` it is the last action instead (put `saveargs=P` before it)."""
+    argv = [sys.executable, str(FAKE_STAGE), *actions]
+    return {
+        "argv": argv,
+        "stdin": None if prompt_in_argv else stdin,
+        "prompt_arg": len(argv) - 1 if prompt_in_argv else None,
+        "tail": tail,
+    }
+
+
+def verdict_file(verdict: Any, notes: Any) -> str:
+    """A fake-agent action that writes this verdict to .agentos/verdict.json."""
+    return "write=.agentos/verdict.json:" + json.dumps({"verdict": verdict, "notes": notes})
+
+
 def python_shell(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make shell stages run `python -c <command>` (portable, no pwsh/bash needed)."""
     monkeypatch.setenv("AGENTOS_SHELL", f'"{sys.executable}" -c')

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -28,21 +30,71 @@ def test_accepts_the_shared_contract_fixture() -> None:
     assert [f.mode for f in m.files].count("block") == 2
     assert [f.path for f in m.files if not f.sync] == [".claude/skills/review-checklist/SKILL.md"]
     assert m.sync_dirs == (".claude/skills/context-aos-42-fix-login-bug",)
-    assert [s.kind for s in m.stages] == ["agent", "shell"]
-    assert m.stages[0].argv is not None
-    assert m.stages[0].argv[0] == "claude"
-    assert m.stages[1].command == "ruff format . && ruff check --fix ."
+    assert [s.kind for s in m.stages] == ["agent", "shell", "agent"]
+    implement, lint, review = m.stages
+    assert implement.argv is not None
+    assert implement.argv[0] == "claude"
+    assert lint.command == "ruff format . && ruff check --fix ."
     assert (m.max_file_bytes, m.max_line_bytes) == (1048576, 8192)
 
+    # The loop block: implement (maker) -> lint (shell check) -> review (agent check, file).
+    assert m.loops == (worker.ManifestLoop("implement", "review", 2),)
+    assert (m.start_stage, m.warnings) == ("implement", ())
+    assert [(s.check, s.verdict_from, s.verdict_repairs) for s in m.stages] == [
+        (False, None, 0),
+        (True, None, 0),
+        (True, "file", 2),
+    ]
+    [later] = implement.rounds
+    assert (later.argv[-1], later.prompt_arg, later.tail) == (
+        "0b8a4c1e-2f4d-4b7a-9c3e-1d2f3a4b5c6d",
+        None,
+        "",
+    )
+    assert later.stdin is not None
+    assert later.stdin.startswith("Round 2 of 2.")
+    assert (implement.repairs, lint.rounds, lint.repairs) == ((), (), ())
+    assert len(review.rounds) == 1
+    assert len(review.repairs) == 2
+    for call in (*review.rounds, *review.repairs):
+        assert call.stdin is None
+        assert call.prompt_arg is not None
+        argv, stdin = call.build("missing key: notes")
+        assert stdin is None
+        expected = list(call.argv)
+        expected[call.prompt_arg] += "missing key: notes" + call.tail
+        assert argv == expected
 
-def test_protocol_and_optional_stage_fields_may_be_omitted() -> None:
+
+def test_protocol_and_optional_fields_may_be_omitted() -> None:
     data = fixture()
-    del data["protocol"]
+    for key in ("protocol", "loops", "start_stage", "warnings"):
+        del data[key]
     for stage in data["stages"]:
-        for key in ("argv", "stdin", "command"):
+        for key in ("argv", "stdin", "command", "verdict_from"):
             if stage[key] is None:
                 del stage[key]
-    assert worker.parse_manifest(data).run_id == 42
+        for key in ("check", "rounds", "repairs", "verdict_repairs"):
+            del stage[key]
+    m = worker.parse_manifest(data)
+    assert m.run_id == 42
+    assert (m.loops, m.start_stage, m.warnings) == ((), None, ())
+    assert all(not s.check and not s.rounds and not s.repairs for s in m.stages)
+
+
+def test_invocation_build_appends_text_then_tail() -> None:
+    on_stdin = worker.Invocation(("claude", "-p"), "Base. ", None, " Tail.")
+    assert on_stdin.build("Notes.") == (["claude", "-p"], "Base. Notes. Tail.")
+    as_arg = worker.Invocation(("copilot", "-p", "Base. ", "--x"), None, 2, " Tail.")
+    assert as_arg.build("Notes.") == (["copilot", "-p", "Base. Notes. Tail.", "--x"], None)
+
+
+def test_warnings_and_a_start_stage_inside_the_first_block() -> None:
+    data = fixture()
+    data["warnings"] = ["loop ignored"]
+    data["start_stage"] = "review"
+    m = worker.parse_manifest(data)
+    assert (m.warnings, m.start_stage) == (("loop ignored",), "review")
 
 
 def test_no_repo_workspace() -> None:
@@ -57,11 +109,9 @@ def _mutate(path: str, value: Any) -> dict[str, Any]:
     keys = path.split(".")
     for key in keys[:-1]:
         target = target[int(key)] if isinstance(target, list) else target[key]
-    last = keys[-1]
+    last: Any = int(keys[-1]) if isinstance(target, list) else keys[-1]
     if value is _DELETE:
         del target[last]
-    elif isinstance(target, list):
-        target[int(last)] = value
     else:
         target[last] = value
     return data
@@ -109,6 +159,132 @@ _DELETE = object()
 def test_rejects_malformed_manifests(path: str, value: Any) -> None:
     with pytest.raises(worker.ManifestError):
         worker.parse_manifest(_mutate(path, value))
+
+
+REPAIR = {"argv": ["claude", "-p"], "stdin": "Fix it: ", "prompt_arg": None, "tail": ""}
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "why"),
+    [
+        # invocations
+        ("stages.0.rounds", [], "stages[0].rounds: expected 1 (max_rounds - 1), got 0"),
+        ("stages.2.rounds", [REPAIR, REPAIR], "stages[2].rounds: expected 1"),
+        ("stages.0.rounds.0.argv", [], "stages[0].rounds[0].argv: must not be empty"),
+        ("stages.0.rounds.0.argv", ["claude", 1], "stages[0].rounds[0].argv[1]: expected a str"),
+        ("stages.0.rounds.0.tail", None, "stages[0].rounds[0].tail: expected a string"),
+        ("stages.0.rounds.0.tail", _DELETE, "stages[0].rounds[0]: missing tail"),
+        ("stages.0.rounds.0.extra", 1, "stages[0].rounds[0]: unexpected extra"),
+        ("stages.0.rounds.0.prompt_arg", 0, "exactly one of stdin and prompt_arg"),
+        ("stages.0.rounds.0.stdin", None, "exactly one of stdin and prompt_arg"),
+        ("stages.2.rounds.0.stdin", "x", "exactly one of stdin and prompt_arg"),
+        ("stages.2.rounds.0.prompt_arg", None, "exactly one of stdin and prompt_arg"),
+        ("stages.2.rounds.0.prompt_arg", 8, "stages[2].rounds[0].prompt_arg: 8 is past the end"),
+        ("stages.2.rounds.0.prompt_arg", -1, "stages[2].rounds[0].prompt_arg: must be >= 0"),
+        ("stages.2.rounds.0.prompt_arg", True, "prompt_arg: expected an integer"),
+        ("stages.2.repairs.0.prompt_arg", 9, "stages[2].repairs[0].prompt_arg: 9 is past"),
+        # check fields
+        ("stages.2.verdict_from", "tool", "verdict_from: expected structured_output or file"),
+        ("stages.2.verdict_from", None, "stages[2].verdict_from: an agent check needs"),
+        ("stages.2.repairs.1", _DELETE, "stages[2].repairs: expected 0 or 2 (max_rounds), got 1"),
+        ("stages.2.verdict_repairs", -1, "stages[2].verdict_repairs: must be >= 0"),
+        ("stages.2.check", "yes", "stages[2].check: expected a boolean"),
+        ("stages.0.repairs", [REPAIR], "stages[0].repairs: only an agent check is repaired"),
+        ("stages.1.rounds", [REPAIR], "stages[1]: a shell stage takes no rounds or repairs"),
+        ("stages.1.id", "implement", "stages[1].id: duplicate stage id 'implement'"),
+        # loops
+        ("loops.0.max_rounds", 0, "loops[0].max_rounds: must be >= 1"),
+        ("loops.0.max_rounds", True, "loops[0].max_rounds: expected an integer"),
+        ("loops.0.start", "nope", "loops[0].start: no stage 'nope'"),
+        ("loops.0.end", "nope", "loops[0].end: no stage 'nope'"),
+        ("loops.0.extra", 1, "loops[0]: unexpected extra"),
+        ("loops.0.start", "review", "loops[0]: start 'review' comes after end 'lint'"),
+        ("loops", {}, "loops: expected a list"),
+        ("loops", [], "stages[0]: check, rounds and repairs need a loop block"),
+        # start_stage, warnings
+        ("start_stage", "nope", "start_stage: no stage 'nope'"),
+        ("start_stage", 2, "start_stage: expected a string"),
+        ("warnings", "careful", "warnings: expected a list"),
+        ("warnings", ["ok", 3], "warnings[1]: expected a string"),
+    ],
+)
+def test_rejects_malformed_loops(path: str, value: Any, why: str) -> None:
+    data = _mutate(path, value)
+    if path == "loops.0.start" and value == "review":
+        data["loops"][0]["end"] = "lint"
+    with pytest.raises(worker.ManifestError, match=re.escape(why)):
+        worker.parse_manifest(data)
+
+
+def plain() -> dict[str, Any]:
+    """The fixture without its loop block."""
+    data = fixture()
+    data["loops"] = []
+    for stage in data["stages"]:
+        stage.update(check=False, rounds=[], repairs=[], verdict_from=None, verdict_repairs=0)
+    return data
+
+
+@pytest.mark.parametrize(
+    ("loops", "why"),
+    [
+        (
+            [("implement", "lint"), ("lint", "review")],
+            "loops[1]: overlaps or comes before the previous loop",
+        ),
+        (
+            [("review", "review"), ("implement", "lint")],
+            "loops[1]: overlaps or comes before the previous loop",
+        ),
+    ],
+)
+def test_rejects_overlapping_or_unordered_loops(loops: list[tuple[str, str]], why: str) -> None:
+    data = plain()
+    data["loops"] = [{"start": a, "end": b, "max_rounds": 1} for a, b in loops]
+    with pytest.raises(worker.ManifestError, match=re.escape(why)):
+        worker.parse_manifest(data)
+
+
+def test_one_round_blocks_and_back_to_back_blocks_parse() -> None:
+    data = plain()
+    data["loops"] = [
+        {"start": "implement", "end": "implement", "max_rounds": 1},
+        {"start": "lint", "end": "review", "max_rounds": 1},
+    ]
+    data["stages"][2].update(check=True, verdict_from="structured_output")
+    m = worker.parse_manifest(data)
+    assert [(lp.start, lp.end) for lp in m.loops] == [
+        ("implement", "implement"),
+        ("lint", "review"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "why"),
+    [
+        (lambda d: d["stages"][1].update(check=True), "stages[1]: check, rounds and repairs need"),
+        (lambda d: d["stages"][2].update(repairs=[REPAIR]), "stages[2]: check, rounds and repairs"),
+        (lambda d: d.update(start_stage="lint"), "start_stage: must be the first stage, or in a"),
+    ],
+)
+def test_rejects_loop_extras_without_a_block(
+    mutate: Callable[[dict[str, Any]], object], why: str
+) -> None:
+    data = plain()
+    mutate(data)
+    with pytest.raises(worker.ManifestError, match=re.escape(why)):
+        worker.parse_manifest(data)
+
+
+def test_start_stage_must_be_in_a_block_that_starts_at_the_first_stage() -> None:
+    data = plain()
+    data["loops"] = [{"start": "lint", "end": "review", "max_rounds": 1}]
+    data["stages"][2].update(check=True, verdict_from="file")
+    data["start_stage"] = "review"
+    with pytest.raises(worker.ManifestError, match="start_stage: must be the first stage"):
+        worker.parse_manifest(data)
+    data["start_stage"] = "implement"
+    assert worker.parse_manifest(data).start_stage == "implement"
 
 
 @pytest.mark.parametrize("raw", [None, [], "manifest", 42])

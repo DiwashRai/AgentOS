@@ -114,6 +114,10 @@ def test_seeded_runtimes_from_the_test_toml(authed: TestClient) -> None:
         "agent_args": [],
         "prompt_via": "stdin",
         "prompt_args": [],
+        "session_args": [],
+        "resume_args": [],
+        "verdict_args": [],
+        "verdict_from": "file",
     }
     assert (got.version, got.updated_by) == (1, None)
 

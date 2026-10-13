@@ -5,6 +5,7 @@ workspace (cwd). Actions run in order:
                   skill dir, and edit AGENTS.md outside the agentos block
   write=P:TEXT    write TEXT to path P            rm=P            delete path P
   selfcommit      force-add CLAUDE.md and commit it (an agent ignoring the rules)
+  forcecommit=P   force-add path P and commit it
   copyblock       copy AGENTS.md (block included) into docs/copy.md
   symlink=TARGET  create SKILL_DIR/link.md pointing at TARGET
   bgchild=PIDFILE start a child that holds stdout/stderr open for 30 s, write its pid, return
@@ -12,6 +13,9 @@ workspace (cwd). Actions run in order:
   print=TEXT      print TEXT                      long=N          print N x's, then "after"
   env             print the AGENTOS_* environment as JSON
   stdin           echo stdin to stdout            exit=N          exit with code N
+  savein=P        write stdin (the prompt) to P, as UTF-8
+  saveargs=P      write the arguments after this one to P as a JSON list, and stop: they are
+                  data (an argument-mode prompt), not actions
 """
 
 from __future__ import annotations
@@ -55,8 +59,8 @@ def _act(action: str) -> None:
         Path(path).write_bytes(text.encode())
     elif name == "rm":
         Path(arg).unlink()
-    elif name == "selfcommit":
-        _git("add", "-f", "CLAUDE.md")
+    elif name in ("selfcommit", "forcecommit"):
+        _git("add", "-f", arg or "CLAUDE.md")
         _git("commit", "-q", "--no-verify", "-m", "agent commit")
     elif name == "copyblock":
         Path("docs").mkdir(exist_ok=True)
@@ -87,10 +91,16 @@ def _act(action: str) -> None:
         sys.stdout.flush()
     elif name == "exit":
         sys.exit(int(arg))
+    elif name == "savein":
+        Path(arg).write_bytes(sys.stdin.buffer.read())
     else:
         raise SystemExit(f"unknown action {action!r}")
 
 
 if __name__ == "__main__":
-    for item in sys.argv[1:]:
+    args = sys.argv[1:]
+    for i, item in enumerate(args):
+        if item.startswith("saveargs="):
+            Path(item.partition("=")[2]).write_text(json.dumps(args[i + 1 :]), encoding="utf-8")
+            break
         _act(item)

@@ -44,9 +44,21 @@
       "name": "Implement",
       "kind": "agent",
       "timeout_s": 3600,
-      "argv": ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", "--model", "sonnet"],
+      "argv": ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", "--model", "sonnet", "--session-id", "0b8a4c1e-2f4d-4b7a-9c3e-1d2f3a4b5c6d"],
       "stdin": "Implement AOS-42. Objective: .claude/skills/context-aos-42-fix-login-bug/SKILL.md. Plan: .claude/skills/context-aos-42-fix-login-bug/TASKS.md.",
-      "command": null
+      "command": null,
+      "check": false,
+      "rounds": [
+        {
+          "argv": ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", "--model", "sonnet", "--resume", "0b8a4c1e-2f4d-4b7a-9c3e-1d2f3a4b5c6d"],
+          "stdin": "Round 2 of 2. The checks found problems with your last change. Address every point, then stop.\n\n",
+          "prompt_arg": null,
+          "tail": ""
+        }
+      ],
+      "repairs": [],
+      "verdict_from": null,
+      "verdict_repairs": 0
     },
     {
       "id": "lint",
@@ -55,8 +67,50 @@
       "timeout_s": 600,
       "argv": null,
       "stdin": null,
-      "command": "ruff format . && ruff check --fix ."
+      "command": "ruff format . && ruff check --fix .",
+      "check": true,
+      "rounds": [],
+      "repairs": [],
+      "verdict_from": null,
+      "verdict_repairs": 0
+    },
+    {
+      "id": "review",
+      "name": "Review",
+      "kind": "agent",
+      "timeout_s": 3600,
+      "argv": ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json", "--resume=6f1d2c3b-4a5e-4f60-8b71-92a3b4c5d6e7", "-p", "Review AOS-42.\n\n## Verdict\nWhen you are done, write the verdict to `.agentos/verdict.json`."],
+      "stdin": null,
+      "command": null,
+      "check": true,
+      "rounds": [
+        {
+          "argv": ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json", "--resume=7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d", "-p", "Review AOS-42.\n\n## Previous round\nLast round's findings, for you to confirm they were fixed:\n\n"],
+          "stdin": null,
+          "prompt_arg": 7,
+          "tail": "\n\n## Verdict\nWhen you are done, write the verdict to `.agentos/verdict.json`."
+        }
+      ],
+      "repairs": [
+        {
+          "argv": ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json", "--resume=6f1d2c3b-4a5e-4f60-8b71-92a3b4c5d6e7", "-p", "Your verdict was invalid: "],
+          "stdin": null,
+          "prompt_arg": 7,
+          "tail": ".\nDon't redo the review. Write only the verdict to `.agentos/verdict.json`."
+        },
+        {
+          "argv": ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json", "--resume=7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d", "-p", "Your verdict was invalid: "],
+          "stdin": null,
+          "prompt_arg": 7,
+          "tail": ".\nDon't redo the review. Write only the verdict to `.agentos/verdict.json`."
+        }
+      ],
+      "verdict_from": "file",
+      "verdict_repairs": 2
     }
   ],
-  "limits": { "max_file_bytes": 1048576, "max_line_bytes": 8192 }
+  "limits": { "max_file_bytes": 1048576, "max_line_bytes": 8192 },
+  "loops": [{ "start": "implement", "end": "review", "max_rounds": 2 }],
+  "start_stage": "implement",
+  "warnings": []
 }

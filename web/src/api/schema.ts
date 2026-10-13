@@ -915,8 +915,6 @@ export interface components {
             /** From Stage */
             from_stage?: string | null;
         };
-        /** EmptyData */
-        EmptyData: Record<string, never>;
         /** ErrorBody */
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
@@ -934,7 +932,7 @@ export interface components {
         /** EventsRequest */
         EventsRequest: {
             /** Events */
-            events: (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"])[];
+            events: (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"] | components["schemas"]["VerdictEvent"] | components["schemas"]["VerdictRepairEvent"])[];
         };
         /** EventsResponse */
         EventsResponse: {
@@ -1325,11 +1323,31 @@ export interface components {
             /** Username */
             username?: string | null;
         };
+        /**
+         * Loop
+         * @description A loop block: the stages from `start` to `end` (ids; pipeline order, `start` at or before
+         *     `end`) run round after round until every check in it passes, at most `max_rounds` times. A
+         *     block holds at least one check and one maker; blocks don't overlap; only `end` may have
+         *     `gate_after` (the gate comes after the loop). 422 `invalid_pipeline` otherwise.
+         */
+        Loop: {
+            /** End */
+            end: string;
+            /**
+             * Max Rounds
+             * @default 3
+             */
+            max_rounds: number;
+            /** Start */
+            start: string;
+        };
         /** Manifest */
         Manifest: {
             /** Files */
             files: components["schemas"]["ManifestFile"][];
             limits: components["schemas"]["ManifestLimits"];
+            /** Loops */
+            loops?: components["schemas"]["ManifestLoop"][];
             /**
              * Protocol
              * @default 1
@@ -1340,9 +1358,13 @@ export interface components {
             run_id: number;
             /** Stages */
             stages: components["schemas"]["ManifestStage"][];
+            /** Start Stage */
+            start_stage?: string | null;
             /** Sync Dirs */
             sync_dirs: string[];
             ticket: components["schemas"]["ManifestTicket"];
+            /** Warnings */
+            warnings?: string[];
             workspace: components["schemas"]["ManifestWorkspace"];
         };
         /** ManifestFile */
@@ -1359,6 +1381,23 @@ export interface components {
             /** Sync */
             sync: boolean;
         };
+        /**
+         * ManifestInvocation
+         * @description Another call of a loop stage's agent: a later round, or a verdict repair (request 24). The
+         *     prompt is the `stdin`, or `argv[prompt_arg]` when the runtime takes it as an argument (then
+         *     `stdin` is null). The worker appends its text to the prompt (the round's feedback, or why the
+         *     verdict was invalid), then `tail`, and changes nothing else.
+         */
+        ManifestInvocation: {
+            /** Argv */
+            argv: string[];
+            /** Prompt Arg */
+            prompt_arg: number | null;
+            /** Stdin */
+            stdin: string | null;
+            /** Tail */
+            tail: string;
+        };
         /** ManifestLimits */
         ManifestLimits: {
             /** Max File Bytes */
@@ -1366,10 +1405,37 @@ export interface components {
             /** Max Line Bytes */
             max_line_bytes: number;
         };
-        /** ManifestStage */
+        /**
+         * ManifestLoop
+         * @description A loop block over the manifest's `stages` (ids, `start` at or before `end`).
+         */
+        ManifestLoop: {
+            /** End */
+            end: string;
+            /** Max Rounds */
+            max_rounds: number;
+            /** Start */
+            start: string;
+        };
+        /**
+         * ManifestStage
+         * @description `argv` / `stdin` (agent) or `command` (shell): the stage's call, in round 1 of a loop.
+         *
+         *     Loop block stages only (otherwise the defaults): `check` = the stage decides the round (a
+         *     shell stage, or an agent check). Agent stages: `rounds` = the calls for rounds 2 to
+         *     `max_rounds`, in order. Agent checks: `verdict_from` = where the verdict is read,
+         *     `verdict_repairs` = at most this many repairs per round, and `repairs` = one repair call per
+         *     round (index 0 = round 1), resuming that round's session; empty = no repair (the runtime has
+         *     no sessions).
+         */
         ManifestStage: {
             /** Argv */
             argv?: string[] | null;
+            /**
+             * Check
+             * @default false
+             */
+            check: boolean;
             /** Command */
             command?: string | null;
             /** Id */
@@ -1381,10 +1447,21 @@ export interface components {
             kind: "agent" | "shell";
             /** Name */
             name: string;
+            /** Repairs */
+            repairs?: components["schemas"]["ManifestInvocation"][];
+            /** Rounds */
+            rounds?: components["schemas"]["ManifestInvocation"][];
             /** Stdin */
             stdin?: string | null;
             /** Timeout S */
             timeout_s: number;
+            /** Verdict From */
+            verdict_from?: ("structured_output" | "file") | null;
+            /**
+             * Verdict Repairs
+             * @default 0
+             */
+            verdict_repairs: number;
         };
         /** ManifestTicket */
         ManifestTicket: {
@@ -1518,6 +1595,8 @@ export interface components {
         Pipeline: {
             /** Library Sets */
             library_sets?: number[];
+            /** Loops */
+            loops?: components["schemas"]["Loop"][];
             /** Stages */
             stages: components["schemas"]["Stage"][];
         };
@@ -1542,10 +1621,14 @@ export interface components {
         /**
          * RailStep
          * @description Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones
-         *     `skipped`). `gate` is set on every enabled stage with `gate_after`.
+         *     `skipped`). `gate` is set on every enabled stage with `gate_after`. `round` / `max_rounds`:
+         *     for a stage in a loop block that the latest run has reached (current, or run), its latest
+         *     round and the block's cap ("round 2 of 3"); null otherwise.
          */
         RailStep: {
             gate: components["schemas"]["GateInfo"] | null;
+            /** Max Rounds */
+            max_rounds: number | null;
             /** Name */
             name: string;
             /**
@@ -1553,6 +1636,8 @@ export interface components {
              * @enum {string}
              */
             phase: "plan" | "build" | "verify" | "review";
+            /** Round */
+            round: number | null;
             /** Stage Id */
             stage_id: string;
             /**
@@ -1787,11 +1872,19 @@ export interface components {
          * RuntimeEntry
          * @description One agent runtime: how a stage's argv is built (SPEC §7). `argv`, then `model_args` when a
          *     model resolves, `effort_args` when an effort resolves, `agent_args` when the stage names an
-         *     agent, then `prompt_args` when `prompt_via` is "arg" (else the prompt is the stdin). The
-         *     placeholders `{model}`, `{effort}`, `{agent}` and `{prompt}` replace whole elements; no shell
-         *     is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then ignored).
-         *     `prompt_via: "arg"` needs `prompt_args` containing "{prompt}"; "stdin" takes no
-         *     `prompt_args`.
+         *     agent, then (loop stages, request 24) `session_args` or `resume_args` and, for checks,
+         *     `verdict_args`, then `prompt_args` when `prompt_via` is "arg" (else the prompt is the stdin).
+         *     The placeholders `{model}`, `{effort}`, `{agent}`, `{verdict_schema}` and `{prompt}` replace
+         *     whole elements; `{session}` (a session id) may be part of one (`--resume={session}`). No
+         *     shell is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then
+         *     ignored). `prompt_via: "arg"` needs `prompt_args` containing "{prompt}" once; "stdin" takes
+         *     no `prompt_args`.
+         *
+         *     Sessions: `session_args` start a session with a known id, `resume_args` resume it, and each
+         *     non-empty one contains "{session}". Both empty = no sessions: loop stages start fresh each
+         *     round and an invalid verdict isn't repaired. `verdict_args` ask the CLI for schema-checked
+         *     output (`{verdict_schema}`); `verdict_from` is where the worker reads a check's verdict
+         *     ("structured_output" needs `verdict_args`).
          */
         RuntimeEntry: {
             /** Agent Args */
@@ -1811,6 +1904,18 @@ export interface components {
              * @enum {string}
              */
             prompt_via: "stdin" | "arg";
+            /** Resume Args */
+            resume_args?: string[];
+            /** Session Args */
+            session_args?: string[];
+            /** Verdict Args */
+            verdict_args?: string[];
+            /**
+             * Verdict From
+             * @default file
+             * @enum {string}
+             */
+            verdict_from: "structured_output" | "file";
         };
         /**
          * RuntimeSettings
@@ -1909,6 +2014,11 @@ export interface components {
             /** Agent */
             agent?: string | null;
             /**
+             * Check
+             * @default false
+             */
+            check: boolean;
+            /**
              * Command
              * @default
              */
@@ -1951,6 +2061,8 @@ export interface components {
              * @default false
              */
             requires_repo: boolean;
+            /** Resume */
+            resume?: boolean | null;
             /** Runtime */
             runtime?: string | null;
             /**
@@ -1958,6 +2070,11 @@ export interface components {
              * @default 3600
              */
             timeout_s: number;
+            /**
+             * Verdict Repairs
+             * @default 2
+             */
+            verdict_repairs: number;
         };
         /** StageFinishedData */
         StageFinishedData: {
@@ -1965,6 +2082,11 @@ export interface components {
             exit_code: number | null;
             /** Reason */
             reason: string | null;
+            /**
+             * Round
+             * @default 1
+             */
+            round: number;
             /**
              * Status
              * @enum {string}
@@ -1989,7 +2111,14 @@ export interface components {
              */
             type: "stage_finished";
         };
-        /** StageRunInfo */
+        /**
+         * StageRunInfo
+         * @description One execution of a stage in a run, in execution order (`idx`). A stage in a loop block has
+         *     one per round it ran (`round`; 1 outside loops). `verdict`: a check's verdict in that round
+         *     (null for other stages, and until it is known). A check that gave a valid verdict
+         *     `succeeded`, even a "fail", except a "fail" in the block's last round: that one `failed` (the
+         *     loop is lost there; the run's error says so).
+         */
         StageRunInfo: {
             /** Exit Code */
             exit_code: number | null;
@@ -2001,6 +2130,8 @@ export interface components {
             name: string;
             /** Reason */
             reason: string | null;
+            /** Round */
+            round: number;
             /** Stage Id */
             stage_id: string;
             /** Started At */
@@ -2010,10 +2141,20 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+            /** Verdict */
+            verdict: ("pass" | "fail") | null;
+        };
+        /** StageStartedData */
+        StageStartedData: {
+            /**
+             * Round
+             * @default 1
+             */
+            round: number;
         };
         /** StageStartedEvent */
         StageStartedEvent: {
-            data: components["schemas"]["EmptyData"];
+            data: components["schemas"]["StageStartedData"];
             /** Seq */
             seq: number;
             /** Stage Id */
@@ -2393,6 +2534,78 @@ export interface components {
              * @enum {string}
              */
             role?: "pending" | "viewer" | "writer" | "admin";
+        };
+        /**
+         * VerdictData
+         * @description A check's verdict in a round (sent before its `stage_finished`). `repairs`: how many
+         *     repairs it took (0 = valid at once).
+         */
+        VerdictData: {
+            /** Notes */
+            notes: string;
+            /** Repairs */
+            repairs: number;
+            /** Round */
+            round: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "structured_output" | "file" | "exit_code";
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "pass" | "fail";
+        };
+        /** VerdictEvent */
+        VerdictEvent: {
+            data: components["schemas"]["VerdictData"];
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "verdict";
+        };
+        /**
+         * VerdictRepairData
+         * @description The check's verdict was invalid (`error` says why), so it is asked again: repair
+         *     `attempt` (1-based) of the round.
+         */
+        VerdictRepairData: {
+            /** Attempt */
+            attempt: number;
+            /** Error */
+            error: string;
+            /** Round */
+            round: number;
+        };
+        /** VerdictRepairEvent */
+        VerdictRepairEvent: {
+            data: components["schemas"]["VerdictRepairData"];
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "verdict_repair";
         };
         /** WarningData */
         WarningData: {
@@ -2862,7 +3075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"])[];
+                    "application/json": (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"] | components["schemas"]["VerdictEvent"] | components["schemas"]["VerdictRepairEvent"])[];
                 };
             };
             /** @description Client error */

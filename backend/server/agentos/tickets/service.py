@@ -100,7 +100,7 @@ _SQL_LATEST_RUNS = (
     "               WHERE ticket_id IN (SELECT value FROM json_each(?)) GROUP BY ticket_id)"
 )
 _SQL_STAGE_RUNS = (
-    "SELECT run_id, idx, stage_id, status, started_at, finished_at FROM stage_runs "
+    "SELECT run_id, idx, stage_id, round, status, started_at, finished_at FROM stage_runs "
     "WHERE run_id IN (SELECT value FROM json_each(?)) ORDER BY run_id, idx"
 )
 _SQL_EVER_SUCCEEDED = (
@@ -263,6 +263,7 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
                 status=sr["status"],
                 started_at=from_db_opt(sr["started_at"]),
                 finished_at=from_db_opt(sr["finished_at"]),
+                round=sr["round"],
             )
         )
     for ev in conn.execute(_SQL_EVER_SUCCEEDED, (ids,)).fetchall():

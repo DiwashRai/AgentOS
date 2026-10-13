@@ -416,12 +416,6 @@
         "title": "DispatchRequest",
         "type": "object"
       },
-      "EmptyData": {
-        "additionalProperties": false,
-        "properties": {},
-        "title": "EmptyData",
-        "type": "object"
-      },
       "ErrorBody": {
         "additionalProperties": false,
         "properties": {
@@ -500,6 +494,8 @@
                   "log": "#/components/schemas/LogEvent",
                   "stage_finished": "#/components/schemas/StageFinishedEvent",
                   "stage_started": "#/components/schemas/StageStartedEvent",
+                  "verdict": "#/components/schemas/VerdictEvent",
+                  "verdict_repair": "#/components/schemas/VerdictRepairEvent",
                   "warning": "#/components/schemas/WarningEvent"
                 },
                 "propertyName": "type"
@@ -516,6 +512,12 @@
                 },
                 {
                   "$ref": "#/components/schemas/WarningEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/VerdictEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/VerdictRepairEvent"
                 }
               ]
             },
@@ -1467,6 +1469,33 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "Loop": {
+        "additionalProperties": false,
+        "description": "A loop block: the stages from `start` to `end` (ids; pipeline order, `start` at or before\n`end`) run round after round until every check in it passes, at most `max_rounds` times. A\nblock holds at least one check and one maker; blocks don't overlap; only `end` may have\n`gate_after` (the gate comes after the loop). 422 `invalid_pipeline` otherwise.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "max_rounds": {
+            "default": 3,
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Max Rounds",
+            "type": "integer"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Loop",
+        "type": "object"
+      },
       "Manifest": {
         "additionalProperties": false,
         "properties": {
@@ -1479,6 +1508,13 @@
           },
           "limits": {
             "$ref": "#/components/schemas/ManifestLimits"
+          },
+          "loops": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestLoop"
+            },
+            "title": "Loops",
+            "type": "array"
           },
           "protocol": {
             "const": 1,
@@ -1497,6 +1533,17 @@
             "title": "Stages",
             "type": "array"
           },
+          "start_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Stage"
+          },
           "sync_dirs": {
             "items": {
               "type": "string"
@@ -1506,6 +1553,13 @@
           },
           "ticket": {
             "$ref": "#/components/schemas/ManifestTicket"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           },
           "workspace": {
             "$ref": "#/components/schemas/ManifestWorkspace"
@@ -1556,6 +1610,53 @@
         "title": "ManifestFile",
         "type": "object"
       },
+      "ManifestInvocation": {
+        "additionalProperties": false,
+        "description": "Another call of a loop stage's agent: a later round, or a verdict repair (request 24). The\nprompt is the `stdin`, or `argv[prompt_arg]` when the runtime takes it as an argument (then\n`stdin` is null). The worker appends its text to the prompt (the round's feedback, or why the\nverdict was invalid), then `tail`, and changes nothing else.",
+        "properties": {
+          "argv": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Argv",
+            "type": "array"
+          },
+          "prompt_arg": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Arg"
+          },
+          "stdin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stdin"
+          },
+          "tail": {
+            "title": "Tail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "argv",
+          "stdin",
+          "prompt_arg",
+          "tail"
+        ],
+        "title": "ManifestInvocation",
+        "type": "object"
+      },
       "ManifestLimits": {
         "additionalProperties": false,
         "properties": {
@@ -1575,8 +1676,34 @@
         "title": "ManifestLimits",
         "type": "object"
       },
+      "ManifestLoop": {
+        "additionalProperties": false,
+        "description": "A loop block over the manifest's `stages` (ids, `start` at or before `end`).",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "max_rounds": {
+            "title": "Max Rounds",
+            "type": "integer"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "max_rounds"
+        ],
+        "title": "ManifestLoop",
+        "type": "object"
+      },
       "ManifestStage": {
         "additionalProperties": false,
+        "description": "`argv` / `stdin` (agent) or `command` (shell): the stage's call, in round 1 of a loop.\n\nLoop block stages only (otherwise the defaults): `check` = the stage decides the round (a\nshell stage, or an agent check). Agent stages: `rounds` = the calls for rounds 2 to\n`max_rounds`, in order. Agent checks: `verdict_from` = where the verdict is read,\n`verdict_repairs` = at most this many repairs per round, and `repairs` = one repair call per\nround (index 0 = round 1), resuming that round's session; empty = no repair (the runtime has\nno sessions).",
         "properties": {
           "argv": {
             "anyOf": [
@@ -1591,6 +1718,11 @@
               }
             ],
             "title": "Argv"
+          },
+          "check": {
+            "default": false,
+            "title": "Check",
+            "type": "boolean"
           },
           "command": {
             "anyOf": [
@@ -1619,6 +1751,20 @@
             "title": "Name",
             "type": "string"
           },
+          "repairs": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestInvocation"
+            },
+            "title": "Repairs",
+            "type": "array"
+          },
+          "rounds": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestInvocation"
+            },
+            "title": "Rounds",
+            "type": "array"
+          },
           "stdin": {
             "anyOf": [
               {
@@ -1632,6 +1778,26 @@
           },
           "timeout_s": {
             "title": "Timeout S",
+            "type": "integer"
+          },
+          "verdict_from": {
+            "anyOf": [
+              {
+                "enum": [
+                  "structured_output",
+                  "file"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict From"
+          },
+          "verdict_repairs": {
+            "default": 0,
+            "title": "Verdict Repairs",
             "type": "integer"
           }
         },
@@ -2035,6 +2201,14 @@
             "title": "Library Sets",
             "type": "array"
           },
+          "loops": {
+            "items": {
+              "$ref": "#/components/schemas/Loop"
+            },
+            "maxItems": 10,
+            "title": "Loops",
+            "type": "array"
+          },
           "stages": {
             "items": {
               "$ref": "#/components/schemas/Stage"
@@ -2102,7 +2276,7 @@
       },
       "RailStep": {
         "additionalProperties": false,
-        "description": "Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones\n`skipped`). `gate` is set on every enabled stage with `gate_after`.",
+        "description": "Stage-level progress: every stage of the ticket's pipeline, in order (disabled ones\n`skipped`). `gate` is set on every enabled stage with `gate_after`. `round` / `max_rounds`:\nfor a stage in a loop block that the latest run has reached (current, or run), its latest\nround and the block's cap (\"round 2 of 3\"); null otherwise.",
         "properties": {
           "gate": {
             "anyOf": [
@@ -2113,6 +2287,17 @@
                 "type": "null"
               }
             ]
+          },
+          "max_rounds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rounds"
           },
           "name": {
             "title": "Name",
@@ -2127,6 +2312,17 @@
             ],
             "title": "Phase",
             "type": "string"
+          },
+          "round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Round"
           },
           "stage_id": {
             "title": "Stage Id",
@@ -2150,7 +2346,9 @@
           "name",
           "phase",
           "state",
-          "gate"
+          "gate",
+          "round",
+          "max_rounds"
         ],
         "title": "RailStep",
         "type": "object"
@@ -2811,7 +3009,7 @@
       },
       "RuntimeEntry": {
         "additionalProperties": false,
-        "description": "One agent runtime: how a stage's argv is built (SPEC \u00a77). `argv`, then `model_args` when a\nmodel resolves, `effort_args` when an effort resolves, `agent_args` when the stage names an\nagent, then `prompt_args` when `prompt_via` is \"arg\" (else the prompt is the stdin). The\nplaceholders `{model}`, `{effort}`, `{agent}` and `{prompt}` replace whole elements; no shell\nis involved. Empty `effort_args` = the runtime has no effort flag (an effort is then ignored).\n`prompt_via: \"arg\"` needs `prompt_args` containing \"{prompt}\"; \"stdin\" takes no\n`prompt_args`.",
+        "description": "One agent runtime: how a stage's argv is built (SPEC \u00a77). `argv`, then `model_args` when a\nmodel resolves, `effort_args` when an effort resolves, `agent_args` when the stage names an\nagent, then (loop stages, request 24) `session_args` or `resume_args` and, for checks,\n`verdict_args`, then `prompt_args` when `prompt_via` is \"arg\" (else the prompt is the stdin).\nThe placeholders `{model}`, `{effort}`, `{agent}`, `{verdict_schema}` and `{prompt}` replace\nwhole elements; `{session}` (a session id) may be part of one (`--resume={session}`). No\nshell is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then\nignored). `prompt_via: \"arg\"` needs `prompt_args` containing \"{prompt}\" once; \"stdin\" takes\nno `prompt_args`.\n\nSessions: `session_args` start a session with a known id, `resume_args` resume it, and each\nnon-empty one contains \"{session}\". Both empty = no sessions: loop stages start fresh each\nround and an invalid verdict isn't repaired. `verdict_args` ask the CLI for schema-checked\noutput (`{verdict_schema}`); `verdict_from` is where the worker reads a check's verdict\n(\"structured_output\" needs `verdict_args`).",
         "properties": {
           "agent_args": {
             "items": {
@@ -2870,6 +3068,42 @@
               "arg"
             ],
             "title": "Prompt Via",
+            "type": "string"
+          },
+          "resume_args": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Resume Args",
+            "type": "array"
+          },
+          "session_args": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Session Args",
+            "type": "array"
+          },
+          "verdict_args": {
+            "items": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Verdict Args",
+            "type": "array"
+          },
+          "verdict_from": {
+            "default": "file",
+            "enum": [
+              "structured_output",
+              "file"
+            ],
+            "title": "Verdict From",
             "type": "string"
           }
         },
@@ -3133,6 +3367,11 @@
             ],
             "title": "Agent"
           },
+          "check": {
+            "default": false,
+            "title": "Check",
+            "type": "boolean"
+          },
           "command": {
             "default": "",
             "title": "Command",
@@ -3212,6 +3451,17 @@
             "title": "Requires Repo",
             "type": "boolean"
           },
+          "resume": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume"
+          },
           "runtime": {
             "anyOf": [
               {
@@ -3228,6 +3478,13 @@
             "maximum": 21600.0,
             "minimum": 60.0,
             "title": "Timeout S",
+            "type": "integer"
+          },
+          "verdict_repairs": {
+            "default": 2,
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Verdict Repairs",
             "type": "integer"
           }
         },
@@ -3264,6 +3521,12 @@
               }
             ],
             "title": "Reason"
+          },
+          "round": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Round",
+            "type": "integer"
           },
           "status": {
             "enum": [
@@ -3328,6 +3591,7 @@
       },
       "StageRunInfo": {
         "additionalProperties": false,
+        "description": "One execution of a stage in a run, in execution order (`idx`). A stage in a loop block has\none per round it ran (`round`; 1 outside loops). `verdict`: a check's verdict in that round\n(null for other stages, and until it is known). A check that gave a valid verdict\n`succeeded`, even a \"fail\", except a \"fail\" in the block's last round: that one `failed` (the\nloop is lost there; the run's error says so).",
         "properties": {
           "exit_code": {
             "anyOf": [
@@ -3371,6 +3635,10 @@
             ],
             "title": "Reason"
           },
+          "round": {
+            "title": "Round",
+            "type": "integer"
+          },
           "stage_id": {
             "title": "Stage Id",
             "type": "string"
@@ -3397,13 +3665,30 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pass",
+                  "fail"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
           }
         },
         "required": [
           "stage_id",
           "name",
           "idx",
+          "round",
           "status",
+          "verdict",
           "exit_code",
           "reason",
           "started_at",
@@ -3412,11 +3697,24 @@
         "title": "StageRunInfo",
         "type": "object"
       },
+      "StageStartedData": {
+        "additionalProperties": false,
+        "properties": {
+          "round": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Round",
+            "type": "integer"
+          }
+        },
+        "title": "StageStartedData",
+        "type": "object"
+      },
       "StageStartedEvent": {
         "additionalProperties": false,
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/EmptyData"
+            "$ref": "#/components/schemas/StageStartedData"
           },
           "seq": {
             "minimum": 1.0,
@@ -4557,6 +4855,167 @@
         "title": "UserPatch",
         "type": "object"
       },
+      "VerdictData": {
+        "additionalProperties": false,
+        "description": "A check's verdict in a round (sent before its `stage_finished`). `repairs`: how many\nrepairs it took (0 = valid at once).",
+        "properties": {
+          "notes": {
+            "maxLength": 20000,
+            "title": "Notes",
+            "type": "string"
+          },
+          "repairs": {
+            "minimum": 0.0,
+            "title": "Repairs",
+            "type": "integer"
+          },
+          "round": {
+            "minimum": 1.0,
+            "title": "Round",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "structured_output",
+              "file",
+              "exit_code"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "pass",
+              "fail"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "round",
+          "verdict",
+          "notes",
+          "source",
+          "repairs"
+        ],
+        "title": "VerdictData",
+        "type": "object"
+      },
+      "VerdictEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VerdictData"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "const": "verdict",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "stage_id",
+          "type",
+          "data"
+        ],
+        "title": "VerdictEvent",
+        "type": "object"
+      },
+      "VerdictRepairData": {
+        "additionalProperties": false,
+        "description": "The check's verdict was invalid (`error` says why), so it is asked again: repair\n`attempt` (1-based) of the round.",
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "error": {
+            "maxLength": 2000,
+            "title": "Error",
+            "type": "string"
+          },
+          "round": {
+            "minimum": 1.0,
+            "title": "Round",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round",
+          "attempt",
+          "error"
+        ],
+        "title": "VerdictRepairData",
+        "type": "object"
+      },
+      "VerdictRepairEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VerdictRepairData"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "const": "verdict_repair",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "stage_id",
+          "type",
+          "data"
+        ],
+        "title": "VerdictRepairEvent",
+        "type": "object"
+      },
       "WarningData": {
         "additionalProperties": false,
         "properties": {
@@ -5243,6 +5702,8 @@
                         "log": "#/components/schemas/LogEvent",
                         "stage_finished": "#/components/schemas/StageFinishedEvent",
                         "stage_started": "#/components/schemas/StageStartedEvent",
+                        "verdict": "#/components/schemas/VerdictEvent",
+                        "verdict_repair": "#/components/schemas/VerdictRepairEvent",
                         "warning": "#/components/schemas/WarningEvent"
                       },
                       "propertyName": "type"
@@ -5259,6 +5720,12 @@
                       },
                       {
                         "$ref": "#/components/schemas/WarningEvent"
+                      },
+                      {
+                        "$ref": "#/components/schemas/VerdictEvent"
+                      },
+                      {
+                        "$ref": "#/components/schemas/VerdictRepairEvent"
                       }
                     ]
                   },

@@ -4,8 +4,17 @@ Single file, Python >= 3.11 standard library only (enforced by a test). Served b
 GET /api/worker/worker.py so runners always get the matching version. See SPEC §9.
 
 Flow: claim -> workspace (clone, or `git init` in no-repo mode) -> write the manifest files ->
-for each stage: run it, sync context files back, then (repo mode) commit, pre-push guard, push ->
-(repo mode) look up the branch's PR with `gh` -> flush events -> complete (with `pr_url` if found).
+emit the manifest's warnings -> for each stage execution: run it, sync context files back, then
+(repo mode) commit, pre-push guard, push -> (repo mode) look up the branch's PR with `gh` -> flush
+events -> complete (with `pr_url` if found).
+
+Loop blocks (`loops`): the block's stages run in rounds, at most `max_rounds`. Its checks decide
+each round, by code: a shell check by its exit code; an agent check by a JSON verdict
+({"verdict": "pass"|"fail", "notes"}) read from the CLI's result line or `.agentos/verdict.json`,
+checked by `verdict_error`, and repaired by resuming the check's session at most `verdict_repairs`
+times. Every check runs each round. No failing check ends the block; otherwise the next round's
+calls get the failing checks' notes appended. Still failing after the last round, or a check
+without a valid verdict, fails the run. The worker only appends text to prompts, never substitutes.
 
 Failure paths after the claim:
 - cancel (`{"cancel": true}` on an events post): kill the stage tree, still sync/commit/push,
@@ -43,6 +52,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -71,6 +81,14 @@ SHELL_LINE_BYTES = 8192  # line cap for every stream except agent-stage stdout
 MAX_PATH_CHARS = 255
 MAX_ERROR_CHARS = 2000
 CANCELLED = "cancelled"  # stage_finished reason for a plain cancel
+
+# Loop blocks and verdicts. `.agentos/` belongs to AgentOS: never committed, never synced.
+AGENTOS_DIR = ".agentos"
+VERDICT_FILE = ".agentos/verdict.json"  # where a `file`-channel check writes its verdict
+VERDICT_FILE_BYTES = 256 * 1024
+VERDICT_NOTES_MAX = 20_000  # agentos.models.VERDICT_NOTES_MAX
+SHELL_CHECK_LINES = 200  # a failing shell check's notes: at most this many last output lines
+FEEDBACK_MAX = 40_000  # the combined notes the next round's calls get
 
 # Tool caches nobody commits on purpose, added to .git/info/exclude so `git add -A` skips them
 # even when the target repo has no .gitignore. Exclude rules never touch tracked files, and the
@@ -218,8 +236,9 @@ def resolve_inside(root: Path, rel: str) -> tuple[Path, str | None]:
     return root.joinpath(*parts), None
 
 
-def read_regular(root: Path, rel: str) -> tuple[bytes | None, str | None]:
-    """(content, error) of a regular file. (None, None) when the file doesn't exist."""
+def read_regular(root: Path, rel: str, limit: int | None = None) -> tuple[bytes | None, str | None]:
+    """(content, error) of a regular file of at most `limit` bytes. (None, None) when the file
+    doesn't exist."""
     target, err = resolve_inside(root, rel)
     if err:
         return None, err
@@ -233,6 +252,8 @@ def read_regular(root: Path, rel: str) -> tuple[bytes | None, str | None]:
         return None, "is a symlink"
     if not stat.S_ISREG(st.st_mode):
         return None, "is not a regular file"
+    if limit is not None and st.st_size > limit:
+        return None, f"is over {limit} bytes"
     try:
         return target.read_bytes(), None
     except OSError as exc:
@@ -339,14 +360,45 @@ class ManifestFile:
 
 
 @dataclass(frozen=True)
+class Invocation:
+    """Another call of a loop stage's agent: a later round, or a verdict repair. The prompt is
+    `argv[prompt_arg]`, or `stdin` when `prompt_arg` is None."""
+
+    argv: tuple[str, ...]
+    stdin: str | None
+    prompt_arg: int | None
+    tail: str
+
+    def build(self, text: str) -> tuple[list[str], str | None]:
+        """(argv, stdin) with `text`, then `tail`, appended to the prompt. Nothing else changes."""
+        argv = list(self.argv)
+        if self.prompt_arg is None:
+            return argv, (self.stdin or "") + text + self.tail
+        argv[self.prompt_arg] += text + self.tail
+        return argv, None
+
+
+@dataclass(frozen=True)
 class ManifestStage:
     id: str
     name: str
     kind: str  # "agent" | "shell"
     timeout_s: int
-    argv: tuple[str, ...] | None
+    argv: tuple[str, ...] | None  # agent: round 1's call (with stdin), used exactly as given
     stdin: str | None
-    command: str | None
+    command: str | None  # shell: every round's call
+    check: bool = False  # in a loop block: the stage decides the round
+    rounds: tuple[Invocation, ...] = ()  # agent stages in a block: rounds 2..max_rounds
+    repairs: tuple[Invocation, ...] = ()  # agent checks: one repair call per round, or none
+    verdict_from: str | None = None  # agent checks: "structured_output" | "file"
+    verdict_repairs: int = 0  # agent checks: at most this many repairs per round
+
+
+@dataclass(frozen=True)
+class ManifestLoop:
+    start: str  # stage ids; the block is every stage from start to end
+    end: str
+    max_rounds: int
 
 
 @dataclass(frozen=True)
@@ -364,6 +416,9 @@ class Manifest:
     stages: tuple[ManifestStage, ...]
     max_file_bytes: int
     max_line_bytes: int
+    loops: tuple[ManifestLoop, ...] = ()
+    start_stage: str | None = None  # where round 1 starts; None = the first stage
+    warnings: tuple[str, ...] = ()  # emitted as warning events once the workspace is ready
 
 
 def _fields(
@@ -412,13 +467,102 @@ def _valid_path(value: object, where: str) -> str:
     return path
 
 
+# A stage's optional keys: its call, then the loop block ones.
+_STAGE_OPTIONAL = (
+    "argv",
+    "stdin",
+    "command",
+    "check",
+    "rounds",
+    "repairs",
+    "verdict_from",
+    "verdict_repairs",
+)
+
+
+def _argv(value: object, where: str) -> tuple[str, ...]:
+    return tuple(_str(a, f"{where}[{j}]") for j, a in enumerate(_list(value, where)))
+
+
+def _invocation(value: object, where: str) -> Invocation:
+    v = _fields(value, where, ("argv", "stdin", "prompt_arg", "tail"))
+    argv = _argv(v["argv"], f"{where}.argv")
+    if not argv:
+        raise ManifestError(f"{where}.argv: must not be empty")
+    stdin = _opt_str(v["stdin"], f"{where}.stdin")
+    raw_arg = v["prompt_arg"]
+    prompt_arg = None if raw_arg is None else _int(raw_arg, f"{where}.prompt_arg", 0)
+    if (stdin is None) == (prompt_arg is None):
+        raise ManifestError(f"{where}: exactly one of stdin and prompt_arg holds the prompt")
+    if prompt_arg is not None and prompt_arg >= len(argv):
+        raise ManifestError(f"{where}.prompt_arg: {prompt_arg} is past the end of argv")
+    return Invocation(argv, stdin, prompt_arg, _str(v["tail"], f"{where}.tail"))
+
+
+def _check_loop_stage(stage: ManifestStage, loop: ManifestLoop, where: str) -> None:
+    """A loop block stage's calls must cover every round (and every repair)."""
+    if stage.kind == "shell":
+        if stage.rounds or stage.repairs:
+            raise ManifestError(f"{where}: a shell stage takes no rounds or repairs")
+        return
+    if len(stage.rounds) != loop.max_rounds - 1:
+        raise ManifestError(
+            f"{where}.rounds: expected {loop.max_rounds - 1} (max_rounds - 1), "
+            f"got {len(stage.rounds)}"
+        )
+    if not stage.check:
+        if stage.repairs:
+            raise ManifestError(f"{where}.repairs: only an agent check is repaired")
+        return
+    if stage.verdict_from is None:
+        raise ManifestError(f"{where}.verdict_from: an agent check needs structured_output or file")
+    if len(stage.repairs) not in (0, loop.max_rounds):
+        raise ManifestError(
+            f"{where}.repairs: expected 0 or {loop.max_rounds} (max_rounds), "
+            f"got {len(stage.repairs)}"
+        )
+
+
+def _parse_loops(raw: object, stages: list[ManifestStage]) -> tuple[ManifestLoop, ...]:
+    """Loop blocks: known stage ids, in order, not overlapping; extras only on block stages."""
+    index = {s.id: i for i, s in enumerate(stages)}
+    loops: list[ManifestLoop] = []
+    covered: set[int] = set()
+    after = 0  # the first stage index the next block may start at
+    for i, item in enumerate(_list(raw, "loops")):
+        where = f"loops[{i}]"
+        f = _fields(item, where, ("start", "end", "max_rounds"))
+        loop = ManifestLoop(
+            start=_str(f["start"], f"{where}.start"),
+            end=_str(f["end"], f"{where}.end"),
+            max_rounds=_int(f["max_rounds"], f"{where}.max_rounds", 1),
+        )
+        for name, stage_id in (("start", loop.start), ("end", loop.end)):
+            if stage_id not in index:
+                raise ManifestError(f"{where}.{name}: no stage {stage_id!r}")
+        first, last = index[loop.start], index[loop.end]
+        if first > last:
+            raise ManifestError(f"{where}: start {loop.start!r} comes after end {loop.end!r}")
+        if first < after:
+            raise ManifestError(f"{where}: overlaps or comes before the previous loop")
+        after = last + 1
+        for j in range(first, last + 1):
+            _check_loop_stage(stages[j], loop, f"stages[{j}]")
+            covered.add(j)
+        loops.append(loop)
+    for j, stage in enumerate(stages):
+        if j not in covered and (stage.check or stage.rounds or stage.repairs):
+            raise ManifestError(f"stages[{j}]: check, rounds and repairs need a loop block")
+    return tuple(loops)
+
+
 def parse_manifest(raw: object) -> Manifest:
     """Validate a protocol v1 manifest by hand (mirrors agentos.models.Manifest, extra=forbid)."""
     m = _fields(
         raw,
         "manifest",
         ("run_id", "ticket", "workspace", "files", "sync_dirs", "stages", "limits"),
-        ("protocol",),
+        ("protocol", "loops", "start_stage", "warnings"),
     )
     protocol = m.get("protocol", PROTOCOL)
     if isinstance(protocol, bool) or protocol != PROTOCOL:
@@ -470,16 +614,12 @@ def parse_manifest(raw: object) -> Manifest:
     stages: list[ManifestStage] = []
     for i, item in enumerate(_list(m["stages"], "stages")):
         where = f"stages[{i}]"
-        s = _fields(item, where, ("id", "name", "kind", "timeout_s"), ("argv", "stdin", "command"))
+        s = _fields(item, where, ("id", "name", "kind", "timeout_s"), _STAGE_OPTIONAL)
         kind = _str(s["kind"], f"{where}.kind")
         if kind not in ("agent", "shell"):
             raise ManifestError(f"{where}.kind: expected agent or shell, got {kind!r}")
         raw_argv = s.get("argv")
-        argv = (
-            None
-            if raw_argv is None
-            else tuple(_str(a, f"{where}.argv[{j}]") for j, a in enumerate(_list(raw_argv, where)))
-        )
+        argv = None if raw_argv is None else _argv(raw_argv, f"{where}.argv")
         command = _opt_str(s.get("command"), f"{where}.command")
         if kind == "agent" and not argv:
             raise ManifestError(f"{where}: an agent stage needs a non-empty argv")
@@ -488,6 +628,23 @@ def parse_manifest(raw: object) -> Manifest:
         stage_id = _str(s["id"], f"{where}.id")
         if not stage_id:
             raise ManifestError(f"{where}.id: must not be empty")
+        if any(st.id == stage_id for st in stages):
+            raise ManifestError(f"{where}.id: duplicate stage id {stage_id!r}")
+        check = s.get("check", False)
+        if not isinstance(check, bool):
+            raise ManifestError(f"{where}.check: expected a boolean")
+        verdict_from = _opt_str(s.get("verdict_from"), f"{where}.verdict_from")
+        if verdict_from not in (None, "structured_output", "file"):
+            raise ManifestError(
+                f"{where}.verdict_from: expected structured_output or file, got {verdict_from!r}"
+            )
+        calls = {
+            name: tuple(
+                _invocation(x, f"{where}.{name}[{j}]")
+                for j, x in enumerate(_list(s.get(name, []), f"{where}.{name}"))
+            )
+            for name in ("rounds", "repairs")
+        }
         stages.append(
             ManifestStage(
                 id=stage_id,
@@ -497,8 +654,28 @@ def parse_manifest(raw: object) -> Manifest:
                 argv=argv,
                 stdin=_opt_str(s.get("stdin"), f"{where}.stdin"),
                 command=command,
+                check=check,
+                rounds=calls["rounds"],
+                repairs=calls["repairs"],
+                verdict_from=verdict_from,
+                verdict_repairs=_int(s.get("verdict_repairs", 0), f"{where}.verdict_repairs", 0),
             )
         )
+
+    loops = _parse_loops(m.get("loops", []), stages)
+    start_stage = _opt_str(m.get("start_stage"), "start_stage")
+    if start_stage is not None:
+        ids = [s.id for s in stages]
+        if start_stage not in ids:
+            raise ManifestError(f"start_stage: no stage {start_stage!r}")
+        at = ids.index(start_stage)
+        if at and not any(lp.start == ids[0] and at <= ids.index(lp.end) for lp in loops):
+            raise ManifestError(
+                "start_stage: must be the first stage, or in a loop block that starts there"
+            )
+    warnings = tuple(
+        _str(w, f"warnings[{i}]") for i, w in enumerate(_list(m.get("warnings", []), "warnings"))
+    )
 
     limits = _fields(m["limits"], "limits", ("max_file_bytes", "max_line_bytes"))
     return Manifest(
@@ -515,7 +692,101 @@ def parse_manifest(raw: object) -> Manifest:
         stages=tuple(stages),
         max_file_bytes=_int(limits["max_file_bytes"], "limits.max_file_bytes", 1),
         max_line_bytes=_int(limits["max_line_bytes"], "limits.max_line_bytes", 1),
+        loops=loops,
+        start_stage=start_stage,
+        warnings=warnings,
     )
+
+
+# ---------------------------------------------------------------- verdicts (loop block checks)
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """A check's valid verdict in one round."""
+
+    verdict: str  # "pass" | "fail"
+    notes: str
+
+
+def _json_type(value: object) -> str:
+    if value is None:
+        return "null"
+    for kind, name in ((bool, "boolean"), (str, "string"), (list, "array"), (dict, "object")):
+        if isinstance(value, kind):
+            return name
+    return "number" if isinstance(value, int | float) else type(value).__name__
+
+
+def verdict_error(value: object) -> str | None:
+    """Why `value` is not a valid verdict, or None. The shape is agentos.models.VERDICT_SCHEMA
+    ({"verdict": "pass"|"fail", "notes": str}, nothing else), plus the notes rules."""
+    if not isinstance(value, dict):
+        return f"expected a JSON object, got {_json_type(value)}"
+    for key in ("verdict", "notes"):
+        if key not in value:
+            return f"missing key: {key}"
+    extra = sorted(str(k) for k in value if k not in ("verdict", "notes"))
+    if extra:
+        return f"unexpected key: {extra[0]}"
+    verdict, notes = value["verdict"], value["notes"]
+    if not isinstance(verdict, str) or verdict not in ("pass", "fail"):
+        return f'verdict: expected "pass" or "fail", got {_clip(json.dumps(verdict), 100)}'
+    if not isinstance(notes, str):
+        return f"notes: expected a string, got {_json_type(notes)}"
+    if len(notes) > VERDICT_NOTES_MAX:
+        return f"notes: longer than {VERDICT_NOTES_MAX} characters"
+    if verdict == "fail" and not notes.strip():
+        return 'notes: must not be empty when the verdict is "fail"'
+    return None
+
+
+def result_verdict(result: dict[str, Any] | None) -> tuple[Any, str | None]:
+    """(value, error): the `structured_output` of a CLI's last stream-json result line."""
+    if result is None:
+        return None, "the CLI printed no result line"
+    value = result.get("structured_output")
+    if value is None:
+        subtype = result.get("subtype")
+        detail = f" (subtype: {_clip(str(subtype), 100)})" if subtype else ""
+        return None, f"the CLI's result has no structured_output{detail}"
+    return value, None
+
+
+def file_verdict(root: Path) -> tuple[Any, str | None]:
+    """(value, error): the JSON in the workspace's verdict file (a regular file, no symlinks)."""
+    data, err = read_regular(root, VERDICT_FILE, limit=VERDICT_FILE_BYTES)
+    if err:
+        return None, f"{VERDICT_FILE}: {err}"
+    if data is None:
+        return None, f"{VERDICT_FILE} was not written"
+    text = _decode(data)
+    if text is None:
+        return None, f"{VERDICT_FILE} is not valid UTF-8"
+    try:
+        return json.loads(text.removeprefix("\ufeff")), None
+    except (ValueError, RecursionError) as exc:
+        return None, f"{VERDICT_FILE} is not valid JSON: {exc}"
+
+
+def shell_verdict(code: int, lines: list[str]) -> Verdict:
+    """A shell check's verdict: exit 0 passes; otherwise the end of its output is the notes."""
+    if code == 0:
+        return Verdict("pass", "")
+    output = "\n".join(lines[-SHELL_CHECK_LINES:])
+    if not output.strip():
+        return Verdict("fail", f"Exited with code {code} (no output).")
+    head = f"Exited with code {code}. The last lines of its output:\n"
+    return Verdict("fail", head + output[len(head) - VERDICT_NOTES_MAX :])
+
+
+def combine_feedback(failing: list[tuple[str, str]]) -> str:
+    """The (stage name, notes) of a round's failing checks, as the next round's feedback."""
+    text = "\n\n".join(f"### {name}\n{notes.strip()}" for name, notes in failing)
+    if len(text) <= FEEDBACK_MAX:
+        return text
+    marker = "\n[truncated]"
+    return text[: FEEDBACK_MAX - len(marker)] + marker
 
 
 # ---------------------------------------------------------------- HTTP
@@ -1237,7 +1508,12 @@ class Run:
         self.start_head = ""
         self.pushed_head = ""
         self.current_stage: str | None = None
-        self.protected = [*dict.fromkeys(f.path for f in manifest.files), *manifest.sync_dirs]
+        self.index = {s.id: i for i, s in enumerate(manifest.stages)}
+        self.protected = [
+            *dict.fromkeys(f.path for f in manifest.files),
+            *manifest.sync_dirs,
+            AGENTOS_DIR,
+        ]
         self._protected_lower = [p.lower() for p in self.protected]
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
@@ -1283,16 +1559,60 @@ class Run:
         if self.repo:
             self._protect()
         self.ready = True
-        for stage in self.m.stages:
-            self.events.check()
-            if self.events.cancel.is_set():
-                return self._finish("cancelled", stage.id, None)
-            status, reason = self._run_stage(stage)
-            if status != "succeeded":
-                # A plain cancel is not an error; a cancel whose after-stage steps failed is.
-                error = None if reason == CANCELLED else reason
-                return self._finish(status, stage.id, error)
+        for message in self.m.warnings:
+            self.events.warn(None, message)
+        stages = self.m.stages
+        blocks = {self.index[loop.start]: loop for loop in self.m.loops}
+        entry = self.index[self.m.start_stage] if self.m.start_stage else 0
+        i = 0
+        while i < len(stages):
+            loop = blocks.get(i)
+            if loop is None:
+                done, _ = self._step(stages[i], 1, None, "")
+                i += 1
+            else:
+                last = self.index[loop.end]
+                done = self._run_loop(loop, i, last, entry if i <= entry <= last else i)
+                i = last + 1
+            if done is not None:
+                return done
         return self._finish("completed", None, None)
+
+    def _run_loop(self, loop: ManifestLoop, first: int, last: int, entry: int) -> int | None:
+        """Run a loop block in rounds until no check fails. Round 1 starts at `entry`, later
+        rounds at the block start. The finished run's exit code, or None to carry on after it."""
+        feedback = ""
+        for round_ in range(1, loop.max_rounds + 1):
+            failing: list[tuple[ManifestStage, str]] = []
+            for stage in self.m.stages[(entry if round_ == 1 else first) : last + 1]:
+                done, verdict = self._step(stage, round_, loop, feedback)
+                if done is not None:
+                    return done
+                if verdict is not None and verdict.verdict == "fail":
+                    failing.append((stage, verdict.notes))
+            if not failing:
+                return None
+            n = loop.max_rounds
+            if round_ == n:
+                error = f"Checks still failing after {n} round{'s' if n != 1 else ''}"
+                return self._finish("failed", failing[0][0].id, error)
+            feedback = combine_feedback([(stage.name, notes) for stage, notes in failing])
+            say(f"round {round_} of {n}: {len(failing)} check(s) failed, going round again")
+        return None
+
+    def _step(
+        self, stage: ManifestStage, round_: int, loop: ManifestLoop | None, feedback: str
+    ) -> tuple[int | None, Verdict | None]:
+        """One stage execution. (exit code, None) once the run is finished, else (None, the
+        check's verdict if it gave one)."""
+        self.events.check()
+        if self.events.cancel.is_set():
+            return self._finish("cancelled", stage.id, None), None
+        status, reason, verdict = self._run_stage(stage, round_, loop, feedback)
+        if verdict is None and status != "succeeded":
+            # A plain cancel is not an error; a cancel whose after-stage steps failed is.
+            return self._finish(status, stage.id, None if reason == CANCELLED else reason), None
+        return None, verdict
 
     def _finish(self, status: str, failed_stage: str | None, error: str | None) -> int:
         pr_url = self._find_pr()
@@ -1372,7 +1692,7 @@ class Run:
                 self.events.warn(None, f"skipped {f.path}: {problem}")
 
     def _protect(self) -> None:
-        """Keep manifest files and sync dirs out of `git add` (SPEC §9.3 git protection)."""
+        """Keep manifest files, sync dirs and `.agentos/` out of `git add` (SPEC §9.3)."""
         r = self._git("ls-files", "-z")
         if r.code:
             self.events.warn(None, f"git ls-files failed: {r.tail()}")
@@ -1405,20 +1725,33 @@ class Run:
             info.mkdir(parents=True, exist_ok=True)
             with (info / "exclude").open("ab") as fh:
                 fh.write(
-                    f"\n# agentos context files\n{lines}# agentos build caches\n{junk}".encode()
+                    f"\n# agentos context files\n{lines}/{AGENTOS_DIR}/\n"
+                    f"# agentos build caches\n{junk}".encode()
                 )
         except OSError as exc:
             self.events.warn(None, f"cannot write .git/info/exclude: {exc}")
 
     # ------------------------------------------------------------ stages (SPEC §9.3)
 
-    def _run_stage(self, stage: ManifestStage) -> tuple[str, str | None]:
+    def _run_stage(
+        self, stage: ManifestStage, round_: int, loop: ManifestLoop | None, feedback: str
+    ) -> tuple[str, str | None, Verdict | None]:
+        """One stage execution: its call(s), then the after-stage steps. (status, reason, the
+        check's verdict); the verdict is dropped when the after-stage steps fail the stage."""
         self.current_stage = stage.id
-        say(f"stage {stage.id} ({stage.kind}) started")
-        self.events.emit("stage_started", stage.id, {})
-        status, exit_code, reason = self._exec_stage(stage)
+        label = f", round {round_} of {loop.max_rounds}" if loop else ""
+        say(f"stage {stage.id} ({stage.kind}) started{label}")
+        self.events.emit("stage_started", stage.id, {"round": round_})
+        verdict: Verdict | None = None
+        if loop is not None and stage.check:
+            status, exit_code, reason, verdict = self._exec_check(
+                stage, round_, loop.max_rounds, feedback
+            )
+        else:
+            status, exit_code, reason = self._exec(stage, *self._call(stage, round_, feedback))
         problem = self._after_stage(stage.id)
         if problem:
+            verdict = None
             if status == "succeeded":
                 status, reason = "failed", problem
             else:
@@ -1427,19 +1760,25 @@ class Run:
         self.events.emit(
             "stage_finished",
             stage.id,
-            {"status": status, "exit_code": exit_code, "reason": reason},
+            {"status": status, "exit_code": exit_code, "reason": reason, "round": round_},
         )
         say(f"stage {stage.id} {status}" + (f": {reason}" if reason else ""))
-        return status, reason
+        return status, reason, verdict
 
-    def _resolve(self, stage: ManifestStage) -> tuple[list[str], str | None]:
-        if stage.kind == "agent":
-            argv = list(stage.argv or ())
-        else:
-            argv = [*shell_prefix(), stage.command or ""]
+    def _call(
+        self, stage: ManifestStage, round_: int, feedback: str
+    ) -> tuple[list[str], str | None]:
+        """(argv, stdin) of `stage` in `round_`: round 1 as given, later rounds with feedback."""
+        if stage.kind == "shell":
+            return [*shell_prefix(), stage.command or ""], None
+        if round_ == 1:
+            return list(stage.argv or ()), stage.stdin
+        return stage.rounds[round_ - 2].build(feedback)
+
+    def _resolve(self, kind: str, argv: list[str]) -> tuple[list[str], str | None]:
         program = shutil.which(argv[0], path=self.stage_env.get("PATH"))
         if program is None:
-            what = "program" if stage.kind == "agent" else "shell (set AGENTOS_SHELL)"
+            what = "program" if kind == "agent" else "shell (set AGENTOS_SHELL)"
             return [], f"{what} not found: {argv[0]}"
         if os.name == "nt":
             problem = cmd_guard_error(program, argv)
@@ -1454,21 +1793,31 @@ class Run:
             return "cancel"
         return None
 
-    def _exec_stage(self, stage: ManifestStage) -> tuple[str, int | None, str | None]:
-        argv, problem = self._resolve(stage)
+    def _exec(
+        self,
+        stage: ManifestStage,
+        argv: list[str],
+        stdin: str | None,
+        collect: OnLine | None = None,
+    ) -> tuple[str, int | None, str | None]:
+        """One call of `stage`; its output goes out as log events (and to `collect`). The exit
+        code is None when the call didn't run to its end (not started, timeout, cancel)."""
+        argv, problem = self._resolve(stage.kind, argv)
         if problem:
             return "failed", None, problem
         stage_id = stage.id
 
         def on_line(stream: str, text: str, truncated: bool) -> None:
             self.events.log(stage_id, stream, text, truncated)
+            if collect is not None:
+                collect(stream, text, truncated)
 
         short = min(SHELL_LINE_BYTES, self.m.max_line_bytes)
         result = run_process(
             argv,
             cwd=self.workdir,
             env=self.stage_env,
-            stdin=stage.stdin if stage.kind == "agent" else None,
+            stdin=stdin,
             timeout_s=stage.timeout_s,
             caps=(self.m.max_line_bytes if stage.kind == "agent" else short, short),
             on_line=on_line,
@@ -1485,6 +1834,121 @@ class Run:
         if result.exit_code == 0:
             return "succeeded", 0, None
         return "failed", result.exit_code, f"exited with code {result.exit_code}"
+
+    # ------------------------------------------------------------ loop block checks
+
+    def _exec_check(
+        self, stage: ManifestStage, round_: int, max_rounds: int, feedback: str
+    ) -> tuple[str, int | None, str | None, Verdict | None]:
+        """A check's call(s) and verdict: (status, exit code, reason, verdict). No verdict means
+        the stage failed or was cancelled: an invalid verdict is never a pass, nor a fail."""
+        argv, stdin = self._call(stage, round_, feedback)
+        if stage.kind == "shell":
+            lines: deque[str] = deque(maxlen=SHELL_CHECK_LINES)
+            status, code, reason = self._exec(stage, argv, stdin, lambda _s, t, _c: lines.append(t))
+            if code is None:
+                return status, None, reason, None
+            verdict = shell_verdict(code, list(lines))
+            return self._decided(stage, round_, max_rounds, verdict, "exit_code", 0, code)
+        attempt, error = 0, ""
+        while True:
+            status, code, reason, found = self._verdict_call(stage, argv, stdin)
+            if code is None:  # not started, timed out or cancelled: never repaired
+                return status, None, reason, None
+            if isinstance(found, Verdict):
+                source = stage.verdict_from or "file"
+                return self._decided(stage, round_, max_rounds, found, source, attempt, code)
+            error = _clip(found)
+            if not stage.repairs or attempt >= stage.verdict_repairs:
+                break
+            attempt += 1
+            say(f"stage {stage.id}: invalid verdict ({error}), repair {attempt}")
+            data = {"round": round_, "attempt": attempt, "error": error}
+            self.events.emit("verdict_repair", stage.id, data)
+            self.events.check()
+            if self.events.cancel.is_set():
+                return "cancelled", code, CANCELLED, None
+            argv, stdin = stage.repairs[round_ - 1].build(error)
+        if stage.repairs and stage.verdict_repairs:
+            after = f" after {attempt} repair{'s' if attempt != 1 else ''}"
+        else:
+            after = ""
+        return "failed", code, f"{stage.name} gave no valid verdict{after}: {error}", None
+
+    def _verdict_call(
+        self, stage: ManifestStage, argv: list[str], stdin: str | None
+    ) -> tuple[str, int | None, str | None, Verdict | str]:
+        """One call of an agent check, and its valid verdict or why there is none. The status and
+        reason are the call's, for when it didn't run to its end (exit code None)."""
+        from_file = stage.verdict_from != "structured_output"
+        if from_file:
+            self._clear_verdict(stage.id)
+        results: list[dict[str, Any]] = []  # the last result line only
+
+        def collect(stream: str, text: str, truncated: bool) -> None:
+            if stream == "stdout" and not truncated and text.startswith("{"):
+                with contextlib.suppress(ValueError, RecursionError):
+                    line = json.loads(text)
+                    if isinstance(line, dict) and line.get("type") == "result":
+                        results[:] = [line]
+
+        status, code, reason = self._exec(stage, argv, stdin, None if from_file else collect)
+        if code is None:
+            return status, None, reason, ""
+        if code != 0:
+            return status, code, reason, f"exited with code {code}"
+        if from_file:
+            value, error = file_verdict(self.workdir)
+        else:
+            value, error = result_verdict(results[-1] if results else None)
+        error = error or verdict_error(value)
+        return status, code, reason, error or Verdict(value["verdict"], value["notes"])
+
+    def _clear_verdict(self, stage_id: str) -> None:
+        """Delete the verdict file (and make `.agentos/`), so a stale verdict is never read."""
+        target, err = resolve_inside(self.workdir, VERDICT_FILE)
+        if err is None:
+            try:
+                target.parent.mkdir(exist_ok=True)
+                target.unlink(missing_ok=True)
+            except OSError as exc:
+                err = exc.strerror or str(exc)
+        if err:
+            self.events.warn(stage_id, f"cannot clear {VERDICT_FILE}: {err}")
+
+    def _decided(
+        self,
+        stage: ManifestStage,
+        round_: int,
+        max_rounds: int,
+        verdict: Verdict,
+        source: str,
+        repairs: int,
+        code: int,
+    ) -> tuple[str, int | None, str | None, Verdict | None]:
+        """Emit a check's valid verdict. A "fail" fails the stage only in the last round (the
+        board blames that check); either way the round's other checks still run."""
+        self.events.emit(
+            "verdict",
+            stage.id,
+            {
+                "round": round_,
+                "verdict": verdict.verdict,
+                "notes": verdict.notes,
+                "source": source,
+                "repairs": repairs,
+            },
+        )
+        if verdict.verdict == "pass":
+            return "succeeded", code, None, verdict
+        if round_ < max_rounds:
+            return "succeeded", code, f"verdict: fail (round {round_} of {max_rounds})", verdict
+        return (
+            "failed",
+            code,
+            f"verdict: fail in the last round ({round_} of {max_rounds})",
+            verdict,
+        )
 
     # ------------------------------------------------------------ after each stage (SPEC §9.4)
 

@@ -190,7 +190,7 @@ def test_events_are_idempotent_and_move_stage_runs(
     assert [s.status for s in detail.stage_runs[1:]] == ["pending", "pending"]
     events = runs.client.get(f"/api/runs/{worker.run_id}/events").json()
     assert [e["seq"] for e in events] == [1, 2, 3, 4]  # the unknown stage's event is kept
-    assert events[2]["data"] == {"status": "failed", "exit_code": 2, "reason": None}
+    assert events[2]["data"] == {"status": "failed", "exit_code": 2, "reason": None, "round": 1}
 
 
 def test_stage_times_come_from_events_capped_at_now(ticket: TicketDetail, runs: RunDriver) -> None:

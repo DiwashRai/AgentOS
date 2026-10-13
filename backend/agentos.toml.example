@@ -5,9 +5,11 @@
 # seed them. After that it is ignored (the server logs a warning while it's still there): delete
 # it. Every table is optional. Top-level keys (default_runtime) must stay above the first table.
 
-# Settings > Runners (runtimes): argv templates; placeholders replace whole elements, no shell.
-# default_runtime is listed first (the server default); without it, the first table is. Without
-# any [runtimes.*], these two built-ins seed:
+# Settings > Runners (runtimes): argv templates; placeholders replace whole elements (except
+# {session}, which may be part of one), no shell. default_runtime is listed first (the server
+# default); without it, the first table is. session_args / resume_args / verdict_args /
+# verdict_from serve loop blocks (sessions, and where a check's verdict is read). Without any
+# [runtimes.*], these two built-ins seed:
 # default_runtime = "claude"
 # [runtimes.claude]
 # argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"]
@@ -15,6 +17,10 @@
 # effort_args = ["--effort", "{effort}"]
 # agent_args = ["--agent", "{agent}"]
 # prompt_via = "stdin"
+# session_args = ["--session-id", "{session}"]
+# resume_args = ["--resume", "{session}"]
+# verdict_args = ["--json-schema", "{verdict_schema}"]
+# verdict_from = "structured_output"
 # [runtimes.copilot]
 # argv = ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json"]
 # model_args = ["--model", "{model}"]
@@ -22,6 +28,9 @@
 # agent_args = ["--agent", "{agent}"]
 # prompt_via = "arg"
 # prompt_args = ["-p", "{prompt}"]
+# session_args = ["--resume={session}"]
+# resume_args = ["--resume={session}"]
+# verdict_from = "file"
 
 # Settings > Space. Zero [[repos]] is valid (no-repo tickets only).
 # [space]

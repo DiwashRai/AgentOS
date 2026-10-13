@@ -11,12 +11,13 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentos.models import RUNTIME_NAME_PATTERN, TemplateDefaults
+from agentos.models import RUNTIME_NAME_PATTERN, TemplateDefaults, VerdictFrom
 
 
 class RuntimeSpec(BaseModel):
-    """One runtime's argv template. Placeholders (`{model}`, `{effort}`, `{agent}`, `{prompt}`)
-    replace whole argv elements; optional groups are omitted when their value is null."""
+    """One runtime's argv template. Placeholders (`{model}`, `{effort}`, `{agent}`,
+    `{verdict_schema}`, `{prompt}`) replace whole argv elements; `{session}` may be part of one.
+    Optional groups are omitted when their value is null (see `RuntimeEntry` for the order)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -26,19 +27,42 @@ class RuntimeSpec(BaseModel):
     agent_args: list[str] = Field(default_factory=list)
     prompt_via: Literal["stdin", "arg"] = "stdin"
     prompt_args: list[str] = Field(default_factory=list)
+    session_args: list[str] = Field(default_factory=list)
+    resume_args: list[str] = Field(default_factory=list)
+    verdict_args: list[str] = Field(default_factory=list)
+    verdict_from: VerdictFrom = "file"
 
     @model_validator(mode="after")
     def _prompt_args_match_prompt_via(self) -> Self:
         if not self.argv[0].strip():
             raise ValueError("argv: the first element (the program) must not be blank")
-        groups = (self.argv, self.model_args, self.effort_args, self.agent_args, self.prompt_args)
+        groups = (
+            self.argv,
+            self.model_args,
+            self.effort_args,
+            self.agent_args,
+            self.prompt_args,
+            self.session_args,
+            self.resume_args,
+            self.verdict_args,
+        )
         if any("\x00" in arg for group in groups for arg in group):
             raise ValueError("arguments must not contain NUL characters")
-        if self.prompt_via == "arg" and "{prompt}" not in self.prompt_args:
-            raise ValueError('prompt_via = "arg" needs prompt_args containing "{prompt}"')
+        if self.prompt_via == "arg" and self.prompt_args.count("{prompt}") != 1:
+            raise ValueError('prompt_via = "arg" needs prompt_args containing "{prompt}" once')
         if self.prompt_via == "stdin" and self.prompt_args:
             raise ValueError('prompt_args are only used with prompt_via = "arg"')
+        for name, group in (("session_args", self.session_args), ("resume_args", self.resume_args)):
+            if group and not any("{session}" in arg for arg in group):
+                raise ValueError(f'{name} must contain "{{session}}"')
+        if self.verdict_from == "structured_output" and not self.verdict_args:
+            raise ValueError('verdict_from = "structured_output" needs verdict_args')
         return self
+
+    @property
+    def sessions(self) -> bool:
+        """Whether a stage can start a session with a known id and resume it later."""
+        return bool(self.session_args and self.resume_args)
 
 
 class NamedRuntime(RuntimeSpec):
@@ -102,6 +126,10 @@ BUILTIN_RUNTIMES: tuple[NamedRuntime, ...] = (
         effort_args=["--effort", "{effort}"],
         agent_args=["--agent", "{agent}"],
         prompt_via="stdin",
+        session_args=["--session-id", "{session}"],
+        resume_args=["--resume", "{session}"],
+        verdict_args=["--json-schema", "{verdict_schema}"],
+        verdict_from="structured_output",
     ),
     NamedRuntime(
         name="copilot",
@@ -111,6 +139,11 @@ BUILTIN_RUNTIMES: tuple[NamedRuntime, ...] = (
         agent_args=["--agent", "{agent}"],
         prompt_via="arg",
         prompt_args=["-p", "{prompt}"],
+        # Copilot CLI 1.0.32: `--resume=<uuid>` starts a new session under an unknown uuid. It has
+        # no schema flag, so a check writes its verdict to the file.
+        session_args=["--resume={session}"],
+        resume_args=["--resume={session}"],
+        verdict_from="file",
     ),
 )
 
