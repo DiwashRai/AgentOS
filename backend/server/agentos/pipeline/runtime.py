@@ -15,13 +15,14 @@ from agentos.models import RUNTIME_NAME_PATTERN, TemplateDefaults
 
 
 class RuntimeSpec(BaseModel):
-    """One runtime's argv template. Placeholders (`{model}`, `{agent}`, `{prompt}`) replace whole
-    argv elements; optional groups are omitted when their value is null."""
+    """One runtime's argv template. Placeholders (`{model}`, `{effort}`, `{agent}`, `{prompt}`)
+    replace whole argv elements; optional groups are omitted when their value is null."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     argv: list[str] = Field(min_length=1)
     model_args: list[str] = Field(default_factory=list)
+    effort_args: list[str] = Field(default_factory=list)
     agent_args: list[str] = Field(default_factory=list)
     prompt_via: Literal["stdin", "arg"] = "stdin"
     prompt_args: list[str] = Field(default_factory=list)
@@ -30,7 +31,7 @@ class RuntimeSpec(BaseModel):
     def _prompt_args_match_prompt_via(self) -> Self:
         if not self.argv[0].strip():
             raise ValueError("argv: the first element (the program) must not be blank")
-        groups = (self.argv, self.model_args, self.agent_args, self.prompt_args)
+        groups = (self.argv, self.model_args, self.effort_args, self.agent_args, self.prompt_args)
         if any("\x00" in arg for group in groups for arg in group):
             raise ValueError("arguments must not contain NUL characters")
         if self.prompt_via == "arg" and "{prompt}" not in self.prompt_args:
@@ -98,6 +99,7 @@ BUILTIN_RUNTIMES: tuple[NamedRuntime, ...] = (
             "bypassPermissions",
         ],
         model_args=["--model", "{model}"],
+        effort_args=["--effort", "{effort}"],
         agent_args=["--agent", "{agent}"],
         prompt_via="stdin",
     ),
@@ -105,6 +107,7 @@ BUILTIN_RUNTIMES: tuple[NamedRuntime, ...] = (
         name="copilot",
         argv=["copilot", "--allow-all", "--no-ask-user", "--output-format", "json"],
         model_args=["--model", "{model}"],
+        effort_args=["--effort", "{effort}"],
         agent_args=["--agent", "{agent}"],
         prompt_via="arg",
         prompt_args=["-p", "{prompt}"],
@@ -113,15 +116,21 @@ BUILTIN_RUNTIMES: tuple[NamedRuntime, ...] = (
 
 
 class SpaceDefaults(BaseModel):
-    """The effective defaults for an agent stage whose `runtime` / `model` is null."""
+    """The effective defaults for an agent stage whose `runtime` / `model` / `effort` is null."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     runtime: str
     model: str | None
+    effort: str | None
 
 
 def space_defaults(defaults: TemplateDefaults, runtimes: RuntimesConfig) -> SpaceDefaults:
-    """The template's defaults, falling back to the server default runtime and to no model (the
-    runtime CLI's own default). The one place this chain lives: manifests and AppConfig."""
-    return SpaceDefaults(runtime=defaults.runtime or runtimes.default_runtime, model=defaults.model)
+    """The template's defaults, falling back to the server default runtime and to no model or
+    effort (the runtime CLI's own default). The one place this chain lives: manifests and
+    AppConfig."""
+    return SpaceDefaults(
+        runtime=defaults.runtime or runtimes.default_runtime,
+        model=defaults.model,
+        effort=defaults.effort,
+    )

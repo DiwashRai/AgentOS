@@ -148,6 +148,8 @@ class AppConfig(ApiModel):
     # (`server_default_runtime`) / no model (the runtime CLI's own default; no `--model` is passed).
     default_runtime: str
     default_model: str | None
+    # The Space default effort (the template's `defaults.effort`; null = none: no effort flag).
+    default_effort: str | None
     # The server default runtime (the first in Settings > Runners): what `default_runtime` falls
     # back to when the template sets no Space runtime (whatever the template says).
     server_default_runtime: str
@@ -204,6 +206,8 @@ class FileEntry(ApiModel):
 
 # A model name becomes one argv element: no whitespace or control characters.
 MODEL_PATTERN = r"^[A-Za-z0-9._:/-]{1,100}$"
+# An effort level, also one argv element: a free per-CLI token (Claude: low|medium|high|...).
+EFFORT_PATTERN = r"^[A-Za-z0-9._-]{1,32}$"
 
 
 class Stage(ApiModel):
@@ -223,6 +227,9 @@ class Stage(ApiModel):
     runtime: str | None = None
     agent: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:/-]{1,100}$")
     model: str | None = Field(default=None, pattern=MODEL_PATTERN)
+    # null = the Space default effort (on the Space runtime only, like `model`), else no flag. A
+    # runtime without `effort_args` passes none. Shell stages ignore `model` and `effort`.
+    effort: str | None = Field(default=None, pattern=EFFORT_PATTERN)
     command: str = ""
     timeout_s: int = Field(default=3600, ge=60, le=21600)
 
@@ -234,12 +241,13 @@ class Pipeline(ApiModel):
 
 class TemplateDefaults(ApiModel):
     """The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's
-    own `runtime` / `model` wins; unset here → the server default runtime (the first in
-    Settings > Runners) / no model. `runtime` must be a configured runtime (422
-    `validation_error`)."""
+    own `runtime` / `model` / `effort` wins; unset here → the server default runtime (the first in
+    Settings > Runners) / no model / no effort. `runtime` must be a configured runtime (422
+    `validation_error`). `model` and `effort` apply only to stages on the Space runtime."""
 
     runtime: str | None = None
     model: str | None = Field(default=None, pattern=MODEL_PATTERN)
+    effort: str | None = Field(default=None, pattern=EFFORT_PATTERN)
 
 
 class Template(ApiModel):
@@ -724,14 +732,17 @@ RuntimeArgs = Annotated[
 
 class RuntimeEntry(ApiModel):
     """One agent runtime: how a stage's argv is built (SPEC §7). `argv`, then `model_args` when a
-    model resolves, `agent_args` when the stage names an agent, then `prompt_args` when
-    `prompt_via` is "arg" (else the prompt is the stdin). The placeholders `{model}`, `{agent}`
-    and `{prompt}` replace whole elements; no shell is involved. `prompt_via: "arg"` needs
-    `prompt_args` containing "{prompt}"; "stdin" takes no `prompt_args`."""
+    model resolves, `effort_args` when an effort resolves, `agent_args` when the stage names an
+    agent, then `prompt_args` when `prompt_via` is "arg" (else the prompt is the stdin). The
+    placeholders `{model}`, `{effort}`, `{agent}` and `{prompt}` replace whole elements; no shell
+    is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then ignored).
+    `prompt_via: "arg"` needs `prompt_args` containing "{prompt}"; "stdin" takes no
+    `prompt_args`."""
 
     name: str = Field(pattern=RUNTIME_NAME_PATTERN)
     argv: RuntimeArgs = Field(min_length=1)
     model_args: RuntimeArgs
+    effort_args: RuntimeArgs = Field(default_factory=list)
     agent_args: RuntimeArgs
     prompt_via: Literal["stdin", "arg"]
     prompt_args: RuntimeArgs

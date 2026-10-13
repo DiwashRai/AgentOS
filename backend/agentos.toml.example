@@ -12,11 +12,13 @@
 # [runtimes.claude]
 # argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"]
 # model_args = ["--model", "{model}"]
+# effort_args = ["--effort", "{effort}"]
 # agent_args = ["--agent", "{agent}"]
 # prompt_via = "stdin"
 # [runtimes.copilot]
 # argv = ["copilot", "--allow-all", "--no-ask-user", "--output-format", "json"]
 # model_args = ["--model", "{model}"]
+# effort_args = ["--effort", "{effort}"]
 # agent_args = ["--agent", "{agent}"]
 # prompt_via = "arg"
 # prompt_args = ["-p", "{prompt}"]

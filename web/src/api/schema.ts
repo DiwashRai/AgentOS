@@ -734,6 +734,8 @@ export interface components {
              * @enum {string}
              */
             auth_mode: "dev" | "jira";
+            /** Default Effort */
+            default_effort: string | null;
             /** Default Model */
             default_model: string | null;
             /** Default Repo */
@@ -1714,16 +1716,20 @@ export interface components {
         /**
          * RuntimeEntry
          * @description One agent runtime: how a stage's argv is built (SPEC §7). `argv`, then `model_args` when a
-         *     model resolves, `agent_args` when the stage names an agent, then `prompt_args` when
-         *     `prompt_via` is "arg" (else the prompt is the stdin). The placeholders `{model}`, `{agent}`
-         *     and `{prompt}` replace whole elements; no shell is involved. `prompt_via: "arg"` needs
-         *     `prompt_args` containing "{prompt}"; "stdin" takes no `prompt_args`.
+         *     model resolves, `effort_args` when an effort resolves, `agent_args` when the stage names an
+         *     agent, then `prompt_args` when `prompt_via` is "arg" (else the prompt is the stdin). The
+         *     placeholders `{model}`, `{effort}`, `{agent}` and `{prompt}` replace whole elements; no shell
+         *     is involved. Empty `effort_args` = the runtime has no effort flag (an effort is then ignored).
+         *     `prompt_via: "arg"` needs `prompt_args` containing "{prompt}"; "stdin" takes no
+         *     `prompt_args`.
          */
         RuntimeEntry: {
             /** Agent Args */
             agent_args: string[];
             /** Argv */
             argv: string[];
+            /** Effort Args */
+            effort_args?: string[];
             /** Model Args */
             model_args: string[];
             /** Name */
@@ -1832,6 +1838,8 @@ export interface components {
              * @default
              */
             command: string;
+            /** Effort */
+            effort?: string | null;
             /**
              * Enabled
              * @default true
@@ -2009,11 +2017,13 @@ export interface components {
         /**
          * TemplateDefaults
          * @description The Space-wide defaults for agent stages, as the admin set them (null = not set). A stage's
-         *     own `runtime` / `model` wins; unset here → the server default runtime (the first in
-         *     Settings > Runners) / no model. `runtime` must be a configured runtime (422
-         *     `validation_error`).
+         *     own `runtime` / `model` / `effort` wins; unset here → the server default runtime (the first in
+         *     Settings > Runners) / no model / no effort. `runtime` must be a configured runtime (422
+         *     `validation_error`). `model` and `effort` apply only to stages on the Space runtime.
          */
         TemplateDefaults: {
+            /** Effort */
+            effort?: string | null;
             /** Model */
             model?: string | null;
             /** Runtime */

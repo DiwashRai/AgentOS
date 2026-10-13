@@ -33,6 +33,7 @@ def app_config(ctx: Ctx) -> AppConfig:
         runtimes=sorted(runtimes.runtimes),
         default_runtime=defaults.runtime,
         default_model=defaults.model,
+        default_effort=defaults.effort,
         server_default_runtime=runtimes.default_runtime,
         sources=["jira"] if ctx.jira_source is not None else [],
     )

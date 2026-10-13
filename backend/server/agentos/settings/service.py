@@ -333,6 +333,7 @@ def _runtime_settings(row: AreaRow) -> RuntimeSettings:
                 name=e.name,
                 argv=e.argv,
                 model_args=e.model_args,
+                effort_args=e.effort_args,
                 agent_args=e.agent_args,
                 prompt_via=e.prompt_via,
                 prompt_args=e.prompt_args,

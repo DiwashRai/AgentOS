@@ -35,21 +35,27 @@ def resolve_agent(
     stage: Stage, prompt: str, runtimes: RuntimesConfig, *, defaults: TemplateDefaults
 ) -> tuple[list[str], str | None]:
     """Final argv + stdin for an agent stage: `argv`, then `model_args` (if a model resolves),
-    then `agent_args` (if `stage.agent`), then `prompt_args` (if `prompt_via = "arg"`). With
-    `prompt_via = "stdin"` the prompt is the stdin. Unknown runtime → 422 `invalid_stage`.
+    then `effort_args` (if an effort resolves), then `agent_args` (if `stage.agent`), then
+    `prompt_args` (if `prompt_via = "arg"`). With `prompt_via = "stdin"` the prompt is the stdin.
+    Unknown runtime → 422 `invalid_stage`.
 
-    A null `stage.runtime` / `stage.model` takes the Space default (`space_defaults`: the
-    template's `defaults`, else the config's `default_runtime` / no model). The Space model is a
-    model of the Space runtime, so a stage on another runtime without its own model gets none."""
+    A null `stage.runtime` / `stage.model` / `stage.effort` takes the Space default
+    (`space_defaults`: the template's `defaults`, else the config's `default_runtime` / no model /
+    no effort). The Space model and effort belong to the Space runtime, so a stage on another
+    runtime without its own gets none. A runtime with empty `effort_args` passes no effort."""
     space = space_defaults(defaults, runtimes)
     name = stage.runtime or space.runtime
     spec = runtimes.runtimes.get(name)
     if spec is None:
         raise ApiError(422, "invalid_stage", f"stage {stage.id}: unknown runtime {name!r}")
     argv = list(spec.argv)
-    model = stage.model or (space.model if name == space.runtime else None)
+    on_space_runtime = name == space.runtime
+    model = stage.model or (space.model if on_space_runtime else None)
     if model:
         argv += _substitute(spec.model_args, "{model}", model)
+    effort = stage.effort or (space.effort if on_space_runtime else None)
+    if effort:
+        argv += _substitute(spec.effort_args, "{effort}", effort)
     if stage.agent:
         argv += _substitute(spec.agent_args, "{agent}", stage.agent)
     if spec.prompt_via == "arg":

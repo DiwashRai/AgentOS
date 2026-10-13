@@ -402,6 +402,7 @@ def test_api_config_reflects_dev_settings(tmp_path: Path, monkeypatch: pytest.Mo
         runtimes=["claude", "fake"],
         default_runtime="fake",
         default_model=None,
+        default_effort=None,
         server_default_runtime="fake",
         sources=[],
     )

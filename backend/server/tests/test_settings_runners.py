@@ -111,6 +111,7 @@ def test_seeded_runtimes_from_the_test_toml(authed: TestClient) -> None:
         "name": "fake",
         "argv": FAKE_ARGV,
         "model_args": ["--model", "{model}"],
+        "effort_args": [],
         "agent_args": [],
         "prompt_via": "stdin",
         "prompt_args": [],
