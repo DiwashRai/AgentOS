@@ -242,6 +242,163 @@
   text-align: right;
 }
 
+/* ---------------------------------------------------------------- how each stage was called */
+
+/* a fold-out: chevron + sentence-case label; the chevron points right while closed */
+.fold > summary {
+  list-style: none;
+}
+
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.foldHead {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.foldHead:hover {
+  color: var(--ink-1);
+}
+
+.chev {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  color: var(--ink-3);
+  transform: rotate(-90deg);
+  transition: transform var(--t-fast) ease;
+}
+
+.fold[open] > summary > .chev {
+  transform: none;
+}
+
+/* the section itself: a heading-sized summary over the stages */
+.section > summary {
+  font-size: var(--fs-ui);
+  color: var(--ink-1);
+}
+
+.calls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.callList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.call {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.callHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.callName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  font-weight: 500;
+  color: var(--ink-1);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chipK {
+  color: var(--ink-3);
+}
+
+.chipV {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-1);
+}
+
+/* the command line: wraps, never scrolls sideways (phones) */
+.cmd {
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--field);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-1);
+}
+
+.tProgram {
+  font-weight: 600;
+}
+
+.tFlag {
+  color: var(--ink-2);
+}
+
+.tArg {
+  color: var(--ink-1);
+}
+
+.tPrompt {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.pre,
+.paths {
+  margin: 6px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--recess);
+  box-shadow: var(--recess-shadow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+.paths {
+  max-height: 220px;
+  list-style: none;
+}
+
 /* ---------------------------------------------------------------- log */
 
 .log {
@@ -351,7 +508,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rowMain {
+  .rowMain,
+  .chev {
     transition: none;
   }
 }

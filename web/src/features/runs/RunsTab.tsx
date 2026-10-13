@@ -1,6 +1,6 @@
 // Ticket page · Runs tab (SPEC §13 Runs, DESIGN §7.3): run history newest first, and for the
-// selected run (`?run=<id>`, default the latest) its stages and its log. The Manifest view and
-// "load earlier" for logs over 5,000 events come later.
+// selected run (`?run=<id>`, default the latest) its stages, how each stage was called (from the
+// run's manifest) and its log. "Load earlier" for logs over 5,000 events comes later.
 import { useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
@@ -19,6 +19,7 @@ import {
   type MarkInfo,
 } from "./runFormat";
 import s from "./RunsTab.module.css";
+import { StageCalls } from "./StageCalls";
 import { useNow } from "./useNow";
 
 type RunSummary = Schemas["RunSummary"];
@@ -194,6 +195,7 @@ function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
       ) : detailQ.data ? (
         <StageList detail={detailQ.data} now={now} />
       ) : null}
+      <StageCalls runId={run.id} status={run.status} />
       <RunLog
         key={run.id}
         runId={run.id}
