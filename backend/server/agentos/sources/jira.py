@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -20,7 +21,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
-from agentos.models import Priority, TicketType
+from agentos.models import JiraField, JiraFieldKind, Priority, TicketType
 from agentos.sources.base import (
     SourceError,
     SourceNotFound,
@@ -163,6 +164,24 @@ class JiraClient:
         if response.status_code in (403, 404):
             raise JiraNotFound(f"GET {path}: {response.status_code}")
         return self._json(path, response)
+
+    def fields(self, creds: JiraCredentials) -> list[dict[str, Any]]:
+        """`GET /rest/api/2/field` (Cloud and Data Center): every field the credentials can see,
+        as raw JSON objects. 401/403 → JiraUnauthorized; anything else but a 200 JSON array →
+        JiraUnavailable."""
+        path = "/rest/api/2/field"
+        response = self.get(creds, path)
+        if response.status_code in (401, 403):
+            raise JiraUnauthorized(f"GET {path}: {response.status_code}")
+        if response.status_code != 200:
+            raise JiraUnavailable(f"GET {path}: {response.status_code}")
+        try:
+            data = response.json()
+        except ValueError:
+            raise JiraUnavailable(f"GET {path}: not JSON") from None
+        if not isinstance(data, list):
+            raise JiraUnavailable(f"GET {path}: not a JSON array")
+        return [f for f in data if isinstance(f, dict)]
 
     def search(
         self, creds: JiraCredentials, jql: str, fields: tuple[str, ...], limit: int
@@ -368,9 +387,14 @@ class JiraSource:
                 return selected[0].upper()
         return None
 
-    def fetch(self, external_id: str) -> SourceTicket:
-        """The issue, mapped. JiraNotFound / JiraUnauthorized / JiraUnavailable on failure."""
-        data = self.client.issue(self._creds, external_id)
+    def fetch(self, external_id: str, extra_fields: Sequence[str] = ()) -> SourceTicket:
+        """The issue, mapped, plus `extra_fields` (Jira field ids, read in the same call) as
+        `field_values` (see `field_values`). JiraNotFound / JiraUnauthorized / JiraUnavailable on
+        failure."""
+        wanted = ISSUE_FIELDS + tuple(
+            f for f in dict.fromkeys(extra_fields) if f not in ISSUE_FIELDS
+        )
+        data = self.client.issue(self._creds, external_id, wanted)
         key = data.get("key")
         fields = data.get("fields")
         if not isinstance(key, str) or not _ISSUE_KEY_RE.fullmatch(key):
@@ -390,7 +414,28 @@ class JiraSource:
             priority=_PRIORITIES.get(_name(fields.get("priority")), "normal"),
             labels=[x for x in labels if isinstance(x, str)] if isinstance(labels, list) else [],
             url=self.browse_url(key),
+            field_values={f: field_values(fields.get(f)) for f in extra_fields},
         )
+
+    def read_fields(self, external_id: str, field_ids: Sequence[str]) -> dict[str, list[str]]:
+        """Just these fields of the issue (the mapping preview), as `field_values`.
+        JiraNotFound / JiraUnauthorized / JiraUnavailable on failure."""
+        data = self.client.issue(self._creds, external_id, tuple(dict.fromkeys(field_ids)))
+        fields = data.get("fields")
+        if not isinstance(fields, dict):
+            raise JiraUnavailable(f"issue {external_id}: no fields in the response")
+        return {f: field_values(fields.get(f)) for f in field_ids}
+
+    def jira_fields(self) -> list[JiraField]:
+        """Every field the service account can see (the mapping's field picker), by name.
+        JiraUnauthorized / JiraUnavailable on failure."""
+        out: list[JiraField] = []
+        for raw in self.client.fields(self._creds):
+            fid, name = raw.get("id"), raw.get("name")
+            if isinstance(fid, str) and fid and isinstance(name, str) and name:
+                out.append(JiraField(id=fid, name=name, kind=_field_kind(raw.get("schema"))))
+        out.sort(key=lambda f: (f.name.casefold(), f.id))
+        return out
 
     def post_comment(self, external_id: str, body: str) -> str:
         raise NotImplementedError("Jira comment sync is not built yet (SPEC §11 M1)")
@@ -462,6 +507,35 @@ class JiraSearch:
 
 
 _ORDER_BY_RE = re.compile(r"\border\s+by\b", re.IGNORECASE)
+_FIELD_KINDS: dict[str, JiraFieldKind] = {
+    "string": "string",
+    "option": "option",
+    "version": "version",
+    "array": "array",
+}
+
+
+def field_values(raw: object) -> list[str]:
+    """A Jira field's raw JSON as plain strings (request 22B): a string → itself; an object → its
+    `name`, else its `value` (versions, components, select options); an array → each element so;
+    null, empty or anything else → none. Values are trimmed; blanks are dropped."""
+    items = raw if isinstance(raw, list) else [raw]
+    out: list[str] = []
+    for item in items:
+        text: object = item
+        if isinstance(item, dict):
+            text = item.get("name")
+            if not isinstance(text, str) or not text.strip():
+                text = item.get("value")
+        if isinstance(text, str) and text.strip():
+            out.append(text.strip())
+    return out
+
+
+def _field_kind(schema: object) -> JiraFieldKind:
+    """From a field's `schema.type` (`{"type": "array", "items": "version", ...}`)."""
+    kind = schema.get("type") if isinstance(schema, dict) else None
+    return _FIELD_KINDS.get(kind, "other") if isinstance(kind, str) else "other"
 
 
 def _aware_datetime(value: object) -> datetime | None:

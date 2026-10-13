@@ -527,6 +527,116 @@
         "title": "EventsResponse",
         "type": "object"
       },
+      "FieldMapping": {
+        "additionalProperties": false,
+        "description": "A Jira field \u2192 an AgentOS field, by rules. `field` = the Jira field id (`fixVersions`,\n`customfield_10042`); `field_name` = its display name (stored, so the UI and the ticket's\nreasons can say \"Fix versions\" without a Jira call).",
+        "properties": {
+          "field": {
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Field",
+            "type": "string"
+          },
+          "field_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Field Name",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/MappingRule"
+            },
+            "maxItems": 100,
+            "title": "Rules",
+            "type": "array"
+          },
+          "source": {
+            "const": "jira",
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "const": "base_branch",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "source",
+          "field",
+          "field_name",
+          "rules"
+        ],
+        "title": "FieldMapping",
+        "type": "object"
+      },
+      "FieldMappings": {
+        "additionalProperties": false,
+        "description": "Settings > Field mappings: at most one mapping per target. A `base_branch` mapping sets an\nimported (manual import or Intake Take in) repo ticket's base branch from the Jira field; no\nmatch leaves it blank and blocked from dispatch (the repo default does not fill it).",
+        "properties": {
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/FieldMapping"
+            },
+            "title": "Mappings",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mappings",
+          "version",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "FieldMappings",
+        "type": "object"
+      },
+      "FieldMappingsUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/settings/mappings: the whole list. 422 `validation_error` naming the mapping and\nrule (`mappings.0.rules.3.value: ...`) or a target listed twice. Saving re-applies the rules\nto every unlocked ticket whose base branch came from a mapping (from its stored Jira value; no\nJira call), except during a run; hand-set and locked tickets are never touched.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/FieldMapping"
+            },
+            "maxItems": 20,
+            "title": "Mappings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mappings",
+          "base_version"
+        ],
+        "title": "FieldMappingsUpdate",
+        "type": "object"
+      },
       "FileContent": {
         "additionalProperties": false,
         "properties": {
@@ -1184,6 +1294,38 @@
         "title": "IntakeSettingsUpdate",
         "type": "object"
       },
+      "JiraField": {
+        "additionalProperties": false,
+        "description": "A Jira field for the mapping's field picker (GET /api/settings/mappings/jira-fields).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "string",
+              "option",
+              "version",
+              "array",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "title": "JiraField",
+        "type": "object"
+      },
       "LogData": {
         "additionalProperties": false,
         "properties": {
@@ -1550,6 +1692,127 @@
           "branch"
         ],
         "title": "ManifestWorkspace",
+        "type": "object"
+      },
+      "MappingPreview": {
+        "additionalProperties": false,
+        "description": "What the mapping gives: `values` = the field's values it read (trimmed, blanks dropped),\n`value` = the result (null = blank), `rule` = the index of the rule that gave it, `reason` =\nwhy it is blank (null when set). The same matcher as an import.",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "values",
+          "value",
+          "rule",
+          "reason"
+        ],
+        "title": "MappingPreview",
+        "type": "object"
+      },
+      "MappingPreviewRequest": {
+        "additionalProperties": false,
+        "description": "\"Try it\": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira\nkey or browse link, read with the service account). Exactly one of `values` / `issue`.",
+        "properties": {
+          "issue": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "mapping": {
+            "$ref": "#/components/schemas/FieldMapping"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
+          }
+        },
+        "required": [
+          "mapping"
+        ],
+        "title": "MappingPreviewRequest",
+        "type": "object"
+      },
+      "MappingRule": {
+        "additionalProperties": false,
+        "description": "`match`: a wildcard pattern, not a regex: `*` = any run of characters, everything else\nliteral, matched against the whole (trimmed) value, case-insensitive. `value`: what the target\ngets (`base_branch`: a valid branch name). Rules are ordered; the first match wins.",
+        "properties": {
+          "match": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Match",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "match",
+          "value"
+        ],
+        "title": "MappingRule",
         "type": "object"
       },
       "Me": {
@@ -4969,6 +5232,195 @@
         ]
       }
     },
+    "/api/settings/mappings": {
+      "get": {
+        "operationId": "get_mappings_api_settings_mappings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldMappings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Mappings",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "description": "Replace the Jira field mappings, then re-apply a `base_branch` mapping to the unlocked\ntickets it set (from the Jira value stored at import; no Jira call).",
+        "operationId": "put_mappings_api_settings_mappings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FieldMappingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldMappings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Put Mappings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/mappings/jira-fields": {
+      "get": {
+        "description": "Jira's fields (via the service account) for the mapping field picker; cached ~10 min.\n501 when Jira isn't configured, 502 `upstream_error` when it fails.",
+        "operationId": "get_jira_fields_api_settings_mappings_jira_fields_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JiraField"
+                  },
+                  "title": "Response Get Jira Fields Api Settings Mappings Jira Fields Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Get Jira Fields",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/mappings/preview": {
+      "post": {
+        "description": "\"Try it\": the unsaved mapping on typed `values`, or on an `issue`'s field (read live).",
+        "operationId": "preview_mapping_api_settings_mappings_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Preview Mapping",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/repos": {
       "get": {
         "operationId": "get_repos_api_settings_repos_get",
@@ -5601,7 +6053,7 @@
     },
     "/api/tickets/import": {
       "post": {
-        "description": "Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with\n`created: false` and the ticket it was imported as before.",
+        "description": "Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with\n`created: false` and the ticket it was imported as before. A `base_branch` field mapping\n(Settings > Field mappings) sets a repo ticket's base branch from its Jira field.",
         "operationId": "import_ticket_api_tickets_import_post",
         "requestBody": {
           "content": {

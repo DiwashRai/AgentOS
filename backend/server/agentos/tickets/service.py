@@ -14,7 +14,7 @@ import json
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from agentos.broker import Broker
@@ -25,6 +25,7 @@ from agentos.files.service import write_version
 from agentos.models import (
     BaseBranchInfo,
     BaseBranchSource,
+    FieldMapping,
     ImportRequest,
     ImportResult,
     LogDelivery,
@@ -47,6 +48,7 @@ from agentos.models import (
     WorkspaceMode,
 )
 from agentos.pipeline.manifest import render_stages
+from agentos.pipeline.mapping import apply_rules, join_values, mapping_for
 from agentos.pipeline.plan import Plan, parse_plan
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig
@@ -532,6 +534,8 @@ class _NewTicket:
     base_branch_set_by: int | None  # who set it (`manual` only)
     owner_id: int | None
     source: SourceLink | None = None
+    base_branch_source_value: str | None = None  # the raw field text a mapping read
+    base_branch_reason: str | None = None  # why a mapping left it blank
 
 
 def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) -> int:
@@ -559,10 +563,11 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     scaffold = render_scaffold(template.template.scaffold, ref)
     cursor = conn.execute(
         "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
-        "workspace_mode, repo, base_branch, base_branch_source, base_branch_set_by, template_id, "
+        "workspace_mode, repo, base_branch, base_branch_source, base_branch_set_by, "
+        "base_branch_source_value, base_branch_reason, template_id, "
         "pipeline, pipeline_version, owner_id, source, external_id, source_url, created_by, "
         "created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
         (
             new.key,
             slug,
@@ -576,6 +581,8 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
             new.base_branch,
             new.base_branch_source,
             new.base_branch_set_by,
+            new.base_branch_source_value,
+            new.base_branch_reason,
             template.id,
             pipeline.model_dump_json(),
             new.owner_id,
@@ -607,6 +614,7 @@ def import_ticket(
     source: TicketSource | None,
     user: Me,
     body: ImportRequest,
+    mappings: Sequence[FieldMapping] = (),
 ) -> ImportResult:
     """Take in a source ticket by key or link (manual take-in: the importer owns it).
 
@@ -619,6 +627,11 @@ def import_ticket(
 
     The ticket gets the key, the source link, the mapped fields (imported text is stored as plain,
     untrusted data), the Space's `default_repo` and the template, exactly like a native ticket.
+
+    A `base_branch` field mapping (request 22B) on a repo ticket: its Jira field is read in the
+    same call and the rules set the ticket's own base branch (`mapping`), or leave it blank with
+    a reason; a blank mapped ticket does not fall back to the repo default (blocked from
+    dispatch until someone sets one). No mapping: the repo default applies (`default`).
     """
     if source is None:
         raise ApiError(
@@ -636,8 +649,12 @@ def import_ticket(
     with db.read() as conn:
         if (key := _imported_key(conn, source.name, external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
+    repo = space.default_repo
+    mapping = mapping_for(mappings, "base_branch")
+    if mapping is not None and (repo is None or mapping.source != source.name):
+        mapping = None  # a no-repo ticket has no base branch
     try:
-        fetched = source.fetch(external_id)
+        fetched = source.fetch(external_id, (mapping.field,) if mapping is not None else ())
     except SourceNotFound:
         raise ApiError(404, "ticket_not_found", f"{source.name} can't see {external_id}") from None
     except SourceUnauthorized:
@@ -658,13 +675,23 @@ def import_ticket(
         type=fetched.type,
         priority=fetched.priority,
         labels=_fit_labels(fetched.labels),
-        repo=space.default_repo,
+        repo=repo,
         base_branch=None,
-        base_branch_source="default",  # 22B: a `base_branch` mapping sets it here
+        base_branch_source="default",
         base_branch_set_by=None,
         owner_id=user.id,
         source=SourceLink(source=source.name, external_id=fetched.external_id, url=fetched.url),
     )
+    if mapping is not None:
+        values = fetched.field_values.get(mapping.field, [])
+        mapped = apply_rules(mapping.rules, values, mapping.field_name)
+        new = replace(
+            new,
+            base_branch=mapped.value,
+            base_branch_source="mapping",
+            base_branch_source_value=join_values(values),
+            base_branch_reason=mapped.reason,
+        )
     with db.tx() as conn:
         if (key := _imported_key(conn, source.name, fetched.external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)

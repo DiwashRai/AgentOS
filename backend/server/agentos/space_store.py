@@ -3,11 +3,12 @@ area.
 
 Areas: `space` (a SpaceSection), `repos` ({"repos": [RepoSpec...]}), `intake`
 ({"queries": [IntakeQuerySpec...]}), `runtimes` ({"runtimes": [NamedRuntime...]}, in order: the
-first is the server default) and `runner` (a RunnerSection). Each save overwrites its row and
-bumps `version`; no history.
+first is the server default), `runner` (a RunnerSection) and `mappings` ({"mappings":
+[FieldMapping...]}, request 22B). Each save overwrites its row and bumps `version`; no history.
 
 `SpaceStore` is the read side every feature uses (through `AppContext.space` / `.runtimes` /
-`.runner`): the current rows as one `Snapshot`, cached in-process and dropped on every save, so a
+`.runner` / `.mappings`): the current rows as one `Snapshot`, cached in-process and dropped on
+every save, so a
 change applies without a restart. Correct within one server process (the only deployment shape).
 """
 
@@ -22,7 +23,7 @@ from typing import Any, Literal
 
 from agentos.clock import from_db, to_db, utcnow
 from agentos.db import Conn, Database
-from agentos.models import IntakeQuerySpec, Person
+from agentos.models import FieldMapping, IntakeQuerySpec, Person
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, NamedRuntime, RuntimesConfig
 from agentos.pipeline.space import (
     IntakeSection,
@@ -32,8 +33,8 @@ from agentos.pipeline.space import (
     SpaceSection,
 )
 
-Area = Literal["space", "repos", "intake", "runtimes", "runner"]
-AREAS: tuple[Area, ...] = ("space", "repos", "intake", "runtimes", "runner")
+Area = Literal["space", "repos", "intake", "runtimes", "runner", "mappings"]
+AREAS: tuple[Area, ...] = ("space", "repos", "intake", "runtimes", "runner", "mappings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +52,7 @@ class Snapshot:
     space: SpaceConfig
     runtimes: RuntimesConfig
     runner: RunnerSection
+    mappings: tuple[FieldMapping, ...]
 
 
 def read_area(conn: Conn, area: Area) -> AreaRow | None:
@@ -135,6 +137,16 @@ def runner_of(row: AreaRow | None) -> RunnerSection:
     return RunnerSection() if row is None else RunnerSection.model_validate(row.value)
 
 
+def mappings_value(mappings: list[FieldMapping]) -> dict[str, Any]:
+    return {"mappings": [m.model_dump(mode="json") for m in mappings]}
+
+
+def mappings_of(row: AreaRow | None) -> tuple[FieldMapping, ...]:
+    if row is None:
+        return ()
+    return tuple(FieldMapping.model_validate(m) for m in row.value.get("mappings", []))
+
+
 def load_space(conn: Conn) -> SpaceConfig:
     """The current settings as one SpaceConfig (an area without a row: its defaults)."""
     return SpaceConfig(
@@ -149,6 +161,7 @@ def load_snapshot(conn: Conn) -> Snapshot:
         space=load_space(conn),
         runtimes=runtimes_of(read_area(conn, "runtimes")),
         runner=runner_of(read_area(conn, "runner")),
+        mappings=mappings_of(read_area(conn, "mappings")),
     )
 
 
@@ -219,6 +232,9 @@ class SpaceStore:
 
     def runner(self) -> RunnerSection:
         return self.snapshot().runner
+
+    def mappings(self) -> tuple[FieldMapping, ...]:
+        return self.snapshot().mappings
 
     def invalidate(self) -> None:
         """Call after a save's transaction committed."""

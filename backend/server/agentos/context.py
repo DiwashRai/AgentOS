@@ -27,6 +27,7 @@ from agentos.launchers.base import Launcher
 from agentos.launchers.github import GitHubActionsLauncher, GitHubTarget
 from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
 from agentos.launchers.mailbox import MailboxLauncher
+from agentos.models import FieldMapping, JiraField
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, RuntimesConfig
 from agentos.pipeline.space import RunnerSection, SpaceConfig
 from agentos.ratelimit import RateLimiter
@@ -34,6 +35,7 @@ from agentos.sources.jira import JiraClient, JiraSearch, JiraSource
 from agentos.space_store import (
     Area,
     SpaceStore,
+    mappings_value,
     missing_areas,
     runner_value,
     runtimes_value,
@@ -47,9 +49,12 @@ log = logging.getLogger(__name__)
 
 LOGIN_ATTEMPTS_PER_MINUTE = 10  # SPEC §11
 INTAKE_CACHE_TTL_S = 45.0  # request 14: how long an intake query's Jira answer is reused
+JIRA_FIELDS_CACHE_TTL_S = 600.0  # request 22B: how long Jira's field list is reused
 
 # An intake query's last Jira answer (or its error message), by query id.
 IntakeCache = TtlCache[str, JiraSearch | str]
+# Jira's field list (the mapping field picker), under one key; only successes are cached.
+JiraFieldsCache = TtlCache[str, list[JiraField]]
 
 # The settings areas agentos.toml can seed.
 _SPACE_AREAS: tuple[Area, ...] = ("space", "repos", "intake")
@@ -62,6 +67,10 @@ def _login_limiter() -> RateLimiter:
 
 def _intake_cache() -> IntakeCache:
     return TtlCache(INTAKE_CACHE_TTL_S)
+
+
+def _jira_fields_cache() -> JiraFieldsCache:
+    return TtlCache(JIRA_FIELDS_CACHE_TTL_S)
 
 
 @dataclass
@@ -77,6 +86,7 @@ class AppContext:
     # Jira login attempts per (client IP, submitted email/username).
     login_limiter: RateLimiter = field(default_factory=_login_limiter)
     intake_cache: IntakeCache = field(default_factory=_intake_cache)
+    jira_fields_cache: JiraFieldsCache = field(default_factory=_jira_fields_cache)
     # SSE notifications: services publish after commit; the lifespan binds it to the loop.
     broker: Broker = field(default_factory=Broker)
 
@@ -94,6 +104,11 @@ class AppContext:
     def runner(self) -> RunnerSection:
         """Where the github launcher dispatches runs, as currently saved (Settings > Runners)."""
         return self.space_store.runner()
+
+    @property
+    def mappings(self) -> tuple[FieldMapping, ...]:
+        """The Jira field mappings as currently saved (Settings > Field mappings)."""
+        return self.space_store.mappings()
 
     @property
     def jira_source(self) -> JiraSource | None:
@@ -134,8 +149,9 @@ def seed_settings(db: Database, settings: Settings) -> list[Area]:
     Sources: `space`/`repos`/`intake` from agentos.toml (AGENTOS_CONFIG, if the file exists) plus
     the moved Space vars, else the defaults; `runtimes` from the file's `[runtimes.*]` (its
     `default_runtime` first), else the built-in claude + copilot; `runner` from the moved
-    AGENTOS_GITHUB_* vars, else no repo. The file is only read when an area it can seed is
-    missing. An invalid file or moved var → ConfigError, but only when it is about to seed."""
+    AGENTOS_GITHUB_* vars, else no repo; `mappings` empty. The file is only read when an area it
+    can seed is missing. An invalid file or moved var → ConfigError, but only when it is about to
+    seed."""
     moved = settings.moved_env
     missing = missing_areas(db)
     path = settings.config
@@ -155,6 +171,8 @@ def seed_settings(db: Database, settings: Settings) -> list[Area]:
         values["runtimes"] = runtimes_value(runtimes.entries())
     if "runner" in missing:
         values["runner"] = runner_value(seed_runner(moved))
+    if "mappings" in missing:
+        values["mappings"] = mappings_value([])
     seeded = seed(db, values) if values else []
 
     from_file = [

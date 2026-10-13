@@ -246,6 +246,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Mappings */
+        get: operations["get_mappings_api_settings_mappings_get"];
+        /**
+         * Put Mappings
+         * @description Replace the Jira field mappings, then re-apply a `base_branch` mapping to the unlocked
+         *     tickets it set (from the Jira value stored at import; no Jira call).
+         */
+        put: operations["put_mappings_api_settings_mappings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/mappings/jira-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Jira Fields
+         * @description Jira's fields (via the service account) for the mapping field picker; cached ~10 min.
+         *     501 when Jira isn't configured, 502 `upstream_error` when it fails.
+         */
+        get: operations["get_jira_fields_api_settings_mappings_jira_fields_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/mappings/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Mapping
+         * @description "Try it": the unsaved mapping on typed `values`, or on an `issue`'s field (read live).
+         */
+        post: operations["preview_mapping_api_settings_mappings_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/repos": {
         parameters: {
             query?: never;
@@ -383,7 +446,8 @@ export interface paths {
         /**
          * Import Ticket
          * @description Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with
-         *     `created: false` and the ticket it was imported as before.
+         *     `created: false` and the ticket it was imported as before. A `base_branch` field mapping
+         *     (Settings > Field mappings) sets a repo ticket's base branch from its Jira field.
          */
         post: operations["import_ticket_api_tickets_import_post"];
         delete?: never;
@@ -807,6 +871,61 @@ export interface components {
             /** Cancel */
             cancel: boolean;
         };
+        /**
+         * FieldMapping
+         * @description A Jira field → an AgentOS field, by rules. `field` = the Jira field id (`fixVersions`,
+         *     `customfield_10042`); `field_name` = its display name (stored, so the UI and the ticket's
+         *     reasons can say "Fix versions" without a Jira call).
+         */
+        FieldMapping: {
+            /** Field */
+            field: string;
+            /** Field Name */
+            field_name: string;
+            /** Rules */
+            rules: components["schemas"]["MappingRule"][];
+            /**
+             * Source
+             * @constant
+             */
+            source: "jira";
+            /**
+             * Target
+             * @constant
+             */
+            target: "base_branch";
+        };
+        /**
+         * FieldMappings
+         * @description Settings > Field mappings: at most one mapping per target. A `base_branch` mapping sets an
+         *     imported (manual import or Intake Take in) repo ticket's base branch from the Jira field; no
+         *     match leaves it blank and blocked from dispatch (the repo default does not fill it).
+         */
+        FieldMappings: {
+            /** Mappings */
+            mappings: components["schemas"]["FieldMapping"][];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * FieldMappingsUpdate
+         * @description PUT /api/settings/mappings: the whole list. 422 `validation_error` naming the mapping and
+         *     rule (`mappings.0.rules.3.value: ...`) or a target listed twice. Saving re-applies the rules
+         *     to every unlocked ticket whose base branch came from a mapping (from its stored Jira value; no
+         *     Jira call), except during a run; hand-set and locked tickets are never touched.
+         */
+        FieldMappingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            /** Mappings */
+            mappings: components["schemas"]["FieldMapping"][];
+        };
         /** FileContent */
         FileContent: {
             author: components["schemas"]["Person"] | null;
@@ -1074,6 +1193,21 @@ export interface components {
             /** Queries */
             queries: components["schemas"]["IntakeQueryIn"][];
         };
+        /**
+         * JiraField
+         * @description A Jira field for the mapping's field picker (GET /api/settings/mappings/jira-fields).
+         */
+        JiraField: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "string" | "option" | "version" | "array" | "other";
+            /** Name */
+            name: string;
+        };
         /** LogData */
         LogData: {
             /**
@@ -1202,6 +1336,46 @@ export interface components {
             mode: "repo" | "none";
             /** Repo Url */
             repo_url: string | null;
+        };
+        /**
+         * MappingPreview
+         * @description What the mapping gives: `values` = the field's values it read (trimmed, blanks dropped),
+         *     `value` = the result (null = blank), `rule` = the index of the rule that gave it, `reason` =
+         *     why it is blank (null when set). The same matcher as an import.
+         */
+        MappingPreview: {
+            /** Reason */
+            reason: string | null;
+            /** Rule */
+            rule: number | null;
+            /** Value */
+            value: string | null;
+            /** Values */
+            values: string[];
+        };
+        /**
+         * MappingPreviewRequest
+         * @description "Try it": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira
+         *     key or browse link, read with the service account). Exactly one of `values` / `issue`.
+         */
+        MappingPreviewRequest: {
+            /** Issue */
+            issue?: string | null;
+            mapping: components["schemas"]["FieldMapping"];
+            /** Values */
+            values?: string[] | null;
+        };
+        /**
+         * MappingRule
+         * @description `match`: a wildcard pattern, not a regex: `*` = any run of characters, everything else
+         *     literal, matched against the whole (trimmed) value, case-insensitive. `value`: what the target
+         *     gets (`base_branch`: a valid branch name). Rules are ordered; the first match wins.
+         */
+        MappingRule: {
+            /** Match */
+            match: string;
+            /** Value */
+            value: string;
         };
         /** Me */
         Me: {
@@ -2683,6 +2857,166 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntakePreview"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_mappings_api_settings_mappings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldMappings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_mappings_api_settings_mappings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldMappingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldMappings"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_jira_fields_api_settings_mappings_jira_fields_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JiraField"][];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    preview_mapping_api_settings_mappings_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MappingPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreview"];
                 };
             };
             /** @description Client error */

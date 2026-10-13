@@ -1,4 +1,5 @@
-"""Settings > Space, Repos, Intake, Runtimes and Runner: read and save each area's document (SPEC
+"""Settings > Space, Repos, Intake, Runtimes, Runner and Field mappings (request 22B: plus the
+Jira field picker and the mapping preview): read and save each area's document (SPEC
 "Settings in the app"). Storage and the cached read side every feature uses live in
 `agentos.space_store`.
 
@@ -9,18 +10,28 @@ commit drop the SpaceStore cache so the change applies at once.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from agentos.broker import Broker
+from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database
 from agentos.errors import ApiError
+from agentos.intake import service as intake
 from agentos.models import (
+    FieldMapping,
+    FieldMappings,
+    FieldMappingsUpdate,
     IntakeQuerySpec,
     IntakeSettings,
     IntakeSettingsUpdate,
+    JiraField,
     LauncherName,
+    MappingPreview,
+    MappingPreviewRequest,
     Me,
     RepoEntry,
     RepoSettings,
@@ -33,13 +44,23 @@ from agentos.models import (
     SpaceSettings,
     SpaceSettingsUpdate,
 )
+from agentos.pipeline.mapping import (
+    apply_rules,
+    check_mapping,
+    check_mappings,
+    clean_values,
+    mapping_for,
+    split_values,
+)
 from agentos.pipeline.runtime import NamedRuntime
 from agentos.pipeline.space import RepoSpec, RunnerSection, SpaceSection, query_id
-from agentos.sources.jira import JiraSearch
+from agentos.sources.jira import JiraError, JiraNotFound, JiraSearch, JiraSource, JiraUnauthorized
 from agentos.space_store import (
     Area,
     AreaRow,
     SpaceStore,
+    mappings_of,
+    mappings_value,
     queries_of,
     read_area,
     repos_of,
@@ -53,6 +74,8 @@ from agentos.space_store import (
 from agentos.templates.service import current as current_template
 from agentos.ttlcache import TtlCache
 
+log = logging.getLogger(__name__)
+
 _M = TypeVar("_M", bound=BaseModel)
 _LABELS: dict[Area, str] = {
     "space": "Space settings",
@@ -60,6 +83,7 @@ _LABELS: dict[Area, str] = {
     "intake": "intake queries",
     "runtimes": "runtimes",
     "runner": "runner settings",
+    "mappings": "field mappings",
 }
 
 
@@ -363,6 +387,144 @@ def _runner_settings(row: AreaRow, *, launcher: LauncherName, token_set: bool) -
         updated_at=row.updated_at,
         updated_by=row.updated_by,
     )
+
+
+# ------------------------------------------------------------------ field mappings (request 22B)
+
+# Tickets a `base_branch` mapping re-apply may change: repo tickets whose base branch came from a
+# mapping, not locked by a run, and with no active run (as a PATCH, which answers `run_active`).
+_SQL_MAPPED_TICKETS = (
+    "SELECT t.id, t.key, t.base_branch, t.base_branch_source_value, t.base_branch_reason "
+    "FROM tickets t WHERE t.repo IS NOT NULL AND t.base_branch_source = 'mapping' "
+    "AND t.base_branch_locked_by_run IS NULL AND NOT EXISTS ("
+    "  SELECT 1 FROM runs r WHERE r.ticket_id = t.id "
+    "  AND r.status IN ('queued', 'dispatched', 'running')) "
+    "ORDER BY t.id"
+)
+_FIELDS_KEY = "fields"  # the one key of the Jira fields cache
+
+
+def get_mappings(db: Database) -> FieldMappings:
+    with db.read() as conn:
+        return _mappings_settings(_row(conn, "mappings"))
+
+
+def put_mappings(
+    db: Database, store: SpaceStore, broker: Broker, actor: Me, body: FieldMappingsUpdate
+) -> FieldMappings:
+    """Replace the field mappings (at most one per target; each rule's `value` valid for its
+    target, else 422 naming the rule). Then, in the same transaction, re-apply a `base_branch`
+    mapping to every ticket `_SQL_MAPPED_TICKETS` selects, from the Jira value stored at import
+    (no Jira call), and publish each changed ticket after the commit. Hand-set (`manual`),
+    repo-default (`default`) and locked tickets are never touched; with the `base_branch` mapping
+    removed, mapped tickets keep what they have."""
+    check_mappings(body.mappings)
+    with db.tx() as conn:
+        row = _current(conn, "mappings", body.base_version)
+        value = mappings_value(list(body.mappings))
+        write_area(conn, "mappings", value, version=row.version + 1, actor_id=actor.id)
+        changed = _reapply_base_branch(conn, mapping_for(body.mappings, "base_branch"))
+        result = _mappings_settings(_row(conn, "mappings"))
+    store.invalidate()
+    for key in changed:
+        broker.ticket(key)
+    return result
+
+
+def _reapply_base_branch(conn: Conn, mapping: FieldMapping | None) -> list[str]:
+    """The keys of the tickets whose base branch (or blank reason) changed."""
+    rows = conn.execute(_SQL_MAPPED_TICKETS).fetchall()
+    if mapping is None:
+        if rows:
+            log.info(
+                "Field mappings: no base_branch mapping any more; %d mapped ticket(s) keep their "
+                "base branch",
+                len(rows),
+            )
+        return []
+    now = to_db(utcnow())
+    changed: list[str] = []
+    for row in rows:
+        values = split_values(row["base_branch_source_value"])
+        mapped = apply_rules(mapping.rules, values, mapping.field_name)
+        if (mapped.value, mapped.reason) == (row["base_branch"], row["base_branch_reason"]):
+            continue
+        conn.execute(
+            "UPDATE tickets SET base_branch = ?, base_branch_reason = ?, updated_at = ? "
+            "WHERE id = ?",
+            (mapped.value, mapped.reason, now, row["id"]),
+        )
+        changed.append(row["key"])
+    log.info(
+        "Field mappings: re-applied base_branch rules to %d ticket(s); %d changed",
+        len(rows),
+        len(changed),
+    )
+    return changed
+
+
+def _mappings_settings(row: AreaRow) -> FieldMappings:
+    return FieldMappings(
+        mappings=list(mappings_of(row)),
+        version=row.version,
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )
+
+
+def jira_fields(
+    source: JiraSource | None, cache: TtlCache[str, list[JiraField]]
+) -> list[JiraField]:
+    """Jira's fields for the mapping field picker, by name; cached (`AppContext.jira_fields_cache`,
+    successes only). 501 `not_implemented` without a Jira service account; 502 `upstream_error`
+    when Jira rejects it or doesn't answer."""
+    if source is None:
+        raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
+    cached = cache.get(_FIELDS_KEY)
+    if cached is not None:
+        return cached
+    try:
+        fields = source.jira_fields()
+    except JiraUnauthorized:
+        raise ApiError(502, "upstream_error", intake.UNAUTHORIZED) from None
+    except JiraError:
+        raise ApiError(502, "upstream_error", intake.UNAVAILABLE) from None
+    cache.put(_FIELDS_KEY, fields)
+    return fields
+
+
+def preview_mapping(source: JiraSource | None, body: MappingPreviewRequest) -> MappingPreview:
+    """Run the (unsaved) mapping on `values`, or on the field of `issue` read live with the
+    service account (any issue it can see). The rules are checked as on save (422). With `issue`:
+    501 without a service account, 422 for a ref that isn't a key or link to this Jira, 404
+    `ticket_not_found` when Jira can't see it, 502 `upstream_error` when Jira fails."""
+    mapping = body.mapping
+    check_mapping(mapping)
+    if body.values is not None:
+        values = body.values
+    else:
+        values = _issue_values(source, body.issue or "", mapping.field)
+    cleaned = clean_values(values)
+    mapped = apply_rules(mapping.rules, cleaned, mapping.field_name)
+    return MappingPreview(
+        values=cleaned, value=mapped.value, rule=mapped.rule, reason=mapped.reason
+    )
+
+
+def _issue_values(source: JiraSource | None, ref: str, field_id: str) -> list[str]:
+    if source is None:
+        raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
+    key = source.parse_ref(ref)
+    if key is None:
+        raise ApiError(422, "validation_error", "issue: not a Jira issue key or link to one")
+    try:
+        return source.read_fields(key, [field_id]).get(field_id, [])
+    except JiraNotFound:
+        raise ApiError(404, "ticket_not_found", f"Jira can't see {key}") from None
+    except JiraUnauthorized:
+        raise ApiError(502, "upstream_error", intake.UNAUTHORIZED) from None
+    except JiraError:
+        raise ApiError(502, "upstream_error", intake.UNAVAILABLE) from None
 
 
 # ------------------------------------------------------------------ helpers

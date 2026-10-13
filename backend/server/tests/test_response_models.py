@@ -10,17 +10,21 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 from fastapi.testclient import TestClient
-from pydantic import TypeAdapter
+from pydantic import SecretStr, TypeAdapter
 
+from agentos.context import AppContext
 from agentos.models import (
     AppConfig,
     ChatMessage,
+    FieldMappings,
     FileContent,
     FileInfo,
     FileVersionInfo,
     IntakeQuery,
     IntakeSettings,
+    JiraField,
     Manifest,
     Me,
     Person,
@@ -36,6 +40,7 @@ from agentos.models import (
     TicketSummary,
     User,
 )
+from agentos.sources.jira import JiraClient
 from tests.run_support import RunDriver
 
 CSRF = {"X-AgentOS": "1"}
@@ -50,7 +55,11 @@ def check(authed: TestClient, url: str, shape: Any) -> Any:
 
 
 def test_every_get_matches_its_model(
-    login: LoginFn, client: TestClient, create_ticket: CreateTicket, runs: RunDriver
+    login: LoginFn,
+    client: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
 ) -> None:
     sam = login("sam")
     login("dev")
@@ -124,6 +133,26 @@ def test_every_get_matches_its_model(
     queries = {"queries": [{"id": None, "name": "To do", "jql": "x"}], "base_version": 1}
     assert client.put("/api/settings/intake", json=queries, headers=CSRF).status_code == 200
     assert check(client, "/api/settings/intake", IntakeSettings).queries
+    # Field mappings (request 22B), and the Jira field picker against a mocked Jira.
+    assert check(client, "/api/settings/mappings", FieldMappings).mappings == []
+    mapping = {
+        "target": "base_branch",
+        "source": "jira",
+        "field": "fixVersions",
+        "field_name": "Fix versions",
+        "rules": [{"match": "version_1*", "value": "App-1.Latest"}],
+    }
+    body = {"mappings": [mapping], "base_version": 1}
+    assert client.put("/api/settings/mappings", json=body, headers=CSRF).status_code == 200
+    assert check(client, "/api/settings/mappings", FieldMappings).updated_by is not None
+    fields = [{"id": "fixVersions", "name": "Fix versions", "schema": {"type": "array"}}]
+    ctx.jira = JiraClient(
+        "https://jira.example.com",
+        "cloud",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=fields)),
+    )
+    ctx.settings = ctx.settings.model_copy(update={"jira_service_token": SecretStr("t")})
+    assert check(client, "/api/settings/mappings/jira-fields", list[JiraField])
     runtimes = check(client, "/api/settings/runtimes", RuntimeSettings)
     body = {"runtimes": [r.model_dump() for r in runtimes.runtimes], "base_version": 1}
     assert client.put("/api/settings/runtimes", json=body, headers=CSRF).status_code == 200

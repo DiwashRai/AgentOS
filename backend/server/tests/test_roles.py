@@ -37,6 +37,8 @@ MUTATING_ROLES: dict[tuple[str, str], Role] = {
     ("PUT", "/api/settings/repos"): "admin",
     ("PUT", "/api/settings/intake"): "admin",
     ("POST", "/api/settings/intake/preview"): "admin",
+    ("PUT", "/api/settings/mappings"): "admin",
+    ("POST", "/api/settings/mappings/preview"): "admin",
     ("PUT", "/api/settings/runtimes"): "admin",
     ("PUT", "/api/settings/runner"): "admin",
 }
@@ -46,6 +48,8 @@ ADMIN_GETS = {
     "/api/settings/space",
     "/api/settings/repos",
     "/api/settings/intake",
+    "/api/settings/mappings",
+    "/api/settings/mappings/jira-fields",
     "/api/settings/runtimes",
     "/api/settings/runner",
 }

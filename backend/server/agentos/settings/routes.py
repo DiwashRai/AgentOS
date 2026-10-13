@@ -1,5 +1,5 @@
-"""Settings routes: Space, Repos, Intake (+ the intake query preview), Runtimes, Runner.
-Admin-only, reads too."""
+"""Settings routes: Space, Repos, Intake (+ the intake query preview), Field mappings (+ the Jira
+field picker and the mapping preview), Runtimes, Runner. Admin-only, reads too."""
 
 from __future__ import annotations
 
@@ -10,10 +10,15 @@ from agentos.errors import ERROR_RESPONSES
 from agentos.http_deps import Ctx
 from agentos.intake import service as intake
 from agentos.models import (
+    FieldMappings,
+    FieldMappingsUpdate,
     IntakePreview,
     IntakePreviewRequest,
     IntakeSettings,
     IntakeSettingsUpdate,
+    JiraField,
+    MappingPreview,
+    MappingPreviewRequest,
     RepoSettings,
     RepoSettingsUpdate,
     RunnerSettings,
@@ -65,6 +70,31 @@ def preview_intake(body: IntakePreviewRequest, _: Admin, ctx: Ctx) -> IntakePrev
     """Test a JQL before saving it: live (never cached), at most 5 items, with the same filtering
     and error messages as GET /api/intake."""
     return intake.preview(ctx.db, body.jql, ctx.jira_source, ctx.space.jira_projects)
+
+
+@router.get("/mappings")
+def get_mappings(_: Admin, ctx: Ctx) -> FieldMappings:
+    return service.get_mappings(ctx.db)
+
+
+@router.put("/mappings")
+def put_mappings(body: FieldMappingsUpdate, user: Admin, ctx: Ctx) -> FieldMappings:
+    """Replace the Jira field mappings, then re-apply a `base_branch` mapping to the unlocked
+    tickets it set (from the Jira value stored at import; no Jira call)."""
+    return service.put_mappings(ctx.db, ctx.space_store, ctx.broker, user, body)
+
+
+@router.get("/mappings/jira-fields")
+def get_jira_fields(_: Admin, ctx: Ctx) -> list[JiraField]:
+    """Jira's fields (via the service account) for the mapping field picker; cached ~10 min.
+    501 when Jira isn't configured, 502 `upstream_error` when it fails."""
+    return service.jira_fields(ctx.jira_source, ctx.jira_fields_cache)
+
+
+@router.post("/mappings/preview")
+def preview_mapping(body: MappingPreviewRequest, _: Admin, ctx: Ctx) -> MappingPreview:
+    """ "Try it": the unsaved mapping on typed `values`, or on an `issue`'s field (read live)."""
+    return service.preview_mapping(ctx.jira_source, body)
 
 
 @router.get("/runtimes")

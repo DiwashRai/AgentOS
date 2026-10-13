@@ -7,7 +7,7 @@ PATCH bodies reject explicit nulls except for fields that can be cleared.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
@@ -803,6 +803,112 @@ class IntakePreview(ApiModel):
     total: int
     error: str | None
     items: list[IntakeItem]
+
+
+# ------------------------------------------------------------------ field mappings (request 22B)
+
+# What a Jira field can set (a closed set that grows: `repo` from Component, priority, type...).
+MappingTarget = Literal["base_branch"]
+# A Jira field's value shape, from its `schema.type` (GET /rest/api/2/field): `array` covers
+# fixVersions, components, labels and multi-selects; `other` = no schema or another type.
+JiraFieldKind = Literal["string", "option", "version", "array", "other"]
+JIRA_FIELD_ID_PATTERN = r"^[A-Za-z0-9_.:-]+$"  # `fixVersions`, `customfield_10042` (no commas)
+JIRA_FIELD_ID_MAX = 255
+JIRA_FIELD_NAME_MAX = 255
+MAPPING_MATCH_MAX = 200
+MAPPING_VALUE_MAX = 255
+MAX_MAPPING_RULES = 100
+MAX_MAPPINGS = 20
+MAX_PREVIEW_VALUES = 100
+PREVIEW_VALUE_MAX = 1000
+
+
+class MappingRule(ApiModel):
+    """`match`: a wildcard pattern, not a regex: `*` = any run of characters, everything else
+    literal, matched against the whole (trimmed) value, case-insensitive. `value`: what the target
+    gets (`base_branch`: a valid branch name). Rules are ordered; the first match wins."""
+
+    match: str = Field(min_length=1, max_length=MAPPING_MATCH_MAX)
+    value: str = Field(min_length=1, max_length=MAPPING_VALUE_MAX)
+
+    @field_validator("match", "value")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class FieldMapping(ApiModel):
+    """A Jira field → an AgentOS field, by rules. `field` = the Jira field id (`fixVersions`,
+    `customfield_10042`); `field_name` = its display name (stored, so the UI and the ticket's
+    reasons can say "Fix versions" without a Jira call)."""
+
+    target: MappingTarget
+    source: Literal["jira"]
+    field: str = Field(min_length=1, max_length=JIRA_FIELD_ID_MAX, pattern=JIRA_FIELD_ID_PATTERN)
+    field_name: str = Field(min_length=1, max_length=JIRA_FIELD_NAME_MAX)
+    rules: list[MappingRule] = Field(max_length=MAX_MAPPING_RULES)
+
+    @field_validator("field_name")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class FieldMappings(ApiModel):
+    """Settings > Field mappings: at most one mapping per target. A `base_branch` mapping sets an
+    imported (manual import or Intake Take in) repo ticket's base branch from the Jira field; no
+    match leaves it blank and blocked from dispatch (the repo default does not fill it)."""
+
+    mappings: list[FieldMapping]
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class FieldMappingsUpdate(ApiModel):
+    """PUT /api/settings/mappings: the whole list. 422 `validation_error` naming the mapping and
+    rule (`mappings.0.rules.3.value: ...`) or a target listed twice. Saving re-applies the rules
+    to every unlocked ticket whose base branch came from a mapping (from its stored Jira value; no
+    Jira call), except during a run; hand-set and locked tickets are never touched."""
+
+    mappings: list[FieldMapping] = Field(max_length=MAX_MAPPINGS)
+    base_version: int
+
+
+class JiraField(ApiModel):
+    """A Jira field for the mapping's field picker (GET /api/settings/mappings/jira-fields)."""
+
+    id: str
+    name: str
+    kind: JiraFieldKind
+
+
+class MappingPreviewRequest(ApiModel):
+    """ "Try it": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira
+    key or browse link, read with the service account). Exactly one of `values` / `issue`."""
+
+    mapping: FieldMapping
+    values: list[Annotated[str, Field(max_length=PREVIEW_VALUE_MAX)]] | None = Field(
+        default=None, max_length=MAX_PREVIEW_VALUES
+    )
+    issue: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _one_input(self) -> Self:
+        if (self.values is None) == (self.issue is None):
+            raise ValueError("send exactly one of values or issue")
+        return self
+
+
+class MappingPreview(ApiModel):
+    """What the mapping gives: `values` = the field's values it read (trimmed, blanks dropped),
+    `value` = the result (null = blank), `rule` = the index of the rule that gave it, `reason` =
+    why it is blank (null when set). The same matcher as an import."""
+
+    values: list[str]
+    value: str | None
+    rule: int | None
+    reason: str | None
 
 
 # ------------------------------------------------------------------ files

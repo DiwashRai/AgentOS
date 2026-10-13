@@ -8,7 +8,8 @@ anything but text.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from agentos.models import Priority, TicketType
@@ -28,6 +29,9 @@ class SourceTicket:
     priority: Priority
     labels: list[str]
     url: str
+    # The values of the extra fields `fetch` was asked for (request 22B), by field id, as plain
+    # strings (none = an empty list).
+    field_values: Mapping[str, list[str]] = field(default_factory=dict)
 
 
 class SourceError(Exception):
@@ -54,8 +58,9 @@ class TicketSource(Protocol):
         """URL or key → external_id, or None if the ref is not for this source."""
         ...
 
-    def fetch(self, external_id: str) -> SourceTicket:
-        """SourceNotFound / SourceUnauthorized / SourceUnavailable on failure."""
+    def fetch(self, external_id: str, extra_fields: Sequence[str] = ()) -> SourceTicket:
+        """`extra_fields`: source field ids to read too, into `SourceTicket.field_values` (the
+        field mappings). SourceNotFound / SourceUnauthorized / SourceUnavailable on failure."""
         ...
 
     def post_comment(self, external_id: str, body: str) -> str:
