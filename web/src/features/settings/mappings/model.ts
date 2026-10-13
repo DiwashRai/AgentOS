@@ -212,9 +212,13 @@ export function matchIssue(match: string): string | undefined {
   return undefined;
 }
 
+/** The field issue about the display name (shown under "Shown as" when the id is typed by hand). */
+export const NAME_ISSUE = "Name the field, e.g. Fix versions.";
+
 function fieldIssue(d: MappingDraft): string | undefined {
-  if (d.field.trim() === "" || d.field_name.trim() === "") return "Pick a Jira field.";
+  if (d.field.trim() === "") return "Pick a Jira field, or enter its id.";
   if (!FIELD_ID_RE.test(d.field.trim())) return `${d.field} isn't a Jira field id.`;
+  if (d.field_name.trim() === "") return NAME_ISSUE;
   return undefined;
 }
 
@@ -368,6 +372,24 @@ export function fieldOptions(
     options.unshift({ value: current.field, label: current.field_name || current.field });
   }
   return options;
+}
+
+/**
+ * A field id typed by hand (when Jira's list can't load, or the field isn't in it): the id as
+ * typed, and the name Jira's list gives that id when it has it, else the name typed so far.
+ */
+export function typedField(
+  fields: readonly JiraField[] | undefined,
+  id: string,
+  name: string,
+): Pick<MappingDraft, "field" | "field_name"> {
+  const known = fields?.find((f) => f.id === id.trim());
+  return { field: id, field_name: known ? known.name : name };
+}
+
+/** The picker starts on typing the id when Jira's list isn't there once loading is over. */
+export function listMissing(fields: { pending: boolean; data: unknown }): boolean {
+  return !fields.pending && fields.data === undefined;
 }
 
 /** The picked field: its id, and what kind of value Jira holds there (when the list has it). */

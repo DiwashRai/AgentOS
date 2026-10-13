@@ -10,6 +10,7 @@ import {
   formOf,
   isBlankMapping,
   issueCount,
+  listMissing,
   locateIssue,
   mergeIssues,
   moveRule,
@@ -25,6 +26,7 @@ import {
   tryBlock,
   tryErrorText,
   tryLine,
+  typedField,
   validate,
   validateMapping,
   type FieldMappings,
@@ -125,7 +127,7 @@ describe("validate", () => {
       ],
     };
     const issues = validateMapping(d);
-    expect(issues.field).toBe("Pick a Jira field.");
+    expect(issues.field).toBe("Pick a Jira field, or enter its id.");
     expect(issues.rules[0]).toEqual({ match: "Required." });
     expect(issues.rules[1]).toEqual({
       match: "At most 200 characters.",
@@ -220,6 +222,29 @@ describe("field picker", () => {
     expect(fieldOptions([], { field: "", field_name: "" })).toEqual([
       { value: "", label: "Choose a Jira field" },
     ]);
+  });
+
+  it("takes an id typed by hand, naming it from Jira's list when the list has it", () => {
+    expect(typedField(FIELDS, " fixVersions ", "")).toEqual({
+      field: " fixVersions ",
+      field_name: "Fix versions",
+    });
+    expect(typedField(undefined, "customfield_10042", "Release")).toEqual({
+      field: "customfield_10042",
+      field_name: "Release",
+    });
+    const typed = { ...draft(), field: "customfield_10042", field_name: "" };
+    expect(validateMapping(typed).field).toBe("Name the field, e.g. Fix versions.");
+    expect(validateMapping({ ...typed, field: "custom field" }).field).toBe(
+      "custom field isn't a Jira field id.",
+    );
+    expect(validateMapping({ ...typed, field_name: "Release" }).field).toBeUndefined();
+  });
+
+  it("starts on typing the id once the list has failed, not while it loads", () => {
+    expect(listMissing({ pending: true, data: undefined })).toBe(false);
+    expect(listMissing({ pending: false, data: undefined })).toBe(true);
+    expect(listMissing({ pending: false, data: FIELDS })).toBe(false);
   });
 
   it("explains a 501 without Retry, and offers Retry otherwise", () => {

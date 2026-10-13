@@ -123,6 +123,12 @@ function type(el: HTMLInputElement, value: string) {
   });
 }
 
+function byPlaceholder(el: HTMLElement, text: string): HTMLInputElement {
+  const i = el.querySelector<HTMLInputElement>(`input[placeholder="${text}"]`);
+  if (!i) throw new Error(`no input with placeholder ${text}`);
+  return i;
+}
+
 function button(el: HTMLElement, name: string): HTMLButtonElement {
   const b = [...el.querySelectorAll("button")].find(
     (x) => (x.getAttribute("aria-label") ?? x.textContent) === name,
@@ -151,6 +157,36 @@ describe("MappingCard", () => {
       button(el, "Add a mapping").click();
     });
     expect(added).toHaveBeenCalledOnce();
+  });
+
+  it("takes the field id by hand when Jira's list can't load", () => {
+    const el = mount(
+      { ...SAVED, field: "", field_name: "" },
+      {
+        data: undefined,
+        pending: false,
+        fetching: false,
+        error: new ApiError(501, "not_implemented", "x"),
+        retry: () => undefined,
+      },
+    );
+    expect(el.querySelector("select")).toBeNull();
+    type(byPlaceholder(el, "customfield_10042"), "customfield_10042");
+    type(byPlaceholder(el, "Fix versions"), "Release");
+    expect(latest).toMatchObject({ field: "customfield_10042", field_name: "Release" });
+    expect(el.textContent).not.toContain("Pick from Jira's list");
+  });
+
+  it("switches from the list to typing the id, and back", () => {
+    const el = mount(SAVED);
+    act(() => {
+      button(el, "Enter the id by hand").click();
+    });
+    expect(byPlaceholder(el, "customfield_10042").value).toBe("fixVersions");
+    act(() => {
+      button(el, "Pick from Jira's list").click();
+    });
+    expect(el.querySelector("select")).not.toBeNull();
   });
 
   it("edits a rule and moves it", () => {
@@ -221,9 +257,10 @@ describe("MappingCard", () => {
       data: undefined,
       error: new ApiError(501, "not_implemented", "Jira isn't configured"),
     });
-    const select = el.querySelector("select");
-    expect(select?.value).toBe("fixVersions");
-    expect(select?.disabled).toBe(true);
+    // The saved id and name stay editable by hand.
+    expect(el.querySelector("select")).toBeNull();
+    expect(byPlaceholder(el, "customfield_10042").value).toBe("fixVersions");
+    expect(byPlaceholder(el, "Fix versions").value).toBe("Fix versions");
     expect(el.textContent).toContain("Jira import isn't configured");
     expect([...el.querySelectorAll("button")].some((b) => b.textContent === "Retry")).toBe(false);
   });

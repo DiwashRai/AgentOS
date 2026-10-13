@@ -4,17 +4,20 @@
 import { useState } from "react";
 
 import { usePreviewMapping } from "../../../api/queries";
-import { Button } from "../../../ui";
-import { Field, Select } from "../../pipeline/fields";
+import { Button, cx, LinkButton } from "../../../ui";
+import { Field, fieldStyles as f, Select } from "../../pipeline/fields";
 import s from "./Mappings.module.css";
 import {
   fieldKind,
   fieldOptions,
   fieldsProblem,
   kindWord,
+  listMissing,
+  NAME_ISSUE,
   previewRequest,
   tryBlock,
   tryLine,
+  typedField,
   type JiraField,
   type MappingDraft,
   type MappingIssues,
@@ -152,6 +155,9 @@ interface FieldPickerProps {
 
 function FieldPicker({ draft, error, fields, readOnly, onPick }: FieldPickerProps) {
   const list = fields.data;
+  // Typing the id by hand: chosen, or the only way when Jira's list can't load.
+  const [typing, setTyping] = useState(false);
+  const manual = typing || listMissing(fields);
   const options = fieldOptions(list, draft);
   const kind = fieldKind(list, draft.field);
   const problem = fields.error ? fieldsProblem(fields.error) : null;
@@ -164,26 +170,99 @@ function FieldPicker({ draft, error, fields, readOnly, onPick }: FieldPickerProp
         {kind ? ` · ${kindWord(kind)}` : null}
       </>
     );
+  const switcher = readOnly ? null : manual ? (
+    list ? (
+      <LinkButton
+        className={s.switch}
+        onClick={() => {
+          setTyping(false);
+        }}
+      >
+        Pick from Jira&apos;s list
+      </LinkButton>
+    ) : null
+  ) : (
+    <LinkButton
+      className={s.switch}
+      onClick={() => {
+        setTyping(true);
+      }}
+    >
+      Enter the id by hand
+    </LinkButton>
+  );
 
   return (
     <div className={s.fieldRow}>
-      <Field label="Jira field" hint={hint} error={error} className={s.picker}>
-        {({ id, describedBy, invalid }) => (
-          <Select
-            id={id}
-            value={draft.field}
-            options={options}
-            disabled={readOnly || !list}
-            aria-describedby={describedBy}
-            aria-invalid={invalid}
-            className={s.select}
-            onChange={(value) => {
-              const picked = list?.find((x) => x.id === value);
-              if (picked) onPick(picked.id, picked.name);
-            }}
-          />
-        )}
-      </Field>
+      {manual ? (
+        <div className={s.typed}>
+          <Field
+            label="Jira field id"
+            hint="As Jira names it, e.g. fixVersions or customfield_10042."
+            error={error === NAME_ISSUE ? undefined : error}
+            className={s.picker}
+          >
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                className={cx(f.input, f.mono)}
+                value={draft.field}
+                placeholder="customfield_10042"
+                readOnly={readOnly}
+                spellCheck={false}
+                autoComplete="off"
+                aria-describedby={describedBy}
+                aria-invalid={invalid}
+                onChange={(e) => {
+                  const next = typedField(list, e.target.value, draft.field_name);
+                  onPick(next.field, next.field_name);
+                }}
+              />
+            )}
+          </Field>
+          <Field
+            label="Shown as"
+            hint="The name tickets show, e.g. Fix versions."
+            error={error === NAME_ISSUE ? error : undefined}
+            className={s.picker}
+          >
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                className={f.input}
+                value={draft.field_name}
+                placeholder="Fix versions"
+                readOnly={readOnly}
+                autoComplete="off"
+                aria-describedby={describedBy}
+                aria-invalid={invalid}
+                onChange={(e) => {
+                  onPick(draft.field, e.target.value);
+                }}
+              />
+            )}
+          </Field>
+        </div>
+      ) : (
+        <Field label="Jira field" hint={hint} error={error} className={s.picker}>
+          {({ id, describedBy, invalid }) => (
+            <Select
+              id={id}
+              value={draft.field}
+              options={options}
+              disabled={readOnly || !list}
+              aria-describedby={describedBy}
+              aria-invalid={invalid}
+              className={s.select}
+              onChange={(value) => {
+                const picked = list?.find((x) => x.id === value);
+                if (picked) onPick(picked.id, picked.name);
+              }}
+            />
+          )}
+        </Field>
+      )}
+      {switcher}
       {fields.pending ? (
         <p className={s.k} role="status">
           Loading Jira&apos;s fields…

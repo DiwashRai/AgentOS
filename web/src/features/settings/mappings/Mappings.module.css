@@ -92,6 +92,19 @@
 .select {
   width: 100%;
 }
+/* the id typed by hand: id and display name side by side, wrapping on narrow screens */
+.typed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.typed > .picker {
+  flex: 1 1 220px;
+}
+.switch {
+  align-self: flex-start;
+  font-size: var(--fs-meta);
+}
 .fieldProblem {
   margin: 0;
   display: flex;
