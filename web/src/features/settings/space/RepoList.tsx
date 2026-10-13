@@ -130,6 +130,7 @@ export function RepoList(props: RepoListProps) {
                         id={id}
                         className={cx(f.input, f.mono)}
                         value={row.default_branch}
+                        placeholder="None: each ticket sets its own"
                         readOnly={readOnly}
                         spellCheck={false}
                         autoComplete="off"

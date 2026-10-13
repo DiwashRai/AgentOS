@@ -179,6 +179,7 @@ export interface RepoRow {
   fresh: boolean;
   name: string;
   url: string;
+  /** The form's text; blank = no default (tickets then need their own base branch). */
   default_branch: string;
   /** From the server; 0 for a fresh row. */
   open_ticket_count: number;
@@ -199,7 +200,7 @@ export function repoRows(r: RepoSettings): RepoRow[] {
     fresh: false,
     name: e.name,
     url: e.url,
-    default_branch: e.default_branch,
+    default_branch: e.default_branch ?? "",
     open_ticket_count: e.open_ticket_count,
   }));
 }
@@ -234,7 +235,7 @@ export function reposBody(rows: readonly RepoRow[], baseVersion: number): ReposB
     repos: rows.map((r) => ({
       name: r.name.trim(),
       url: r.url.trim(),
-      default_branch: r.default_branch.trim(),
+      default_branch: r.default_branch.trim() || null,
     })),
     base_version: baseVersion,
   };
@@ -254,7 +255,8 @@ export function validateRepos(rows: readonly RepoRow[]): ReposValidation {
     }
     const url = checkRepoUrl(r.url.trim());
     if (url !== undefined) out.url = url;
-    const branch = checkBranch(r.default_branch.trim());
+    const branchText = r.default_branch.trim();
+    const branch = branchText === "" ? undefined : checkBranch(branchText);
     if (branch !== undefined) out.default_branch = branch;
     return out;
   });

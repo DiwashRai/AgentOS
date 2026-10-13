@@ -192,6 +192,19 @@ describe("Repo rows", () => {
     });
   });
 
+  it("allows no default branch: null comes back blank, blank goes out as null", () => {
+    const none = repoRows({
+      repos: [{ name: "app", url: "https://h/app", default_branch: null, open_ticket_count: 0 }],
+      version: 1,
+      updated_at: "2026-10-13T10:00:00Z",
+      updated_by: null,
+    });
+    expect(none[0]?.default_branch).toBe("");
+    expect(validateRepos(none).rows[0]).toEqual({});
+    const blanked = rows.map((r) => ({ ...r, default_branch: "  " }));
+    expect(reposBody(blanked, 1).repos.map((r) => r.default_branch)).toEqual([null, null]);
+  });
+
   it("a new row gets an unused key and is fresh", () => {
     const a = newRepoRow(rows);
     const b = newRepoRow([...rows, a]);

@@ -51,6 +51,7 @@ function detail(over: Partial<Detail> = {}): Detail {
     ...ticket(),
     active_run_id: null,
     base_branch: null,
+    base_branch_info: null,
     branch: null,
     created_at: "2026-10-11T10:00:00Z",
     description: "",
