@@ -20,6 +20,7 @@ from agentos.models import (
     TicketPatch,
     TicketSummary,
     TicketType,
+    WorkflowSwitch,
 )
 from agentos.tickets import service
 
@@ -83,3 +84,12 @@ def resolve_ticket(key: str, body: ResolveRequest, user: Writer, ctx: Ctx) -> Ti
 @router.put("/{key}/pipeline")
 def put_pipeline(key: str, body: PipelineUpdate, user: Writer, ctx: Ctx) -> TicketDetail:
     return service.put_pipeline(ctx.db, ctx.broker, ctx.runtimes, ctx.space, key, user, body)
+
+
+@router.post("/{key}/workflow")
+def switch_workflow(key: str, body: WorkflowSwitch, user: Writer, ctx: Ctx) -> TicketDetail:
+    """Replace the ticket's pipeline with a copy of a workflow's (allowed after runs; 409
+    `run_active` during one, `stale_version` on a stale `base_version`; 404 `not_found` for an
+    unknown workflow). The rail keeps the run history of stages the new pipeline shares by id;
+    new stages start pending."""
+    return service.switch_workflow(ctx.db, ctx.broker, ctx.runtimes, ctx.space, key, user, body)

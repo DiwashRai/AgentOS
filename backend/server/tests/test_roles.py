@@ -26,12 +26,16 @@ MUTATING_ROLES: dict[tuple[str, str], Role] = {
     ("PATCH", "/api/tickets/{key}"): "writer",
     ("POST", "/api/tickets/{key}/resolve"): "writer",
     ("PUT", "/api/tickets/{key}/pipeline"): "writer",
+    ("POST", "/api/tickets/{key}/workflow"): "writer",
     ("PUT", "/api/tickets/{key}/files/{path}"): "writer",
     ("DELETE", "/api/tickets/{key}/files/{path}"): "writer",
     ("POST", "/api/tickets/{key}/chat"): "viewer",
     ("POST", "/api/tickets/{key}/runs"): "writer",
     ("POST", "/api/runs/{run_id}/cancel"): "writer",
     ("PUT", "/api/template"): "admin",
+    ("POST", "/api/workflows"): "admin",
+    ("PUT", "/api/workflows/{workflow_id}"): "admin",
+    ("DELETE", "/api/workflows/{workflow_id}"): "admin",
     ("PATCH", "/api/users/{user_id}"): "admin",
     ("PUT", "/api/settings/space"): "admin",
     ("PUT", "/api/settings/repos"): "admin",
@@ -55,7 +59,13 @@ ADMIN_GETS = {
 }
 
 # Path parameters point at things that don't exist, so a missing gate can't mutate stub data.
-SAMPLE = {"key": "NOPE-999", "path": "SKILL.md", "run_id": "999999", "user_id": "999999"}
+SAMPLE = {
+    "key": "NOPE-999",
+    "path": "SKILL.md",
+    "run_id": "999999",
+    "user_id": "999999",
+    "workflow_id": "999999",
+}
 _PARAM = re.compile(r"\{(\w+)\}")
 
 

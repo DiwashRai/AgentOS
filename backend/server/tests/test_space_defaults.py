@@ -40,7 +40,6 @@ def get_template(client: TestClient) -> Template:
 def put_template(client: TestClient, **changes: Any) -> Any:
     current = get_template(client)
     body = {
-        "pipeline": current.pipeline.model_dump(),
         "scaffold": [e.model_dump() for e in current.scaffold],
         "base_version": current.version,
         **changes,

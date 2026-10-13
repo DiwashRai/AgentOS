@@ -73,6 +73,7 @@ from agentos.space_store import (
 )
 from agentos.templates.service import current as current_template
 from agentos.ttlcache import TtlCache
+from agentos.workflows import service as workflows
 
 log = logging.getLogger(__name__)
 
@@ -92,16 +93,19 @@ _LABELS: dict[Area, str] = {
 
 def get_space(db: Database) -> SpaceSettings:
     with db.read() as conn:
-        return _space_settings(_row(conn, "space"))
+        return _space_settings(conn, _row(conn, "space"))
 
 
 def put_space(
     db: Database, store: SpaceStore, actor: Me, body: SpaceSettingsUpdate, *, jira_auth: bool
 ) -> SpaceSettings:
     """Replace the Space settings. 422 when `key_prefix` is one of `jira_projects`, a project
-    repeats, `jira_projects` is empty while sign-in is with Jira (`jira_auth`), or `default_repo`
-    isn't in the repo catalog."""
-    section = _validated(SpaceSection, body.model_dump(exclude={"base_version"}))
+    repeats, `jira_projects` is empty while sign-in is with Jira (`jira_auth`), `default_repo`
+    isn't in the repo catalog, or `default_workflow_id` isn't a workflow (null keeps the current
+    default; the default is stored on the workflows, `workflows.service.set_default`)."""
+    section = _validated(
+        SpaceSection, body.model_dump(exclude={"base_version", "default_workflow_id"})
+    )
     if jira_auth and not section.jira_projects:
         raise ApiError(
             422,
@@ -115,6 +119,8 @@ def put_space(
             raise ApiError(
                 422, "validation_error", f"default_repo: {default!r} is not in this Space's repos"
             )
+        if body.default_workflow_id is not None:
+            workflows.set_default(conn, body.default_workflow_id)
         write_area(
             conn,
             "space",
@@ -122,12 +128,12 @@ def put_space(
             version=row.version + 1,
             actor_id=actor.id,
         )
-        result = _space_settings(_row(conn, "space"))
+        result = _space_settings(conn, _row(conn, "space"))
     store.invalidate()
     return result
 
 
-def _space_settings(row: AreaRow) -> SpaceSettings:
+def _space_settings(conn: Conn, row: AreaRow) -> SpaceSettings:
     section = section_of(row)
     return SpaceSettings(
         name=section.name,
@@ -135,6 +141,7 @@ def _space_settings(row: AreaRow) -> SpaceSettings:
         key_prefix=section.key_prefix,
         jira_projects=list(section.jira_projects),
         claim_timeout_s=section.claim_timeout_s,
+        default_workflow_id=workflows.default_id(conn),
         version=row.version,
         updated_at=row.updated_at,
         updated_by=row.updated_by,
@@ -284,7 +291,8 @@ def put_runtimes(
     db: Database, store: SpaceStore, actor: Me, body: RuntimeSettingsUpdate
 ) -> RuntimeSettings:
     """Replace the runtimes (in order: the first is the server default). A name missing from the
-    body is a removal: 409 `in_use` while the current template's `defaults` or stages use it."""
+    body is a removal: 409 `in_use` while the template's `defaults` or a workflow's stages use
+    it."""
     entries: list[NamedRuntime] = []
     for i, entry in enumerate(body.runtimes):
         named = _validated(NamedRuntime, entry.model_dump(), f"runtimes.{i}")
@@ -308,18 +316,19 @@ def put_runtimes(
 
 
 def _check_runtimes_unused(conn: Conn, removed: list[str]) -> None:
-    """409 `in_use` naming each removed runtime the current template still uses (its `defaults`
-    or any agent stage). Tickets' own pipelines aren't checked: a stage pinned to a removed
-    runtime fails its dispatch (422 `invalid_stage`) until the ticket's pipeline is edited."""
+    """409 `in_use` naming each removed runtime the template's `defaults` or a workflow's agent
+    stage still uses. Tickets' own pipelines aren't checked: a stage pinned to a removed runtime
+    fails its dispatch (422 `invalid_stage`) until the ticket's pipeline is edited."""
     template = current_template(conn).template
+    pinned = workflows.runtime_uses(conn, removed)
     problems: list[str] = []
     for name in removed:
         uses: list[str] = []
         if template.defaults.runtime == name:
             uses.append("it is the template's default runtime")
-        n = sum(1 for s in template.pipeline.stages if s.kind == "agent" and s.runtime == name)
-        if n:
-            uses.append(f"{n} template stage{'s' if n != 1 else ''} use{'s' if n == 1 else ''} it")
+        if names := pinned.get(name):
+            what = "the workflow" if len(names) == 1 else "the workflows"
+            uses.append(f"{what} {', '.join(names)} use{'s' if len(names) == 1 else ''} it")
         if uses:
             problems.append(f"{name!r} ({' and '.join(uses)})")
     if problems:

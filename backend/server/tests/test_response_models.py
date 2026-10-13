@@ -39,6 +39,7 @@ from agentos.models import (
     TicketDetail,
     TicketSummary,
     User,
+    Workflow,
 )
 from agentos.sources.jira import JiraClient
 from tests.run_support import RunDriver
@@ -118,6 +119,7 @@ def test_every_get_matches_its_model(
     check(client, "/api/users", list[User])
     check(client, "/api/people", list[Person])
     check(client, "/api/template", Template)
+    check(client, "/api/workflows", list[Workflow])
     # No intake queries in the test config; test_intake.py validates filled answers.
     check(client, "/api/intake", list[IntakeQuery])
     # Settings: seeded (updated_by null), then saved by someone (updated_by set).

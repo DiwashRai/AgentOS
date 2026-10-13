@@ -1,9 +1,14 @@
 """The default template (SPEC §4, §15): append-only versions, current = the max version.
 
-Copied into a ticket at creation (`tickets.template_id` records the exact version) and never
-linked afterwards, so a template edit only affects tickets created after it. The exception is
-`defaults` (the Space's default runtime/model): it is read from the current version whenever a
-run's stages are resolved, so a change reaches every ticket whose stages leave them null.
+Its scaffold is rendered into a ticket at creation (`tickets.template_id` records the exact
+version) and never linked afterwards, so a template edit only affects tickets created after it.
+The exception is `defaults` (the Space's default runtime/model/effort): it is read from the
+current version whenever a run's stages are resolved, so a change reaches every ticket whose
+stages leave them null.
+
+A ticket's pipeline comes from a workflow (request 23B, `agentos.workflows`). The `pipeline`
+column stays: the startup seed fills it and `legacy_pipeline` hands it to the "Standard" workflow
+seed; a template save copies it over unchanged.
 """
 
 from __future__ import annotations
@@ -26,7 +31,6 @@ from agentos.pipeline.scaffold import (
     SKILL_MD_PATH,
     default_pipeline,
 )
-from agentos.pipeline.segment import validate_pipeline
 from agentos.space_store import read_area, runtime_entries_of
 
 log = logging.getLogger(__name__)
@@ -111,12 +115,23 @@ def current(conn: Conn) -> TemplateRow:
     return TemplateRow(
         id=row["id"],
         template=Template(
-            pipeline=Pipeline.model_validate_json(row["pipeline"]),
             scaffold=_SCAFFOLD.validate_json(row["scaffold"]),
             defaults=TemplateDefaults.model_validate_json(row["defaults"]),
             version=row["version"],
         ),
     )
+
+
+def legacy_pipeline(conn: Conn) -> Pipeline:
+    """The current version's stored pipeline: what tickets copied before workflows, and what the
+    "Standard" workflow is seeded from."""
+    row = conn.execute(
+        "SELECT pipeline FROM templates WHERE name = ? ORDER BY version DESC LIMIT 1",
+        (DEFAULT_NAME,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("the default template is missing (seed_default did not run)")
+    return Pipeline.model_validate_json(row["pipeline"])
 
 
 def current_defaults(conn: Conn) -> TemplateDefaults:
@@ -143,13 +158,12 @@ def get_defaults(db: Database) -> TemplateDefaults:
 
 def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
     """Append version+1. 409 `stale_version` unless `base_version` is the current version.
-    The checks raise 422 `invalid_pipeline` / `render_error` / `validation_error` or 413.
-    `defaults` omitted → the current version's are carried over. Runtimes are checked against
-    Settings > Runners in the same transaction, so a concurrent runtime removal can't slip by."""
+    The checks raise 422 `render_error` / `validation_error` or 413. `defaults` omitted → the
+    current version's are carried over. Runtimes are checked against Settings > Runners in the
+    same transaction, so a concurrent runtime removal can't slip by."""
     check_scaffold(body.scaffold)
     with db.tx() as conn:
         runtimes = _runtime_names(conn)
-        validate_pipeline(body.pipeline, runtimes=runtimes)
         runtime = None if body.defaults is None else body.defaults.runtime
         if runtime is not None and runtime not in runtimes:
             raise ApiError(
@@ -165,7 +179,7 @@ def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
             (
                 DEFAULT_NAME,
                 template.version + 1,
-                body.pipeline.model_dump_json(),
+                legacy_pipeline(conn).model_dump_json(),
                 _scaffold_json(body.scaffold),
                 defaults.model_dump_json(),
                 to_db(utcnow()),

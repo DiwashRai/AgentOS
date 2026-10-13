@@ -92,7 +92,6 @@ def runtime(name: str, argv: list[str], **fields: Any) -> dict[str, Any]:
 def set_template(client: TestClient, **changes: Any) -> httpx.Response:
     current = client.get("/api/template").json()
     body = {
-        "pipeline": current["pipeline"],
         "scaffold": current["scaffold"],
         "base_version": current["version"],
         **changes,
@@ -172,22 +171,23 @@ def test_runtimes_are_validated(authed: TestClient, items: list[Any], where: str
     assert runtimes(authed).version == 1
 
 
-def test_removing_a_runtime_the_template_uses_is_refused(authed: TestClient) -> None:
+def test_removing_a_runtime_the_template_or_a_workflow_uses_is_refused(authed: TestClient) -> None:
     fake, _claude = entries(authed)
     assert set_template(authed, defaults={"runtime": "claude"}).status_code == 200
     status, code, message = error(put_runtimes(authed, [fake]))
     assert (status, code) == (409, "in_use")
     assert "'claude' (it is the template's default runtime)" in message
 
-    template = authed.get("/api/template").json()
-    for stage in template["pipeline"]["stages"]:
+    pipeline = authed.get("/api/workflows").json()[0]["pipeline"]
+    for stage in pipeline["stages"]:
         if stage["kind"] == "agent" and stage["id"] in ("plan", "review"):
             stage["runtime"] = "claude"
-    saved = set_template(authed, pipeline=template["pipeline"], defaults={})
-    assert saved.status_code == 200, saved.text
+    body = {"name": "Careful", "pipeline": pipeline}
+    assert authed.post("/api/workflows", json=body, headers=CSRF).status_code == 201
+    assert set_template(authed, defaults={}).status_code == 200
     status, code, message = error(put_runtimes(authed, [fake]))
     assert (status, code) == (409, "in_use")
-    assert "'claude' (2 template stages use it)" in message
+    assert "'claude' (the workflow Careful uses it)" in message
     assert [r.name for r in runtimes(authed).runtimes] == ["fake", "claude"]
 
 

@@ -9,6 +9,7 @@ from agentos.http_deps import Ctx
 from agentos.models import AppConfig, Health
 from agentos.pipeline.runtime import space_defaults
 from agentos.templates import service as templates
+from agentos.workflows import service as workflows
 
 router = APIRouter(prefix="/api", tags=["meta"], responses=ERROR_RESPONSES)
 
@@ -34,6 +35,7 @@ def app_config(ctx: Ctx) -> AppConfig:
         default_runtime=defaults.runtime,
         default_model=defaults.model,
         default_effort=defaults.effort,
+        default_workflow_id=workflows.get_default_id(ctx.db),
         server_default_runtime=runtimes.default_runtime,
         sources=["jira"] if ctx.jira_source is not None else [],
     )

@@ -45,6 +45,8 @@ from agentos.models import (
     TicketPatch,
     TicketSummary,
     TicketType,
+    TicketWorkflow,
+    WorkflowSwitch,
     WorkspaceMode,
 )
 from agentos.pipeline.manifest import render_stages
@@ -64,6 +66,7 @@ from agentos.sources.base import (
 from agentos.templates import service as templates
 from agentos.tickets.board import ACTIVE, RunFact, StageRunFact, TicketFacts, derive, for_viewer
 from agentos.validate import validate_base_branch, validate_key
+from agentos.workflows import service as workflows
 
 log = logging.getLogger(__name__)
 
@@ -436,10 +439,20 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
         branch=n.branch,
         pipeline=ticket_pipeline(row),
         pipeline_version=row["pipeline_version"],
+        workflow=_ticket_workflow(row),
         next_stage=next_stage,
         active_run_id=active,
         created_at=from_db(row["created_at"]),
         plan=list(plan.items) if plan is not None else None,
+    )
+
+
+def _ticket_workflow(row: Row) -> TicketWorkflow | None:
+    """The workflow the pipeline was copied from (null before workflows existed)."""
+    if row["workflow_name"] is None:
+        return None
+    return TicketWorkflow(
+        id=row["workflow_id"], name=row["workflow_name"], version=row["workflow_version"]
     )
 
 
@@ -511,6 +524,7 @@ def create_ticket(
                 base_branch_source="manual" if base_branch is not None else "default",
                 base_branch_set_by=user.id if base_branch is not None else None,
                 owner_id=body.owner_id,
+                workflow_id=body.workflow_id,
             ),
         )
         detail = _detail(conn, space, key, user.id)
@@ -536,16 +550,19 @@ class _NewTicket:
     source: SourceLink | None = None
     base_branch_source_value: str | None = None  # the raw field text a mapping read
     base_branch_reason: str | None = None  # why a mapping left it blank
+    workflow_id: int | None = None  # None = the default workflow
 
 
 def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) -> int:
-    """Insert the ticket with a copy of the current template's pipeline and its rendered scaffold
-    as bundle v1 (inside the caller's transaction, so a render error leaves nothing behind)."""
+    """Insert the ticket with a copy of its workflow's pipeline (422 for an unknown workflow) and
+    the current template's rendered scaffold as bundle v1 (inside the caller's transaction, so a
+    render error leaves nothing behind). A no-repo ticket gets `requires_repo` stages disabled."""
     resolved = space.resolve(new.repo, new.base_branch, source=new.base_branch_source)
     now = utcnow()
     slug = ""  # the skill dir is named by the key alone; older tickets keep their title slug
+    workflow = workflows.for_ticket(conn, new.workflow_id)
     template = templates.current(conn)
-    pipeline = template.template.pipeline
+    pipeline = workflow.pipeline
     if resolved.mode == "none":
         pipeline = _without_repo_stages(pipeline)
     source = new.source
@@ -565,9 +582,10 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
         "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
         "workspace_mode, repo, base_branch, base_branch_source, base_branch_set_by, "
         "base_branch_source_value, base_branch_reason, template_id, "
-        "pipeline, pipeline_version, owner_id, source, external_id, source_url, created_by, "
-        "created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+        "pipeline, pipeline_version, workflow_id, workflow_name, workflow_version, "
+        "owner_id, source, external_id, source_url, created_by, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, "
+        "?, ?, ?, ?, ?, ?, ?)",
         (
             new.key,
             slug,
@@ -585,6 +603,9 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
             new.base_branch_reason,
             template.id,
             pipeline.model_dump_json(),
+            workflow.id,
+            workflow.name,
+            workflow.version,
             new.owner_id,
             source.source if source is not None else None,
             source.external_id if source is not None else None,
@@ -649,6 +670,7 @@ def import_ticket(
     with db.read() as conn:
         if (key := _imported_key(conn, source.name, external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
+        workflows.for_ticket(conn, body.workflow_id)  # 422 before the Jira call (rechecked below)
     repo = space.default_repo
     mapping = mapping_for(mappings, "base_branch")
     if mapping is not None and (repo is None or mapping.source != source.name):
@@ -681,6 +703,7 @@ def import_ticket(
         base_branch_set_by=None,
         owner_id=user.id,
         source=SourceLink(source=source.name, external_id=fetched.external_id, url=fetched.url),
+        workflow_id=body.workflow_id,
     )
     if mapping is not None:
         values = fetched.field_values.get(mapping.field, [])
@@ -975,15 +998,11 @@ def put_pipeline(
 ) -> TicketDetail:
     """409 `run_active` / `stale_version`; 422 `invalid_pipeline` (incl. an enabled
     `requires_repo` stage on a no-repo ticket) or `render_error` (every agent prompt must render,
-    so a template typo surfaces on save, not at dispatch)."""
+    so a template typo surfaces on save, not at dispatch). The ticket's `workflow` record stays:
+    it says where the pipeline was copied from, not that it is unchanged."""
     pipeline = body.pipeline
     with db.tx() as conn:
-        row = get_ticket_row(conn, key)
-        if active_run_id(conn, row["id"]) is not None:
-            raise ApiError(409, "run_active", "The pipeline is locked while a run is active")
-        if body.base_version != row["pipeline_version"]:
-            raise ApiError(409, "stale_version", "The pipeline was changed by someone else")
-        validate_pipeline(pipeline, runtimes=runtimes.runtimes.keys())
+        row = _pipeline_row(conn, key, body.base_version)
         if workspace_mode(row) == "none":
             for stage in pipeline.stages:
                 if stage.enabled and stage.requires_repo:
@@ -992,17 +1011,70 @@ def put_pipeline(
                         "invalid_pipeline",
                         f"stage {stage.id}: requires a repo; this ticket has none",
                     )
-        agent_stages = [s for s in pipeline.stages if s.kind == "agent"]
-        defaults = templates.current_defaults(conn)
-        render_stages(0, ticket_ref(row, space), agent_stages, runtimes, defaults=defaults)
+        _store_pipeline(conn, row, space, runtimes, pipeline)
+        detail = _detail(conn, space, key, user.id)
+    broker.ticket(key)
+    return detail
+
+
+def switch_workflow(
+    db: Database,
+    broker: Broker,
+    runtimes: RuntimesConfig,
+    space: SpaceConfig,
+    key: str,
+    user: Me,
+    body: WorkflowSwitch,
+) -> TicketDetail:
+    """Replace the ticket's pipeline with a copy of the workflow's and record the workflow (its
+    current version). Allowed after runs: the ticket branch carries on, and the board reads the
+    run history by stage id (stages the new pipeline shares keep their state; new ones start
+    pending). A no-repo ticket gets `requires_repo` stages disabled, as at creation.
+
+    409 `run_active` / `stale_version` (`base_version` = the ticket's `pipeline_version`); 404
+    `not_found` for an unknown workflow; 422 `invalid_pipeline` / `render_error` when the copy
+    fails the checks a pipeline save runs (e.g. a stage pinned to a runtime removed since)."""
+    with db.tx() as conn:
+        row = _pipeline_row(conn, key, body.base_version)
+        workflow = workflows.get(conn, body.workflow_id)
+        pipeline = workflow.pipeline
+        if workspace_mode(row) == "none":
+            pipeline = _without_repo_stages(pipeline)
+        _store_pipeline(conn, row, space, runtimes, pipeline)
         conn.execute(
-            "UPDATE tickets SET pipeline = ?, pipeline_version = pipeline_version + 1, "
-            "updated_at = ? WHERE id = ?",
-            (pipeline.model_dump_json(), to_db(utcnow()), row["id"]),
+            "UPDATE tickets SET workflow_id = ?, workflow_name = ?, workflow_version = ? "
+            "WHERE id = ?",
+            (workflow.id, workflow.name, workflow.version, row["id"]),
         )
         detail = _detail(conn, space, key, user.id)
     broker.ticket(key)
     return detail
+
+
+def _pipeline_row(conn: Conn, key: str, base_version: int) -> Row:
+    """The ticket row for a pipeline change: 409 `run_active` during a run, 409 `stale_version`
+    unless `base_version` is its `pipeline_version`."""
+    row = get_ticket_row(conn, key)
+    if active_run_id(conn, row["id"]) is not None:
+        raise ApiError(409, "run_active", "The pipeline is locked while a run is active")
+    if base_version != row["pipeline_version"]:
+        raise ApiError(409, "stale_version", "The pipeline was changed by someone else")
+    return row
+
+
+def _store_pipeline(
+    conn: Conn, row: Row, space: SpaceConfig, runtimes: RuntimesConfig, pipeline: Pipeline
+) -> None:
+    """Check `pipeline` (422 `invalid_pipeline` / `render_error`) and store it, version + 1."""
+    validate_pipeline(pipeline, runtimes=runtimes.runtimes.keys())
+    agent_stages = [s for s in pipeline.stages if s.kind == "agent"]
+    defaults = templates.current_defaults(conn)
+    render_stages(0, ticket_ref(row, space), agent_stages, runtimes, defaults=defaults)
+    conn.execute(
+        "UPDATE tickets SET pipeline = ?, pipeline_version = pipeline_version + 1, "
+        "updated_at = ? WHERE id = ?",
+        (pipeline.model_dump_json(), to_db(utcnow()), row["id"]),
+    )
 
 
 # ------------------------------------------------------------------ repo backfill (startup)

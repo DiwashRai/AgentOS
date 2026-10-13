@@ -601,6 +601,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tickets/{key}/workflow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch Workflow
+         * @description Replace the ticket's pipeline with a copy of a workflow's (allowed after runs; 409
+         *     `run_active` during one, `stale_version` on a stale `base_version`; 404 `not_found` for an
+         *     unknown workflow). The rail keeps the run history of stages the new pipeline shares by id;
+         *     new stages start pending.
+         */
+        post: operations["switch_workflow_api_tickets__key__workflow_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users": {
         parameters: {
             query?: never;
@@ -720,6 +743,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Workflows
+         * @description Every workflow, by name, with its full pipeline.
+         */
+        get: operations["list_workflows_api_workflows_get"];
+        put?: never;
+        /** Create Workflow */
+        post: operations["create_workflow_api_workflows_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{workflow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Workflow */
+        put: operations["update_workflow_api_workflows__workflow_id__put"];
+        post?: never;
+        /**
+         * Delete Workflow
+         * @description The default workflow can't be deleted (409 `in_use`). Tickets copied from it keep their
+         *     pipeline and their `workflow` record (its `id` becomes null).
+         */
+        delete: operations["delete_workflow_api_workflows__workflow_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -742,6 +808,8 @@ export interface components {
             default_repo: string | null;
             /** Default Runtime */
             default_runtime: string;
+            /** Default Workflow Id */
+            default_workflow_id: number;
             /** Jira Deployment */
             jira_deployment: ("cloud" | "datacenter") | null;
             /** Jira Url */
@@ -1056,6 +1124,8 @@ export interface components {
         ImportRequest: {
             /** Ref */
             ref: string;
+            /** Workflow Id */
+            workflow_id?: number | null;
         };
         /**
          * ImportResult
@@ -1794,6 +1864,8 @@ export interface components {
             claim_timeout_s: number;
             /** Default Repo */
             default_repo: string | null;
+            /** Default Workflow Id */
+            default_workflow_id: number;
             /** Jira Projects */
             jira_projects: string[];
             /** Key Prefix */
@@ -1813,7 +1885,8 @@ export interface components {
          * SpaceSettingsUpdate
          * @description PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,
          *     `key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project
-         *     repeats, or `jira_projects` is empty while sign-in is with Jira.
+         *     repeats, `jira_projects` is empty while sign-in is with Jira, or `default_workflow_id` isn't a
+         *     workflow.
          */
         SpaceSettingsUpdate: {
             /** Base Version */
@@ -1822,6 +1895,8 @@ export interface components {
             claim_timeout_s: number;
             /** Default Repo */
             default_repo: string | null;
+            /** Default Workflow Id */
+            default_workflow_id?: number | null;
             /** Jira Projects */
             jira_projects: string[];
             /** Key Prefix */
@@ -2005,10 +2080,13 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** Template */
+        /**
+         * Template
+         * @description The Space-wide part of a new ticket: its scaffold (context files) and the agent defaults.
+         *     The pipeline comes from a workflow (request 23B).
+         */
         Template: {
             defaults: components["schemas"]["TemplateDefaults"];
-            pipeline: components["schemas"]["Pipeline"];
             /** Scaffold */
             scaffold: components["schemas"]["FileEntry"][];
             /** Version */
@@ -2031,15 +2109,14 @@ export interface components {
         };
         /**
          * TemplateUpdate
-         * @description PUT: `pipeline` and `scaffold` replace the current ones. `defaults` omitted = keep the
-         *     current defaults (explicit null is rejected); send `{}` or nulls to clear them.
+         * @description PUT: `scaffold` replaces the current one. `defaults` omitted = keep the current defaults
+         *     (explicit null is rejected); send `{}` or nulls to clear them.
          */
         TemplateUpdate: {
             /** Base Version */
             base_version: number;
             /** Defaults */
             defaults?: components["schemas"]["TemplateDefaults"];
-            pipeline: components["schemas"]["Pipeline"];
             /** Scaffold */
             scaffold: components["schemas"]["FileEntry"][];
         };
@@ -2072,6 +2149,8 @@ export interface components {
              * @enum {string}
              */
             type: "feature" | "bug" | "improvement" | "task";
+            /** Workflow Id */
+            workflow_id?: number | null;
         };
         /** TicketDetail */
         TicketDetail: {
@@ -2160,6 +2239,7 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            workflow: components["schemas"]["TicketWorkflow"] | null;
             /**
              * Workspace Mode
              * @enum {string}
@@ -2264,6 +2344,19 @@ export interface components {
              */
             updated_at: string;
         };
+        /**
+         * TicketWorkflow
+         * @description The workflow a ticket's pipeline was copied from, as it was then: `id` is null once that
+         *     workflow is deleted (the name stays); `version` is the workflow's version at the copy.
+         */
+        TicketWorkflow: {
+            /** Id */
+            id: number | null;
+            /** Name */
+            name: string;
+            /** Version */
+            version: number;
+        };
         /** User */
         User: {
             /** Avatar Url */
@@ -2323,6 +2416,71 @@ export interface components {
              * @enum {string}
              */
             type: "warning";
+        };
+        /**
+         * Workflow
+         * @description A named pipeline preset. Applying one copies its pipeline into a ticket; editing it later
+         *     never changes existing tickets. `default`: what a new ticket gets when it names none.
+         */
+        Workflow: {
+            /** Default */
+            default: boolean;
+            /** Description */
+            description: string;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            pipeline: components["schemas"]["Pipeline"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            /** Version */
+            version: number;
+        };
+        /**
+         * WorkflowCreate
+         * @description POST /api/workflows. `name` is unique ignoring case (422 `validation_error`); `pipeline` is
+         *     checked like a ticket's (stage ids, runtimes exist, agent prompts render).
+         */
+        WorkflowCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            pipeline: components["schemas"]["Pipeline"];
+        };
+        /**
+         * WorkflowSwitch
+         * @description POST /api/tickets/{key}/workflow. `base_version` = the ticket's `pipeline_version`.
+         */
+        WorkflowSwitch: {
+            /** Base Version */
+            base_version: number;
+            /** Workflow Id */
+            workflow_id: number;
+        };
+        /**
+         * WorkflowUpdate
+         * @description PUT /api/workflows/{id}: replaces name, description and pipeline. 409 `stale_version`.
+         */
+        WorkflowUpdate: {
+            /** Base Version */
+            base_version: number;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            pipeline: components["schemas"]["Pipeline"];
         };
     };
     responses: never;
@@ -4157,6 +4315,50 @@ export interface operations {
             };
         };
     };
+    switch_workflow_api_tickets__key__workflow_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowSwitch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketDetail"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_users_api_users_get: {
         parameters: {
             query?: never;
@@ -4439,6 +4641,168 @@ export interface operations {
                 };
                 content: {
                     "text/plain": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_workflows_api_workflows_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workflow"][];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_workflow_api_workflows_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workflow"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    update_workflow_api_workflows__workflow_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workflow"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_workflow_api_workflows__workflow_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

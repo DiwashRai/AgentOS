@@ -150,6 +150,8 @@ class AppConfig(ApiModel):
     default_model: str | None
     # The Space default effort (the template's `defaults.effort`; null = none: no effort flag).
     default_effort: str | None
+    # The workflow a new ticket gets when it names none (`Workflow.default`).
+    default_workflow_id: int
     # The server default runtime (the first in Settings > Runners): what `default_runtime` falls
     # back to when the template sets no Space runtime (whatever the template says).
     server_default_runtime: str
@@ -251,17 +253,18 @@ class TemplateDefaults(ApiModel):
 
 
 class Template(ApiModel):
-    pipeline: Pipeline
+    """The Space-wide part of a new ticket: its scaffold (context files) and the agent defaults.
+    The pipeline comes from a workflow (request 23B)."""
+
     scaffold: list[FileEntry]
     defaults: TemplateDefaults
     version: int
 
 
 class TemplateUpdate(PatchModel):
-    """PUT: `pipeline` and `scaffold` replace the current ones. `defaults` omitted = keep the
-    current defaults (explicit null is rejected); send `{}` or nulls to clear them."""
+    """PUT: `scaffold` replaces the current one. `defaults` omitted = keep the current defaults
+    (explicit null is rejected); send `{}` or nulls to clear them."""
 
-    pipeline: Pipeline
     scaffold: list[FileEntry]
     defaults: TemplateDefaults | SkipJsonSchema[None] = None
     base_version: int
@@ -460,6 +463,15 @@ class TicketSummary(ApiModel):
     updated_at: AwareDatetime
 
 
+class TicketWorkflow(ApiModel):
+    """The workflow a ticket's pipeline was copied from, as it was then: `id` is null once that
+    workflow is deleted (the name stays); `version` is the workflow's version at the copy."""
+
+    id: int | None
+    name: str
+    version: int
+
+
 class TicketDetail(TicketSummary):
     description: str
     slug: str
@@ -476,6 +488,9 @@ class TicketDetail(TicketSummary):
     branch: str | None
     pipeline: Pipeline
     pipeline_version: int
+    # The workflow `pipeline` was copied from (at creation or the last switch); null for tickets
+    # created before workflows. Edits to the ticket's pipeline don't change it.
+    workflow: TicketWorkflow | None
     next_stage: str | None
     active_run_id: int | None
     created_at: AwareDatetime
@@ -495,6 +510,8 @@ class TicketCreate(ApiModel):
     # `default_branch`; a repo without one leaves the ticket blank and blocked from dispatch.
     base_branch: str | None = None
     owner_id: int | None = None
+    # The workflow whose pipeline the ticket copies. Omitted/null → the default (422 if unknown).
+    workflow_id: int | None = None
 
 
 class TicketPatch(PatchModel):
@@ -521,6 +538,9 @@ class ImportRequest(ApiModel):
     """A source ticket to import: a Jira key (`SCRUM-6`) or its browse link."""
 
     ref: str = Field(min_length=1, max_length=2000)
+    # As in TicketCreate: omitted/null → the default workflow; 422 if unknown. Unused when the
+    # issue was imported before (that ticket is returned as it is).
+    workflow_id: int | None = None
 
 
 class ImportResult(ApiModel):
@@ -532,6 +552,58 @@ class ImportResult(ApiModel):
 
 class PipelineUpdate(ApiModel):
     pipeline: Pipeline
+    base_version: int
+
+
+# ------------------------------------------------------------------ workflows (request 23B)
+
+WORKFLOW_NAME_MAX = 60
+WORKFLOW_DESCRIPTION_MAX = 500
+
+
+class Workflow(ApiModel):
+    """A named pipeline preset. Applying one copies its pipeline into a ticket; editing it later
+    never changes existing tickets. `default`: what a new ticket gets when it names none."""
+
+    id: int
+    name: str
+    description: str
+    pipeline: Pipeline
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+    default: bool
+
+
+class WorkflowCreate(ApiModel):
+    """POST /api/workflows. `name` is unique ignoring case (422 `validation_error`); `pipeline` is
+    checked like a ticket's (stage ids, runtimes exist, agent prompts render)."""
+
+    name: str = Field(min_length=1, max_length=WORKFLOW_NAME_MAX)
+    description: str = Field(default="", max_length=WORKFLOW_DESCRIPTION_MAX)
+    pipeline: Pipeline
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _stripped(value)
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str) -> str:
+        return value.strip()
+
+
+class WorkflowUpdate(WorkflowCreate):
+    """PUT /api/workflows/{id}: replaces name, description and pipeline. 409 `stale_version`."""
+
+    base_version: int
+
+
+class WorkflowSwitch(ApiModel):
+    """POST /api/tickets/{key}/workflow. `base_version` = the ticket's `pipeline_version`."""
+
+    workflow_id: int
     base_version: int
 
 
@@ -612,6 +684,8 @@ class SpaceSettings(ApiModel):
     key_prefix: str
     jira_projects: list[str]
     claim_timeout_s: int  # a dispatched run whose worker never connects fails after this
+    # The workflow a new ticket gets when it names none (request 23B).
+    default_workflow_id: int
     version: int
     updated_at: AwareDatetime
     updated_by: Person | None
@@ -620,13 +694,16 @@ class SpaceSettings(ApiModel):
 class SpaceSettingsUpdate(ApiModel):
     """PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,
     `key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project
-    repeats, or `jira_projects` is empty while sign-in is with Jira."""
+    repeats, `jira_projects` is empty while sign-in is with Jira, or `default_workflow_id` isn't a
+    workflow."""
 
     name: str = Field(min_length=1, max_length=SPACE_NAME_MAX)
     default_repo: str | None
     key_prefix: str = Field(pattern=KEY_PREFIX_PATTERN)
     jira_projects: list[JiraProjectKey] = Field(max_length=MAX_JIRA_PROJECTS)
     claim_timeout_s: int = Field(ge=CLAIM_TIMEOUT_MIN_S, le=CLAIM_TIMEOUT_MAX_S)
+    # Omitted/null = keep the current default.
+    default_workflow_id: int | None = None
     base_version: int
 
     @field_validator("name")

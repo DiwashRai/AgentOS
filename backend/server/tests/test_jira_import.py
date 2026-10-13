@@ -226,6 +226,33 @@ def test_import_creates_a_ticket_the_importer_owns(
     assert ".claude/skills/context-scrum-6/SKILL.md" in paths
 
 
+def test_import_copies_the_chosen_workflow(authed: TestClient, jira: FakeJira) -> None:
+    stages = [{"id": "research", "name": "Research", "kind": "agent", "phase": "plan"}]
+    body = {"name": "Research only", "pipeline": {"stages": stages}}
+    made = authed.post("/api/workflows", json=body, headers=CSRF).json()
+    response = authed.post(
+        "/api/tickets/import", json={"ref": "SCRUM-6", "workflow_id": made["id"]}, headers=CSRF
+    )
+    assert response.status_code == 201, response.text
+    ticket = response.json()["ticket"]
+    assert [s["id"] for s in ticket["pipeline"]["stages"]] == ["research"]
+    assert ticket["workflow"] == {"id": made["id"], "name": "Research only", "version": 1}
+
+
+def test_import_without_a_workflow_gets_the_default(authed: TestClient, jira: FakeJira) -> None:
+    ticket = post(authed, "SCRUM-6").json()["ticket"]
+    assert ticket["workflow"]["name"] == "Standard"
+
+
+def test_import_with_an_unknown_workflow_is_refused_before_calling_jira(
+    authed: TestClient, jira: FakeJira
+) -> None:
+    body = {"ref": "SCRUM-6", "workflow_id": 999}
+    response = authed.post("/api/tickets/import", json=body, headers=CSRF)
+    assert error(response) == (422, "validation_error")
+    assert jira.calls == []
+
+
 def test_reimport_returns_the_ticket_without_calling_jira(
     authed: TestClient, jira: FakeJira
 ) -> None:

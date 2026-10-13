@@ -114,6 +114,7 @@ def test_seeded_space_settings(authed: TestClient) -> None:
         "key_prefix": "AOS",
         "jira_projects": [],
         "claim_timeout_s": 900,
+        "default_workflow_id": 1,
         "version": 1,
         "updated_by": None,  # seeded, not saved by anyone
     }
@@ -511,7 +512,6 @@ def test_config_names_the_server_default_runtime(authed: TestClient) -> None:
     )
     template = authed.get("/api/template").json()
     body = {
-        "pipeline": template["pipeline"],
         "scaffold": template["scaffold"],
         "defaults": {"runtime": "claude"},
         "base_version": template["version"],

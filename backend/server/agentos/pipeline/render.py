@@ -191,3 +191,12 @@ def check_scaffold(entries: Sequence[FileEntry]) -> None:
     """Template save: the scaffold must render to valid, unique paths for any ticket."""
     for ticket in DUMMY_TICKETS:
         render_scaffold(entries, ticket)
+
+
+def check_prompts(stages: Sequence[Stage]) -> None:
+    """Workflow save: every agent stage's prompt must render for any ticket (a typo surfaces on
+    save, not at dispatch). 422 `render_error` naming the stage."""
+    for ticket in DUMMY_TICKETS:
+        for stage in stages:
+            if stage.kind == "agent":
+                render_prompt(stage, ticket, 1)

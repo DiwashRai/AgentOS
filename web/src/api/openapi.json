@@ -50,6 +50,10 @@
             "title": "Default Runtime",
             "type": "string"
           },
+          "default_workflow_id": {
+            "title": "Default Workflow Id",
+            "type": "integer"
+          },
           "jira_deployment": {
             "anyOf": [
               {
@@ -126,6 +130,7 @@
           "default_runtime",
           "default_model",
           "default_effort",
+          "default_workflow_id",
           "server_default_runtime",
           "sources"
         ],
@@ -964,6 +969,17 @@
             "minLength": 1,
             "title": "Ref",
             "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
           }
         },
         "required": [
@@ -2981,6 +2997,10 @@
             ],
             "title": "Default Repo"
           },
+          "default_workflow_id": {
+            "title": "Default Workflow Id",
+            "type": "integer"
+          },
           "jira_projects": {
             "items": {
               "type": "string"
@@ -3022,6 +3042,7 @@
           "key_prefix",
           "jira_projects",
           "claim_timeout_s",
+          "default_workflow_id",
           "version",
           "updated_at",
           "updated_by"
@@ -3031,7 +3052,7 @@
       },
       "SpaceSettingsUpdate": {
         "additionalProperties": false,
-        "description": "PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,\n`key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project\nrepeats, or `jira_projects` is empty while sign-in is with Jira.",
+        "description": "PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,\n`key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project\nrepeats, `jira_projects` is empty while sign-in is with Jira, or `default_workflow_id` isn't a\nworkflow.",
         "properties": {
           "base_version": {
             "title": "Base Version",
@@ -3053,6 +3074,17 @@
               }
             ],
             "title": "Default Repo"
+          },
+          "default_workflow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Workflow Id"
           },
           "jira_projects": {
             "items": {
@@ -3555,12 +3587,10 @@
       },
       "Template": {
         "additionalProperties": false,
+        "description": "The Space-wide part of a new ticket: its scaffold (context files) and the agent defaults.\nThe pipeline comes from a workflow (request 23B).",
         "properties": {
           "defaults": {
             "$ref": "#/components/schemas/TemplateDefaults"
-          },
-          "pipeline": {
-            "$ref": "#/components/schemas/Pipeline"
           },
           "scaffold": {
             "items": {
@@ -3575,7 +3605,6 @@
           }
         },
         "required": [
-          "pipeline",
           "scaffold",
           "defaults",
           "version"
@@ -3628,7 +3657,7 @@
       },
       "TemplateUpdate": {
         "additionalProperties": false,
-        "description": "PUT: `pipeline` and `scaffold` replace the current ones. `defaults` omitted = keep the\ncurrent defaults (explicit null is rejected); send `{}` or nulls to clear them.",
+        "description": "PUT: `scaffold` replaces the current one. `defaults` omitted = keep the current defaults\n(explicit null is rejected); send `{}` or nulls to clear them.",
         "properties": {
           "base_version": {
             "title": "Base Version",
@@ -3637,9 +3666,6 @@
           "defaults": {
             "$ref": "#/components/schemas/TemplateDefaults",
             "title": "Defaults"
-          },
-          "pipeline": {
-            "$ref": "#/components/schemas/Pipeline"
           },
           "scaffold": {
             "items": {
@@ -3650,7 +3676,6 @@
           }
         },
         "required": [
-          "pipeline",
           "scaffold",
           "base_version"
         ],
@@ -3731,6 +3756,17 @@
             ],
             "title": "Type",
             "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
           }
         },
         "required": [
@@ -4026,6 +4062,16 @@
             "title": "Updated At",
             "type": "string"
           },
+          "workflow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TicketWorkflow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "workspace_mode": {
             "enum": [
               "repo",
@@ -4068,6 +4114,7 @@
           "branch",
           "pipeline",
           "pipeline_version",
+          "workflow",
           "next_stage",
           "active_run_id",
           "created_at",
@@ -4374,6 +4421,38 @@
         "title": "TicketSummary",
         "type": "object"
       },
+      "TicketWorkflow": {
+        "additionalProperties": false,
+        "description": "The workflow a ticket's pipeline was copied from, as it was then: `id` is null once that\nworkflow is deleted (the name stays); `version` is the workflow's version at the copy.",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version"
+        ],
+        "title": "TicketWorkflow",
+        "type": "object"
+      },
       "User": {
         "additionalProperties": false,
         "properties": {
@@ -4533,6 +4612,141 @@
           "data"
         ],
         "title": "WarningEvent",
+        "type": "object"
+      },
+      "Workflow": {
+        "additionalProperties": false,
+        "description": "A named pipeline preset. Applying one copies its pipeline into a ticket; editing it later\nnever changes existing tickets. `default`: what a new ticket gets when it names none.",
+        "properties": {
+          "default": {
+            "title": "Default",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/Pipeline"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "pipeline",
+          "version",
+          "updated_at",
+          "updated_by",
+          "default"
+        ],
+        "title": "Workflow",
+        "type": "object"
+      },
+      "WorkflowCreate": {
+        "additionalProperties": false,
+        "description": "POST /api/workflows. `name` is unique ignoring case (422 `validation_error`); `pipeline` is\nchecked like a ticket's (stage ids, runtimes exist, agent prompts render).",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/Pipeline"
+          }
+        },
+        "required": [
+          "name",
+          "pipeline"
+        ],
+        "title": "WorkflowCreate",
+        "type": "object"
+      },
+      "WorkflowSwitch": {
+        "additionalProperties": false,
+        "description": "POST /api/tickets/{key}/workflow. `base_version` = the ticket's `pipeline_version`.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "workflow_id": {
+            "title": "Workflow Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "workflow_id",
+          "base_version"
+        ],
+        "title": "WorkflowSwitch",
+        "type": "object"
+      },
+      "WorkflowUpdate": {
+        "additionalProperties": false,
+        "description": "PUT /api/workflows/{id}: replaces name, description and pipeline. 409 `stale_version`.",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/Pipeline"
+          }
+        },
+        "required": [
+          "name",
+          "pipeline",
+          "base_version"
+        ],
+        "title": "WorkflowUpdate",
         "type": "object"
       }
     }
@@ -7001,6 +7215,69 @@
         ]
       }
     },
+    "/api/tickets/{key}/workflow": {
+      "post": {
+        "description": "Replace the ticket's pipeline with a copy of a workflow's (allowed after runs; 409\n`run_active` during one, `stale_version` on a stale `base_version`; 404 `not_found` for an\nunknown workflow). The rail keeps the run history of stages the new pipeline shares by id;\nnew stages start pending.",
+        "operationId": "switch_workflow_api_tickets__key__workflow_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowSwitch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Switch Workflow",
+        "tags": [
+          "tickets"
+        ]
+      }
+    },
     "/api/users": {
       "get": {
         "operationId": "list_users_api_users_get",
@@ -7343,6 +7620,207 @@
         "summary": "Worker Source",
         "tags": [
           "worker"
+        ]
+      }
+    },
+    "/api/workflows": {
+      "get": {
+        "description": "Every workflow, by name, with its full pipeline.",
+        "operationId": "list_workflows_api_workflows_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Workflow"
+                  },
+                  "title": "Response List Workflows Api Workflows Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "List Workflows",
+        "tags": [
+          "workflows"
+        ]
+      },
+      "post": {
+        "operationId": "create_workflow_api_workflows_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workflow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Create Workflow",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/workflows/{workflow_id}": {
+      "delete": {
+        "description": "The default workflow can't be deleted (409 `in_use`). Tickets copied from it keep their\npipeline and their `workflow` record (its `id` becomes null).",
+        "operationId": "delete_workflow_api_workflows__workflow_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Delete Workflow",
+        "tags": [
+          "workflows"
+        ]
+      },
+      "put": {
+        "operationId": "update_workflow_api_workflows__workflow_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workflow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Update Workflow",
+        "tags": [
+          "workflows"
         ]
       }
     }

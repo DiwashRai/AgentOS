@@ -23,6 +23,7 @@ TABLES = {
     "sessions",
     "key_counters",
     "templates",
+    "workflows",
     "tickets",
     "file_versions",
     "runs",

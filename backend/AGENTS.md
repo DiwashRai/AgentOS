@@ -3,7 +3,7 @@
 Applies to `backend/**`: the FastAPI + SQLite server (`server/agentos/`), the single-file worker (`worker/worker.py`) and their tests. Repo-wide rules (commands, gates, commits, multi-session work, Windows gotchas) are in `../AGENTS.md`; the design rationale is in `../ARCHITECTURE.md`. If present, `../SPEC.md` has the long-form background; code wins over it.
 
 ## Layout
-- `server/agentos/`: one package per feature (`auth`, `tickets`, `files`, `social` (chat), `runs`, `templates`, `worker_api`, `intake`, `settings`), each split into `routes.py` / `deps.py` / `service.py` (+ `board.py`, `dispatcher.py`, `reaper.py` where needed).
+- `server/agentos/`: one package per feature (`auth`, `tickets`, `files`, `social` (chat), `runs`, `templates`, `workflows`, `worker_api`, `intake`, `settings`), each split into `routes.py` / `deps.py` / `service.py` (+ `board.py`, `dispatcher.py`, `reaper.py` where needed).
 - Shared modules: `models.py` (the API contract), `db.py`, `config.py`, `context.py`, `clock.py`, `errors.py` + `http_errors.py`, `broker.py` + `stream.py`, `space_store.py`, `csrf.py`, `main.py`.
 - Pure core: `models.py`, `validate.py`, `pipeline/*` (scaffold, render, segment, manifest, plan, runtime, space), `tickets/board.py`.
 - Plugins: `launchers/` (`local`, `github`; protocol in `launchers/base.py`) and `sources/` (`jira`; protocol in `sources/base.py`).
@@ -17,7 +17,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Only `agentos.db` imports `sqlite3` (keeps a Postgres swap to one module).
 - Only the HTTP layer imports FastAPI/Starlette/uvicorn. Services raise the pure `errors.ApiError`; `http_errors.py` turns it into a response.
 - Plugins are adapters: no db, services, routes or FastAPI. They get what they need as arguments (the dispatcher counts active runs; the launcher only reports `max_concurrency`).
-- No import cycles between subpackages. Direction: `worker_api → runs → social → tickets → templates | files → auth`. To read another feature's tables, query them in your own service rather than importing upwards.
+- No import cycles between subpackages. Direction: `worker_api → runs → social → tickets → workflows → templates | files → auth`. To read another feature's tables, query them in your own service rather than importing upwards.
 
 **Fix the code, never the contract.** Don't loosen a contract to make an import work.
 
@@ -41,7 +41,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Use `db.tx()` for writes (BEGIN IMMEDIATE, commit or roll back) and `db.read()` for reads (one snapshot; writes raise). Import `Conn`, `Row`, `IntegrityError`, `OperationalError` from `agentos.db`.
 - Timestamps are stored via `clock.to_db` and read via `from_db` / `from_db_opt`; get "now" from `clock.utcnow()`.
 - Migrations are `migrations/NNNN_name.sql`, numbered 1..N with no gaps (`db.migrations()` refuses otherwise). Never edit a shipped migration; add a new one. Before migrating an existing db, `migrate()` backs it up to `{data_dir}/backups/` (5 newest kept). A server refuses a db newer than it knows.
-- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only and tickets pin `template_id`; `stage_runs` is keyed by `(run_id, idx)`; a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
+- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only and tickets pin `template_id` (the template holds the scaffold and agent defaults; a ticket's pipeline is copied from a `workflows` row, recorded as `workflow_id`/`_name`/`_version`); `stage_runs` is keyed by `(run_id, idx)`; a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
 - Batch-load for lists (one query per table, never one per ticket).
 
 ## Settings and config

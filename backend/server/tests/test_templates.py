@@ -1,4 +1,5 @@
-"""The default template: startup seed, GET and the admin PUT (SPEC §4, §6, §15)."""
+"""The default template: startup seed, GET and the admin PUT (SPEC §4, §6, §15). Since request
+23B it holds the scaffold and the agent defaults; the pipeline comes from a workflow."""
 
 from __future__ import annotations
 
@@ -29,9 +30,13 @@ def get_template(client: TestClient) -> Template:
     return Template.model_validate(response.json())
 
 
+def get_template_json(client: TestClient) -> dict[str, Any]:
+    body: dict[str, Any] = client.get("/api/template").json()
+    return body
+
+
 def put(client: TestClient, template: Template, **changes: Any) -> Any:
     body = {
-        "pipeline": template.pipeline.model_dump(),
         "scaffold": [e.model_dump() for e in template.scaffold],
         "base_version": template.version,
         **changes,
@@ -42,8 +47,8 @@ def put(client: TestClient, template: Template, **changes: Any) -> Any:
 def test_startup_seeds_version_1(authed: TestClient) -> None:
     template = get_template(authed)
     assert template.version == 1
-    assert template.pipeline == default_pipeline()
     assert template.scaffold == DEFAULT_SCAFFOLD
+    assert "pipeline" not in get_template_json(authed)
 
 
 def test_seed_is_idempotent(authed: TestClient, ctx: AppContext) -> None:
@@ -95,18 +100,28 @@ def test_seed_leaves_a_customised_skill_md_alone(authed: TestClient, ctx: AppCon
 
 def test_put_appends_a_version(authed: TestClient, ctx: AppContext) -> None:
     current = get_template(authed)
-    pipeline = current.pipeline.model_dump()
-    pipeline["stages"] = pipeline["stages"][:2]
-    response = put(authed, current, pipeline=pipeline)
+    notes = FileEntry(path="NOTES.md", content="Notes for {{ticket.key}}")
+    response = put(authed, current, scaffold=[notes.model_dump()])
     assert response.status_code == 200, response.text
     saved = Template.model_validate(response.json())
     assert saved.version == 2
-    assert [s.id for s in saved.pipeline.stages] == ["plan", "implement"]
+    assert saved.scaffold == [notes]
     assert get_template(authed) == saved
     with ctx.db.read() as conn:
-        rows = conn.execute("SELECT version, created_by FROM templates ORDER BY version").fetchall()
+        rows = conn.execute(
+            "SELECT version, created_by, pipeline FROM templates ORDER BY version"
+        ).fetchall()
     me = authed.get("/api/me").json()["id"]
     assert [(r["version"], r["created_by"]) for r in rows] == [(1, None), (2, me)]
+    assert rows[1]["pipeline"] == rows[0]["pipeline"]  # the unused column is carried over
+
+
+def test_put_with_a_pipeline_is_refused(authed: TestClient) -> None:
+    """An older client still sending `pipeline`: the pipeline lives in workflows now."""
+    current = get_template(authed)
+    response = put(authed, current, pipeline=default_pipeline().model_dump())
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
 
 
 def test_put_with_a_stale_base_version_is_409(authed: TestClient) -> None:
@@ -115,15 +130,6 @@ def test_put_with_a_stale_base_version_is_409(authed: TestClient) -> None:
     response = put(authed, current)  # still base_version 1
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "stale_version"
-
-
-def test_put_validates_the_pipeline(authed: TestClient) -> None:
-    current = get_template(authed)
-    pipeline = current.pipeline.model_dump()
-    pipeline["stages"].append(pipeline["stages"][0])
-    response = put(authed, current, pipeline=pipeline)
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "invalid_pipeline"
 
 
 def test_put_checks_the_scaffold_renders(authed: TestClient) -> None:
@@ -139,18 +145,18 @@ def test_put_checks_the_scaffold_renders(authed: TestClient) -> None:
     assert get_template(authed).version == 1
 
 
-def test_new_tickets_copy_the_current_version(
+def test_new_tickets_render_the_current_scaffold(
     authed: TestClient, ctx: AppContext, create_ticket: CreateTicket
 ) -> None:
     before = create_ticket("Before")
     current = get_template(authed)
-    pipeline = current.pipeline.model_dump()
-    pipeline["stages"] = pipeline["stages"][1:2]
     scaffold = [{"path": "NOTES.md", "content": "Notes for {{ticket.key}}", "mode": "replace"}]
-    assert put(authed, current, pipeline=pipeline, scaffold=scaffold).status_code == 200
+    assert put(authed, current, scaffold=scaffold).status_code == 200
     after = create_ticket("After")
-    assert [s.id for s in before.pipeline.stages] == [s.id for s in default_pipeline().stages]
-    assert [s.id for s in after.pipeline.stages] == ["implement"]
+    assert [s.id for s in after.pipeline.stages] == [s.id for s in default_pipeline().stages]
+    assert "NOTES.md" not in [
+        f["path"] for f in authed.get(f"/api/tickets/{before.key}/files").json()
+    ]
     files = authed.get(f"/api/tickets/{after.key}/files").json()
     assert [f["path"] for f in files] == ["NOTES.md"]
     content = authed.get(f"/api/tickets/{after.key}/files/NOTES.md").json()["content"]
