@@ -77,6 +77,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - The worker appends `JUNK_PATTERNS` (tool caches only, never `dist/`/`build/`) to `.git/info/exclude`; it never touches tracked files and the repo's `.gitignore` wins.
 - `.agentos/` in the workspace belongs to AgentOS (a check's `verdict.json`): excluded, protected like the context files, never synced or committed.
 - `AGENTOS_PR_LOOKUP=0` skips the end-of-run `gh pr view`.
+- Every agent call's output is also echoed on the worker's stderr as it arrives (`Echo`: readable `[stage id] ...` lines from Claude stream-json and Copilot JSONL, anything else as plain text cut short), so a job console or the launcher's log shows the run live; the log events are unchanged. `AGENTOS_ECHO=0` turns it off. Every printed line carries the prefix (control characters are stripped), so agent output can't start a workflow command.
 
 ## Testing
 - Fixtures in `server/tests/conftest.py`: `settings` (tmp dirs, dev auth, `Settings(_env_file=None)` so a developer's `.env` never leaks in), `launcher` (a `FakeLauncher`), `app` (`create_app(settings, launcher=launcher, run_loops=False)`), `client` (runs the lifespan; base URL `127.0.0.1` because dev auth needs a loopback host), `ctx`, `authed`, `login(username, role=None)`, `set_role`, `create_ticket`, `add_run` (inserts run rows directly) and `runs` (a `RunDriver` that dispatches, ticks and acts as the worker).

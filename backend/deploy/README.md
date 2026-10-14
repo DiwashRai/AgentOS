@@ -239,9 +239,12 @@ whose `python3` is 3.6), uncomment `container:`, install python3.11 in the image
 
 **What you see in the app:** the run shows as running with a link to the Actions run. Its stage
 progress and logs arrive **when the GitHub job ends** (the stage rail stays pending until then;
-that's expected): watch it live through the Actions link. A cancel in the app cancels the
-Actions run; whatever the worker recorded before that is still published and replayed. A run
-whose job ends without an outbox fails with an error pointing to the GitHub run: look there.
+that's expected): watch it live through the Actions link, where the "Run the worker" step prints
+each agent stage's output as it arrives (`[stage id] ...` lines: the agent's text, tool calls and
+results; set `AGENTOS_ECHO: "0"` in that step's `env:` to turn it off). A cancel in the app
+cancels the Actions run; whatever the worker recorded before that is still published and
+replayed. A run whose job ends without an outbox fails with an error pointing to the GitHub run:
+look there.
 
 **Security notes:**
 - The agent never shares a job with the Artifactory credential. That only holds if the runners
@@ -250,7 +253,9 @@ whose job ends without an outbox fails with an error pointing to the GitHub run:
   the agent could tamper with the runner and steal the credential from a later fetch/publish job.
 - The Actions artifacts `agentos-inbox` (the ticket's files) and `agentos-outbox` (the agent's
   transcript and synced files) stay for 1 day and are readable by anyone who can read the repo:
-  keep the repo **private** with few readers.
+  keep the repo **private** with few readers. The job log holds the same transcript (the live
+  echo, kept as long as the repo keeps Actions logs, 90 days by default); `AGENTOS_ECHO: "0"`
+  keeps it out.
 - Repo access in the work job is only the job's `GITHUB_TOKEN` (contents + pull-requests: write
   on that repo), handed to git through gh's credential helper for the job's GitHub host, as in
   the github launcher's workflow.
