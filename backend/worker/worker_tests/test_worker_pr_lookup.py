@@ -1,4 +1,5 @@
-"""End-of-run PR lookup: whole runs through worker.main() with a fake `gh` (PR_LOOKUP)."""
+"""End-of-run PR lookup: the parsing of captured `gh` output as a table, and whole runs through
+worker.main() with a fake `gh` (PR_LOOKUP) for the lookup's preconditions."""
 
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ FAKE_GH = (
     "[print(line) for line in sys.argv[4:]]; "
     "sys.stderr.write('gh: no pull requests found\\n'); sys.exit(int(sys.argv[3]))"
 )
+NO_PR = "gh: no pull requests found"
+DONE = worker.ProcResult(exit_code=0)
 
 
 def fake_gh(
@@ -46,58 +49,63 @@ def system_logs(server: FakeServer) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("actions", "expected"),
+    ("result", "out", "err", "why"),
     [
-        (("edit",), {"status": "completed", "failed_stage": None, "error": None}),
-        (
-            ("edit", "exit=3"),
-            {"status": "failed", "failed_stage": "implement", "error": "exited with code 3"},
-        ),
+        (worker.ProcResult(exit_code=1), [], [NO_PR], "exited with code 1: gh: no pull requests"),
+        (DONE, ["http://github.com/o/r/pull/7"], [], "not an https:// URL"),
+        (DONE, ["https://user:pw@github.com/o/r/pull/7"], [], "credentials"),
+        (DONE, [PR, PR], [], "got 2 lines"),
+        (DONE, [], [], "got 0 lines"),
+        (worker.ProcResult(exit_code=None, stopped="timeout"), [PR], [], "timed out"),
+        (worker.ProcResult(exit_code=None, stopped="abort"), [PR], [], "server went away"),
+        (worker.ProcResult(exit_code=None, error="cannot start gh: denied"), [], [], "denied"),
+    ],
+    ids=[
+        "gh-failed",
+        "http",
+        "credentials",
+        "two-lines",
+        "no-lines",
+        "timeout",
+        "stopped",
+        "spawn",
     ],
 )
-def test_a_found_pr_is_reported_on_complete(
-    server: FakeServer,
-    origin: Origin,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    actions: tuple[str, ...],
-    expected: dict[str, object],
+def test_no_pr_url_says_why(
+    result: worker.ProcResult, out: list[str], err: list[str], why: str
+) -> None:
+    url, reason = worker.pr_lookup_result("gh", result, out, err)
+    assert url is None
+    assert why in reason
+
+
+def test_a_failed_lookup_quotes_its_last_stderr_line_clipped() -> None:
+    err = ["earlier", "x" * 300]
+    _, reason = worker.pr_lookup_result("gh", worker.ProcResult(exit_code=1), [], err)
+    assert reason.endswith(": " + "x" * 197 + "...")
+
+
+def test_one_https_line_is_the_pr_url() -> None:
+    assert worker.pr_lookup_result("gh", DONE, [PR], [NO_PR]) == (PR, "")
+
+
+def test_a_found_pr_is_reported_even_when_the_run_fails(
+    server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     record = tmp_path / "gh-branch.txt"
     fake_gh(monkeypatch, record, PR)
-    server.manifest = make_manifest([agent_stage("implement", *actions)], repo_url=origin.url)
+    server.manifest = make_manifest(
+        [agent_stage("implement", "edit", "exit=3")], repo_url=origin.url
+    )
     assert run_worker(server, tmp_path / "ws") == 0
-    assert server.complete() == {**expected, "pr_url": PR}
+    assert server.complete() == {
+        "status": "failed",
+        "failed_stage": "implement",
+        "error": "exited with code 3",
+        "pr_url": PR,
+    }
     assert record.read_text() == f"agent/{KEY}"
     assert f"PR: {PR}" in system_logs(server)
-    assert server.warnings() == []
-
-
-@pytest.mark.parametrize(
-    ("output", "exit_code", "why"),
-    [
-        ((), 1, "exited with code 1: gh: no pull requests found"),
-        (("http://github.com/o/r/pull/7",), 0, "not an https:// URL"),
-        (("https://user:pw@github.com/o/r/pull/7",), 0, "credentials"),
-        ((PR, PR), 0, "got 2 lines"),
-        ((), 0, "got 0 lines"),
-    ],
-)
-def test_no_pr_url_leaves_the_run_alone(
-    server: FakeServer,
-    origin: Origin,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    output: tuple[str, ...],
-    exit_code: int,
-    why: str,
-) -> None:
-    fake_gh(monkeypatch, tmp_path / "gh-branch.txt", *output, exit_code=exit_code)
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
-    assert run_worker(server, tmp_path / "ws") == 0
-    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
-    [line] = [t for t in system_logs(server) if t.startswith("no PR URL")]
-    assert why in line
     assert server.warnings() == []
 
 

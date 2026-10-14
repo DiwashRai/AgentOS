@@ -1,21 +1,29 @@
-"""Shared fixtures: isolated settings (tmp data + workspaces, dev auth), the app and clients."""
+"""Shared fixtures: isolated settings (tmp data + workspaces, dev auth), the app and clients.
+
+One app and client serve the whole session; each test gets its own `ctx` on a copy of the
+template db the session app's startup migrated and seeded."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import shutil
 from collections.abc import Callable, Iterator, Sequence
+from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from anyio.from_thread import BlockingPortal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agentos.clock import to_db
 from agentos.config import Settings
-from agentos.context import AppContext
+from agentos.context import AppContext, build_context
 from agentos.main import create_app
 from agentos.models import Me, Role, RunStatus, StageRunStatus, TicketDetail
 from tests.run_support import FakeLauncher, RunDriver
@@ -36,24 +44,42 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests see only the settings they pass: drop AGENTOS_* from the developer's shell."""
+def pytest_terminal_summary(
+    terminalreporter: pytest.TerminalReporter, exitstatus: int, config: pytest.Config
+) -> None:
+    """Print the random-order seed (pytest-randomly's header line is hidden by `-q`)."""
+    del exitstatus
+    seed = config.getoption("randomly_seed", None)
+    if seed is not None:
+        terminalreporter.write_line(f"random order: --randomly-seed={seed}")
+
+
+def _strip_agentos_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in list(os.environ):
         if name.upper().startswith("AGENTOS_"):
             monkeypatch.delenv(name)
 
 
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests see only the settings they pass: drop AGENTOS_* from the developer's shell."""
+    _strip_agentos_env(monkeypatch)
+
+
+def _test_settings(root: Path) -> Settings:
     # _env_file=None: a developer's backend/.env never leaks into tests.
     return Settings(
         _env_file=None,
-        data_dir=tmp_path / "data",
-        workspaces_dir=tmp_path / "workspaces",
+        data_dir=root / "data",
+        workspaces_dir=root / "workspaces",
         dev_auth=True,
         config=RUNTIMES_TOML,
     )
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    return _test_settings(tmp_path)
 
 
 @pytest.fixture
@@ -61,26 +87,76 @@ def launcher() -> FakeLauncher:
     return FakeLauncher()
 
 
-@pytest.fixture
-def app(settings: Settings, launcher: FakeLauncher) -> FastAPI:
-    # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
-    return create_app(settings, launcher=launcher, run_loops=False)
+@dataclass(frozen=True)
+class SessionServer:
+    """One started app per test session (per xdist worker) and the db its startup left behind."""
+
+    app: FastAPI
+    client: TestClient
+    portal: BlockingPortal
+    template_db: Path
+
+
+@pytest.fixture(scope="session")
+def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SessionServer]:
+    """Start one app (the real lifespan: checks, migrations, seeding) and keep a copy of its
+    migrated, seeded db as the template every test's `ctx` starts from.
+
+    Session fixtures run before the autouse `_clean_env`, so this strips AGENTOS_* itself while
+    the settings are read and the app starts."""
+    root = tmp_path_factory.mktemp("session-app")
+    with ExitStack() as stack:
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            _strip_agentos_env(monkeypatch)
+            settings = _test_settings(root)
+            # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
+            app = create_app(settings, launcher=FakeLauncher(), run_loops=False)
+            client = stack.enter_context(TestClient(app, base_url=BASE_URL))
+
+        # Every connection is closed after startup, so SQLite has checkpointed its WAL.
+        assert not settings.db_path.with_name(settings.db_path.name + "-wal").exists()
+        template_db = root / "template.db"
+        shutil.copyfile(settings.db_path, template_db)
+
+        portal = client.portal
+        assert portal is not None
+        yield SessionServer(app, client, portal, template_db)
 
 
 @pytest.fixture
-def client(app: FastAPI) -> Iterator[TestClient]:
-    # `with` runs the lifespan (checks, migrations, app.state.ctx)
-    with TestClient(app, base_url=BASE_URL) as c:
-        yield c
+def app(session_server: SessionServer) -> FastAPI:
+    """The session's app. Tests never modify it; a test that needs other startup config builds
+    its own app with `create_app`."""
+    return session_server.app
 
 
 @pytest.fixture
-def ctx(app: FastAPI, client: TestClient) -> AppContext:
-    """The running app's context (db, settings). Depends on `client`, which starts the app."""
-    del client
-    context = app.state.ctx
-    assert isinstance(context, AppContext)
-    return context
+def ctx(
+    session_server: SessionServer, settings: Settings, launcher: FakeLauncher
+) -> Iterator[AppContext]:
+    """This test's context on the session app: a fresh copy of the template db, built from this
+    test's `settings` and `launcher`, its broker on the app's loop."""
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(session_server.template_db, settings.db_path)
+    context = build_context(settings, launcher=launcher)
+    loop = session_server.portal.call(asyncio.get_running_loop)
+    context.broker.bind(loop)
+
+    app = session_server.app
+    app.state.ctx = context
+    yield context
+
+    session_server.portal.call(context.broker.close)
+    del app.state.ctx  # a request that outlives its test fails loudly
+    assert not app.dependency_overrides, "tests must not modify the shared app"
+
+
+@pytest.fixture
+def client(session_server: SessionServer, ctx: AppContext) -> TestClient:
+    """The session's client, serving this test's `ctx`, signed out."""
+    del ctx
+    session_server.client.cookies.clear()
+    return session_server.client
 
 
 @pytest.fixture

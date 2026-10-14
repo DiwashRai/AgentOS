@@ -10,6 +10,7 @@ Usage: ctrl_c_harness.py OUT_JSON FAKE_WORKER TMP_DIR
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import signal
@@ -40,6 +41,10 @@ def _ignore(signum: int, frame: FrameType | None) -> None:
 
 def main() -> None:
     out, fake_worker, tmp = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+
+    # A CREATE_NEW_PROCESS_GROUP ancestor (e.g. a shell AgentOS launched) disables Ctrl+C for
+    # all its descendants; re-enable it so the control child, which inherits the flag, gets it.
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
     signal.signal(signal.SIGINT, _ignore)  # the harness itself must outlive its Ctrl+C
 
     control_ready = tmp / "control.ready"
