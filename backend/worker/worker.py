@@ -142,6 +142,7 @@ MAX_PR_URL_CHARS = 500  # the server's CompleteRequest.pr_url max_length
 
 # GitHub API publication on Actions (see api_publish).
 GITHUB_RETRY_BUDGET_S = 300.0  # rate limits, network errors and 5xx are retried this long
+GITHUB_MIN_WAIT_S = 1.0  # the shortest pause GitHub's rate-limit answers get
 GITHUB_API_VERSION = "2022-11-28"
 INLINE_MAX_BYTES = 1024 * 1024  # text up to this goes inline in the tree; larger is a blob
 MAX_GITHUB_MESSAGE_CHARS = 500
@@ -1973,14 +1974,15 @@ def tree_entry(d: DiffEntry, data: bytes | None) -> tuple[dict[str, Any], bytes 
 
 
 def retry_wait(headers: Mapping[str, str], now: float) -> float | None:
-    """Seconds GitHub asks us to wait (`Retry-After`, or an exhausted rate limit's reset), or
-    None when it asks for nothing."""
+    """Seconds GitHub asks us to wait (`Retry-After`, or an exhausted rate limit's reset), at
+    least GITHUB_MIN_WAIT_S (a reset already past by our clock must not mean an instant retry),
+    or None when it asks for nothing."""
     after = headers.get("retry-after", "").strip()
     if after.isdigit():
-        return float(after)
+        return max(GITHUB_MIN_WAIT_S, float(after))
     reset = headers.get("x-ratelimit-reset", "").strip()
     if headers.get("x-ratelimit-remaining", "").strip() == "0" and reset.isdigit():
-        return max(0.0, float(reset) - now)
+        return max(GITHUB_MIN_WAIT_S, float(reset) - now)
     return None
 
 
@@ -2502,7 +2504,7 @@ class Run:
         try:
             github.call("POST", "/git/blobs", {"content": "", "encoding": "utf-8"})
         except GitHubError as exc:
-            if exc.status in (401, 403, 404):
+            if exc.status in (401, 403, 404) and exc.action != "retry":
                 runs_in = os.environ.get("GITHUB_REPOSITORY") or "unknown"
                 return (
                     f"cannot write to {repo} through the GitHub API ({exc}): the job's token "

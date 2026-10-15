@@ -1,10 +1,13 @@
 """GitHub API publication: the pure parts as tables (mechanism choice, repo URLs, commit and
-diff-tree parsing, tree entries, classifying GitHub's answers, token scrubbing), plus whole runs
-for what never reaches GitHub (the setup's env check)."""
+diff-tree parsing, tree entries, classifying GitHub's answers, token scrubbing), the git side of
+publishing against local repos (a rewrite is refused, the branch looks pushed afterwards, blob
+reads), plus whole runs for what never reaches GitHub (the setup's env check)."""
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,6 +17,7 @@ from worker_tests.worker_support import (
     FakeServer,
     Origin,
     agent_stage,
+    git,
     make_manifest,
     run_worker,
 )
@@ -238,8 +242,9 @@ def test_large_text_goes_as_a_blob(monkeypatch: pytest.MonkeyPatch) -> None:
     ("headers", "wait"),
     [
         ({"retry-after": "7"}, 7.0),
+        ({"retry-after": "0"}, worker.GITHUB_MIN_WAIT_S),
         ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1030"}, 30.0),
-        ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "900"}, 0.0),
+        ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "900"}, worker.GITHUB_MIN_WAIT_S),
         ({"x-ratelimit-remaining": "12", "x-ratelimit-reset": "1030"}, None),
         ({}, None),
     ],
@@ -296,6 +301,115 @@ def test_api_mode_without_the_api_url_fails_setup(
     assert done["status"] == "failed"
     assert "GITHUB_API_URL" in done["error"]
     assert not origin.has_branch(BRANCH)
+
+
+def test_a_rate_limited_setup_check_is_not_blamed_on_the_token(
+    server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def rate_limited(self: worker.GitHub, method: str, path: str, body: Any = None) -> Any:
+        raise worker.GitHubError(403, "API rate limit exceeded", "retry")
+
+    monkeypatch.setattr(worker.GitHub, "call", rate_limited)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GH_TOKEN", "ghs_secret")
+    monkeypatch.setenv("GITHUB_API_URL", "https://api.github.com")
+    monkeypatch.setenv("GITHUB_SERVER_URL", SERVER)
+    server.manifest = make_manifest(
+        [agent_stage("implement", "edit")], repo_url="https://github.com/acme/app"
+    )
+
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    done = server.complete()
+    assert done is not None
+    assert done["status"] == "failed"
+    assert "rate limit" in done["error"]
+    assert "only writes" not in done["error"]
+
+
+class NoGitHub(worker.GitHub):
+    """A GitHub client the test expects never to be called."""
+
+    def __init__(self) -> None:
+        super().__init__("https://api.invalid", "t", "acme/app")
+
+    def call(self, method: str, path: str, body: Any = None, *, ref_write: bool = False) -> Any:
+        raise AssertionError(f"unexpected GitHub call: {method} {path}")
+
+
+def runner(cwd: Path) -> worker.GitRunner:
+    def run(*args: str, stdin: bytes | None = None) -> worker.GitResult:
+        p = subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
+            cwd=cwd,
+            input=stdin,
+            capture_output=True,
+            check=False,
+        )
+        return worker.GitResult(p.returncode, p.stdout, p.stderr)
+
+    return run
+
+
+def clone(origin: Origin, tmp_path: Path) -> Path:
+    work = tmp_path / "work"
+    git(tmp_path, "clone", "-q", origin.url, str(work))
+    git(work, "switch", "-q", "-c", BRANCH)
+    (work / "a.txt").write_bytes(b"one\n")
+    git(work, "add", "a.txt")
+    git(work, "commit", "-q", "-m", "one")
+    return work
+
+
+def test_a_rewrite_of_published_commits_is_refused_before_any_github_call(
+    origin: Origin, tmp_path: Path
+) -> None:
+    work = clone(origin, tmp_path)
+    pushed = git(work, "rev-parse", "HEAD").strip()
+    git(work, "commit", "-q", "--amend", "-m", "one, amended")
+
+    with pytest.raises(worker.PublishError, match="rejected"):
+        worker.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
+
+
+def test_a_published_head_looks_pushed(origin: Origin, tmp_path: Path) -> None:
+    work = clone(origin, tmp_path)
+    head = git(work, "rev-parse", "HEAD").strip()
+
+    assert worker.track_published(runner(work), BRANCH, head) is None
+
+    assert git(work, "rev-parse", f"refs/remotes/origin/{BRANCH}").strip() == head
+    assert git(work, "config", f"branch.{BRANCH}.remote").strip() == "origin"
+    assert git(work, "config", f"branch.{BRANCH}.merge").strip() == f"refs/heads/{BRANCH}"
+
+
+def test_a_different_remote_commit_is_fetched_and_becomes_head(
+    origin: Origin, tmp_path: Path
+) -> None:
+    work = clone(origin, tmp_path)
+    git(work, "push", "-q", "origin", f"HEAD:refs/heads/{BRANCH}")
+    tree = git(work, "rev-parse", "HEAD^{tree}").strip()
+    remote = git(origin.bare, "commit-tree", tree, "-p", "main", "-m", "as GitHub made it")
+    remote = remote.strip()
+    git(origin.bare, "update-ref", f"refs/heads/{BRANCH}", remote)
+
+    assert worker.track_published(runner(work), BRANCH, remote) is None
+
+    assert git(work, "rev-parse", "HEAD").strip() == remote
+    assert git(work, "rev-parse", f"refs/remotes/origin/{BRANCH}").strip() == remote
+    assert git(work, "write-tree").strip() == tree
+    assert git(work, "status", "--porcelain") == ""
+
+
+def test_read_blobs_splits_cat_file_batch_by_size(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    contents = [b"\0bin\nary\n\xff\n", b"text\n"]
+    shas = []
+    for i, data in enumerate(contents):
+        (tmp_path / f"f{i}").write_bytes(data)
+        shas.append(git(tmp_path, "hash-object", "-w", f"f{i}").strip())
+
+    assert worker._read_blobs(runner(tmp_path), shas) == dict(zip(shas, contents, strict=True))
 
 
 def test_a_token_off_actions_still_pushes_with_git(
