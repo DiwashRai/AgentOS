@@ -20,7 +20,7 @@ check-backend:
     uv run mypy
     uv run mypy --python-version 3.11 worker/worker.py
     uv run lint-imports
-    uv run pytest
+    uv run pytest -n auto
 
 # Web gates: types, lint, format, tests.
 [working-directory('web')]

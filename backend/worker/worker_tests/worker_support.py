@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -152,7 +153,8 @@ def server() -> Iterator[FakeServer]:
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), _handler(fake))
     httpd.daemon_threads = True
     fake.url = f"http://127.0.0.1:{httpd.server_address[1]}"
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    # A short poll interval: shutdown() waits up to one interval (the default 0.5 s per test).
+    thread = threading.Thread(target=httpd.serve_forever, args=(0.01,), daemon=True)
     thread.start()
     yield fake
     httpd.shutdown()
@@ -178,10 +180,9 @@ def git(cwd: Path, *args: str) -> str:
 
 @dataclass
 class Origin:
-    """A temp bare repo used as `origin`, plus the seed checkout it was pushed from."""
+    """A temp bare repo used as `origin`."""
 
     bare: Path
-    seed: Path
 
     @property
     def url(self) -> str:
@@ -200,21 +201,34 @@ class Origin:
         return git(self.bare, "log", "-p", branch)
 
 
-@pytest.fixture
-def origin(tmp_path: Path) -> Origin:
-    """main has README.md, a tracked AGENTS.md and a .gitignore that re-includes every *.md."""
-    bare = tmp_path / "origin.git"
-    seed = tmp_path / "seed"
-    git(tmp_path, "init", "-q", "--bare", "-b", "main", str(bare))
-    git(tmp_path, "init", "-q", "-b", "main", str(seed))
+@pytest.fixture(scope="session")
+def origin_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The bare repo `origin` copies, built once per session (and per xdist worker)."""
+    root = tmp_path_factory.mktemp("origin-template")
+    bare = root / "origin.git"
+    seed = root / "seed"
+    git(root, "init", "-q", "--bare", "-b", "main", str(bare))
+    git(root, "init", "-q", "-b", "main", str(seed))
+
     (seed / "README.md").write_bytes(b"# App\n")
     (seed / "AGENTS.md").write_bytes(b"# Repo agents\nBe nice.\n")
     (seed / ".gitignore").write_bytes(b"*.log\n!*.md\n")
     git(seed, "add", "-A")
     git(seed, "commit", "-q", "-m", "init")
+
     git(seed, "remote", "add", "origin", bare.as_uri())
     git(seed, "push", "-q", "origin", "main")
-    return Origin(bare, seed)
+    return bare
+
+
+@pytest.fixture
+def origin(tmp_path: Path, origin_template: Path) -> Origin:
+    """main has README.md, a tracked AGENTS.md and a .gitignore that re-includes every *.md.
+
+    A per-test copy of the session template: tests push to it and add hooks."""
+    bare = tmp_path / "origin.git"
+    shutil.copytree(origin_template, bare)
+    return Origin(bare)
 
 
 # ---------------------------------------------------------------- manifests

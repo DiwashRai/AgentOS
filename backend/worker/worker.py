@@ -210,6 +210,29 @@ def pr_url_error(url: str) -> str | None:
     return None
 
 
+def pr_lookup_result(
+    program: str, result: ProcResult, out: list[str], err: list[str]
+) -> tuple[str | None, str]:
+    """(PR URL, "") from a finished PR lookup, or (None, why not). `out` and `err` are its
+    non-blank stdout and stderr lines, stripped."""
+    if result.error:
+        return None, result.error
+    if result.stopped == "timeout":
+        return None, f"{program} timed out after {PR_LOOKUP_TIMEOUT_S:g}s"
+    if result.stopped is not None:
+        return None, "the server went away"
+    if result.exit_code != 0:
+        detail = f": {_clip(err[-1], 200)}" if err else ""
+        return None, f"{program} exited with code {result.exit_code}{detail}"
+
+    if len(out) != 1:
+        return None, f"expected one URL line from {program}, got {len(out)} lines"
+    problem = pr_url_error(out[0])
+    if problem:
+        return None, f"{program} printed {_clip(out[0], 200)!r}: {problem}"
+    return out[0], ""
+
+
 _REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: symlinks and junctions on Windows
 
 
@@ -2323,21 +2346,7 @@ class Run:
             on_line=on_line,
             interrupt=lambda: "abort" if self.events.failure is not None else None,
         )
-        if result.error:
-            return None, result.error
-        if result.stopped == "timeout":
-            return None, f"{argv[0]} timed out after {PR_LOOKUP_TIMEOUT_S:g}s"
-        if result.stopped is not None:
-            return None, "the server went away"
-        if result.exit_code != 0:
-            detail = f": {_clip(err[-1], 200)}" if err else ""
-            return None, f"{argv[0]} exited with code {result.exit_code}{detail}"
-        if len(out) != 1:
-            return None, f"expected one URL line from {argv[0]}, got {len(out)} lines"
-        problem = pr_url_error(out[0])
-        if problem:
-            return None, f"{argv[0]} printed {_clip(out[0], 200)!r}: {problem}"
-        return out[0], ""
+        return pr_lookup_result(argv[0], result, out, err)
 
     # ------------------------------------------------------------ git
 

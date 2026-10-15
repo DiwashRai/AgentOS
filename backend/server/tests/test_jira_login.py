@@ -6,7 +6,6 @@ from __future__ import annotations
 import base64
 import logging
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -86,7 +85,8 @@ def fake_jira() -> FakeJira:
 
 
 @pytest.fixture
-def jira_settings(settings: Settings) -> Settings:
+def settings(settings: Settings) -> Settings:
+    """Jira login instead of dev auth."""
     return settings.model_copy(
         update={
             "dev_auth": False,
@@ -97,29 +97,14 @@ def jira_settings(settings: Settings) -> Settings:
 
 
 @pytest.fixture
-def jira_app(
-    jira_settings: Settings, fake_jira: FakeJira, launcher: FakeLauncher
-) -> Iterator[tuple[TestClient, AppContext]]:
-    app = create_app(jira_settings, launcher=launcher, run_loops=False)
-    with TestClient(app, base_url=BASE_URL) as client:
-        ctx = app.state.ctx
-        assert isinstance(ctx, AppContext)
-        assert ctx.jira is not None  # built from AGENTOS_JIRA_URL
-        ctx.jira = JiraClient(
-            JIRA, jira_settings.jira_deployment, transport=httpx.MockTransport(fake_jira.handler)
-        )
-        set_space(ctx, jira_projects=("SCRUM", "OPS"))
-        yield client, ctx
-
-
-@pytest.fixture
-def client(jira_app: tuple[TestClient, AppContext]) -> TestClient:
-    return jira_app[0]
-
-
-@pytest.fixture
-def ctx(jira_app: tuple[TestClient, AppContext]) -> AppContext:
-    return jira_app[1]
+def ctx(ctx: AppContext, fake_jira: FakeJira) -> AppContext:
+    """The test's context with the mocked Jira and the Space's projects SCRUM and OPS."""
+    assert ctx.jira is not None  # built from AGENTOS_JIRA_URL
+    ctx.jira = JiraClient(
+        JIRA, ctx.settings.jira_deployment, transport=httpx.MockTransport(fake_jira.handler)
+    )
+    set_space(ctx, jira_projects=("SCRUM", "OPS"))
+    return ctx
 
 
 def login(client: TestClient, body: dict[str, str], **headers: str) -> Any:
@@ -367,9 +352,9 @@ def test_rate_limit_trusts_proxy_headers_only_when_configured(
 
 
 def test_datacenter_uses_a_bearer_pat_and_the_user_key(
-    jira_settings: Settings, fake_jira: FakeJira, launcher: FakeLauncher
+    settings: Settings, fake_jira: FakeJira, launcher: FakeLauncher
 ) -> None:
-    dc = jira_settings.model_copy(update={"jira_deployment": "datacenter"})
+    dc = settings.model_copy(update={"jira_deployment": "datacenter"})
     fake_jira.add(f"Bearer {TOKEN}", "jsmith", email="j@example.com")
     app = create_app(dc, launcher=launcher, run_loops=False)
     with TestClient(app, base_url=BASE_URL) as client:
