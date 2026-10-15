@@ -11,7 +11,6 @@ import {
   initialForm,
   repoOptions,
   toCreateBody,
-  trapIndex,
   validate,
   TITLE_MAX,
 } from "./form";
@@ -105,15 +104,5 @@ describe("new ticket form", () => {
     expect(toCreateBody(f)).toMatchObject({ repo: "agentos", base_branch: null, owner_id: null });
     const none = { ...initialForm(defaults), title: "T", repo: NO_REPO, baseBranch: "dev" };
     expect(toCreateBody(none)).toMatchObject({ repo: null, base_branch: null });
-  });
-});
-describe("focus trap", () => {
-  it("wraps Tab and Shift+Tab", () => {
-    expect(trapIndex(0, 3, false)).toBe(1);
-    expect(trapIndex(2, 3, false)).toBe(0);
-    expect(trapIndex(0, 3, true)).toBe(2);
-    expect(trapIndex(-1, 3, false)).toBe(0);
-    expect(trapIndex(-1, 3, true)).toBe(2);
-    expect(trapIndex(0, 0, false)).toBe(-1);
   });
 });

@@ -22,48 +22,16 @@
   border-left: 2px solid var(--blocked);
 }
 
+/* editor's textarea, in the confirm's text size rather than mono */
 .note {
-  box-sizing: border-box;
-  display: block;
-  width: 100%;
   min-height: 40px;
   padding: var(--sp-3) var(--sp-5);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-control);
-  background: var(--field);
-  color: var(--ink-1);
-  font: inherit;
+  font-family: inherit;
   font-size: var(--fs-control);
   line-height: 1.45;
-  outline: none;
-  resize: vertical;
-}
-.note::placeholder {
-  color: var(--ink-3);
-}
-/* focus = the ink ring (refresh §3.5) */
-.note:focus-visible {
-  border-color: var(--rule-strong);
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
 }
 
-.err {
-  margin: 0;
-  font-size: var(--fs-meta);
-  line-height: 1.4;
-  color: var(--blocked);
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--sp-3);
-}
 .keys {
   margin-right: auto;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
   white-space: nowrap;
 }

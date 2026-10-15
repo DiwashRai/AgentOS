@@ -1,35 +1,36 @@
 // My queue rows (refresh HANDOFF §5 "My queue row"): one grid for every zone, so titles share one
 // x and stage labels sit at 90px. Needs you (incl. blocked) and Ready to start are raised; Done
-// (incl. abandoned) is flat. Click / Enter / Space anywhere on the row opens the peek; the row's buttons keep their
-// action.
+// (incl. abandoned) is flat. Click / Enter / Space on the row opens the peek; its buttons keep
+// their action.
 import type { ReactNode } from "react";
 
 import type { Schemas } from "../../api/client";
-import { age } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import type { MeRef } from "../../domain/status";
+import {
+  outcomeLine,
+  rowLook,
+  sourceRef,
+  statusLine,
+  statusMark,
+  waitAge,
+} from "../../domain/ticketView";
 import {
   Age,
   Avatar,
   AvatarSlot,
   cx,
+  DataRow,
+  DataTitle,
+  Inline,
   KeyChip,
-  PriorityIcon,
+  Stack,
   StageGlyph,
   StatusMark,
-  TypeIcon,
+  text,
 } from "../../ui";
 import { peekItemProps } from "../peek/usePeek";
-import {
-  askLabel,
-  outcomeLine,
-  rowLook,
-  sourceWord,
-  stateLine,
-  statusMark,
-  subLine,
-  waitingPerson,
-} from "./model";
+import { subLine } from "./model";
 import s from "./Queue.module.css";
 import { RowActions } from "./RowActions";
 
@@ -47,7 +48,7 @@ interface RowProps {
 function RowAge({ ticket: t, now }: { ticket: Ticket; now: number }) {
   return (
     <Age
-      text={age(t.attention_since, now)}
+      text={waitAge(t, now)}
       size={t.attention === "needs_you" || t.attention === "blocked" ? "lg" : "md"}
       title={new Date(t.attention_since).toLocaleString()}
       className={s.age}
@@ -55,16 +56,8 @@ function RowAge({ ticket: t, now }: { ticket: Ticket; now: number }) {
   );
 }
 
-const EDGE = {
-  you: s.edgeYou,
-  live: s.edgeLive,
-  blocked: s.edgeBlocked,
-  done: s.edgeDone,
-  neutral: s.edgeNeutral,
-} as const;
-
-/** The row shell: surface, status edge, wash, lift, and the left half every row shares (stage
- *  glyph, key chip, type/priority icons, title, optional sub-line). */
+/** The row shell: the kit row (surface, status edge, wash, lift) on the queue's grid, and the left
+ *  half every row shares (stage glyph, key chip, type/priority icons, title, optional sub-line). */
 function RowShell({
   ticket: t,
   sub,
@@ -78,60 +71,71 @@ function RowShell({
 }) {
   const look = rowLook(t);
   return (
-    <article
-      className={cx(
-        s.row,
-        look.flat ? s.flat : s.raised,
-        t.attention === "needs_you" && s.isYou,
-        EDGE[look.edge],
-      )}
+    <DataRow
+      as="article"
+      className={s.row}
+      surface={look.flat ? "flat" : "raised"}
+      you={t.attention === "needs_you"}
+      edge={look.edge}
+      hover="lift"
       {...peekItemProps(`${t.key} ${t.title}`, () => {
         onOpen(t.key);
       })}
     >
       <StageGlyph model={stageModel(t)} className={s.stage} />
-      <span className={s.key}>
+      <Inline as="span" className={s.key}>
         <KeyChip>{t.key}</KeyChip>
-      </span>
+      </Inline>
       <div className={s.ti}>
-        <div className={s.title}>
-          <TypeIcon type={t.type} />
-          <PriorityIcon priority={t.priority} />
-          <span title={t.title}>{t.title}</span>
-        </div>
+        <DataTitle
+          as="div"
+          text={t.title}
+          type={t.type}
+          priority={t.priority}
+          size={look.flat ? "md" : "lg"}
+        />
         {sub ? (
-          <div className={s.sub} title={sub}>
+          <div className={cx(s.sub, text.meta, text.ellipsis)} title={sub}>
             {sub}
           </div>
         ) : null}
       </div>
       <span className={cx(s.divider, look.flat && s.blank)} aria-hidden="true" />
       {children}
-    </article>
+    </DataRow>
   );
 }
 
-/** The line under a status mark (model.stateLine): a dispatch block ("Set a base branch first")
- *  in the you hue, else the reason or status line. */
+/** The line under a status mark (`statusLine`): a dispatch block ("Set a base branch first") in
+ *  the you hue, else the reason. */
 function SecondLine({ ticket: t }: { ticket: Ticket }) {
-  const line = stateLine(t);
+  const line = statusLine(t);
   if (!line.text) return null;
   return (
-    <div className={cx(s.ask2, line.flag && s.flag)} title={line.text}>
+    <div className={cx(s.ask2, text.ellipsis, line.flag && s.flag)} title={line.text}>
       {line.text}
     </div>
+  );
+}
+
+/** The status cell: the mark (and a face) on line one, its text on line two. */
+function AskCell({ ticket: t, children }: { ticket: Ticket; children: ReactNode }) {
+  return (
+    <Stack className={s.ask}>
+      <Inline gap={3} className={s.ask1}>
+        {children}
+      </Inline>
+      <SecondLine ticket={t} />
+    </Stack>
   );
 }
 
 export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
   return (
     <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
-      <div className={s.ask}>
-        <div className={s.ask1}>
-          <StatusMark kind="you" ask={askLabel(t)} />
-        </div>
-        <SecondLine ticket={t} />
-      </div>
+      <AskCell ticket={t}>
+        <StatusMark kind="you" ask={statusMark(t).ask} />
+      </AskCell>
       <RowAge ticket={t} now={now} />
       <RowActions ticket={t} />
     </RowShell>
@@ -142,43 +146,39 @@ export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
 function StateCell({ ticket: t }: { ticket: Ticket }) {
   const mark = statusMark(t);
   if (mark.kind === "wait") {
-    const who = waitingPerson(t);
+    const who = mark.person;
     return (
-      <div className={s.ask}>
-        <div className={s.ask1}>
-          {who ? <Avatar name={who.display_name} id={who.id} /> : null}
-          <StatusMark kind="wait" name={mark.name} ask={mark.ask} />
-        </div>
-        <SecondLine ticket={t} />
-      </div>
+      <AskCell ticket={t}>
+        {who ? <Avatar name={who.display_name} id={who.id} /> : null}
+        <StatusMark kind="wait" name={mark.name} ask={mark.ask} />
+      </AskCell>
     );
   }
   return (
-    <div className={s.ask}>
-      <div className={s.ask1}>
-        <StatusMark kind={mark.kind} name={mark.name} />
-      </div>
-      <SecondLine ticket={t} />
-    </div>
+    <AskCell ticket={t}>
+      <StatusMark kind={mark.kind} name={mark.name} />
+    </AskCell>
   );
 }
 
 /** Done recently: flat; the person and repo, the age, and the outcome right-aligned. */
 function DoneCells({ ticket: t, now }: { ticket: Ticket; now: number }) {
   const out = outcomeLine(t);
-  const src = sourceWord(t);
+  const src = sourceRef(t);
   const where = [src, t.repo_name].filter(Boolean).join(" · ");
   return (
     <>
-      <span className={s.who}>
+      <Inline as="span" gap={5} className={cx(s.who, text.meta)}>
         {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}
-        <span title={where}>{where}</span>
-      </span>
+        <span className={text.ellipsis} title={where}>
+          {where}
+        </span>
+      </Inline>
       <RowAge ticket={t} now={now} />
-      <span className={s.outcome} title={out?.note ?? undefined}>
+      <span className={cx(s.outcome, text.ellipsis)} title={out?.note ?? undefined}>
         {out ? (
           <>
-            <span className={cx(out.abandoned && s.abandoned)}>{out.word}</span>
+            <span className={cx(out.outcome === "abandoned" && s.abandoned)}>{out.word}</span>
             {out.note ? ` · ${out.note}` : null}
           </>
         ) : null}

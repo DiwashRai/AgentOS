@@ -3,184 +3,228 @@
 // by the plan being signed off) or the status band. On you it is the `--you-tint` band with the YOU
 // pill + the ask; every other state uses the same band, quiet (no blue). Gate actions are NOT
 // repeated here: the header group carries them (gate actions appear once per page).
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router";
 
 import type { Schemas } from "../../api/client";
-import { clientWait } from "../../domain/clients";
-import { elapsed } from "../../domain/format";
-import { planText } from "../../domain/plan";
-import { OUTCOME_KIND, outcomeOf, resolvedBy, type Outcome } from "../../domain/outcome";
-import { statusKind } from "../../domain/status";
-import { attentionWords, onlineWords, outcomeWords } from "../../domain/words";
-import { RunMeter, StatusMark, cx, linkClass } from "../../ui";
+import { duration, runSeconds } from "../../domain/format";
+import { planText, planView } from "../../domain/plan";
+import { OUTCOME_KIND, resolvedBy } from "../../domain/outcome";
+import {
+  gate,
+  type GateView,
+  outcomeLine,
+  type OutcomeLine,
+  runLine,
+  statusLine,
+  statusMark,
+} from "../../domain/ticketView";
+import { attentionWords, onlineWords, statusWords, words as phrases } from "../../domain/words";
+import {
+  Checklist,
+  EmptyState,
+  Inline,
+  RunMeter,
+  Stack,
+  StatusMark,
+  cx,
+  linkClass,
+  text,
+} from "../../ui";
 import { isTasksFile } from "../context/files";
 import { useNow } from "../../ui/useNow";
-import {
-  gateMeta,
-  gatePerson,
-  parkedGate,
-  progressStep,
-  runLabel,
-  runSeconds,
-  statusText,
-  stripKind,
-  thenStage,
-  ticketPath,
-  type ParkedGate,
-} from "./model";
-import { PlanList } from "./PlanList";
+import { gateMeta, stripKind, thenStage, ticketPath } from "./model";
 import { PrLink } from "./PrLink";
 import s from "./Strip.module.css";
 
 type Detail = Schemas["TicketDetail"];
 
-function Elapsed({ startedAt }: { startedAt: string | null }) {
+/** The status band's line for a ticket nobody has dispatched yet. */
+const INBOX_LINE = `${phrases.inboxNote} · add context, then dispatch`;
+
+/** One band: the quiet surface, or the you tint; the line first, then what sits under it. */
+function Band({
+  you = false,
+  title,
+  line,
+  children,
+}: {
+  you?: boolean;
+  title?: string | undefined;
+  line: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <Stack gap={5} className={cx(s.band, you ? s.you : s.quiet)} title={title}>
+      <Inline wrap gap={4} rowGap={3} className={s.line}>
+        {line}
+      </Inline>
+      {children}
+    </Stack>
+  );
+}
+
+/** A number or word beside the line (k/n, the elapsed time, a waiting client's Online). */
+const num = cx(text.meta, s.num);
+
+/** The elapsed time on its own 1 s clock, so the band re-renders only with the ticket. */
+function Elapsed({ run }: { run: Detail["latest_run"] }) {
   const now = useNow(1000);
-  if (!startedAt) return null;
-  return <span className={s.num}>{elapsed(runSeconds(startedAt, now))}</span>;
+  const seconds = runSeconds(run, now);
+  return seconds === null ? null : <span className={num}>{duration(seconds)}</span>;
 }
 
 function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
   const { search } = useLocation();
-  const step = queued ? null : progressStep(t.now.progress);
-  const plan = t.plan ?? [];
+  const line = runLine(t, null);
+  const meter = queued ? null : line.meter;
+  const plan = planView(t.plan);
   // Past STRIP_LABEL_MAX steps the meter drops its labels anyway (bare segments).
-  const labels = step?.n === plan.length ? plan.map((p) => planText(p.text)) : undefined;
-  const nowText = planText(t.now.text);
+  const labels = plan && meter?.n === plan.total ? plan.items.map((p) => p.text) : undefined;
   // A queued client run says whose client it waits for and whether that client is online.
-  const wait = queued ? clientWait(t) : null;
-  const text = wait ? wait.text : queued ? "Waiting for a runner" : nowText;
+  const wait = queued ? line.wait : null;
+  const words = wait ? wait.text : queued ? "Waiting for a runner" : line.step;
   return (
-    <div className={cx(s.band, s.quiet, s.run)}>
-      <div className={s.line}>
-        {queued ? (
-          <StatusMark kind="queued" name={attentionWords.queued} />
-        ) : (
-          <StatusMark kind="run" name={runLabel(t)} />
-        )}
-        <span className={s.text} title={text}>
-          {text}
-        </span>
-        {wait ? <span className={s.meta}>{onlineWords[wait.online]}</span> : null}
-        {step ? <span className={s.num}>{`${String(step.k)}/${String(step.n)}`}</span> : null}
-        {queued ? null : <Elapsed startedAt={t.latest_run?.started_at ?? null} />}
-        <span className={s.end}>
-          <RouterLink className={linkClass} to={ticketPath(t.key, "runs", search)}>
-            Log →
-          </RouterLink>
-        </span>
-      </div>
-      {step ? (
+    <Band
+      line={
+        <>
+          {queued ? (
+            <StatusMark kind="queued" name={attentionWords.queued} />
+          ) : (
+            <StatusMark kind="run" name={line.label} />
+          )}
+          <span className={cx(text.ellipsis, s.text)} title={words}>
+            {words}
+          </span>
+          {wait ? <span className={num}>{onlineWords[wait.online]}</span> : null}
+          {meter ? <span className={num}>{meter.text}</span> : null}
+          {queued ? null : <Elapsed run={t.latest_run} />}
+          <Inline as="span" gap={7} className={s.end}>
+            <RouterLink className={linkClass} to={ticketPath(t.key, "runs", search)}>
+              Log →
+            </RouterLink>
+          </Inline>
+        </>
+      }
+    >
+      {meter ? (
         <RunMeter
-          k={step.k}
-          n={step.n}
-          state="running"
+          k={meter.k}
+          n={meter.n}
+          state={meter.state}
           size="strip"
           labels={labels}
           className={s.meter}
         />
       ) : null}
-    </div>
+    </Band>
   );
 }
 
-function GateBand({ t, parked, tasksPath }: { t: Detail; parked: ParkedGate; tasksPath: string }) {
-  const { gate } = parked;
-  const mine = gate.state === "you";
+function GateBand({ t, parked, tasksPath }: { t: Detail; parked: GateView; tasksPath: string }) {
+  const mine = parked.state === "you";
   const params = new URLSearchParams({ file: tasksPath });
   const then = thenStage(t);
-  const text = planText(t.now.text);
+  const step = planText(t.now.text);
   return (
     <>
-      <div className={cx(s.band, mine ? s.you : s.quiet)} title={gateMeta(t, parked)}>
-        <div className={s.line}>
-          {mine ? (
-            <StatusMark kind="you" ask={gate.label} />
-          ) : (
-            <StatusMark kind="wait" name={gatePerson(gate)} ask={gate.label} />
-          )}
-          {text ? (
-            <span className={cx(s.text, s.instr)} title={text}>
-              {text}
-            </span>
-          ) : null}
-          <span className={s.end}>
-            {then ? <span className={s.then}>{`Then ${then}`}</span> : null}
-            <RouterLink
-              className={linkClass}
-              to={ticketPath(t.key, "context", `?${params.toString()}`)}
-            >
-              Edit TASKS.md →
-            </RouterLink>
-            {t.pr_url ? <PrLink url={t.pr_url} /> : null}
-          </span>
-        </div>
-      </div>
-      <PlanList
-        plan={t.plan}
-        id="ticket-gate-plan"
-        level={3}
-        empty="No plan written yet."
-        className={s.plan}
+      <Band
+        you={mine}
+        title={gateMeta(t, parked)}
+        line={
+          <>
+            {mine ? (
+              <StatusMark kind="you" ask={parked.label} />
+            ) : (
+              <StatusMark kind="wait" name={parked.person} ask={parked.label} />
+            )}
+            {step ? (
+              <span className={cx(s.text, s.instr)} title={step}>
+                {step}
+              </span>
+            ) : null}
+            <Inline as="span" gap={7} className={s.end}>
+              {then ? <span className={text.meta}>{`Then ${then}`}</span> : null}
+              <RouterLink
+                className={linkClass}
+                to={ticketPath(t.key, "context", `?${params.toString()}`)}
+              >
+                Edit TASKS.md →
+              </RouterLink>
+              {t.pr_url ? <PrLink url={t.pr_url} /> : null}
+            </Inline>
+          </>
+        }
       />
+      <section className={s.plan} aria-labelledby="ticket-gate-plan">
+        <Checklist
+          plan={planView(t.plan)}
+          title="Plan"
+          level={3}
+          id="ticket-gate-plan"
+          empty={<EmptyState form="note">No plan written yet.</EmptyState>}
+        />
+      </section>
     </>
   );
 }
 
 /** A done ticket: Complete (green) or Abandoned (red), who closed it and when, and the note. */
-function OutcomeBand({ t, outcome }: { t: Detail; outcome: Outcome }) {
+function OutcomeBand({ t, outcome }: { t: Detail; outcome: OutcomeLine }) {
   const now = useNow(30_000);
   const r = t.resolution;
   return (
-    <div className={cx(s.band, s.quiet)}>
-      <div className={s.line}>
-        <StatusMark kind={OUTCOME_KIND[outcome]} name={outcomeWords[outcome]} />
-        <span className={cx(s.text, s.wrap)}>
-          {r ? resolvedBy(r, now) : statusText(t)}
-          {r?.note ? (
-            <>
-              {" — "}
-              <span className={s.note}>{r.note}</span>
-            </>
-          ) : null}
-        </span>
-        {t.pr_url ? (
-          <span className={s.end}>
-            <PrLink url={t.pr_url} />
+    <Band
+      line={
+        <>
+          <StatusMark kind={OUTCOME_KIND[outcome.outcome]} name={outcome.word} />
+          <span className={cx(s.text, s.wrap)}>
+            {r ? resolvedBy(r, now) : statusLine(t).reason}
+            {r?.note ? (
+              <>
+                {" — "}
+                <span className={s.note}>{r.note}</span>
+              </>
+            ) : null}
           </span>
-        ) : null}
-      </div>
-    </div>
+          {t.pr_url ? (
+            <Inline as="span" gap={7} className={s.end}>
+              <PrLink url={t.pr_url} />
+            </Inline>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
 function StatusBand({ t }: { t: Detail }) {
-  const outcome = outcomeOf(t);
+  const outcome = outcomeLine(t);
   if (outcome) return <OutcomeBand t={t} outcome={outcome} />;
-  const kind = statusKind(t);
-  const name =
-    kind === "wait" && t.now.person ? t.now.person.display_name : attentionWords[t.attention];
-  const text = statusText(t);
+
+  const mark = statusMark(t);
+  const kind = mark.kind;
+  // Waiting on nobody in particular reads as the status word, not "Someone".
+  const name = kind === "wait" && !mark.person ? statusWords.wait : mark.name;
+  const line = t.attention === "inbox" ? INBOX_LINE : statusLine(t).reason;
   return (
-    <div className={cx(s.band, kind === "you" ? s.you : s.quiet)}>
-      <div className={s.line}>
-        {kind === "you" ? (
-          <StatusMark kind="you" ask="Your move" />
-        ) : (
-          <StatusMark kind={kind} name={name} />
-        )}
-        {text ? (
-          <span className={cx(s.text, s.wrap, kind === "you" && s.instr)}>{text}</span>
-        ) : null}
-        {/* "review the result and mark done": the thing to review */}
-        {t.pr_url ? (
-          <span className={s.end}>
-            <PrLink url={t.pr_url} />
-          </span>
-        ) : null}
-      </div>
-    </div>
+    <Band
+      you={kind === "you"}
+      line={
+        <>
+          <StatusMark kind={kind} name={name} ask={mark.ask} />
+          {line ? (
+            <span className={cx(s.text, s.wrap, kind === "you" && s.instr)}>{line}</span>
+          ) : null}
+          {/* "review the result and mark done": the thing to review */}
+          {t.pr_url ? (
+            <Inline as="span" gap={7} className={s.end}>
+              <PrLink url={t.pr_url} />
+            </Inline>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
@@ -193,7 +237,7 @@ export function Strip({ t, files }: { t: Detail; files: readonly { path: string 
     setShown(kind);
     setChanged(true);
   }
-  const parked = parkedGate(t);
+  const parked = gate(t);
   const tasksPath = files.find((f) => isTasksFile(f.path))?.path ?? "TASKS.md";
   return (
     <div key={kind} className={cx(s.slot, changed && s.enter)}>

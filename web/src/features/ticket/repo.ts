@@ -4,6 +4,7 @@
 // repo drops the ticket's own base branch back to that repo's default; no repo clears the base
 // branch and turns off the stages that need one. This only words it before the change.
 import { ApiError, type Schemas } from "../../api/client";
+import { words } from "../../domain/words";
 import { actionErrorText } from "./model";
 
 type Detail = Schemas["TicketDetail"];
@@ -11,7 +12,6 @@ type Repo = Pick<Schemas["RepoInfo"], "name" | "default_branch">;
 
 /** The select's value for no repo. */
 export const NO_REPO = "";
-export const NO_REPO_LABEL = "No repo";
 
 export interface RepoOption {
   value: string;
@@ -32,7 +32,7 @@ export function repoOptions(
   const names = (repos ?? []).map((r) => r.name);
   if (repoName !== null && !names.includes(repoName)) names.push(repoName);
   names.sort((a, b) => a.localeCompare(b));
-  return [{ value: NO_REPO, label: NO_REPO_LABEL }, ...names.map((n) => ({ value: n, label: n }))];
+  return [{ value: NO_REPO, label: words.noRepo }, ...names.map((n) => ({ value: n, label: n }))];
 }
 
 /** The PATCH body for a select value. */

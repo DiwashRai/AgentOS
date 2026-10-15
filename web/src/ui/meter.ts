@@ -1,7 +1,8 @@
-// Pure display helpers for RunMeter (kit.js `segs` / `runOfText`).
-// k is the step in progress, 1-based (k/n reads "3/5" while step 3 runs), as in the kit.
+// Pure display helpers for RunMeter (kit.js `segs`). k is the step in progress, 1-based, as in the
+// kit. The meter's state and its k/n text live in domain/meter.ts and are re-exported here.
+import type { MeterState } from "../domain/meter";
 
-export type MeterState = "running" | "finished" | "queued";
+export { meterOfText, type MeterState } from "../domain/meter";
 export type SegState = "done" | "cur" | "up";
 
 function clamp(k: number, n: number): number {
@@ -16,13 +17,6 @@ export function meterSegments(k: number, n: number, state: MeterState): SegState
     if (state === "running" && i === cur) return "cur";
     return "up";
   });
-}
-
-/** "3/5": a finished run reads n/n, a queued one 0/n. */
-export function meterOfText(k: number, n: number, state: MeterState): string {
-  const count = Math.max(Math.trunc(n), 0);
-  const done = state === "finished" ? count : state === "queued" ? 0 : clamp(k, count);
-  return `${String(done)}/${String(count)}`;
 }
 
 /** The strip names its steps up to this many (the kit's examples run 4–5); past it, step columns

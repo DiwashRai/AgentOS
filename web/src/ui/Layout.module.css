@@ -1,0 +1,76 @@
+/* Stack and Inline: a flex column or row whose gap is one step of the --sp-* scale. Layout only. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inline {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.wrap {
+  flex-wrap: wrap;
+}
+
+/* the gap: both axes */
+.g1 {
+  gap: var(--sp-1);
+}
+.g2 {
+  gap: var(--sp-2);
+}
+.g3 {
+  gap: var(--sp-3);
+}
+.g4 {
+  gap: var(--sp-4);
+}
+.g5 {
+  gap: var(--sp-5);
+}
+.g6 {
+  gap: var(--sp-6);
+}
+.g7 {
+  gap: var(--sp-7);
+}
+.g8 {
+  gap: var(--sp-8);
+}
+.g9 {
+  gap: var(--sp-9);
+}
+.g10 {
+  gap: var(--sp-10);
+}
+
+/* a wrapping row's line gap, after the gap so it wins */
+.r3 {
+  row-gap: var(--sp-3);
+}
+
+/* cross-axis alignment */
+.aStart {
+  align-items: flex-start;
+}
+.aEnd {
+  align-items: flex-end;
+}
+.aBaseline {
+  align-items: baseline;
+}
+
+/* main-axis distribution */
+.jEnd {
+  justify-content: flex-end;
+}
+.jBetween {
+  justify-content: space-between;
+}
+
+/* a child that takes the free space (pushes what follows to the far end) */
+.grow {
+  flex: 1;
+  min-width: 0;
+}

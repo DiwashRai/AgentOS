@@ -3,12 +3,13 @@
 // drawn as needing action. Writers click it to edit inline (Enter / Save saves, Esc or blur
 // cancels). An active run disables it; the server's lock (a run started the ticket branch from
 // it) turns it into plain text with "Locked by run #N". The logic is in `branch.ts`.
-import { useCallback, useId, useState, type MouseEvent } from "react";
+import { useCallback, useId, type MouseEvent } from "react";
 import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useConfig, usePatchTicket } from "../../api/queries";
-import { Button, LinkButton, cx, linkClass } from "../../ui";
+import { fieldStyles as f } from "../../editor";
+import { Button, Inline, LinkButton, cx, linkClass, text } from "../../ui";
 import s from "./BaseBranchField.module.css";
 import {
   branchError,
@@ -22,6 +23,8 @@ import {
   lockNote,
   repoDefault,
 } from "./branch";
+import ie from "./InlineEdit.module.css";
+import { useInlineEdit } from "./useInlineEdit";
 
 type Detail = Schemas["TicketDetail"];
 
@@ -34,7 +37,7 @@ function LockNote({ t }: { t: Detail }) {
   const note = lockNote(t);
   if (!note) return null;
   return (
-    <span className={s.lock}>
+    <span className={cx(text.meta, s.lock)}>
       {note.href ? (
         <RouterLink className={linkClass} to={note.href}>
           {note.text}
@@ -49,7 +52,9 @@ function LockNote({ t }: { t: Detail }) {
 export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   const config = useConfig();
   const patch = usePatchTicket(t.key);
-  const [draft, setDraft] = useState<string | null>(null); // null = at rest
+  const lock = branchLock(t);
+  // A run that starts mid-edit closes the editor.
+  const edit = useInlineEdit<string, Schemas["TicketPatch"]>(patch, { locked: lock !== null });
   const ids = useId();
   const focusInput = useCallback((el: HTMLInputElement | null) => {
     el?.focus();
@@ -58,10 +63,8 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
 
   const def = repoDefault(t.repo_name, config.data?.repos);
   const view = branchView(t);
-  const lock = branchLock(t);
   const locked = t.base_branch_info?.locked === true;
-  // A run that starts mid-edit closes the editor.
-  if (lock !== null && draft !== null) setDraft(null);
+  const draft = edit.draft;
 
   const value = (
     <>
@@ -75,10 +78,10 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
   // Locked (or a viewer): plain text, with the lock note beside it.
   if (readOnly || locked) {
     return (
-      <span className={s.rest} title={locked ? (lock ?? undefined) : undefined}>
+      <Inline as="span" gap={2} align="baseline" title={locked ? (lock ?? undefined) : undefined}>
         {value}
         <LockNote t={t} />
-      </span>
+      </Inline>
     );
   }
 
@@ -86,12 +89,11 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
     return (
       <button
         type="button"
-        className={s.value}
+        className={ie.value}
         disabled={lock !== null}
         title={lock ?? "Change the base branch"}
         onClick={() => {
-          patch.reset();
-          setDraft(t.base_branch ?? "");
+          edit.start(t.base_branch ?? "");
         }}
       >
         {value}
@@ -99,17 +101,6 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
     );
   }
 
-  const cancel = () => {
-    patch.reset();
-    setDraft(null);
-  };
-  const save = (body: Schemas["TicketPatch"]) => {
-    patch.mutate(body, {
-      onSuccess: () => {
-        setDraft(null);
-      },
-    });
-  };
   // An empty input (a blank ticket's editor opens empty) just can't save; no "Required." yet.
   const invalid = draft.trim() === "" ? undefined : branchError(draft);
   const canSave = canSaveBranch(draft, t.base_branch) && !patch.isPending;
@@ -124,16 +115,14 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
       className={s.edit}
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSave) save(branchPatch(draft, def));
+        if (canSave) edit.save(branchPatch(draft, def));
       }}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) cancel();
-      }}
+      onBlur={edit.onBlur}
     >
-      <span className={s.row}>
+      <Inline as="span" gap={4}>
         <input
           ref={focusInput}
-          className={s.input}
+          className={cx(f.input, f.mono, s.input)}
           aria-label="Base branch"
           aria-invalid={message ? true : undefined}
           aria-describedby={describedBy || undefined}
@@ -143,15 +132,9 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
           autoComplete="off"
           onChange={(e) => {
             patch.reset();
-            setDraft(e.target.value);
+            edit.change(e.target.value);
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              e.stopPropagation();
-              cancel();
-            }
-          }}
+          onKeyDown={edit.onKeyDown}
         />
         <Button type="submit" variant="ink" size="xs" disabled={!canSave} onMouseDown={keepFocus}>
           Save
@@ -162,20 +145,24 @@ export function BaseBranchField({ t, readOnly }: { t: Detail; readOnly: boolean 
             disabled={patch.isPending}
             onMouseDown={keepFocus}
             onClick={() => {
-              save({ base_branch: null });
+              edit.save({ base_branch: null });
             }}
           >
             Use repo default
           </LinkButton>
         ) : null}
-      </span>
+      </Inline>
       {message ? (
-        <span id={errId} className={s.err} role={patch.error ? "alert" : undefined}>
+        <span
+          id={errId}
+          className={cx(text.error, ie.msg)}
+          role={patch.error ? "alert" : undefined}
+        >
           {message}
         </span>
       ) : null}
       {hint ? (
-        <span id={hintId} className={s.note}>
+        <span id={hintId} className={cx(text.meta, ie.msg)}>
           {hint}
         </span>
       ) : null}

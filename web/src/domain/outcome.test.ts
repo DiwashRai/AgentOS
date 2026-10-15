@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { person, ticket } from "./fixtures";
-import { displayKind, outcomeOf, outcomeWord, resolvedBy } from "./outcome";
+import { outcomeOf, resolvedBy } from "./outcome";
 
 const resolution = (outcome: "completed" | "abandoned", note: string | null = null) => ({
   outcome,
@@ -30,19 +30,6 @@ describe("outcomeOf", () => {
   it("only done tickets have an outcome", () => {
     expect(outcomeOf(ticket({ attention: "blocked", state: "closed" }))).toBeNull();
     expect(outcomeOf(ticket({ attention: "inbox" }))).toBeNull();
-  });
-});
-
-describe("displayKind / outcomeWord", () => {
-  it("splits done by outcome and leaves other kinds alone", () => {
-    const abandoned = ticket({ attention: "done", state: "closed" });
-    const complete = ticket({ attention: "done", state: "done" });
-    expect(displayKind(abandoned)).toBe("abandoned");
-    expect(displayKind(complete)).toBe("done");
-    expect(displayKind(ticket({ attention: "blocked" }))).toBe("blk");
-    expect(outcomeWord(abandoned)).toBe("Abandoned");
-    expect(outcomeWord(complete)).toBe("Complete");
-    expect(outcomeWord(ticket({ attention: "running" }))).toBeNull();
   });
 });
 

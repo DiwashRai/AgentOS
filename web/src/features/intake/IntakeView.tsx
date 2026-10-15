@@ -4,7 +4,7 @@
 // Jira, the button takes it in, so the row itself is not a click target: it lights up on hover or
 // focus (never moves) and Take in fills blue. Every list and number comes from model.ts; this view
 // only lays them out.
-import { useEffect, useId, useMemo, useState } from "react";
+import { type Ref, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
@@ -17,18 +17,26 @@ import {
   Age,
   Avatar,
   AvatarSlot,
+  Badge,
   Button,
   cx,
-  EmptyRow,
+  type DataColumn,
+  DataFoot,
+  DataHead,
+  DataRow,
+  DataRows,
+  DataTitle,
+  EmptyState,
   GroupHead,
-  Kbd,
+  Inline,
   KeyChip,
+  type KeyHint,
   linkClass,
   LinkButton,
-  litRowClass,
-  PriorityIcon,
+  Stack,
   StatusLine,
   StatusMark,
+  text,
   TypeIcon,
 } from "../../ui";
 import { importErrorText } from "../newticket/importForm";
@@ -45,6 +53,7 @@ import {
   type IntakeQuery,
   jqlHref,
   nameId,
+  ROW_CAP,
   searchItems,
   sharedPrefix,
   toTakeIn,
@@ -56,7 +65,20 @@ const AGE_TICK_MS = 30_000;
 /** How long "Taken in" stays before the list is refetched (and the row leaves). */
 const TAKEN_HOLD_MS = 3500;
 
-const COLUMNS = ["Jira", "Type", "Issue", "Jira status", "Assignee", "Upd", ""] as const;
+const COLUMNS: readonly DataColumn[] = [
+  { label: "Jira" },
+  { label: "Type" },
+  { label: "Issue" },
+  { label: "Jira status" },
+  { label: "Assignee" },
+  { label: "Upd", end: true },
+  { label: "" },
+];
+
+const HINTS: readonly KeyHint[] = [
+  { keys: ["/"], label: "Search" },
+  { keys: ["Esc"], label: "Clear" },
+];
 
 /** A row taken in on this page: the ticket it became, and whether it already existed. */
 interface Taken {
@@ -90,32 +112,43 @@ function Assignee({ person }: { person: IntakeItem["assignee"] }) {
     return (
       <span className={cx(s.as, s.isNone)}>
         <AvatarSlot dashed />
-        <span>Unassigned</span>
+        <span className={text.ellipsis}>Unassigned</span>
       </span>
     );
   return (
     <span className={s.as}>
       <Avatar name={person.display_name} id={nameId(person.display_name)} />
-      <span title={person.display_name}>{person.display_name}</span>
+      <span className={text.ellipsis} title={person.display_name}>
+        {person.display_name}
+      </span>
     </span>
   );
 }
 
 function IntakeRow({
   item,
+  keyRef,
   now,
   taken,
   onTaken,
 }: {
   item: IntakeItem;
+  /** The row's Jira key link (its first tab stop). */
+  keyRef?: Ref<HTMLAnchorElement> | undefined;
   now: number;
   taken: Taken | undefined;
   onTaken: (key: string, result: Schemas["ImportResult"]) => void;
 }) {
   const take = useImportTicket();
   return (
-    <li className={cx(s.row, taken ? s.isTaken : litRowClass)}>
+    <DataRow
+      grid
+      surface={taken ? "flat" : "raised"}
+      hover={taken ? "none" : "lit"}
+      className={s.row}
+    >
       <a
+        ref={keyRef}
         className={s.key}
         href={item.url}
         target="_blank"
@@ -126,14 +159,13 @@ function IntakeRow({
         <OutArrow />
       </a>
       <TypeIcon type={item.type} label className={s.type} />
-      <span className={s.ti}>
-        <PriorityIcon priority={item.priority} />
-        <span title={item.title}>{item.title}</span>
-      </span>
+      <DataTitle priority={item.priority} text={item.title} className={s.ti} />
       {taken ? (
         <span className={s.taken} role="status">
           <StatusMark kind="done" name={taken.created ? "Taken in" : "Already here"} />
-          <span className={s.where}>{taken.created ? "Inbox · yours" : "Taken in before"}</span>
+          <span className={cx(s.where, text.ellipsis)}>
+            {taken.created ? "Inbox · yours" : "Taken in before"}
+          </span>
           <RouterLink className={linkClass} to={`/t/${encodeURIComponent(taken.ticketKey)}`}>
             Open {taken.ticketKey} →
           </RouterLink>
@@ -142,7 +174,7 @@ function IntakeRow({
         <>
           <span className={s.st}>
             {/* Jira gives only the status name (no category), so one neutral ring for all. */}
-            <span className={s.loz} title={`Jira status: ${item.status}`}>
+            <span className={s.status} title={`Jira status: ${item.status}`}>
               <i aria-hidden="true" />
               <span>{item.status}</span>
             </span>
@@ -179,11 +211,11 @@ function IntakeRow({
         </>
       )}
       {take.isError && !taken && (
-        <p className={s.rowErr} role="alert">
+        <p className={cx(s.rowErr, text.error)} role="alert">
           {importErrorText(take.error)}
         </p>
       )}
-    </li>
+    </DataRow>
   );
 }
 
@@ -217,6 +249,16 @@ function IntakeGroup({
   onTaken: (key: string, result: Schemas["ImportResult"]) => void;
 }) {
   const bodyId = useId();
+
+  // "Show all" leaves with the rows it reveals, so focus moves to the first revealed row's key
+  // (the row at ROW_CAP) when it mounts.
+  const revealing = useRef(false);
+  const focusRevealed = useCallback((el: HTMLAnchorElement | null) => {
+    if (!el || !revealing.current) return;
+    revealing.current = false;
+    el.focus();
+  }, []);
+
   const items = searchItems(q.items, query);
   const { shown, rest } = visibleRows(items, expanded);
   const href = jqlHref(jiraUrl, q.jql);
@@ -243,27 +285,36 @@ function IntakeGroup({
     );
   else if (items.length === 0) {
     const { lead, note } = emptyGroupText(q, query.length > 0);
-    body = <EmptyRow lead={lead}>{note}</EmptyRow>;
+    body = <EmptyState lead={lead}>{note}</EmptyState>;
   } else
     body = (
       <>
-        <ul className={s.rows}>
-          {shown.map((item) => (
+        <DataRows>
+          {shown.map((item, i) => (
             <IntakeRow
               key={item.key}
               item={item}
+              keyRef={i === ROW_CAP ? focusRevealed : undefined}
               now={now}
               taken={taken.get(item.key)}
               onTaken={onTaken}
             />
           ))}
-        </ul>
+        </DataRows>
         {rest > 0 && (
+          // A reveal, not a toggle: it leaves with the hidden rows, and focus moves to the first one.
           <div className={s.more}>
-            <b>+{rest} more</b>
+            <b>{`+${String(rest)} more`}</b>
             <span className={s.moreEnd}>
-              {cap && <span className={s.cap}>{cap}</span>}
-              <LinkButton onClick={onExpand}>Show all {items.length}</LinkButton>
+              {cap ? <span className={s.cap}>{cap}</span> : null}
+              <LinkButton
+                onClick={() => {
+                  revealing.current = true;
+                  onExpand();
+                }}
+              >
+                {`Show all ${String(items.length)}`}
+              </LinkButton>
             </span>
           </div>
         )}
@@ -272,7 +323,7 @@ function IntakeGroup({
 
   return (
     <section className={s.group} aria-label={q.name}>
-      <div className={s.head}>
+      <Inline gap={2}>
         <GroupHead
           className={s.gh}
           name={q.name}
@@ -280,9 +331,9 @@ function IntakeGroup({
           count={q.error ? undefined : groupCount(items, takenKeys)}
           summary={
             <>
-              {summary && <span className={s.of}>{summary} ·</span>}
+              {summary && <span className={cx(s.of, text.meta)}>{summary} ·</span>}
               {/* Not uppercased: JQL values are case-sensitive. */}
-              <code className={s.jql} title={q.jql}>
+              <code className={cx(s.jql, text.ellipsis)} title={q.jql}>
                 {q.jql}
               </code>
             </>
@@ -303,7 +354,7 @@ function IntakeGroup({
             <OutArrow />
           </a>
         )}
-      </div>
+      </Inline>
       <div id={bodyId} hidden={collapsed}>
         {body}
       </div>
@@ -357,13 +408,13 @@ export function IntakeView() {
     );
   else if (queries.length === 0)
     body = (
-      <p className={s.none}>
+      <EmptyState form="inset">
         No intake queries yet. An admin adds them in{" "}
         <RouterLink className={linkClass} to="/settings/intake">
           Settings › Intake
         </RouterLink>
         .
-      </p>
+      </EmptyState>
     );
   else
     body = queries.map((q) => (
@@ -399,38 +450,31 @@ export function IntakeView() {
         title="Intake"
         middle={
           intake.data && (
-            <div className={s.counters} aria-live="polite">
-              <span className={cx(s.counter, total === 0 && s.isZero)}>
-                <b>{total}</b> to take in
-              </span>
-              <span className={cx(s.counter, s.wide, n === 0 && s.isZero)}>
-                <b>{n}</b> {n === 1 ? "query" : "queries"}
-              </span>
-            </div>
+            <Inline gap={9} className={s.counters} aria-live="polite">
+              <Badge tone="counter" count={total}>
+                to take in
+              </Badge>
+              <Badge tone="counter" count={n} className={s.wide}>
+                {n === 1 ? "query" : "queries"}
+              </Badge>
+            </Inline>
           )
         }
       />
       <Surface className={s.surface}>
-        <div className={s.colhead} aria-hidden="true">
-          {COLUMNS.map((label, i) => (
-            <span key={i}>{label}</span>
-          ))}
-        </div>
-        <div className={s.list}>{body}</div>
-        <footer className={s.foot}>
-          <span className={s.keys}>
-            <Kbd>/</Kbd> Search
-          </span>
-          <span className={s.keys}>
-            <Kbd>Esc</Kbd> Clear
-          </span>
-          <span className={s.grow} />
+        <DataHead columns={COLUMNS} className={s.colhead} />
+        <Stack gap={6} className={s.list}>
+          {body}
+        </Stack>
+        <DataFoot hints={HINTS} hintClassName={s.keys} className={s.foot}>
           {foot && (
-            <span className={s.note}>
+            <span className={text.ellipsis}>
               <b>{foot.count}</b> {foot.text}
             </span>
           )}
-          {fresh.error && <span className={s.note}>Refresh failed · {fresh.error.message}</span>}
+          {fresh.error && (
+            <span className={text.ellipsis}>Refresh failed · {fresh.error.message}</span>
+          )}
           <LinkButton
             className={s.refresh}
             disabled={refreshing}
@@ -440,7 +484,7 @@ export function IntakeView() {
           >
             {refreshing && !intake.isPending ? "Refreshing…" : "Refresh"}
           </LinkButton>
-        </footer>
+        </DataFoot>
       </Surface>
     </div>
   );

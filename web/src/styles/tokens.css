@@ -5,7 +5,7 @@
      Type Case Cool (light, default) = "light" (alias "company-light")
      Harbour (dark)                  = "dark"  (alias "company-dark")
    They are plain attribute selectors (not `:root[...]`), so a subtree can carry its own theme
-   (the theme menu's swatches and the kit sheet use this). index.html sets the attribute on <html>
+   (the theme menu's swatches use this). index.html sets the attribute on <html>
    before first paint; `:root:not([data-theme])` is a fallback if that script never ran.
    This is the ONLY file allowed to hold raw colour values.
    Min text size is 11px. Contrast: every text/ground pair >= 4.5:1 (refresh/checks/contrast.txt).

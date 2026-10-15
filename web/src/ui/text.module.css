@@ -8,6 +8,17 @@
   color: var(--ink-3);
 }
 
+/* a section heading (an Overview or Plan h2): display 15/600 --ink-1. Type only: the element
+   sets its own margin and layout. */
+.heading {
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-1);
+}
+
 /* a sub-line, hint or note: 12/400 --ink-3 */
 .meta {
   font-size: var(--fs-meta);

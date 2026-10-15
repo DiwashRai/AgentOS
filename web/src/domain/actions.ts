@@ -10,6 +10,7 @@
 // (Approve, Retry, Dispatch run), titled with its text.
 import type { Schemas } from "../api/client";
 import { firstName } from "./format";
+import { gate, type GateView } from "./ticketView";
 import { words } from "./words";
 
 export type ActionId =
@@ -73,8 +74,6 @@ function withBlock(set: ActionSet, block: Schemas["DispatchBlock"] | null): Acti
   };
 }
 
-type Gate = Schemas["GateInfo"];
-
 const act = (
   id: ActionId,
   label: string,
@@ -82,17 +81,20 @@ const act = (
   extra: Pick<Action, "title" | "disabled"> = {},
 ): Action => ({ id, label, variant, ...extra });
 
-/** The gate the server says is parked in `state`, and whether an enabled stage follows it. */
-function parkedGate(t: ActionTicket, state: Gate["state"]): { gate: Gate; more: boolean } | null {
-  const i = t.rail.findIndex((s) => s.gate?.state === state);
-  const gate = t.rail[i]?.gate;
-  if (!gate) return null;
-  return { gate, more: t.rail.slice(i + 1).some((s) => s.state !== "skipped") };
+/** The parked gate (`gate(t)`) when it is in `state`, and whether an enabled stage follows it. */
+function parkedIn(
+  t: ActionTicket,
+  state: GateView["state"],
+): { gate: GateView; more: boolean } | null {
+  const parked = gate(t);
+  if (parked?.state !== state) return null;
+
+  return { gate: parked, more: t.rail.slice(parked.index + 1).some((s) => s.state !== "skipped") };
 }
 
 function waitingTitle(t: ActionTicket): string {
-  const parked = parkedGate(t, "waiting");
-  const who = parked?.gate.person ?? t.now.person;
+  const parked = parkedIn(t, "waiting");
+  const who = parked ? parked.gate.who : t.now.person;
   const name = who ? firstName(who) : "someone";
   return parked ? `Waiting on ${name} at ${parked.gate.label}` : `Waiting on ${name}`;
 }
@@ -122,7 +124,7 @@ function actionsFor(t: ActionTicket, ctx: ActionContext): ActionSet {
 
   switch (t.attention) {
     case "needs_you": {
-      const parked = parkedGate(t, "you");
+      const parked = parkedIn(t, "you");
       const changes = parked ? [act("request_changes", words.requestChanges, "quiet")] : [];
       if (parked?.more) {
         // Gate primacy: Approve stays the one primary; only the header may also abandon here.

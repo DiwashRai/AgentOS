@@ -29,11 +29,6 @@ export const ALLOWED: readonly Allowed[] = [
   },
   {
     file: "src/features/talk/Talk.module.css",
-    declaration: "margin: -1px",
-    reason: "the visually hidden (screen reader only) pattern",
-  },
-  {
-    file: "src/features/talk/Talk.module.css",
     declaration: "margin-bottom: 1px",
     reason: "lines the Send button up with the textarea's bottom edge",
   },

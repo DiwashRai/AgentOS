@@ -1,0 +1,230 @@
+/* DataList (refresh mock §4.1 `.row`, §5.2 `.col-head` / `.compact-row`, §4.16 `.list-foot`;
+   HANDOFF §3–§5). The view owns `--cols` and its cells; these are the shared surfaces. */
+
+/* ---------- column head ---------- */
+.head {
+  flex: none;
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: var(--sp-7);
+  align-items: center;
+  height: var(--h-col-head);
+  padding: 0 var(--sp-7);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.head > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.head > .end {
+  text-align: right;
+}
+
+/* ---------- rows ---------- */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rows[hidden] {
+  display: none;
+}
+
+/* the surface: raised by default, flat when settled; the order below is the cascade order */
+.row {
+  position: relative;
+  border-radius: var(--r-row);
+  background: var(--row-raised);
+  box-shadow:
+    0 0 0 1px var(--row-raised-edge),
+    var(--row-raised-shadow);
+}
+.row[data-surface="flat"] {
+  background: var(--row-flat);
+  box-shadow: inset 0 0 0 1px var(--row-flat-edge);
+}
+/* the Needs-you wash: a gradient over the surface (the one gradient) */
+.row[data-you] {
+  background: linear-gradient(90deg, var(--you-wash), transparent 45%), var(--row-raised);
+}
+/* open (selected): the lit surface with a solid ink hairline, no halo */
+.row[data-open] {
+  background: var(--row-hover);
+  box-shadow: 0 0 0 1px var(--row-selected-edge);
+}
+
+/* lit: light up on hover / keyboard focus inside, never move (same height, no transform) */
+.lit {
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.lit:is(:hover, :has(:focus-visible)) {
+  z-index: 1;
+  background: var(--row-hover);
+  box-shadow:
+    0 0 0 1px var(--row-hover-edge),
+    var(--row-hover-halo);
+}
+.row[data-you]:is(.lit:hover, .lit:has(:focus-visible), [data-open]) {
+  background: linear-gradient(90deg, var(--you-wash), transparent 45%), var(--row-hover);
+}
+
+/* lift: rise by --lift on hover or focus, transform only (My queue) */
+.lift {
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease-out);
+}
+.lift:is(:hover, :focus-visible, :has(:focus-visible)) {
+  transform: translateY(var(--lift));
+}
+
+/* focus: the ink ring around the whole row, when the row or its line has keyboard focus */
+.row:focus {
+  outline: none;
+}
+.row:is(:focus-visible, :has(> .line:focus-visible)) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* the row's own cells on --cols, one 42px line (Intake) */
+.grid {
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: var(--sp-7);
+  align-items: center;
+  min-height: var(--h-compact);
+  padding: 0 var(--sp-7);
+}
+
+/* the 3px status edge: full height on the row, or inset 8px on its line */
+.row[data-edge="you"] {
+  --edge: var(--waiting);
+}
+.row[data-edge="live"] {
+  --edge: var(--live);
+}
+.row[data-edge="blocked"] {
+  --edge: var(--blocked);
+}
+.row[data-edge="done"] {
+  --edge: var(--progress);
+}
+.row[data-edge="quiet"] {
+  --edge: var(--rule-strong);
+}
+.edgeRow::before,
+.edgeLine > .line::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 3px;
+  background: var(--edge);
+}
+.edgeRow::before {
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-row) 0 0 var(--r-row);
+}
+.edgeLine > .line::before {
+  top: 8px;
+  bottom: 8px;
+  border-radius: 0 2px 2px 0;
+}
+
+/* ---------- the line: the row's one-line button (Compact) ---------- */
+.line {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: var(--sp-7);
+  align-items: center;
+  width: 100%;
+  height: var(--h-compact);
+  padding: 0 var(--sp-7);
+  border: 0;
+  border-radius: var(--r-row);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row[data-surface="flat"] > .line {
+  height: var(--h-compact-flat);
+}
+/* the ring is drawn on the row (above), so it follows the open row's whole surface */
+.line:focus-visible {
+  outline: none;
+}
+
+/* ---------- title cell ---------- */
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-row-title);
+  font-weight: 500;
+  color: var(--ink-1);
+}
+.title > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lg {
+  font-size: var(--fs-row-title-lg);
+  letter-spacing: -0.005em;
+}
+.row[data-you] .title {
+  font-weight: 600;
+}
+.row[data-surface="flat"] .title {
+  color: var(--ink-2);
+}
+
+/* ---------- foot bar ---------- */
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-9);
+  padding: var(--sp-5) var(--sp-7);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.ruled {
+  border-top: 1px solid var(--rule);
+}
+.foot b {
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.caps {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lit,
+  .lift {
+    transition: none;
+  }
+  .lift:is(:hover, :focus-visible, :has(:focus-visible)) {
+    transform: none;
+  }
+}

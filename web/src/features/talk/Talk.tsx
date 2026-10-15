@@ -1,7 +1,6 @@
 // Talk (DESIGN §11, SPEC §13 "Chat pane"): the people-only chat on a ticket. Agents never read
 // or post here. No typing indicator, presence, reactions, attach or @ (cut; see web/AGENTS.md).
 import {
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -12,7 +11,19 @@ import {
 
 import type { Schemas } from "../../api/client";
 import { useChat, useMe, usePostChat } from "../../api/queries";
-import { Avatar, Button, Faces, cx } from "../../ui";
+import { words } from "../../domain/words";
+import {
+  Avatar,
+  Button,
+  cx,
+  EmptyState,
+  Faces,
+  Inline,
+  Spacer,
+  Stack,
+  StatusLine,
+  text,
+} from "../../ui";
 import { linkify } from "./linkify";
 import s from "./Talk.module.css";
 import { clockTime, fullTime, groupThread, placeholder, speakers, type BlockItem } from "./thread";
@@ -25,7 +36,7 @@ export interface TalkProps {
 }
 
 const NOTE = {
-  ticket: "Just people here. Agents don't read this.",
+  ticket: words.talkNote,
   peek: "Just people here",
 } as const;
 
@@ -70,11 +81,13 @@ function Block({ block, newAfter }: { block: BlockItem; newAfter: number }) {
     return (
       <div className={cx(s.msg, s.mine, isNew && s.isNew)}>
         <div>
-          <div className={s.who}>
+          <Inline gap={4} align="baseline" className={s.who}>
             {time}
             You
-          </div>
-          <div className={s.bs}>{bubbles}</div>
+          </Inline>
+          <Stack gap={1} align="start" className={s.bs}>
+            {bubbles}
+          </Stack>
         </div>
       </div>
     );
@@ -83,22 +96,23 @@ function Block({ block, newAfter }: { block: BlockItem; newAfter: number }) {
     <div className={cx(s.msg, isNew && s.isNew)}>
       <Avatar name={block.author.display_name} id={block.author.id} size={26} />
       <div>
-        <div className={s.who}>
+        <Inline gap={4} align="baseline" className={s.who}>
           {block.author.display_name}
           {time}
-        </div>
-        <div className={s.bs}>{bubbles}</div>
+        </Inline>
+        <Stack gap={1} align="start" className={s.bs}>
+          {bubbles}
+        </Stack>
       </div>
     </div>
   );
 }
 
 function Composer({ ticketKey, people }: { ticketKey: string; people: Schemas["Person"][] }) {
-  const id = useId();
   const post = usePostChat(ticketKey);
-  const [text, setText] = useState("");
+  const [draft, setDraft] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
-  const body = text.trim();
+  const body = draft.trim();
   const canSend = body.length > 0 && !post.isPending;
 
   // Grow with the text up to ~6 lines, then scroll inside.
@@ -107,15 +121,15 @@ function Composer({ ticketKey, people }: { ticketKey: string; people: Schemas["P
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${String(Math.min(el.scrollHeight, COMPOSER_MAX_PX))}px`;
-  }, [text]);
+  }, [draft]);
 
   const send = () => {
     if (!canSend) return;
-    const sent = text;
+    const sent = draft;
     post.mutate(body, {
       // Keep anything typed while the post was in flight.
       onSuccess: () => {
-        setText((t) => (t === sent ? "" : t));
+        setDraft((t) => (t === sent ? "" : t));
       },
     });
   };
@@ -135,18 +149,15 @@ function Composer({ ticketKey, people }: { ticketKey: string; people: Schemas["P
           send();
         }}
       >
-        <label htmlFor={id} className={s.sr}>
-          Message
-        </label>
         <textarea
-          id={id}
+          aria-label="Message"
           ref={ref}
           rows={1}
           maxLength={MAX_CHARS}
           placeholder={placeholder(people)}
-          value={text}
+          value={draft}
           onChange={(e) => {
-            setText(e.target.value);
+            setDraft(e.target.value);
             if (post.isError) post.reset();
           }}
           onKeyDown={onKeyDown}
@@ -156,7 +167,7 @@ function Composer({ ticketKey, people }: { ticketKey: string; people: Schemas["P
         </Button>
       </form>
       {post.isError && (
-        <p className={s.error} aria-live="polite">
+        <p className={cx(s.sendError, text.error)} aria-live="polite">
           {`Not sent · ${post.error.message}`}
         </p>
       )}
@@ -222,15 +233,15 @@ function TalkPane({ ticketKey, limit = 8, variant }: TalkProps) {
   };
 
   let thread: ReactNode;
-  if (chat.isPending) thread = <p className={s.quiet}>Loading</p>;
+  if (chat.isPending) thread = <StatusLine>Loading</StatusLine>;
   else if (chat.isError)
-    thread = <p className={s.quiet}>{`Can't load Talk · ${chat.error.message}`}</p>;
+    thread = <StatusLine error>{`Can't load Talk · ${chat.error.message}`}</StatusLine>;
   else if (items.length === 0)
-    thread = <p className={s.empty}>Nobody has said anything yet. Start it off.</p>;
+    thread = <EmptyState form="note">Nobody has said anything yet. Start it off.</EmptyState>;
   else
     thread = items.map((item) =>
       item.kind === "day" ? (
-        <div key={item.key} className={s.day}>
+        <div key={item.key} className={cx(s.day, text.label)}>
           {item.label}
         </div>
       ) : (
@@ -241,16 +252,17 @@ function TalkPane({ ticketKey, limit = 8, variant }: TalkProps) {
   return (
     <section className={cx(s.talk, s[variant])} aria-label="Talk">
       <div className={s.sheet}>
-        <div className={s.head}>
-          <b>Talk</b>
+        <Inline gap={5} className={s.head}>
+          <b className={text.heading}>Talk</b>
           {people.length > 0 && (
             <Faces
               palette="talk"
               people={people.map((p) => ({ id: p.id, name: p.display_name }))}
             />
           )}
-          <span className={s.note}>{NOTE[variant]}</span>
-        </div>
+          <Spacer />
+          <span className={cx(text.meta, s.note)}>{NOTE[variant]}</span>
+        </Inline>
         <div className={s.threadWrap}>
           <div
             ref={threadRef}

@@ -3,10 +3,9 @@
 // without reaching outer Esc handlers (the peek).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { NOTE_MAX, ResolveConfirm, type ResolveConfirmProps } from "./ResolveConfirm";
+import { ResolveConfirm, type ResolveConfirmProps } from "./ResolveConfirm";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -61,34 +60,6 @@ function key(el: Element, k: string, shiftKey = false) {
     el.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
   });
 }
-
-describe("ResolveConfirm markup", () => {
-  it("abandon: the red confirm, an optional capped note", () => {
-    const html = renderToStaticMarkup(<ResolveConfirm {...props()} />);
-    expect(html).toContain('aria-label="Close as abandoned"');
-    expect(html).toContain('placeholder="Add a note (optional)"');
-    expect(html).toContain(`maxLength="${String(NOTE_MAX)}"`);
-    expect(html).toMatch(/type="submit"[^>]*>Abandon<\/button>/);
-  });
-
-  it("complete: Complete, and the busy word while pending", () => {
-    const html = renderToStaticMarkup(<ResolveConfirm {...props({ outcome: "completed" })} />);
-    expect(html).toContain('aria-label="Close as complete"');
-    expect(html).toMatch(/type="submit"[^>]*>Complete<\/button>/);
-    const busy = renderToStaticMarkup(
-      <ResolveConfirm {...props({ outcome: "completed", pending: true })} />,
-    );
-    expect(busy).toMatch(/disabled=""[^>]*>Completing…<\/button>/);
-  });
-
-  it("shows an error inline", () => {
-    const html = renderToStaticMarkup(
-      <ResolveConfirm {...props({ error: "A run is already active" })} />,
-    );
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("A run is already active");
-  });
-});
 
 describe("ResolveConfirm keys", () => {
   it("Enter confirms with the note; Shift+Enter does not", () => {

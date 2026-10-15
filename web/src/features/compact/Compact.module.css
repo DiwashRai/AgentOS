@@ -1,137 +1,11 @@
-/* Compact (DESIGN §6) in the visual refresh (mock §5.2 `.col-head`, `.compact-row`, §4.1 `.row`,
-   §4.13 `.filter-chips`, §4.16 `.list-foot`; HANDOFF §3–§5). No mark column: a 3px status edge
-   replaces it. Rows light up on hover / focus and never move. */
+/* Compact (DESIGN §6) in the visual refresh (mock §5.2 `.compact-row`; HANDOFF §3–§5). The row
+   surfaces, the status edge, the column head and the foot are the kit's DataList; this module keeps
+   the surface's frame, the row grid and its cells, the expansion grid and the narrow layouts. */
 
-/* ---------- the surface: column head / scrolling list / footer; only the list scrolls ---------- */
-.surface {
-  /* fills the viewport under the 58px top bar (the shell's main column keeps 24px below) */
-  height: calc(100dvh - 58px - 24px);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  container: compact / inline-size;
-  /* ref · stage · ticket · now · source · people · upd (HANDOFF §5 "Compact row") */
-  --crow-cols: 84px 168px minmax(0, 1.15fr) minmax(0, 1fr) 148px 44px 40px;
-}
-.colhead {
-  flex: none;
-  display: grid;
-  grid-template-columns: var(--crow-cols);
-  column-gap: var(--sp-7);
-  align-items: center;
-  height: var(--h-col-head);
-  margin: 0 var(--sp-5);
-  padding: 0 var(--sp-7);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-.colhead > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.colhead > span:last-child {
-  text-align: right;
-}
-.list {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden auto;
-  /* room for the 2px ink ring at a 2px offset, and the lit halo */
-  padding: 0 var(--sp-5) var(--sp-8);
-  scrollbar-width: thin;
-  scroll-padding: 12px 0 24px;
-}
-.group {
-  margin-top: var(--sp-6);
-}
-.list > .group:first-child {
-  margin-top: 0;
-}
-.rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.rows[hidden] {
-  display: none;
-}
-.emptyRow {
-  margin-top: var(--sp-2);
-}
-.list > .emptyRow:first-child {
-  margin-top: 0;
-}
-.empty {
-  margin: 0;
-  padding: var(--sp-5) var(--sp-7);
-  font-size: var(--fs-control);
-  color: var(--ink-3);
-}
-
-/* group-head right slots */
-.headAge {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-.headNote {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-1);
-}
-.headNote > svg {
-  flex: none;
-  color: var(--ink-2);
-}
-
-/* footer (mock .list-foot): its own row inside the surface, so the last row always clears it */
-.foot {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-9);
-  padding: var(--sp-5) var(--sp-7);
-  border-top: 1px solid var(--rule);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-.keys {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-.caps {
-  display: inline-flex;
-  gap: var(--sp-1);
-}
-.grow {
-  flex: 1;
-}
-.sum {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
-  color: var(--ink-2);
-}
-.sum b {
-  font-weight: 600;
-  color: var(--ink-1);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---------- filter pills (mock §4.13): a recessed track, the pressed pill a raised sheet ---------- */
-/* When the top bar runs out of room the track scrolls sideways instead of pushing the page wider
-   (it was flex: none, which gave the page a horizontal scrollbar under ~1330px). It barely shrinks,
-   so the search field gives way first. Padding 4px (mock: 3) so the scroll box never clips a pill's
-   2px ink ring at its 2px offset. */
+/* ---------- the filter pills (mock §4.13 `.filter-chips`) ---------- */
+/* A recessed track, the pressed pill a raised sheet. The track barely shrinks (flex 0 0.02 auto),
+   so the search field beside it gives way first, and then it scrolls sideways. Padding 4px
+   (mock: 3) so the scroll box never clips a pill's 2px ink ring at its 2px offset. */
 .pills {
   display: flex;
   flex: 0 0.02 auto;
@@ -144,7 +18,7 @@
   overflow-x: auto;
   scrollbar-width: none;
 }
-.pills > button {
+.pill {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -161,10 +35,10 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.pills > button:hover {
+.pill:hover {
   color: var(--ink-1);
 }
-.pills > button[aria-pressed="true"] {
+.pill[aria-pressed="true"] {
   background: var(--row-raised);
   box-shadow:
     0 0 0 1px var(--row-raised-edge),
@@ -172,126 +46,87 @@
   color: var(--ink-1);
   font-weight: 600;
 }
-.pills > button:focus-visible {
+.pill:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.pills em {
+.pill.pillYou {
+  color: var(--you-text);
+}
+.pillMark {
+  display: inline-flex;
+}
+/* the pill's count: zero recedes, Needs you's in you-blue */
+.count {
   font-style: normal;
   font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--ink-1);
   font-variant-numeric: tabular-nums;
 }
-.pills em.isZero {
+.count[data-zero] {
   color: var(--ink-3);
   font-weight: 500;
 }
-.pills > button.pillYou,
-.pills > button.pillYou em {
+.count[data-you] {
   color: var(--you-text);
 }
-.pillMark {
-  display: inline-flex;
-}
 
-/* ---------- compact row (mock §4.1 .row + §5.2 .compact-row) ---------- */
-.crow {
-  position: relative;
-  border-radius: var(--r-row);
-  background: var(--row-raised);
-  box-shadow:
-    0 0 0 1px var(--row-raised-edge),
-    var(--row-raised-shadow);
-  scroll-margin: 12px 0 20px;
-  transition:
-    background-color 0.12s ease,
-    box-shadow 0.12s ease;
+/* ---------- the surface: column head / scrolling list / footer; only the list scrolls ---------- */
+.surface {
+  /* fills the viewport under the 58px top bar (the shell's main column keeps 24px below) */
+  height: calc(100dvh - 58px - 24px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  container: compact / inline-size;
+  /* ref · stage · ticket · now · source · people · upd (HANDOFF §5 "Compact row") */
+  --cols: 84px 168px minmax(0, 1.15fr) minmax(0, 1fr) 148px 44px 40px;
 }
-.crow + .crow {
+.colhead {
+  margin: 0 var(--sp-5);
+}
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  /* room for the 2px ink ring at a 2px offset, and the lit halo */
+  padding: 0 var(--sp-5) var(--sp-8);
+  scrollbar-width: thin;
+  scroll-padding: var(--sp-6) 0 var(--sp-10);
+}
+.group {
+  margin-top: var(--sp-6);
+}
+.emptyRow {
   margin-top: var(--sp-2);
 }
-/* settled: flat on the recess, 4px shorter */
-.crow.isFlat {
-  background: var(--row-flat);
-  box-shadow: inset 0 0 0 1px var(--row-flat-edge);
-}
-/* the Needs-you wash: a gradient over the surface (the one gradient) */
-.crow.isYou {
-  background: linear-gradient(90deg, var(--you-wash), transparent 45%), var(--row-raised);
-}
-/* open (selected): the lit surface with a solid ink hairline, no halo */
-.crow.isOpen {
-  background: var(--row-hover);
-  box-shadow: 0 0 0 1px var(--row-selected-edge);
-}
-/* hover / keyboard focus: light up, never move (same height, no transform) */
-.crow:is(:hover, :has(:focus-visible)) {
-  z-index: 1;
-  background: var(--row-hover);
-  box-shadow:
-    0 0 0 1px var(--row-hover-edge),
-    var(--row-hover-halo);
-}
-.crow.isYou:is(:hover, :has(:focus-visible), .isOpen) {
-  background: linear-gradient(90deg, var(--you-wash), transparent 45%), var(--row-hover);
-}
-/* focus: the light-up plus the ink ring around the whole row */
-.crow:has(> .line:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.list > :first-child {
+  margin-top: 0;
 }
 
-/* the 3px status edge, inset 8px top and bottom of the line */
-.edgeYou {
-  --edge: var(--waiting);
+/* group-head right slots */
+.headAge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
 }
-.edgeLive {
-  --edge: var(--live);
+.headNote {
+  font-weight: 500;
+  color: var(--ink-1);
 }
-.edgeBlocked {
-  --edge: var(--blocked);
+.headNote > svg {
+  flex: none;
+  color: var(--ink-2);
 }
-.edgeDone {
-  --edge: var(--progress);
-}
-.edgeQuiet {
-  --edge: var(--rule-strong);
+.sum {
+  color: var(--ink-2);
 }
 
-.line {
-  position: relative;
-  display: grid;
-  grid-template-columns: var(--crow-cols);
-  column-gap: var(--sp-7);
-  align-items: center;
-  width: 100%;
-  height: var(--h-compact);
-  padding: 0 var(--sp-7);
-  border: 0;
-  border-radius: var(--r-row);
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.line::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--edge, transparent);
-}
-.isFlat > .line {
-  height: var(--h-compact-flat);
-}
-/* the ring is drawn on the row (above), so it follows the open row's whole surface */
-.line:focus-visible {
-  outline: none;
+/* ---------- the row: an opened row scrolls fully into view ---------- */
+.crow {
+  scroll-margin: var(--sp-6) 0 var(--sp-9);
 }
 .cRef {
   display: flex;
@@ -300,28 +135,6 @@
 .stage {
   min-width: 0;
   overflow: hidden;
-}
-.ti {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  font-size: var(--fs-row-title);
-  font-weight: 500;
-  color: var(--ink-1);
-}
-.ti > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.isYou .ti {
-  font-weight: 600;
-}
-.isFlat .ti {
-  color: var(--ink-2);
 }
 .now {
   display: flex;
@@ -346,14 +159,6 @@
   color: var(--blocked);
   font-weight: 600;
 }
-.src {
-  min-width: 0;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .people {
   display: flex;
   align-items: center;
@@ -366,11 +171,11 @@
   color: var(--ink-2);
   white-space: nowrap;
 }
-.isYou .upd {
+[data-you] .upd {
   color: var(--ink-1);
   font-weight: 600;
 }
-.isFlat .upd {
+[data-surface="flat"] .upd {
   color: var(--ink-3);
 }
 
@@ -415,7 +220,7 @@
   right: 0;
   height: var(--h-compact);
   display: grid;
-  grid-template-columns: var(--crow-cols);
+  grid-template-columns: var(--cols);
   column-gap: var(--sp-7);
   align-items: center;
   padding: 0 var(--sp-7);
@@ -427,7 +232,7 @@
   justify-self: start;
   pointer-events: auto;
 }
-.isInbox:is(:hover, :focus-within, .isOpen) .addCtx {
+.isInbox:is(:hover, :focus-within, [data-open]) .addCtx {
   display: inline-flex;
 }
 /* the server's dispatch block ("Set a base branch first"): the owner's move, so the you hue. On an
@@ -436,7 +241,7 @@
   color: var(--you-text);
   font-weight: 500;
 }
-.isInbox:is(:hover, :focus-within, .isOpen) .nowBlock {
+.isInbox:is(:hover, :focus-within, [data-open]) .nowBlock {
   visibility: hidden;
 }
 
@@ -462,23 +267,8 @@
   padding: var(--sp-7) 0 var(--sp-8);
   border-top: 1px solid var(--rule-soft);
 }
-.col {
-  min-width: 0;
-}
 .lab {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
   margin-bottom: var(--sp-4);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-3);
-  white-space: nowrap;
-  min-width: 0;
-}
-.lab > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .lab.isLive {
   color: var(--live-text);
@@ -497,61 +287,11 @@
   line-height: 1.45;
   color: var(--ink-3);
 }
-.acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
+.err {
+  margin: var(--sp-3) 0 0;
 }
 .confirm {
   margin-top: var(--sp-4);
-}
-.err {
-  margin: var(--sp-3) 0 0;
-  font-size: var(--fs-meta);
-  color: var(--blocked);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* plan items: a green tick or a 14px ring */
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-.steps > li {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--sp-4);
-  min-height: 19px;
-  font-size: var(--fs-control);
-  color: var(--ink-1);
-}
-.steps > li > span:last-child {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.steps > li.isDone {
-  color: var(--ink-2);
-}
-.todo {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
-}
-.steps > li.moreItems {
-  display: block;
-  min-height: 0;
-  padding-left: var(--sp-10);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
 }
 .stepper {
   margin-top: var(--sp-6);
@@ -564,9 +304,6 @@
   gap: var(--sp-4);
 }
 .who {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-4);
   font-size: var(--fs-control);
   font-weight: 600;
   color: var(--ink-1);
@@ -598,8 +335,8 @@
 /* ---------- a narrow surface: ref · ticket · upd only, the expansion in one column ---------- */
 @container compact (max-width: 760px) {
   .colhead,
-  .line {
-    --crow-cols: 84px minmax(0, 1fr) 40px;
+  .list {
+    --cols: 84px minmax(0, 1fr) 40px;
   }
   .cStage,
   .cNow,
@@ -614,15 +351,12 @@
   }
 }
 @container compact (max-width: 560px) {
-  .keys {
+  .foot .keys {
     display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .crow {
-    transition: none;
-  }
   .more {
     animation: none;
   }

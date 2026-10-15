@@ -18,10 +18,9 @@
   scrollbar-width: thin;
 }
 
+/* Talk fills its column. */
 .talk {
   min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 .talk > * {
   flex: 1;
@@ -44,10 +43,8 @@
   }
 }
 
-.doc {
-  padding-top: var(--sp-7);
-}
-
+/* the tabs under the strip, and a wide tab's panel under the tabs */
+.doc,
 .wide {
   padding-top: var(--sp-7);
 }
@@ -60,12 +57,7 @@
   white-space: nowrap;
 }
 
-.missing {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--sp-2);
-}
-.missing > a {
+/* "Back to My queue" under the not-found line, on its inset */
+.back {
   margin-left: var(--sp-9);
 }

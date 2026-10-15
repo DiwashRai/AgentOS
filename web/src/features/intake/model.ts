@@ -2,7 +2,7 @@
 // the Space's JQL queries with their Jira candidates, each a "Take in" away from the Inbox. Over
 // server fields only (`IntakeQuery`, `IntakeItem`) plus which keys this page has taken in.
 import type { Schemas } from "../../api/client";
-import { age, type Instant } from "../../domain/format";
+import { age, ago, type Instant } from "../../domain/format";
 import type { Query } from "../../domain/search";
 import { projectPrefix } from "../../ui/identity";
 
@@ -108,11 +108,10 @@ export function footNote(
 ): { count: number; text: string } {
   const n = queries.length;
   const failing = queries.filter((q) => q.error).length;
-  const a = age(checkedAt, now);
   const text = [
     n === 1 ? "query" : "queries",
     failing > 0 ? `${String(failing)} didn't answer` : null,
-    a === "now" ? "checked just now" : `checked ${a} ago`,
+    `checked ${ago(checkedAt, now)}`,
   ]
     .filter(Boolean)
     .join(" · ");

@@ -4,15 +4,7 @@
 // move the keyboard between rows. Every list and number comes from model.ts over useBoard(); this
 // view only lays them out.
 // Cut from the prototype: P/O keys, the runner pool gauge, FLIP glides, team bands (repos instead).
-import {
-  Fragment,
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, type ReactNode, type RefObject, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { isShortcut } from "../../app/keys";
@@ -20,10 +12,28 @@ import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
 import { useSearchQuery } from "../../app/useSearchQuery";
-import { repoShort } from "../../domain/format";
+import { plural, repoShort } from "../../domain/format";
 import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
-import { Age, ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, StatusLine, TickBadge } from "../../ui";
+import {
+  Age,
+  ArrowIcon,
+  Badge,
+  cx,
+  DataFoot,
+  DataHead,
+  DataRows,
+  type DataColumn,
+  dialogOpen,
+  EmptyState,
+  GroupHead,
+  Inline,
+  type KeyHint,
+  KeyChip,
+  StatusLine,
+  StatusMark,
+  useDocumentKey,
+} from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { NewTicketPrompt, NoMatches } from "../queue/QueueView";
 import { useNow } from "../../ui/useNow";
@@ -35,31 +45,83 @@ import {
   compactSections,
   emptyText,
   FILTER_PARAM,
+  type Filter,
   footSummary,
   type GroupRight,
   inRepo,
   parseFilter,
+  type Pill,
   pills,
-  plural,
   REPO_PARAM,
   withFilter,
 } from "./model";
-import { Pills } from "./Pills";
 import { CompactRow } from "./Row";
 
 /** Ages tick by the minute; nothing on a compact line shows seconds. */
 const AGE_TICK_MS = 30_000;
 
 /** Column heads, with the class that hides a column on a narrow surface. */
-const COLUMNS: readonly [string, string | undefined][] = [
-  ["Ref", undefined],
-  ["Stage", s.cStage],
-  ["Ticket", undefined],
-  ["Now", s.cNow],
-  ["Source", s.cSrc],
-  ["People", s.cPeople],
-  ["Upd", undefined],
+const COLUMNS: readonly DataColumn[] = [
+  { label: "Ref" },
+  { label: "Stage", className: s.cStage },
+  { label: "Ticket" },
+  { label: "Now", className: s.cNow },
+  { label: "Source", className: s.cSrc },
+  { label: "People", className: s.cPeople },
+  { label: "Upd", end: true },
 ];
+
+const HINTS: readonly KeyHint[] = [
+  { keys: ["↵"], label: "Expand" },
+  { keys: ["Esc"], label: "Collapse" },
+  { keys: ["J", "K"], label: "Move" },
+  { keys: ["/"], label: "Search" },
+];
+
+/** The filter pills (refresh mock §4.13 `.filter-chips`): Everything, then each group with its 7px
+ *  glyph and its shared count; zero counts stay, drawn quiet. The pressed pill is `?f=`. */
+function Pills({
+  items,
+  active,
+  onPick,
+}: {
+  items: readonly Pill[];
+  active: Filter;
+  onPick: (filter: Filter) => void;
+}) {
+  return (
+    <div className={s.pills} role="group" aria-label="Filter">
+      {items.map((p) => {
+        const you = p.filter === "needs_you";
+        return (
+          <button
+            key={p.filter}
+            type="button"
+            className={cx(s.pill, you && s.pillYou)}
+            aria-pressed={p.filter === active}
+            onClick={() => {
+              onPick(p.filter);
+            }}
+          >
+            {p.mark ? (
+              <span className={s.pillMark} aria-hidden="true">
+                <StatusMark kind={p.mark} glyphOnly size={7} />
+              </span>
+            ) : null}
+            {p.label}
+            <span
+              className={s.count}
+              data-zero={p.count === 0 ? "" : undefined}
+              data-you={you ? "" : undefined}
+            >
+              {p.count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function Right({ right }: { right: GroupRight }): ReactNode {
   if (right === null) return undefined;
@@ -78,35 +140,33 @@ function Right({ right }: { right: GroupRight }): ReactNode {
       );
     case "note":
       return (
-        <span className={s.headNote}>
+        <Inline as="span" gap={3} className={s.headNote}>
           <ArrowIcon />
           {right.text}
-        </span>
+        </Inline>
       );
     case "shipped":
       return (
-        <>
-          <TickBadge size={12} />
-          <span>
-            <b>{`${String(right.n)} shipped`}</b> this week
-          </span>
-        </>
+        <Badge tone="stat">
+          <b>{`${String(right.n)} shipped`}</b> this week
+        </Badge>
       );
   }
 }
 
 /** J / K move the keyboard to the next / previous row line in the list (never while typing). */
 function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
-  useEffect(() => {
-    if (!enabled) return;
-    const onKey = (e: KeyboardEvent) => {
+  useDocumentKey(
+    (e) => {
       if ((e.key !== "j" && e.key !== "k") || !isShortcut(e)) return;
-      // Never from inside a dialog (New ticket, a confirm).
-      if (document.activeElement?.closest("dialog, [role='dialog']")) return;
+      // Never while a dialog is open (New ticket, the peek, a confirm).
+      if (dialogOpen()) return;
+
       const lines = [
         ...(list.current?.querySelectorAll<HTMLButtonElement>("[data-row-line]") ?? []),
       ].filter((el) => el.offsetParent !== null);
       if (lines.length === 0) return;
+
       const active = document.activeElement;
       const at = lines.findIndex((el) => el === active || el.parentElement?.contains(active));
       const next =
@@ -118,12 +178,9 @@ function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
       e.preventDefault();
       lines[next]?.focus();
       lines[next]?.scrollIntoView({ block: "nearest" });
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [list, enabled]);
+    },
+    { enabled },
+  );
 }
 
 export function CompactView() {
@@ -151,16 +208,12 @@ export function CompactView() {
 
   // Esc collapses the open row; while a peek is open, Esc is the peek's.
   const peekOpen = peek.key !== null;
-  useEffect(() => {
-    if (open === null || peekOpen) return;
-    const onKey = (e: KeyboardEvent) => {
+  useDocumentKey(
+    (e) => {
       if (e.key === "Escape") setOpen(null);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, peekOpen]);
+    },
+    { enabled: open !== null && !peekOpen },
+  );
   useRowKeys(listRef, !peekOpen);
 
   const toggleGroup = (id: Attention) => {
@@ -181,15 +234,15 @@ export function CompactView() {
       query.length > 0 ? (
         <NoMatches where={filter !== "all" || repo ? "here" : undefined} />
       ) : (
-        <p className={s.empty}>{emptyText(filter, repo)}</p>
+        <EmptyState form="inset">{emptyText(filter, repo)}</EmptyState>
       );
   else
     body = compactSections(groups, filter === "all" && query.length === 0).map((sec) => {
       if (sec.kind === "empty")
         return (
-          <EmptyRow key={`empty-${sec.id}`} lead={sec.lead} className={s.emptyRow}>
+          <EmptyState key={`empty-${sec.id}`} lead={sec.lead} className={s.emptyRow}>
             {sec.note}
-          </EmptyRow>
+          </EmptyState>
         );
       const g = sec.group;
       const collapsed = collapsedByDefault(g.id, filter) !== flipped.has(g.id);
@@ -207,7 +260,7 @@ export function CompactView() {
             }}
             controls={bodyId}
           />
-          <ul id={bodyId} className={s.rows} hidden={collapsed}>
+          <DataRows id={bodyId} hidden={collapsed}>
             {g.items.map((t) => (
               <CompactRow
                 key={t.key}
@@ -219,7 +272,7 @@ export function CompactView() {
                 }}
               />
             ))}
-          </ul>
+          </DataRows>
         </section>
       );
     });
@@ -240,35 +293,12 @@ export function CompactView() {
         }
       />
       <Surface className={s.surface}>
-        <div className={s.colhead} aria-hidden="true">
-          {COLUMNS.map(([label, cls]) => (
-            <span key={label} className={cls}>
-              {label}
-            </span>
-          ))}
-        </div>
+        <DataHead columns={COLUMNS} className={s.colhead} />
         <div ref={listRef} className={s.list}>
           {body}
         </div>
-        <footer className={s.foot}>
-          <span className={s.keys}>
-            <Kbd>↵</Kbd>Expand
-          </span>
-          <span className={s.keys}>
-            <Kbd>Esc</Kbd>Collapse
-          </span>
-          <span className={s.keys}>
-            <span className={s.caps}>
-              <Kbd>J</Kbd>
-              <Kbd>K</Kbd>
-            </span>
-            Move
-          </span>
-          <span className={s.keys}>
-            <Kbd>/</Kbd>Search
-          </span>
-          <span className={s.grow} />
-          <span className={s.sum}>
+        <DataFoot hints={HINTS} hintClassName={s.keys} className={s.foot}>
+          <Inline as="span" gap={3} className={s.sum}>
             <span>
               <b>{foot.tickets}</b> {plural(foot.tickets, "ticket")}
             </span>
@@ -286,8 +316,8 @@ export function CompactView() {
             <span>
               <b>{foot.repos}</b> {plural(foot.repos, "repo")}
             </span>
-          </span>
-        </footer>
+          </Inline>
+        </DataFoot>
       </Surface>
     </>
   );

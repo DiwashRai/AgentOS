@@ -1,0 +1,48 @@
+/* Badge: a head's small figures. */
+
+/* counter: a top-bar count (mock `.counter`); the number carries the weight, a zero recedes */
+.counter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 0;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}
+.counter > b {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.counter[data-zero],
+.counter[data-zero] > b {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.counter[data-zero] > b {
+  font-size: 13px;
+}
+/* a non-zero "need you": the one tinted counter */
+.counter[data-you] {
+  padding: var(--sp-1) var(--sp-5) var(--sp-1) var(--sp-4);
+  border-radius: var(--r-pill);
+  background: var(--you-tint);
+  color: var(--you-text);
+  font-weight: 600;
+}
+.counter[data-you] > b {
+  color: var(--you-text);
+}
+.mark {
+  display: inline-flex;
+  align-self: center;
+}
+
+/* stat: a head's statistic led by the tick, e.g. "✓ 2 shipped this week" (mock `.head-stat`);
+   the head it sits in colours its `<b>` */
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}

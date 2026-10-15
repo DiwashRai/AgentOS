@@ -23,7 +23,6 @@ import {
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   // The component sheet (both themes side by side), outside the shell and the auth guard.
-  { path: "/kit", lazy: async () => ({ Component: (await import("../ui/KitSheet")).default }) },
   {
     element: <Shell />,
     children: [

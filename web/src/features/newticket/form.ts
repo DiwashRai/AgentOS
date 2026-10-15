@@ -1,6 +1,7 @@
 // The New ticket form's pure model: fields, validation and the POST /api/tickets body (SPEC §10,
 // `TicketCreate`). Display defaults come from GET /api/config and the signed-in user.
 import type { Schemas } from "../../api/client";
+import { words } from "../../domain/words";
 
 type Create = Schemas["TicketCreate"];
 
@@ -28,7 +29,7 @@ export function repoOptions(
 ): readonly { value: string; label: string }[] {
   return [
     ...repos.map((r) => ({ value: r.name, label: r.name })),
-    { value: NO_REPO, label: "No repo" },
+    { value: NO_REPO, label: words.noRepo },
   ];
 }
 
@@ -124,11 +125,4 @@ export function toCreateBody(f: NewTicketForm, workflowId: number | null = null)
     owner_id: f.ownerId === "" ? null : Number(f.ownerId),
     workflow_id: workflowId,
   };
-}
-
-/** Tab inside a dialog: the index to focus next, wrapping at both ends (-1 = nothing to focus). */
-export function trapIndex(current: number, count: number, back: boolean): number {
-  if (count <= 0) return -1;
-  if (current < 0) return back ? count - 1 : 0;
-  return back ? (current - 1 + count) % count : (current + 1) % count;
 }

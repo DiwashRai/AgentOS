@@ -123,7 +123,7 @@ const SOURCE_WORD: Record<VerdictSource, string> = {
 };
 
 /** How the verdict was read, as shown. */
-export function sourceWord(source: VerdictSource): string {
+export function verdictSourceWord(source: VerdictSource): string {
   return SOURCE_WORD[source];
 }
 
@@ -135,7 +135,7 @@ export function checkFold(
   if (!o || (o.notes === "" && o.repairs.length === 0)) return null;
   const n = o.repairs.length;
   const meta = [
-    o.source ? `via ${sourceWord(o.source)}` : "",
+    o.source ? `via ${verdictSourceWord(o.source)}` : "",
     n > 0 ? `${String(n)} repair${n === 1 ? "" : "s"}` : "",
   ]
     .filter(Boolean)

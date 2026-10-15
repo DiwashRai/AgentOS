@@ -1,102 +1,110 @@
 // The Peek's contents (DESIGN §9): header, plan + compact stepper, run or status, Talk, footer.
 // Detail comes from useTicket(key); the board's summary stands in while it loads. The peek never
 // carries gate actions (those live on the row or the ticket header).
+import { useId } from "react";
 import { Link as RouterLink, useNavigate } from "react-router";
 
 import { ApiError, type Schemas } from "../../api/client";
 import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
-import { elapsed, firstName, repoShort, srcLabel } from "../../domain/format";
-import { outcomeWord, resolvedBy } from "../../domain/outcome";
-import { planText } from "../../domain/plan";
-import { stageModel } from "../../domain/stage";
+import { firstName, repoShort } from "../../domain/format";
+import { resolvedBy } from "../../domain/outcome";
+import { firstParagraph, planView } from "../../domain/plan";
+import { type GlyphModel, stageModel } from "../../domain/stage";
+import {
+  outcomeLine,
+  runLine,
+  sourceRef,
+  stageCount,
+  statusLine,
+  statusMark,
+} from "../../domain/ticketView";
 import { words } from "../../domain/words";
-import { Button, cx, Kbd, linkClass, RunMeter, StageGlyph, StatusMark, Stepper } from "../../ui";
-import { meterOfText } from "../../ui/meter";
-import { meterOf, runNumber, runSeconds, statusMark } from "../queue/model";
+import {
+  Button,
+  Checklist,
+  cx,
+  DataFoot,
+  DialogTitle,
+  EmptyState,
+  Inline,
+  linkClass,
+  RunMeter,
+  Spacer,
+  Stack,
+  StageGlyph,
+  StatusLine,
+  StatusMark,
+  Stepper,
+  text,
+} from "../../ui";
 import { useNow } from "../../ui/useNow";
 import { Talk } from "../talk/Talk";
 import { PrLink } from "../ticket/PrLink";
-import { firstParagraph, plainText, planView, stagesText } from "./model";
+import { ticketPath } from "../ticket/model";
 import s from "./Peek.module.css";
 
 type Summary = Schemas["TicketSummary"];
 type Detail = Schemas["TicketDetail"];
 
-function ticketPath(key: string): string {
-  return `/t/${encodeURIComponent(key)}`;
-}
+/** Plan items shown before "+N more". */
+const PLAN_MAX = 8;
 
-function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefined }) {
-  const plan = detail?.plan ? planView(detail.plan) : null;
+const ESC_HINT = [{ keys: ["Esc"], label: "close" }] as const;
+
+function Plan({ model, detail }: { model: GlyphModel; detail: Detail | undefined }) {
+  const id = useId();
   return (
-    <section className={s.sec} aria-label="Plan">
-      <h3 className={s.lab}>
-        <span>Plan</span>
-        {plan && (
-          <span className={s.labNote}>{`${String(plan.done)} of ${String(plan.total)} done`}</span>
-        )}
-      </h3>
-      {plan ? (
-        <ul className={s.steps}>
-          {plan.items.map((item, i) => (
-            <li key={i} className={cx(item.done && s.isDone)}>
-              <span className={s.tick} role="img" aria-label={item.done ? "Done" : "Open"}>
-                {item.done ? "✓" : "○"}
-              </span>
-              <span title={planText(item.text)}>{plainText(planText(item.text))}</span>
-            </li>
-          ))}
-          {plan.more > 0 && <li className={s.more}>{`+${String(plan.more)} more`}</li>}
-        </ul>
-      ) : detail ? (
-        <p className={s.meta}>No plan yet.</p>
-      ) : null}
-      <Stepper model={stageModel(t)} compact />
-    </section>
+    <Stack as="section" gap={4} className={s.sec} aria-label="Plan">
+      <Checklist
+        plan={planView(detail?.plan, PLAN_MAX)}
+        density="compact"
+        title="Plan"
+        level={3}
+        id={id}
+        empty={detail ? <EmptyState form="note">No plan yet.</EmptyState> : undefined}
+      />
+      <Stepper model={model} compact />
+    </Stack>
   );
 }
 
 function Run({ ticket: t }: { ticket: Summary }) {
   const now = useNow(1000);
   const live = t.attention === "running";
-  const meter = meterOf(t);
-  const secs = runSeconds(t, now);
-  const run = runNumber(t);
-  const line = [
-    t.now.actor ?? "Run",
-    run !== null ? `Run #${String(run)}` : null,
-    secs !== null ? elapsed(secs) : null,
-    meter ? meterOfText(meter.k, meter.n, meter.state) : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const line = runLine(t, now);
+  const { meter } = line;
   return (
-    <section className={s.sec} aria-label="Run">
-      <h3 className={cx(s.lab, live && s.isLive)}>
+    <Stack as="section" gap={4} className={s.sec} aria-label="Run">
+      <h3 className={cx(text.label, s.lab, live && s.isLive)}>
         <StatusMark kind={live ? "run" : "queued"} glyphOnly />
-        <span>{line}</span>
+        <span className={text.ellipsis}>{line.line}</span>
       </h3>
       {meter && <RunMeter k={meter.k} n={meter.n} state={meter.state} size="tile" />}
-      {t.now.text && <p className={s.meta}>{planText(t.now.text)}</p>}
-    </section>
+      {line.step && <p className={cx(text.meta, s.flat)}>{line.step}</p>}
+    </Stack>
   );
 }
 
 function Status({ ticket: t }: { ticket: Summary }) {
   const mark = statusMark(t);
-  // A closed ticket's note (Complete / Abandoned) says more than the server's status line.
-  const text = t.resolution?.note ?? t.now.text;
+  const line = statusLine(t);
+
+  // A closed ticket's note (Complete / Abandoned) says more than the status line; otherwise the
+  // dispatch block, flagged, sits above the reason.
+  const note = t.resolution?.note ?? line.reason;
+  const block = line.flag && !t.resolution?.note ? line.text : null;
   return (
-    <section className={s.sec} aria-label="Status">
-      <h3 className={s.lab}>Status</h3>
-      <div className={s.status}>
+    <Stack as="section" gap={4} className={s.sec} aria-label="Status">
+      <h3 className={cx(text.label, s.lab)}>Status</h3>
+      <Stack gap={3}>
         <span>
           <StatusMark kind={mark.kind} name={mark.name} ask={mark.ask} />
         </span>
-        {text && <p>{text}</p>}
-      </div>
-    </section>
+        {block && <p className={cx(text.meta, s.flat, s.flag)}>{block}</p>}
+        {note && <p className={cx(text.meta, s.flat, s.note)}>{note}</p>}
+      </Stack>
+    </Stack>
   );
 }
 
@@ -128,54 +136,58 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
   const notFound = query.error instanceof ApiError && query.error.status === 404;
 
   if (notFound || !t) {
-    let text = "Loading";
-    if (notFound) text = "Ticket not found";
-    else if (query.error) text = `Can't reach the server · ${query.error.message}`;
+    let line = "Loading";
+    if (notFound) line = "Ticket not found";
+    else if (query.error) line = `Can't reach the server · ${query.error.message}`;
+
     return (
-      <>
-        <div className={s.quietBar}>
+      <Stack gap={9} className={s.quiet}>
+        <Inline justify="end">
           <CloseButton onClose={onClose} />
-        </div>
-        <p className={s.quiet} data-error={query.error && !notFound ? "" : undefined}>
-          {text}
-        </p>
-      </>
+        </Inline>
+        <StatusLine error={Boolean(query.error) && !notFound}>{line}</StatusLine>
+      </Stack>
     );
   }
 
-  const desc = detail ? firstParagraph(detail.description) : "";
+  const desc = detail ? firstParagraph(detail.description) : null;
   const repo = repoShort(t.repo_name);
   const running = t.attention === "running" || t.attention === "queued";
   const runner = t.attention === "running" ? t.latest_run?.launch_ref : null;
-  const stages = stagesText(t.rail);
-  const outcome = outcomeWord(t);
+  const outcome = outcomeLine(t)?.word;
+  const model = stageModel(t);
+  const path = ticketPath(t.key, "overview");
 
   return (
     <>
       <header className={s.head}>
-        <div className={s.bar}>
-          <span className={s.src}>{srcLabel(t)}</span>
-          {repo && <span className={s.k}>{`· ${repo}`}</span>}
-          <span className={s.sp} />
-          <StageGlyph model={stageModel(t)} />
+        <Inline gap={4} className={s.bar}>
+          <span className={s.mono}>{sourceRef(t) ?? t.key}</span>
+          {repo && <span className={s.mono}>{`· ${repo}`}</span>}
+          <Spacer />
+          <StageGlyph model={model} />
           <Button
             size="sm"
             onClick={() => {
-              void navigate(ticketPath(t.key));
+              void navigate(path);
             }}
           >
             {words.open}
           </Button>
           <CloseButton onClose={onClose} />
-        </div>
-        <h2 className={s.title}>{t.title}</h2>
-        {desc && <p className={s.desc}>{desc}</p>}
-        <div className={s.facts}>
+        </Inline>
+        <DialogTitle className={s.title}>{t.title}</DialogTitle>
+        {desc?.text && (
+          <p className={s.desc} title={desc.raw}>
+            {desc.text}
+          </p>
+        )}
+        <Inline wrap gap={8} rowGap={3} className={cx(text.meta, s.facts)}>
           <span>
             Owner <b>{t.owner ? firstName(t.owner) : "Nobody"}</b>
           </span>
           <span>
-            Pipeline <b>{stages}</b>
+            Pipeline <b>{stageCount(model)}</b>
           </span>
           {runner && (
             <span>
@@ -184,22 +196,18 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
           )}
           {outcome && t.resolution && <ResolvedFact word={outcome} resolution={t.resolution} />}
           {t.pr_url && <PrLink url={t.pr_url} />}
-        </div>
+        </Inline>
       </header>
-      <Plan ticket={t} detail={detail} />
+      <Plan model={model} detail={detail} />
       {running ? <Run ticket={t} /> : t.attention !== "inbox" && <Status ticket={t} />}
       <div className={s.talk}>
         <Talk ticketKey={t.key} variant="peek" limit={8} />
       </div>
-      <footer className={s.foot}>
-        <span className={s.keys}>
-          <Kbd>Esc</Kbd> close
-        </span>
-        <span className={s.sp} />
-        <RouterLink className={linkClass} to={ticketPath(t.key)}>
+      <DataFoot rule={false} hints={ESC_HINT} className={s.foot}>
+        <RouterLink className={linkClass} to={path}>
           {words.openTicket}
         </RouterLink>
-      </footer>
+      </DataFoot>
     </>
   );
 }

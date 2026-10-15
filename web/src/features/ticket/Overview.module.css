@@ -1,5 +1,4 @@
-/* Overview tab (DESIGN §7.3; kit .ao-body, .ao-heading, .ao-ctx; ticket.css .tv-read). The plan
-   list is PlanList (refresh mock §4.15). */
+/* Overview tab (DESIGN §7.3; kit .ao-body; ticket.css .tv-read). */
 .read {
   max-width: 70ch;
   padding-top: var(--sp-2);
@@ -31,61 +30,17 @@
   flex-direction: column;
   gap: var(--sp-4);
 }
-/* kit .ao-input, as a textarea */
-.textarea {
-  display: block;
-  width: 100%;
+/* editor's textarea in the body's type, not mono */
+.text {
   padding: var(--sp-5) var(--sp-6);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-control);
-  background: var(--field);
-  color: var(--ink-1);
+  font-family: inherit;
   font-size: var(--fs-body);
   line-height: 1.62;
-  outline: none;
-  resize: vertical;
-}
-.textarea:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.editBar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--sp-4);
-}
-.err {
-  margin-right: auto;
-  font-size: var(--fs-meta);
-  color: var(--blocked);
 }
 
 .sec {
   margin-top: var(--sp-11);
 }
 .heading {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-5);
   margin: 0 0 var(--sp-5);
-  font-family: var(--font-display);
-  font-size: var(--fs-heading);
-  line-height: 1.35;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  color: var(--ink-1);
-}
-
-.empty {
-  margin: 0;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-}
-
-/* kit .ao-ctx */
-.ctx {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-4);
 }

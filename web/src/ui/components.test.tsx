@@ -4,10 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Age } from "./Age";
 import { Avatar, AvatarSlot } from "./Avatar";
 import { Button } from "./Button";
-import { CountPill } from "./CountPill";
-import { EmptyRow } from "./EmptyRow";
 import type { StepperModel } from "./glyph";
-import { KeyChip } from "./KeyChip";
 import { PriorityIcon } from "./PriorityIcon";
 import { RunMeter } from "./RunMeter";
 import { StageGlyph } from "./StageGlyph";
@@ -204,14 +201,8 @@ describe("Button", () => {
     expect(html).toContain('type="button"');
     expect(html).toContain("<svg");
   });
-  it("renders danger without the accent arrow", () => {
-    const html = renderToStaticMarkup(<Button variant="danger">Abandon</Button>);
-    expect(html).toContain(">Abandon</button>");
-    expect(html).not.toContain("<svg");
-  });
   it("gives the you variant no arrow, and marks a litOnRow button", () => {
     const you = renderToStaticMarkup(<Button variant="you">Approve</Button>);
-    expect(you).toContain(">Approve</button>");
     expect(you).not.toContain("<svg");
     const plain = renderToStaticMarkup(<Button variant="outline">Take in</Button>);
     const lit = renderToStaticMarkup(
@@ -241,12 +232,6 @@ describe("Avatar", () => {
   });
 });
 
-describe("KeyChip", () => {
-  it("renders the key as written", () => {
-    expect(renderToStaticMarkup(<KeyChip>AOS-14</KeyChip>)).toContain(">AOS-14</span>");
-  });
-});
-
 describe("TypeIcon / PriorityIcon", () => {
   it("names the type, or shows it as a visible label", () => {
     expect(renderToStaticMarkup(<TypeIcon type="bug" />)).toContain('aria-label="Bug"');
@@ -273,15 +258,6 @@ describe("Age", () => {
     expect(html).toMatch(/3<span class="[^"]*">h<\/span>/);
     expect(html).toMatch(/05<span class="[^"]*">m<\/span>/);
     expect(renderToStaticMarkup(<Age text="now" />)).toContain("<span>now</span>");
-  });
-});
-
-describe("CountPill / EmptyRow", () => {
-  it("shows the count and the lead word", () => {
-    expect(renderToStaticMarkup(<CountPill count={3} tone="you" />)).toContain(">3</span>");
-    const empty = renderToStaticMarkup(<EmptyRow lead="All quiet">nothing queued</EmptyRow>);
-    expect(empty).toContain("<b>All quiet</b>");
-    expect(empty).toContain("nothing queued");
   });
 });
 

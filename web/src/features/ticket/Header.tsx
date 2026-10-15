@@ -7,17 +7,23 @@ import { useMemo } from "react";
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket, usePeople } from "../../api/queries";
 import { isDispatch, ticketActions, type Action } from "../../domain/actions";
-import { repoShort } from "../../domain/format";
+import { ago, repoShort } from "../../domain/format";
+import { firstParagraph } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
+import { sourceWord, stageCount } from "../../domain/ticketView";
 import {
   Avatar,
   Button,
   ChevronIcon,
+  Inline,
   KeyChip,
   PriorityIcon,
+  Stack,
   Stepper,
   Tag,
   TypeIcon,
+  cx,
+  text,
 } from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
 import { TargetPicker } from "../actions/TargetPicker";
@@ -26,18 +32,10 @@ import { useTicketAction } from "../actions/useTicketAction";
 import { useNow } from "../../ui/useNow";
 import { BaseBranchField } from "./BaseBranchField";
 import s from "./Header.module.css";
+import ie from "./InlineEdit.module.css";
 import { PrLink } from "./PrLink";
 import { RepoPicker } from "./RepoPicker";
-import {
-  actionErrorText,
-  firstParagraph,
-  openedText,
-  ownerPatch,
-  ownerValue,
-  pipelineSummary,
-  runnerText,
-  sourceText,
-} from "./model";
+import { actionErrorText, ownerPatch, ownerValue, runnerText } from "./model";
 
 type Detail = Schemas["TicketDetail"];
 
@@ -71,21 +69,21 @@ function ActionGroup({
     </Button>
   );
   return (
-    <div className={s.actsCol}>
-      <div className={s.acts}>
+    <Stack gap={3} align="end" className={s.actsCol}>
+      <Inline wrap gap={4} justify="end" className={s.acts}>
         {dispatching && !readOnly ? (
           <TargetPicker target={target} disabled={action.pending} />
         ) : null}
         {set.secondary.map(button)}
         {set.primary ? button(set.primary) : null}
-      </div>
+      </Inline>
       {action.error ? (
-        <p className={s.actErr} role="alert">
+        <p className={cx(text.error, s.actErr)} role="alert">
           {actionErrorText(action.error)}
         </p>
       ) : null}
       <ActionConfirm confirm={action.confirm} className={s.confirm} />
-    </div>
+    </Stack>
   );
 }
 
@@ -99,10 +97,11 @@ function OwnerPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
     return [...all].sort((a, b) => a.display_name.localeCompare(b.display_name));
   }, [people.data, t.owner]);
   return (
-    <span className={s.owner}>
+    <Inline as="span" gap={3}>
       {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : null}
-      <span className={s.pick}>
+      <span className={ie.pick}>
         <select
+          className={ie.value}
           aria-label="Owner"
           value={ownerValue(t.owner)}
           disabled={readOnly || patch.isPending}
@@ -121,14 +120,14 @@ function OwnerPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
         </select>
         {readOnly ? null : <ChevronIcon />}
       </span>
-    </span>
+    </Inline>
   );
 }
 
 function Kicker({ t }: { t: Detail }) {
-  const source = sourceText(t);
+  const source = sourceWord(t);
   return (
-    <div className={s.kicker}>
+    <Inline wrap gap={3} className={s.kicker}>
       <KeyChip size="lg">{t.key}</KeyChip>
       {source && t.source?.url ? (
         <a
@@ -157,7 +156,7 @@ function Kicker({ t }: { t: Detail }) {
           {repoShort(t.repo_name)}
         </Tag>
       ) : null}
-    </div>
+    </Inline>
   );
 }
 
@@ -170,12 +169,16 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
   const model = stageModel(t);
   return (
     <header className={s.head}>
-      <div className={s.top}>
+      <Inline gap={8} align="start" justify="between" className={s.top}>
         <Kicker t={t} />
         <ActionGroup t={t} readOnly={readOnly} target={target} />
-      </div>
+      </Inline>
       <h1 className={s.h1}>{t.title}</h1>
-      {lead ? <p className={s.lead}>{lead}</p> : null}
+      {lead.text ? (
+        <p className={s.lead} title={lead.raw}>
+          {lead.text}
+        </p>
+      ) : null}
       <dl className={s.byline}>
         <div>
           <dt>Owner</dt>
@@ -203,11 +206,11 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
         </div>
         <div>
           <dt>Opened</dt>
-          <dd title={new Date(t.created_at).toLocaleString()}>{openedText(t, now)}</dd>
+          <dd title={new Date(t.created_at).toLocaleString()}>{ago(t.created_at, now)}</dd>
         </div>
         <div>
           <dt>Pipeline</dt>
-          <dd>{pipelineSummary(model.stages)}</dd>
+          <dd>{stageCount(model)}</dd>
         </div>
         {t.pr_url ? (
           <div>

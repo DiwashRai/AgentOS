@@ -1,18 +1,9 @@
-/* The Peek (DESIGN §9). Ported from kit.css `.ao-scrim`, `.ao-peek*`, `.ao-facts`, `.ao-lab`,
-   `.ao-steps`. */
-.scrim {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  z-index: 40;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  border: 0;
-  padding: 0;
-  cursor: default;
-}
-.scrim.isOpen {
-  opacity: 1;
+/* The Peek (DESIGN §9). `Dialog` draws the scrim and the panel's surface; this module gives the
+   side-sheet geometry and its slide (open on `[data-open]`), the header and the section rules. */
+
+/* Under the Rail (z 45), as the peek always was. */
+.layer {
+  --dialog-z: 40;
 }
 
 .peek {
@@ -23,64 +14,49 @@
   width: min(560px, calc(100vw - 24px));
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-radius: var(--r-xl);
-  box-shadow: var(--surface-shadow);
   overflow: hidden auto;
   scrollbar-width: thin;
-  z-index: 41;
   opacity: 0;
   transform: translateX(24px);
   transition:
     opacity 0.22s ease,
     transform var(--dur-panel) var(--ease-out);
 }
-.peek.isOpen {
+.peek[data-open] {
   opacity: 1;
   transform: none;
-}
-.peek:focus {
-  outline: none;
 }
 .peek > * {
   flex: none;
 }
+:global(html.ao-paused) .peek {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .peek {
+    transition: none;
+  }
+}
 
-/* header */
+/* header: the key line, the title, a three-line lead and the facts */
 .head {
   padding: var(--sp-9) var(--sp-10) var(--sp-8);
   border-bottom: 1px solid var(--rule);
 }
 .bar {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
   color: var(--ink-3);
-  min-width: 0;
   white-space: nowrap;
 }
 .bar > button {
   flex: none;
 }
 /* the key and the repo: mono without caps (refresh §3.4) */
-.src,
-.k {
+.mono {
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   line-height: 1.25;
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-.sp {
-  flex: 1;
 }
 .title {
-  font-family: var(--font-display);
-  font-size: var(--fs-title);
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--ink-1);
   margin: var(--sp-6) 0 var(--sp-3);
 }
 .desc {
@@ -95,108 +71,38 @@
   overflow: hidden;
 }
 .facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-3) var(--sp-8);
   margin-top: var(--sp-5);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
 }
 .facts b {
   color: var(--ink-1);
   font-weight: 500;
 }
 
-/* sections */
+/* sections, split by rules; a section label is text.label in a row */
 .sec {
   padding: var(--sp-7) var(--sp-10);
   border-bottom: 1px solid var(--rule);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
 }
-/* section label: sentence case, 12/500 --ink-3 (refresh §6 meta) */
 .lab {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   margin: 0;
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-3);
   white-space: nowrap;
-  min-width: 0;
 }
-.lab > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.isLive {
+.lab.isLive {
   color: var(--live-text);
 }
-.labNote {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-.meta {
+.flat {
   margin: 0;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
 }
-.status {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  min-width: 0;
-}
-.status > p {
-  margin: 0;
-  font-size: var(--fs-meta);
+.note {
   color: var(--ink-2);
 }
-
-/* plan items (kit .ao-steps) */
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-.steps > li {
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--sp-4);
-  font-size: var(--fs-control);
-  color: var(--ink-1);
-  min-height: 19px;
-}
-.steps > li > span:last-child {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.steps > li.isDone {
-  color: var(--ink-2);
-}
-.tick {
-  justify-self: center;
-  font-size: var(--fs-mono);
-  line-height: 1;
-  color: var(--rule-strong);
-}
-/* green = done: ticks are --progress (refresh §3.6) */
-.isDone .tick {
-  color: var(--progress);
-}
-.steps > li.more {
-  display: block;
-  min-height: 0;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  padding-left: var(--sp-10);
+/* the server's dispatch block ("Set a base branch first"): needs action, as on the rows */
+.flag {
+  color: var(--you-text);
+  font-weight: 500;
 }
 
 /* Talk fills the rest (min 240px) */
@@ -207,34 +113,12 @@
   display: flex;
 }
 
-/* footer */
 .foot {
-  display: flex;
-  align-items: center;
   gap: var(--sp-5);
   padding: 0 var(--sp-10) var(--sp-7);
-  color: var(--ink-3);
-  font-size: var(--fs-meta);
-}
-.keys {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
 }
 
-/* loading / error: a sentence-case meta line */
+/* loading, not found, error: the close button over a status line */
 .quiet {
-  margin: 0;
   padding: var(--sp-9) var(--sp-10);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-}
-.quiet[data-error] {
-  color: var(--blocked);
-}
-.quietBar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: var(--sp-9) var(--sp-10) 0;
 }

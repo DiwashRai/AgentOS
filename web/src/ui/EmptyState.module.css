@@ -1,0 +1,75 @@
+/* Empty states: the dashed row, or a sentence then an optional action, in one row. */
+.state {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.state > p {
+  margin: 0;
+  min-width: 0;
+}
+.state b {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+/* line: a view's own empty line with its way out ("Nothing here yet" · New ticket) */
+.line {
+  gap: var(--sp-7);
+  padding: var(--sp-7) var(--sp-1);
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}
+
+/* inset: padded to a list's row inset, where the rows would be */
+.inset {
+  padding: var(--sp-5) var(--sp-7);
+  font-size: var(--fs-control);
+  color: var(--ink-3);
+}
+
+/* note: a meta-sized line inside a section ("No plan yet.") */
+.note {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+/* row: the dashed empty row (refresh mock §4.3 `.empty-row`) */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: var(--h-empty);
+  padding: 0 var(--sp-7);
+  border-radius: var(--r-row);
+  border: 1px dashed var(--rule-strong);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* the mock's queued dot: a 6px dotted ring */
+.row > i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px dotted var(--ink-3);
+}
+.row > b {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+.row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the optional action, at the far end */
+.action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}

@@ -42,13 +42,6 @@ export function stageMark(status: StageRunStatus): MarkInfo {
   return STAGE_MARK[status];
 }
 
-/** `0:42`, `12:05` under an hour; `1h 4m` from there. */
-export function duration(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  if (s < 3600) return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, "0")}`;
-  return `${String(Math.floor(s / 3600))}h ${String(Math.floor((s % 3600) / 60))}m`;
-}
-
 /** Seconds from `start` to `end` (or to `nowMs` while unfinished); null if it never started. */
 export function spanSeconds(
   start: string | null,

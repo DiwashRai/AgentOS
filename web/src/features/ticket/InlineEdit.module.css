@@ -1,0 +1,61 @@
+/* A byline value that edits in place (the owner and repo selects, the base branch's button):
+   it reads as the value, transparent until hovered. */
+.value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 22px;
+  margin: calc(-1 * var(--sp-1)) 0 calc(-1 * var(--sp-1)) calc(-1 * var(--sp-3));
+  padding: 0 var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.value:hover {
+  border-color: var(--rule);
+  background: var(--surface);
+}
+.value:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.value:disabled {
+  cursor: default;
+}
+.value:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+}
+.value[aria-invalid="true"] {
+  border-color: var(--blocked);
+}
+
+/* A select: no native arrow; the chevron sits over its right padding (none while disabled). */
+.pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.pick > .value {
+  appearance: none;
+  field-sizing: content;
+  padding-right: var(--sp-9);
+}
+.pick > .value:disabled {
+  padding-right: var(--sp-2);
+}
+.pick > svg {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+  color: var(--ink-3);
+}
+
+/* A message or hint under an edit (inside the byline's 600 values). */
+.msg {
+  max-width: 52ch;
+  font-weight: 400;
+}

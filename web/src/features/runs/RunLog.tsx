@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { useRunEvents } from "../../api/queries";
-import { cx } from "../../ui";
+import { cx, EmptyState, StatusLine } from "../../ui";
 import { buildLines } from "./log";
 import { emptyLogText, type LogDelivery } from "./runFormat";
 import s from "./RunsTab.module.css";
@@ -59,18 +59,14 @@ export function RunLog({ runId, active, queued, stageName, delivery, liveHref }:
     opened.current = true;
   }, [lines, active]);
 
-  if (events.isPending) return <p className={s.quiet}>Loading log</p>;
+  if (events.isPending) return <StatusLine>Loading log</StatusLine>;
   if (events.isError) {
-    return (
-      <p className={s.quiet} data-error="" role="alert">
-        {`Can't load the log · ${events.error.message}`}
-      </p>
-    );
+    return <StatusLine error>{`Can't load the log · ${events.error.message}`}</StatusLine>;
   }
   if (lines.length === 0) {
     const waiting = delivery === "at_end" && (queued || active);
     return (
-      <p className={s.quiet}>
+      <EmptyState form="note">
         {emptyLogText({ queued, active, delivery })}
         {waiting && liveHref ? (
           <>
@@ -80,14 +76,14 @@ export function RunLog({ runId, active, queued, stageName, delivery, liveHref }:
             </a>
           </>
         ) : null}
-      </p>
+      </EmptyState>
     );
   }
 
   return (
     <>
       {events.data.length >= EVENT_CAP ? (
-        <p className={s.quiet}>Showing the last 5,000 events</p>
+        <StatusLine>Showing the last 5,000 events</StatusLine>
       ) : null}
       <div
         ref={box}

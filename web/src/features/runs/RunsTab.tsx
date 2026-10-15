@@ -6,8 +6,18 @@ import { useSearchParams } from "react-router";
 
 import { ApiError, type Schemas } from "../../api/client";
 import { useCancelRun, useRun, useRunEvents, useRuns } from "../../api/queries";
-import { age } from "../../domain/format";
-import { Button, ChevronIcon, cx, StatusMark } from "../../ui";
+import { ago, duration } from "../../domain/format";
+import {
+  Button,
+  cx,
+  EmptyState,
+  Fold,
+  Inline,
+  Stack,
+  StatusLine,
+  StatusMark,
+  text,
+} from "../../ui";
 import {
   checkFold,
   checkMark,
@@ -21,7 +31,7 @@ import {
   type StageRun,
 } from "./rounds";
 import { RunLog } from "./RunLog";
-import { duration, isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
+import { isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
 import s from "./RunsTab.module.css";
 import { StageCalls } from "./StageCalls";
 import { useNow } from "../../ui/useNow";
@@ -35,31 +45,29 @@ function RunMark({ id, mark }: { id: number; mark: MarkInfo }) {
   const name = `Run #${String(id)}`;
   if (mark.kind === "you") {
     return (
-      <span className={s.gated}>
+      <Inline as="span" gap={3} className={s.gated}>
         <StatusMark kind="you" glyphOnly title={mark.word} />
         <b>{name}</b>
         <span>· {mark.word}</span>
-      </span>
+      </Inline>
     );
   }
   return <StatusMark kind={mark.kind} name={name} ask={mark.word} />;
 }
 
 function startedText(run: RunSummary, now: number): string {
-  const at = run.started_at ?? run.created_at;
-  const a = age(at, now);
-  return a === "now" ? "just now" : `${a} ago`;
+  return ago(run.started_at ?? run.created_at, now);
 }
 
 function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary }) {
   const cancel = useCancelRun(ticketKey);
   if (run.cancel_requested_at !== null || cancel.isPending) {
-    return <span className={s.k}>Cancelling…</span>;
+    return <span className={text.label}>Cancelling…</span>;
   }
   return (
-    <span className={s.cancel}>
+    <Inline as="span" gap={5}>
       {cancel.isError ? (
-        <span className={s.err} role="alert">
+        <span className={text.error} role="alert">
           {cancel.error instanceof ApiError && cancel.error.code === "run_gone"
             ? "This run already finished."
             : cancel.error.message}
@@ -75,7 +83,7 @@ function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary 
       >
         Cancel run
       </Button>
-    </span>
+    </Inline>
   );
 }
 
@@ -100,16 +108,16 @@ function RunRow({
     <li className={cx(s.row, selected && s.selected)}>
       <button type="button" className={s.rowMain} aria-current={selected} onClick={onSelect}>
         <RunMark id={run.id} mark={runMark(run.status)} />
-        <span className={s.rowMeta}>
-          <span className={s.ellip}>
+        <Inline as="span" gap={6} align="baseline" justify="between" className={text.meta}>
+          <span className={cx(s.from, text.ellipsis)}>
             from <b>{run.from_stage}</b>
             {run.created_by ? ` · ${run.created_by.display_name}` : ""} · {startedText(run, now)}
           </span>
           {secs !== null ? <span className={s.mono}>{duration(secs)}</span> : null}
-        </span>
+        </Inline>
       </button>
       {isActiveRun(run.status) ? <CancelControl ticketKey={ticketKey} run={run} /> : <span />}
-      <span className={s.ref}>
+      <span className={cx(s.ref, text.ellipsis)}>
         {ref?.href ? (
           <a className={s.refLink} href={ref.href} target="_blank" rel="noreferrer">
             {ref.text}
@@ -129,25 +137,18 @@ function CheckFold({ check }: { check: CheckOutcome }) {
   const fold = checkFold(check);
   if (!fold) return null;
   return (
-    <details className={cx(s.fold, s.checkFold)}>
-      <summary className={s.foldHead}>
-        <span className={s.chev}>
-          <ChevronIcon />
-        </span>
-        {fold.label}
-        {fold.meta ? <span className={s.foldMeta}>· {fold.meta}</span> : null}
-      </summary>
+    <Fold summary={fold.label} meta={fold.meta || undefined} className={s.checkFold}>
       {check.notes ? <pre className={s.pre}>{check.notes}</pre> : null}
       {check.repairs.length > 0 ? (
         <ol className={s.repairs} aria-label="Repairs">
           {check.repairs.map((r) => (
             <li key={r.attempt}>
-              <span className={s.k}>Repair {r.attempt}</span> {r.error}
+              <span className={text.label}>Repair {r.attempt}</span> {r.error}
             </li>
           ))}
         </ol>
       ) : null}
-    </details>
+    </Fold>
   );
 }
 
@@ -172,30 +173,35 @@ function StageRow({
   ]
     .filter(Boolean)
     .join(" · ");
+  // Without a verdict, a failed stage's note reads crimson and a passed one green.
+  const word = verdict
+    ? undefined
+    : mark.kind === "blk"
+      ? "bad"
+      : mark.kind === "done"
+        ? "ok"
+        : undefined;
   return (
-    <li className={s.stageItem}>
+    <li>
       <div className={s.stage}>
         <StatusMark kind={mark.kind} glyphOnly title={mark.word} />
-        <span className={s.stageName}>{st.name}</span>
-        <span className={s.noteCell}>
+        <span className={cx(s.stageName, text.ellipsis)}>{st.name}</span>
+        <Inline as="span" gap={4}>
           {verdict ? (
-            <span className={cx(s.verdict, verdict === "pass" ? s.vPass : s.vFail)}>
+            <span className={cx(s.verdict, verdict === "pass" ? s.pass : s.fail)}>
               {verdictWord(verdict)}
             </span>
           ) : null}
-          {verdict && !note ? null : (
-            <span
-              className={cx(
-                s.stageNote,
-                !verdict && mark.kind === "blk" && s.bad,
-                !verdict && mark.kind === "done" && s.ok,
-              )}
-              title={note}
-            >
+          {verdict && !note ? null : word ? (
+            <span className={cx(s[word], text.ellipsis)} title={note}>
+              {note || mark.word}
+            </span>
+          ) : (
+            <span className={cx(s.stageNote, text.ellipsis)} title={note}>
               {note || mark.word}
             </span>
           )}
-        </span>
+        </Inline>
         <span className={s.mono}>{secs !== null ? duration(secs) : ""}</span>
       </div>
       {check ? <CheckFold check={check} /> : null}
@@ -213,16 +219,16 @@ function StageList({ detail, now, active }: { detail: RunDetail; now: number; ac
     <StageRow key={st.idx} st={st} check={checks.get(roundKey(st.stage_id, st.round))} now={now} />
   );
   return (
-    <ol className={s.stages} aria-label="Stages">
+    <ol className={s.ruled} aria-label="Stages">
       {items.map((it) => {
         if (it.type === "stage") return row(it.run);
         const meta = roundMeta(roundCounts(it.runs));
         return (
           <li key={it.key} className={s.round}>
-            <div className={s.roundHead}>
+            <Inline gap={4} align="baseline" className={s.roundHead}>
               <span>Round {it.round}</span>
               {meta ? <span className={s.roundMeta}>{meta}</span> : null}
-            </div>
+            </Inline>
             <ol className={s.roundRows} aria-label={`Round ${String(it.round)}`}>
               {it.runs.map(row)}
             </ol>
@@ -256,16 +262,14 @@ function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
   // The selected row above is the run's header (mark, who, when, Cancel run): start at its error,
   // stages and log.
   return (
-    <section className={s.panel} aria-label={`Run #${String(run.id)}`}>
+    <Stack gap={6} as="section" aria-label={`Run #${String(run.id)}`}>
       {run.error ? (
-        <p className={s.runError} role="note">
+        <div className={text.error} role="note">
           {run.error}
-        </p>
+        </div>
       ) : null}
       {detailQ.isError ? (
-        <p className={s.quiet} data-error="">
-          {`Can't load stages · ${detailQ.error.message}`}
-        </p>
+        <StatusLine error>{`Can't load stages · ${detailQ.error.message}`}</StatusLine>
       ) : detailQ.data ? (
         <StageList detail={detailQ.data} now={now} active={active} />
       ) : null}
@@ -279,27 +283,23 @@ function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
         delivery={run.log_delivery}
         liveHref={run.launch_url}
       />
-    </section>
+    </Stack>
   );
 }
 
-export function RunsTab({ ticketKey }: { ticketKey: string }) {
+function RunsBody({ ticketKey }: { ticketKey: string }) {
   const runsQ = useRuns(ticketKey);
   const [params, setParams] = useSearchParams();
   const runs = useMemo(() => [...(runsQ.data ?? [])].sort((a, b) => b.id - a.id), [runsQ.data]);
   const anyActive = runs.some((r) => isActiveRun(r.status));
   const now = useNow(anyActive ? 1000 : 30_000);
 
-  if (runsQ.isPending) return <p className={s.quiet}>Loading runs</p>;
+  if (runsQ.isPending) return <StatusLine>Loading runs</StatusLine>;
   if (runsQ.isError) {
-    return (
-      <p className={s.quiet} data-error="" role="alert">
-        {`Can't load runs · ${runsQ.error.message}`}
-      </p>
-    );
+    return <StatusLine error>{`Can't load runs · ${runsQ.error.message}`}</StatusLine>;
   }
   if (runs.length === 0) {
-    return <p className={s.empty}>No runs yet. Dispatch one from the header.</p>;
+    return <EmptyState form="note">No runs yet. Dispatch one from the header.</EmptyState>;
   }
 
   const asked = Number(params.get("run"));
@@ -316,8 +316,8 @@ export function RunsTab({ ticketKey }: { ticketKey: string }) {
   };
 
   return (
-    <div className={s.tab}>
-      <ul className={s.runs} aria-label="Runs">
+    <>
+      <ul className={s.rows} aria-label="Runs">
         {runs.map((r) => (
           <RunRow
             key={r.id}
@@ -332,6 +332,14 @@ export function RunsTab({ ticketKey }: { ticketKey: string }) {
         ))}
       </ul>
       {selected ? <RunPanel key={selected.id} summary={selected} now={now} /> : null}
-    </div>
+    </>
+  );
+}
+
+export function RunsTab({ ticketKey }: { ticketKey: string }) {
+  return (
+    <Stack gap={10} className={s.tab}>
+      <RunsBody ticketKey={ticketKey} />
+    </Stack>
   );
 }
