@@ -1,5 +1,4 @@
-"""The Space's settings in the db: the `settings` table (migration 0006), one JSON document per
-area.
+"""The Space's settings in the db: the `settings` table, one JSON document per area.
 
 Areas: `space` (a SpaceSection), `repos` ({"repos": [RepoSpec...]}), `intake`
 ({"queries": [IntakeQuerySpec...]}), `runtimes` ({"runtimes": [NamedRuntime...]}, in order: the

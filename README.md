@@ -41,7 +41,7 @@ The server ships as one container (API + built UI, data on a `/data` volume), an
 ```
 backend/
   server/agentos/   FastAPI + SQLite server: one package per feature, a pure core, plugins
-    migrations/     numbered SQL migrations
+    migrations/     numbered SQL migrations (0001_schema.sql is the schema)
   worker/worker.py  the worker: one stdlib-only file, served by the server
   deploy/           deploy guide, container env example, GitHub Actions worker workflow
 web/src/
