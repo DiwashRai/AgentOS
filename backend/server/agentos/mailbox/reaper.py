@@ -7,9 +7,9 @@ next run is checked):
 2. Ask GitHub for the Actions run's status (unknown: no run URL, or a MailboxError).
 3. The outbox is in the store → replay it (an unexpected error fails the run).
 4. GitHub says `completed` and there is no outbox → cancelled (if requested) or failed.
-5. GitHub says not started for longer than the claim timeout, the work job hasn't started and no
-   job is running (the jobs are asked for only then, and no more once the work job started; the
-   run reports queued/waiting again while publish waits) → cancel + failed.
+5. GitHub says not started for longer than the claim timeout, and the run's jobs say the work job
+   never started and none is running (the run is queued/waiting again while publish waits)
+   → cancel + failed.
 6. Past `started_at + time_budget_s + BUDGET_GRACE + claim_timeout_s` → cancel + failed.
 7. The status is unknown and a cancel was requested over CANCEL_GRACE ago → cancelled.
 8. No launch_ref LAUNCH_GRACE after the claim (the server died mid-launch) → failed.
@@ -49,7 +49,7 @@ CANCEL_GRACE = timedelta(minutes=15)  # only while GitHub can't tell us the run'
 LAUNCH_GRACE = timedelta(minutes=15)  # well above a bounded send() (D4)
 SWEEP_EVERY = timedelta(hours=1)
 NOT_STARTED = frozenset({"queued", "waiting", "pending", "requested"})
-JOB_STARTED = frozenset({"in_progress", "completed"})
+JOB_STARTED = frozenset({"in_progress", "completed"})  # a queued job has a started_at too
 NOT_PICKED_UP = "no runner picked up the GitHub job"
 LAUNCH_INTERRUPTED = "launch interrupted"
 TOO_LARGE = "the run's results are over 512 MiB"
@@ -127,8 +127,7 @@ class MailboxReaper:
                     f"GitHub job ended ({status.conclusion or 'no conclusion'}) without sending "
                     "results; see the GitHub run",
                 )
-            # 5. never picked up (the run reports queued/waiting again while publish waits, so the
-            # jobs decide). `ref` is set whenever `status` is; the check narrows it for mypy.
+            # 5. never picked up (`ref` is set whenever `status` is; the check narrows it)
             if (
                 status.status in NOT_STARTED
                 and run.started_at is not None
@@ -185,10 +184,8 @@ class MailboxReaper:
         return "ended" if ended else "gone"
 
     def _work_never_picked_up(self, run_id: int, ref: str) -> bool:
-        """True only when GitHub says the work job hasn't started and no job is running (fetch
-        held at its environment, or no runner for work). Unknown (an error, or a ref that names
-        no run) is False: the time budget rule ends the run instead. A started work job is
-        remembered, so the jobs aren't asked for again while publish waits."""
+        """The work job hasn't started and no job is running. Unknown is False (the budget rule
+        ends the run). A started work job is remembered, so publish waiting costs one call."""
         if run_id in self.work_started:
             return False
         try:
@@ -198,10 +195,10 @@ class MailboxReaper:
             return False
         if jobs is None:
             return False
-        if any(job.name == WORK_JOB and job.status in JOB_STARTED for job in jobs):
+        if jobs.get(WORK_JOB) in JOB_STARTED:
             self.work_started.add(run_id)
             return False
-        return not any(job.status == "in_progress" for job in jobs)
+        return "in_progress" not in jobs.values()
 
     def _cancel(self, run_id: int, ref: str | None) -> None:
         """Ask GitHub to cancel the run, once per run per process (best effort)."""

@@ -15,9 +15,10 @@ REST facts (docs.github.com, checked 2026-10-11):
 - Fine-grained PAT: repository permission "Actions: write" on the one repo.
 
 Mailbox mode (`launchers/mailbox.py`) also uses `dispatch()` (its own inputs), `run_status()`
-(`GET /repos/{repo}/actions/runs/{id}`) and `cancel_run()` (`POST .../cancel`: 202, or 409 once
-the run has finished). Both read only the path of a launch_ref and must name a run of the current
-target repo; the request always goes to the configured API URL.
+(`GET /repos/{repo}/actions/runs/{id}`), `run_jobs()` (`GET .../jobs`) and `cancel_run()`
+(`POST .../cancel`: 202, or 409 once the run has finished). They read only the path of a
+launch_ref and must name a run of the current target repo; the request always goes to the
+configured API URL.
 
 Neither the GitHub token nor the dispatch token ever appears in a raised message.
 """
@@ -86,16 +87,6 @@ class ActionsRun:
     conclusion: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ActionsJob:
-    """A job of a workflow run: `name` is the job's `name:` (its key when unset); `status` is
-    queued | in_progress | completed | waiting | requested | pending. A job's `started_at` is set
-    even while it is queued, so only `in_progress`/`completed` say it has started."""
-
-    name: str
-    status: str
-
-
 class GitHubActionsLauncher:
     name = "github"
     max_concurrency: int | None = None  # GitHub queues jobs; the runner pool is the limit
@@ -153,54 +144,30 @@ class GitHubActionsLauncher:
     def run_status(self, launch_ref: str) -> ActionsRun | None:
         """The Actions run `launch_ref` names (see `run_id_of`; None if it names none). Raises
         LaunchError if GitHub can't be asked or answers something else than the run."""
-        url = self._run_url(launch_ref)
-        if url is None:
+        data = self._get_run(launch_ref)
+        if data is None:
             return None
-        resp = self._send("GET", url, None, (self._token,))
-        if resp.status_code != 200:
-            raise LaunchError(
-                _safe(
-                    f"GitHub answered {resp.status_code}: {_github_message(resp)}", (self._token,)
-                )
-            )
-        try:
-            data = resp.json()
-        except ValueError:
-            data = None
-        status = data.get("status") if isinstance(data, dict) else None
-        conclusion = data.get("conclusion") if isinstance(data, dict) else None
+        status = data.get("status")
+        conclusion = data.get("conclusion")
         if not isinstance(status, str) or not (conclusion is None or isinstance(conclusion, str)):
             raise LaunchError("GitHub answered 200 without a workflow run")
         return ActionsRun(status=status, conclusion=conclusion)
 
-    def run_jobs(self, launch_ref: str) -> list[ActionsJob] | None:
-        """The jobs of the Actions run `launch_ref` names (None if it names none; the latest
-        attempt, up to 100). Raises LaunchError like `run_status`."""
-        url = self._run_url(launch_ref)
-        if url is None:
+    def run_jobs(self, launch_ref: str) -> dict[str, str] | None:
+        """{job name: status} of the latest attempt of the Actions run `launch_ref` names (None
+        if it names none). Raises LaunchError like `run_status`."""
+        data = self._get_run(launch_ref, "/jobs")
+        if data is None:
             return None
-        resp = self._send("GET", f"{url}/jobs?per_page=100", None, (self._token,))
-        if resp.status_code != 200:
-            raise LaunchError(
-                _safe(
-                    f"GitHub answered {resp.status_code}: {_github_message(resp)}", (self._token,)
-                )
-            )
-        try:
-            data = resp.json()
-        except ValueError:
-            data = None
-        jobs = data.get("jobs") if isinstance(data, dict) else None
-        if not isinstance(jobs, list):
+        jobs = data.get("jobs")
+        if not isinstance(jobs, list) or not all(
+            isinstance(job, dict)
+            and isinstance(job.get("name"), str)
+            and isinstance(job.get("status"), str)
+            for job in jobs
+        ):
             raise LaunchError("GitHub answered 200 without the run's jobs")
-        found: list[ActionsJob] = []
-        for job in jobs:
-            name = job.get("name") if isinstance(job, dict) else None
-            status = job.get("status") if isinstance(job, dict) else None
-            if not isinstance(name, str) or not isinstance(status, str):
-                raise LaunchError("GitHub answered 200 with a job without a name or status")
-            found.append(ActionsJob(name=name, status=status))
-        return found
+        return {job["name"]: job["status"] for job in jobs}
 
     def cancel_run(self, launch_ref: str) -> None:
         """Ask GitHub to cancel the run `launch_ref` names (no-op if it names none). 202 and 409
@@ -232,6 +199,25 @@ class GitHubActionsLauncher:
             return None
         repo, run_id = found
         return f"{self.api_url}/repos/{repo}/actions/runs/{run_id}"
+
+    def _get_run(self, launch_ref: str, path: str = "") -> dict[str, Any] | None:
+        """GET `path` under the run `launch_ref` names (None if it names none); a 200 that isn't
+        a JSON object is {}. Any other answer raises a safe LaunchError."""
+        url = self._run_url(launch_ref)
+        if url is None:
+            return None
+        resp = self._send("GET", url + path, None, (self._token,))
+        if resp.status_code != 200:
+            raise LaunchError(
+                _safe(
+                    f"GitHub answered {resp.status_code}: {_github_message(resp)}", (self._token,)
+                )
+            )
+        try:
+            data = resp.json()
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _dispatch(self, inputs: dict[str, str], secrets: tuple[str, ...]) -> str:
         target = self._target()

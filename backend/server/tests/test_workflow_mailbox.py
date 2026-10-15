@@ -131,8 +131,7 @@ def test_jobs_and_their_runners() -> None:
         code = _code(_section(lines, "jobs", job))
         assert store_runner in code
         assert re.search(r"^ +environment: agentos-store$", code, re.MULTILINE)
-    # The reaper finds the work job by name in GitHub's jobs list: its key, with no `name:`.
-    assert WORK_JOB == "work"
+    # The reaper finds the work job by its key in GitHub's jobs list: a `name:` would hide it.
     assert "name" not in _child_keys(_section(lines, "jobs", WORK_JOB))
     work = _code(_section(lines, "jobs", "work"))
     assert "runs-on: ${{ fromJSON(vars.AGENTOS_RUNS_ON || '\"ubuntu-latest\"') }}" in work
