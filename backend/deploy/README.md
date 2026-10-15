@@ -173,8 +173,10 @@ plus 15 min). Past it, the reaper fails the run and the worker stops on its next
 
 Some organisations let CI write to GitHub only through the REST API (`git push` from a runner is
 refused). So when the worker runs on GitHub Actions (`GITHUB_ACTIONS=true`) with `GH_TOKEN` set,
-it publishes each stage's commits through the Git Data API (blobs, trees, commits, then one ref
-write with `force: false`) instead of `git push`. It talks to `GITHUB_API_URL` (right on GHES too)
+it publishes each stage's work through the Git Data API instead of `git push`: one commit per
+publish with HEAD's tree, message and author on top of the branch's remote commit (blobs, a tree,
+the commit, then one ref write with `force: false`). The worker commits once per stage, so that
+is the same history; any extra local commits are squashed into it. It talks to `GITHUB_API_URL` (right on GHES too)
 and takes owner/repo from the ticket's repo URL, never from `GITHUB_REPOSITORY`. The local
 launcher, a client and a plain `worker.py` still use `git push`. There is no setting for this.
 
@@ -187,9 +189,10 @@ launcher, a client and a plain `worker.py` still use `git push`. There is no set
   on other repos fail at setup. Multi-repo setups must give the worker step a broader token as
   `GH_TOKEN` themselves (e.g. a GitHub App installation token); AgentOS doesn't mint one.
 - **What it refuses:** an agent's amend or rebase of already-published commits ("push rejected"),
-  a commit message that isn't UTF-8, and commits touching `.github/workflows/` (GitHub refuses
-  those for `GITHUB_TOKEN`: "push failed: ..."). Signatures are dropped; commits aren't
-  "Verified". Each commit's tree is checked against the local one before the ref moves.
+  merge commits (squashed, a merged base would read as the branch's own work), a message that
+  isn't UTF-8, and changes to `.github/workflows/` (GitHub refuses those for `GITHUB_TOKEN`:
+  "push failed: ..."). Commits aren't signed or "Verified". GitHub's tree is checked against
+  HEAD's before the ref moves ("publish mismatch").
 - **Rate limits:** text goes inline in the tree and binary blobs are deduplicated, so a stage
   costs a handful of calls. Rate-limit answers are waited out within a bounded budget, then the
   stage fails with GitHub's message.
@@ -199,8 +202,8 @@ launcher, a client and a plain `worker.py` still use `git push`. There is no set
 **Checking against the real API** (by hand, never in CI): from `backend/`, with `GH_TOKEN` set to
 a token that can write the repo's contents, run `uv run python worker/live_publish.py
 <owner/repo>` (use a scratch repo). It clones the repo, publishes added, modified, deleted,
-executable, symlinked and binary files, a merge and an empty commit to a throwaway branch, checks
-the remote tree and that a second publish fast-forwards, prints PASS or FAIL, and deletes the
+executable, symlinked and binary files to a new throwaway branch, checks the remote tree, then
+publishes a second batch and checks it fast-forwards. It prints PASS or FAIL and deletes the
 branch. `GITHUB_API_URL` / `GITHUB_SERVER_URL` default to github.com.
 
 **WSL2 runner and `AGENTOS_WORKER_URL`.** The container publishes host port 8080 on Windows.

@@ -9,10 +9,11 @@ emit the manifest's warnings -> for each stage execution: run it, sync context f
 events -> complete (with `pr_url` if found).
 
 Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
-each stage's commits go through the Git Data API of the ticket's repo at GITHUB_API_URL (see
-publish_branch): blobs, a tree per commit (checked against the local tree), the commits with
-their parents mapped, then one ref write with `force: false`. Setup first checks the token can
-write there. A GitHub failure fails the stage; it is never a lost run or an unreachable server.
+each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
+publish_branch) as one commit: blobs, a tree (checked against HEAD's), the commit on the
+branch's remote commit, then one ref write with `force: false`. Merges and rewrites are refused.
+Setup first checks the token can write there. A GitHub failure fails the stage; it is never a
+lost run or an unreachable server.
 
 Every output line goes out as a log event. An agent stage's output is also printed on stderr as
 it arrives, as readable `[stage id] ...` lines (see Echo), so a job console or the launcher's log
@@ -72,7 +73,7 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, Protocol
 
@@ -1787,7 +1788,6 @@ def write_entry(root: Path, f: ManifestFile, key: str) -> str | None:
 
 _REPO_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
 _SCP_RE = re.compile(r"(?:[^@/:]+@)?([^@/:]+):(.+)")
-_PERSON_RE = re.compile(rb"(.*) <(.*)> ([0-9]+) ([+-])([0-9]{2})([0-9]{2})")
 _DIFF_META_RE = re.compile(r":([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([AMDT])")
 _NULL_SHA_RE = re.compile(r"0+")
 _BLOB_MODES = frozenset({"100644", "100755", "120000"})
@@ -1838,64 +1838,6 @@ def github_repo(repo_url: str, server_url: str) -> tuple[str | None, str | None]
     ):
         return None, "the repo URL's path is not owner/repo"
     return f"{parts[0]}/{parts[1]}", None
-
-
-@dataclass(frozen=True)
-class Person:
-    name: str
-    email: str
-    date: str  # ISO 8601 with the original offset
-
-    def body(self) -> dict[str, str]:
-        return {"name": self.name, "email": self.email, "date": self.date}
-
-
-@dataclass(frozen=True)
-class GitCommit:
-    tree: str
-    parents: tuple[str, ...]
-    author: Person
-    committer: Person
-    message: str
-
-
-def _person(sha: str, value: bytes) -> Person:
-    match = _PERSON_RE.fullmatch(value)
-    name, email = (None, None) if match is None else (_decode(match[1]), _decode(match[2]))
-    if match is None or name is None or email is None:
-        raise PublishError(f"push failed: commit {sha[:12]} has an unreadable author or committer")
-    minutes = int(match[5]) * 60 + int(match[6])
-    offset = timedelta(minutes=-minutes if match[4] == b"-" else minutes)
-    when = datetime.fromtimestamp(int(match[3]), timezone(offset))
-    return Person(name, email, when.isoformat())
-
-
-def parse_commit(sha: str, raw: bytes) -> GitCommit:
-    """`git cat-file commit` output. Continuation headers (`gpgsig`, `mergetag`) are skipped; a
-    message that isn't UTF-8 is refused, because it can't go byte-exact through JSON."""
-    head, _, body = raw.partition(b"\n\n")
-    tree = ""
-    parents: list[str] = []
-    people: dict[bytes, Person] = {}
-    for line in head.split(b"\n"):
-        if line.startswith(b" "):
-            continue
-        key, _, value = line.partition(b" ")
-        if key == b"tree":
-            tree = value.decode("ascii")
-        elif key == b"parent":
-            parents.append(value.decode("ascii"))
-        elif key in (b"author", b"committer"):
-            people[key] = _person(sha, value)
-        elif key == b"encoding" and value.lower() not in (b"utf-8", b"utf8"):
-            raise PublishError(f"push failed: commit {sha[:12]} has a non-UTF-8 message")
-
-    message = _decode(body)
-    if message is None:
-        raise PublishError(f"push failed: commit {sha[:12]} has a non-UTF-8 message")
-    if not tree or b"author" not in people or b"committer" not in people:
-        raise PublishError(f"push failed: commit {sha[:12]} cannot be read")
-    return GitCommit(tree, tuple(parents), people[b"author"], people[b"committer"], message)
 
 
 @dataclass(frozen=True)
@@ -2143,18 +2085,24 @@ def _github(github: GitHub, method: str, path: str, body: Any) -> Any:
         raise PublishError(f"push failed: {exc.message}") from None
 
 
-def _publish_commit(
-    git: GitRunner, github: GitHub, sha: str, remote: dict[str, str], uploaded: set[str]
-) -> str:
-    """Recreate one local commit on GitHub; its parents are already there. The remote sha."""
-    commit = parse_commit(sha, _git_out(git, "cat-file", "commit", sha))
-    if not commit.parents:
-        raise PublishError(f"push failed: commit {sha[:12]} has no parent")
-    first = commit.parents[0]
-    diffs = parse_diff_tree(_git_out(git, "diff-tree", "-r", "-z", "--no-renames", first, sha))
+def _head_commit(git: GitRunner) -> tuple[str, dict[str, str]]:
+    """HEAD's message and author: what the one published commit carries."""
+    out = _git_out(git, "log", "-1", "--format=%an%x00%ae%x00%aI%x00%B")
+    parts = [p for p in (_decode(f) for f in out.split(b"\0", 3)) if p is not None]
+    if len(parts) != 4:
+        raise PublishError("push failed: HEAD's message or author is not UTF-8")
+
+    name, email, date, message = parts
+    return message.rstrip("\n") + "\n", {"name": name, "email": email, "date": date}
+
+
+def _tree_entries(git: GitRunner, github: GitHub, base: str, head: str) -> list[dict[str, Any]]:
+    """The tree entries that turn `base`'s tree into `head`'s, uploading what can't go inline."""
+    diffs = parse_diff_tree(_git_out(git, "diff-tree", "-r", "-z", "--no-renames", base, head))
     blobs = _read_blobs(git, list(dict.fromkeys(d.new_sha for d in diffs if d.needs_content)))
 
     entries: list[dict[str, Any]] = []
+    uploaded: set[str] = set()
     for d in diffs:
         entry, upload = tree_entry(d, blobs.get(d.new_sha))
         if upload is not None and d.new_sha not in uploaded:
@@ -2164,22 +2112,7 @@ def _publish_commit(
                 raise PublishError(f"publish mismatch: blob {d.path}")
             uploaded.add(d.new_sha)
         entries.append(entry)
-
-    tree = commit.tree
-    if entries:
-        base = _git_out(git, "rev-parse", f"{first}^{{tree}}").decode().strip()
-        answer = _github(github, "POST", "/git/trees", {"base_tree": base, "tree": entries})
-        if answer.get("sha") != commit.tree:
-            raise PublishError(f"publish mismatch: the tree of commit {sha[:12]} differs")
-
-    body = {
-        "message": commit.message,
-        "tree": tree,
-        "parents": [remote.get(p, p) for p in commit.parents],
-        "author": commit.author.body(),
-        "committer": commit.committer.body(),
-    }
-    return str(_github(github, "POST", "/git/commits", body)["sha"])
+    return entries
 
 
 def _write_ref(github: GitHub, branch: str, sha: str, exists: bool) -> None:
@@ -2218,10 +2151,11 @@ def publish_branch(
     exists: bool,
     before_ref: Callable[[], None] = lambda: None,
 ) -> tuple[str, int]:
-    """Publish HEAD's commits since `pushed_head` to `branch` through the Git Data API: each
-    commit's changes as a tree on its first parent's, every parent mapped local -> remote, then
-    one ref write (`exists`: PATCH, else POST). `before_ref` runs right before the ref write.
-    Returns (the branch's new remote sha, commits published); raises PublishError."""
+    """Publish HEAD to `branch` through the Git Data API as ONE commit on `pushed_head` (the
+    branch's remote commit): the changes as a tree on its tree, with HEAD's message and author,
+    then one ref write (`exists`: PATCH, else POST). `before_ref` runs right before the ref
+    write. Merge commits are refused: squashed, a merged base would read as the branch's own
+    work. Returns (the branch's new remote sha, local commits it covers); raises PublishError."""
     head = _git_out(git, "rev-parse", "HEAD").decode().strip()
     r = git("merge-base", "--is-ancestor", pushed_head, head)
     if r.code == 1:
@@ -2229,19 +2163,26 @@ def publish_branch(
     if r.code:
         raise PublishError(f"push failed: git merge-base failed: {r.tail()}")
 
-    listed = _git_out(
-        git, "rev-list", "--reverse", "--topo-order", head, "--not", pushed_head, "--remotes=origin"
-    )
-    commits = listed.decode().split()
-    remote: dict[str, str] = {}
-    uploaded: set[str] = set()
-    for sha in commits:
-        remote[sha] = _publish_commit(git, github, sha, remote, uploaded)
+    span = f"{pushed_head}..{head}"
+    if _git_out(git, "rev-list", "--merges", span).strip():
+        raise PublishError("push failed: merge commits can't be published through the GitHub API")
+    count = int(_git_out(git, "rev-list", "--count", span))
 
-    target = remote.get(head, head)
+    tree = _git_out(git, "rev-parse", f"{head}^{{tree}}").decode().strip()
+    entries = _tree_entries(git, github, pushed_head, head)
+    if entries:
+        base = _git_out(git, "rev-parse", f"{pushed_head}^{{tree}}").decode().strip()
+        answer = _github(github, "POST", "/git/trees", {"base_tree": base, "tree": entries})
+        if answer.get("sha") != tree:
+            raise PublishError("publish mismatch: GitHub's tree differs from HEAD's")
+
+    message, author = _head_commit(git)
+    body = {"message": message, "tree": tree, "parents": [pushed_head], "author": author}
+    sha = str(_github(github, "POST", "/git/commits", body)["sha"])
+
     before_ref()
-    _write_ref(github, branch, target, exists)
-    return target, len(commits)
+    _write_ref(github, branch, sha, exists)
+    return sha, count
 
 
 def track_published(git: GitRunner, branch: str, sha: str) -> str | None:
@@ -2885,7 +2826,9 @@ class Run:
         self.pushed_head = sha
         self.branch_exists = True
 
-        message = f"published {count} commit(s) to {branch} through the GitHub API ({sha[:12]})"
+        message = (
+            f"published {count} commit(s) to {branch} as one through the GitHub API ({sha[:12]})"
+        )
         say(message)
         self.events.log(stage_id, "system", message)
         return track_published(self._git, branch, sha)

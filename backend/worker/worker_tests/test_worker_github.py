@@ -1,7 +1,7 @@
-"""GitHub API publication: the pure parts as tables (mechanism choice, repo URLs, commit and
-diff-tree parsing, tree entries, classifying GitHub's answers, token scrubbing), the git side of
-publishing against local repos (a rewrite is refused, the branch looks pushed afterwards, blob
-reads), plus whole runs for what never reaches GitHub (the setup's env check)."""
+"""GitHub API publication: the pure parts as tables (mechanism choice, repo URLs, diff-tree
+parsing, tree entries, classifying GitHub's answers, token scrubbing), the git side of
+publishing against local repos (a rewrite or a merge is refused, the branch looks pushed
+afterwards, blob reads), plus whole runs for what never reaches GitHub (the setup's env check)."""
 
 from __future__ import annotations
 
@@ -88,57 +88,6 @@ def test_github_repo_errors_never_echo_userinfo() -> None:
         _, why = worker.github_repo(url, SERVER)
         assert why is not None
         assert "hunter2" not in why
-
-
-def commit_raw(*headers: bytes, message: bytes = b"subject\n\nbody\n") -> bytes:
-    return b"\n".join(headers) + b"\n\n" + message
-
-
-TREE = b"tree " + B.encode()
-AUTHOR = b"author Ann <ann@x.org> 1700000000 +0130"
-COMMITTER = b"committer Bob <bob@x.org> 1700000100 -0700"
-
-
-def test_parse_commit_keeps_message_people_and_offsets() -> None:
-    raw = commit_raw(
-        TREE,
-        b"parent " + A.encode(),
-        b"parent " + Z.encode(),
-        AUTHOR,
-        COMMITTER,
-        b"gpgsig -----BEGIN PGP SIGNATURE-----",
-        b" abc",
-        b" -----END PGP SIGNATURE-----",
-        message=b"  wip\r\n\n\ttrailing  \n\n",
-    )
-
-    commit = worker.parse_commit(A, raw)
-
-    assert commit == worker.GitCommit(
-        tree=B,
-        parents=(A, Z),
-        author=worker.Person("Ann", "ann@x.org", "2023-11-14T23:43:20+01:30"),
-        committer=worker.Person("Bob", "bob@x.org", "2023-11-14T15:15:00-07:00"),
-        message="  wip\r\n\n\ttrailing  \n\n",
-    )
-
-
-def test_parse_commit_reads_a_root_commit_with_an_empty_message() -> None:
-    commit = worker.parse_commit(A, commit_raw(TREE, AUTHOR, COMMITTER, message=b""))
-
-    assert (commit.parents, commit.message) == ((), "")
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        commit_raw(TREE, AUTHOR, COMMITTER, message=b"caf\xe9\n"),
-        commit_raw(TREE, AUTHOR, COMMITTER, b"encoding ISO-8859-1", message=b"cafe\n"),
-    ],
-)
-def test_parse_commit_refuses_non_utf8_messages(raw: bytes) -> None:
-    with pytest.raises(worker.PublishError, match="non-UTF-8"):
-        worker.parse_commit(A, raw)
 
 
 def diff(old_mode: str, new_mode: str, old: str, new: str, status: str, path: str) -> bytes:
@@ -369,6 +318,20 @@ def test_a_rewrite_of_published_commits_is_refused_before_any_github_call(
     git(work, "commit", "-q", "--amend", "-m", "one, amended")
 
     with pytest.raises(worker.PublishError, match="rejected"):
+        worker.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
+
+
+def test_a_merge_is_refused_before_any_github_call(origin: Origin, tmp_path: Path) -> None:
+    work = clone(origin, tmp_path)
+    pushed = git(work, "rev-parse", "HEAD").strip()
+    git(work, "switch", "-q", "-c", "side", "origin/main")
+    (work / "b.txt").write_bytes(b"side\n")
+    git(work, "add", "b.txt")
+    git(work, "commit", "-q", "-m", "side")
+    git(work, "switch", "-q", BRANCH)
+    git(work, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+
+    with pytest.raises(worker.PublishError, match="merge"):
         worker.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
 
 

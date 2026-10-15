@@ -8,9 +8,9 @@ with GH_TOKEN set to a token that can write to the repo's contents (GITHUB_API_U
 GITHUB_SERVER_URL default to github.com). It clones the repo into a temp dir and, on a throwaway
 branch `agentos-live-publish-<timestamp>` off the default branch, commits added, modified,
 deleted, executable, symlinked (index-only, so it works without symlink support) and binary
-files, a merge and an empty commit. It publishes them with `worker.publish_branch`, checks the
-remote tree and the commit count, then publishes a second batch and checks it fast-forwards. The
-branch is deleted at the end, whatever happened.
+files. It publishes them with `worker.publish_branch` (one remote commit), checks the remote tree,
+parent and ref, then publishes a second batch and checks it fast-forwards. The branch is deleted
+at the end, whatever happened.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
 
 import worker
 
@@ -90,9 +89,9 @@ def commit(git: worker.GitRunner, message: str, *paths: str) -> str:
     return out(git, "rev-parse", "HEAD")
 
 
-def first_batch(git: worker.GitRunner, root: Path, base: str, branch: str) -> int:
-    """Added text, binary, executable and symlinked files; a modify and a delete; a merge of a
-    side branch (not on the remote either); an empty commit. Returns how many commits."""
+def first_batch(git: worker.GitRunner, root: Path) -> None:
+    """Two commits, published as one: added text, binary, executable and symlinked files, then
+    a modify and a delete."""
     write(root, "live/a.txt", b"first line\n")
     write(root, "live/old.txt", b"to be deleted\n")
     write(root, "live/data.bin", bytes(range(256)) * 4)
@@ -100,54 +99,41 @@ def first_batch(git: worker.GitRunner, root: Path, base: str, branch: str) -> in
     out(git, "add", "--chmod=+x", "--", "live/run.sh")
     target = out(git, "hash-object", "-w", "--stdin", stdin=b"a.txt")
     out(git, "update-index", "--add", "--cacheinfo", f"120000,{target},live/link")
-    commit(
-        git,
-        "live: add text, binary, executable and symlink",
-        "live/a.txt",
-        "live/old.txt",
-        "live/data.bin",
-    )
+    commit(git, "live: add files", "live/a.txt", "live/old.txt", "live/data.bin")
 
     write(root, "live/a.txt", b"first line\nsecond line\n")
     out(git, "rm", "-q", "--", "live/old.txt")
     commit(git, "live: modify and delete", "live/a.txt")
 
-    out(git, "switch", "-q", "-c", f"{branch}-side", base)
-    write(root, "live/side.txt", b"from the side branch\n")
-    commit(git, "live: side branch", "live/side.txt")
-    out(git, "switch", "-q", branch)
-    out(git, "merge", "-q", "--no-ff", "-m", "live: merge the side branch", f"{branch}-side")
 
-    commit(git, "live: empty commit")
-    return 5
-
-
-def second_batch(git: worker.GitRunner, root: Path) -> int:
+def second_batch(git: worker.GitRunner, root: Path) -> None:
     """A modify, a mode-only change and a delete on top of the published branch."""
     write(root, "live/a.txt", b"first line\nsecond line\nthird line\n")
     out(git, "update-index", "--chmod=-x", "live/run.sh")
     out(git, "rm", "-q", "--", "live/data.bin")
     commit(git, "live: second batch", "live/a.txt")
-    return 1
-
-
-def check_remote(github: worker.GitHub, git: worker.GitRunner, sha: str) -> Any:
-    """The remote commit `sha`; fails unless its tree is the local HEAD's tree."""
-    remote = github.call("GET", f"/git/commits/{sha}")
-    local_tree = out(git, "rev-parse", "HEAD^{tree}")
-    if remote["tree"]["sha"] != local_tree:
-        raise Fail(f"remote tree {remote['tree']['sha']} != local tree {local_tree}")
-    return remote
 
 
 def publish(
     git: worker.GitRunner, github: worker.GitHub, branch: str, pushed: str, exists: bool
-) -> tuple[str, int]:
-    sha, count = worker.publish_branch(git, github, branch, pushed, exists)
+) -> str:
+    """Publish, then check: one remote commit on `pushed` with HEAD's tree, and the branch on it.
+    Returns the remote sha."""
+    sha, _ = worker.publish_branch(git, github, branch, pushed, exists)
     problem = worker.track_published(git, branch, sha)
     if problem:
         raise Fail(problem)
-    return sha, count
+
+    remote = github.call("GET", f"/git/commits/{sha}")
+    local_tree = out(git, "rev-parse", "HEAD^{tree}")
+    if remote["tree"]["sha"] != local_tree:
+        raise Fail(f"remote tree {remote['tree']['sha']} != local tree {local_tree}")
+    if [p["sha"] for p in remote["parents"]] != [pushed]:
+        raise Fail(f"the remote commit's parent is not {pushed[:12]}")
+    ref = github.call("GET", f"/git/ref/heads/{branch}")
+    if ref["object"]["sha"] != sha:
+        raise Fail(f"{branch} is not at {sha[:12]}")
+    return sha
 
 
 def run(repo: str, token: str, api_url: str, server_url: str, tmp: Path) -> None:
@@ -164,21 +150,13 @@ def run(repo: str, token: str, api_url: str, server_url: str, tmp: Path) -> None
     out(git, "switch", "-q", "-c", branch)
 
     try:
-        expected = first_batch(git, root, base, branch)
-        sha1, count = publish(git, github, branch, base, exists=False)
-        check_remote(github, git, sha1)
-        if count != expected:
-            raise Fail(f"first batch: published {count} commits, expected {expected}")
-        print(f"first batch: {count} commits, remote tree matches ({sha1[:12]})")
+        first_batch(git, root)
+        sha1 = publish(git, github, branch, base, exists=False)
+        print(f"first batch: new branch at {sha1[:12]}, remote tree matches")
 
-        expected = second_batch(git, root)
-        sha2, count = publish(git, github, branch, sha1, exists=True)
-        remote = check_remote(github, git, sha2)
-        parents = [p["sha"] for p in remote["parents"]]
-        ref = github.call("GET", f"/git/ref/heads/{branch}")
-        if count != expected or parents != [sha1] or ref["object"]["sha"] != sha2:
-            raise Fail("second batch did not fast-forward the branch")
-        print(f"second batch: fast-forwarded to {sha2[:12]}")
+        second_batch(git, root)
+        sha2 = publish(git, github, branch, sha1, exists=True)
+        print(f"second batch: fast-forwarded to {sha2[:12]}, remote tree matches")
     finally:
         try:
             github.call("DELETE", f"/git/refs/heads/{branch}")
