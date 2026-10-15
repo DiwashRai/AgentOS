@@ -24,6 +24,8 @@ export function run(status: Run["status"], over: Partial<Run> = {}): Run {
     launch_ref: null,
     launch_url: null,
     log_delivery: "live",
+    target: "server",
+    client_online: null,
     ...over,
   };
 }

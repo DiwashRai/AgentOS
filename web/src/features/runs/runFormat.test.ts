@@ -78,7 +78,7 @@ describe("marks", () => {
 
 describe("launchRef", () => {
   const at = (launch_ref: string | null, launch_url: string | null = null) =>
-    launchRef({ launch_ref, launch_url });
+    launchRef({ launch_ref, launch_url, target: "server" });
 
   it("links the launcher's URL: one Actions run, or the workflow's runs page", () => {
     expect(at("123", "https://github.com/o/r/actions/runs/1")).toEqual({
@@ -97,5 +97,14 @@ describe("launchRef", () => {
     expect(at("https://example.com/x")).toEqual({ href: null, text: "https://example.com/x" });
     expect(at(null)).toBeNull();
     expect(at("  ")).toBeNull();
+  });
+
+  it("names the client of a client run, even an all-digit name; nothing before it takes the run", () => {
+    const client = (launch_ref: string | null) =>
+      launchRef({ launch_ref, launch_url: null, target: "client" });
+    expect(client("work laptop")?.href).toBeNull();
+    expect(client("work laptop")?.text).toContain("work laptop");
+    expect(client("4242")?.text).not.toContain("pid");
+    expect(client(null)).toBeNull();
   });
 });

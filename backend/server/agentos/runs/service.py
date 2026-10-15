@@ -3,7 +3,8 @@
 Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means the run
 was elsewhere already (a no-op or a conflict, the caller decides). Terminal side effects
 (`finish`): unfinished stage_runs → `cancelled`, `finished_at` set, the ticket's `updated_at`
-bumped. The dispatcher and the reaper (loops) and the worker API call the primitives here.
+bumped. The dispatcher and the reaper (loops) and the worker API (the client poll included) call
+the primitives here.
 Every change publishes `broker.run(key, run_id)` after its transaction commits.
 
 Tokens are never stored in plaintext: `dispatch_token_hash` / `worker_token_hash` are SHA-256
@@ -21,10 +22,12 @@ from datetime import datetime, timedelta
 from pydantic import TypeAdapter
 
 from agentos.broker import Broker
+from agentos.clients.service import CLIENT_LAUNCHER, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError
 from agentos.models import (
+    DispatchTarget,
     Manifest,
     Me,
     Person,
@@ -43,9 +46,11 @@ from agentos.templates.service import current_defaults
 from agentos.tickets.board import RunFact, StageRunFact, next_stage
 from agentos.tickets.service import (
     active_run_id,
+    client_online,
     get_ticket_row,
     launch_url,
     log_delivery,
+    run_target,
     run_ticket_ref,
     ticket_pipeline,
 )
@@ -97,7 +102,22 @@ def run_row(conn: Conn, run_id: int) -> Row:
     return row
 
 
-def _summary(row: Row) -> RunSummary:
+def _summaries(conn: Conn, rows: Sequence[Row]) -> list[RunSummary]:
+    """`run_row`-shaped rows → summaries, with one query for whose clients are online."""
+    creators = [
+        r["created_by"]
+        for r in rows
+        if r["launcher"] == CLIENT_LAUNCHER and r["created_by"] is not None
+    ]
+    online = online_user_ids(conn, creators, utcnow()) if creators else set()
+    return [_summary_of(r, online) for r in rows]
+
+
+def _summary(conn: Conn, row: Row) -> RunSummary:
+    return _summaries(conn, [row])[0]
+
+
+def _summary_of(row: Row, online: set[int]) -> RunSummary:
     return RunSummary(
         id=row["id"],
         ticket_key=row["ticket_key"],
@@ -113,6 +133,8 @@ def _summary(row: Row) -> RunSummary:
         launch_ref=row["launch_ref"],
         launch_url=launch_url(row["launcher"], row["launch_ref"]),
         log_delivery=log_delivery(row["launcher"]),
+        target=run_target(row["launcher"]),
+        client_online=client_online(row["launcher"], row["created_by"], online),
     )
 
 
@@ -135,7 +157,7 @@ def _detail(conn: Conn, row: Row) -> RunDetail:
         )
         for sr in conn.execute(_SQL_STAGE_RUNS, (row["id"],)).fetchall()
     ]
-    return RunDetail(**_summary(row).model_dump(), stage_runs=stage_runs)
+    return RunDetail(**_summary(conn, row).model_dump(), stage_runs=stage_runs)
 
 
 def _latest_run_fact(conn: Conn, ticket_id: int) -> RunFact | None:
@@ -181,6 +203,7 @@ def dispatch(
     key: str,
     user: Me,
     from_stage: str | None,
+    target: DispatchTarget = "server",
 ) -> RunSummary:
     """Queue a run (SPEC §8 "Dispatch"), all in one transaction: a 422 leaves no run row.
 
@@ -191,10 +214,16 @@ def dispatch(
 
     The run covers `plan_run`'s stages (`stage_ids`): from `from_stage` on, plus the start of the
     loop block it is in (run from round 2 on), with a time budget for every round.
+
+    `target` "server" queues the run for the configured launcher (`launcher_name`); "client"
+    queues it for `user`'s own client (`launcher = 'client'`, taken by `take_client_run`), which
+    only the ticket's owner may do (403 `forbidden`).
     """
     now = to_db(utcnow())
     with db.tx() as conn:
         ticket = get_ticket_row(conn, key)
+        if target == "client" and ticket["owner_id"] != user.id:
+            raise ApiError(403, "forbidden", f"Only {key}'s owner can run it on their client")
         if ticket["state"] != "open":
             raise ApiError(409, "invalid_stage", f"{key} is {ticket['state']}; reopen it first")
         ref = run_ticket_ref(ticket, space)
@@ -207,11 +236,12 @@ def dispatch(
                 raise ApiError(422, "invalid_stage", "nothing to run; pick a stage")
         plan = plan_run(pipeline, from_stage)
         check_segment(plan.stages, ref.workspace_mode)
+        launcher = CLIENT_LAUNCHER if target == "client" else launcher_name
         try:
             cursor = conn.execute(
                 "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
                 "launcher, created_by, created_at) VALUES (?, 'queued', ?, '[]', 0, ?, ?, ?)",
-                (ticket["id"], from_stage, launcher_name, user.id, now),
+                (ticket["id"], from_stage, launcher, user.id, now),
             )
         except IntegrityError as exc:  # runs_one_active
             raise ApiError(409, "run_active", f"{key} already has an active run") from exc
@@ -233,7 +263,7 @@ def dispatch(
             [(run_id, i, stage_id) for i, stage_id in enumerate(ids[ids.index(from_stage) :])],
         )
         conn.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (now, ticket["id"]))
-        summary = _summary(run_row(conn, run_id))
+        summary = _summary(conn, run_row(conn, run_id))
     broker.run(summary.ticket_key, summary.id)
     return summary
 
@@ -246,7 +276,7 @@ def list_runs(db: Database, key: str) -> list[RunSummary]:
     with db.read() as conn:
         ticket = get_ticket_row(conn, key)
         rows = conn.execute(_SQL_TICKET_RUNS, (ticket["id"],)).fetchall()
-    return [_summary(r) for r in rows]
+        return _summaries(conn, rows)
 
 
 def get_run(db: Database, run_id: int) -> RunDetail:
@@ -321,7 +351,7 @@ def cancel(db: Database, broker: Broker, run_id: int) -> RunSummary:
                 (to_db(now), run_id),
             )
             changed = cursor.rowcount > 0
-        summary = _summary(run_row(conn, run_id))
+        summary = _summary(conn, run_row(conn, run_id))
     if changed:
         broker.run(summary.ticket_key, run_id)
     return summary
@@ -414,6 +444,33 @@ def mark_next_dispatched(
     return run_id
 
 
+def take_client_run(
+    db: Database, broker: Broker, user_id: int, dispatch_token_hash: str, launch_ref: str
+) -> int | None:
+    """Hand the user's oldest `queued` client run to their polling client: → `dispatched`, storing
+    the token hash and `launch_ref` (the client's name). From here the claim timeout applies, as
+    for a launched worker. Returns the run id, or None if none is queued."""
+    with db.tx() as conn:
+        row = conn.execute(
+            "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
+            "ORDER BY id LIMIT 1",
+            (CLIENT_LAUNCHER, user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        run_id: int = row["id"]
+        cursor = conn.execute(
+            "UPDATE runs SET status = 'dispatched', dispatch_token_hash = ?, dispatched_at = ?, "
+            "launch_ref = ? WHERE id = ? AND status = 'queued'",
+            (dispatch_token_hash, to_db(utcnow()), launch_ref, run_id),
+        )
+        if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
+            return None
+        key = run_ticket_key(conn, run_id)
+    broker.run(key, run_id)
+    return run_id
+
+
 def set_launch_ref(db: Database, broker: Broker, run_id: int, launch_ref: str) -> None:
     """Store where the launcher started the worker (the run's `launch_url` derives from it)."""
     with db.tx() as conn:
@@ -459,8 +516,11 @@ def reap(
 ) -> list[Reaped]:
     """Reaper rules 2-5 (SPEC §8), in order, in one transaction.
 
-    Runs of `exempt_launcher` skip rules 3-5 (heartbeat, budget, unacknowledged cancel): the
-    mailbox launcher's runs never send heartbeats and have their own reaper (`agentos.mailbox`).
+    Each rule keys on the run's own row: `queued` runs are never touched (a client run waits for
+    its user's client), and a dispatched or running client run is reaped exactly like a local
+    one. Runs whose `launcher` is `exempt_launcher` skip rules 3-5 (heartbeat, budget,
+    unacknowledged cancel): the reaper passes "mailbox" only while the mailbox reaper
+    (`agentos.mailbox`) watches those runs, as they never send heartbeats.
     """
     out: list[Reaped] = []
     # Rules 3-5 end with `AND (? IS NULL OR launcher <> ?)`, bound to these two values.

@@ -2,6 +2,7 @@
 // Everything renders in sentence case as written (visual refresh: no mono caps anywhere but the
 // YOU pill), so these strings are exactly what the screen shows.
 import type { Schemas } from "../api/client";
+import type { OnlineKey } from "./clients";
 import type { Attention, StatusKind } from "./status";
 
 /** The word for each status kind (marks, legends, group heads). */
@@ -30,6 +31,18 @@ export const attentionWords: Record<Attention, string> = {
   blocked: "Blocked",
   inbox: "Inbox",
   done: "Done",
+};
+
+/** A personal client's state (a machine, never a person; src/domain/clients.ts). */
+export const onlineWords: Record<OnlineKey, string> = {
+  online: "Online",
+  offline: "Offline",
+};
+
+/** Where a dispatched run goes: the server's launcher, or the owner's own client. */
+export const targetWords: Record<Schemas["DispatchRequest"]["target"], string> = {
+  server: "Server",
+  client: "My client",
 };
 
 /** Other fixed phrases from DESIGN §16. */

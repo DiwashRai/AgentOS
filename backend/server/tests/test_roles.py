@@ -45,6 +45,8 @@ MUTATING_ROLES: dict[tuple[str, str], Role] = {
     ("POST", "/api/settings/mappings/preview"): "admin",
     ("PUT", "/api/settings/runtimes"): "admin",
     ("PUT", "/api/settings/runner"): "admin",
+    ("POST", "/api/me/clients"): "writer",
+    ("DELETE", "/api/me/clients/{client_id}"): "viewer",
 }
 PUBLIC_GETS = {"/api/health", "/api/config", "/api/worker/worker.py"}
 ADMIN_GETS = {
@@ -65,6 +67,7 @@ SAMPLE = {
     "run_id": "999999",
     "user_id": "999999",
     "workflow_id": "999999",
+    "client_id": "999999",
 }
 _PARAM = re.compile(r"\{(\w+)\}")
 

@@ -1,10 +1,12 @@
 // Runs a ticket action from src/domain/actions.ts against the API. Shared by My queue rows, the
 // Compact expansion and the Ticket page header so every surface does the same thing for the same
 // button.
-//   approve / retry / dispatch = POST runs {} (the server picks next_stage) · cancel = POST cancel
-//   complete / abandon = open the inline confirm (ResolveConfirm); its confirm POSTs resolve
-//   reopen = PATCH state=open · request_changes = the Context tab (edit TASKS.md, then Approve)
-//   open = the peek (rows) — the header never offers it.
+//   approve / retry / dispatch = POST runs {target} (the server picks next_stage) · cancel = POST
+//   cancel · complete / abandon = open the inline confirm (ResolveConfirm); its confirm POSTs
+//   resolve · reopen = PATCH state=open · request_changes = the Context tab (edit TASKS.md, then
+//   Approve) · open = the peek (rows) — the header never offers it.
+// The target is the dispatch target rule's (features/actions/target.ts); only the header shows
+// the choice, so rows send its default.
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -12,15 +14,18 @@ import type { ApiError } from "../../api/client";
 import { useCancelRun, useDispatch, usePatchTicket, useResolveTicket } from "../../api/queries";
 import type { Action, ActionId } from "../../domain/actions";
 import type { Outcome } from "../../domain/outcome";
+import { useDispatchTarget } from "./useDispatchTarget";
 
 interface ActionTarget {
   key: string;
+  owner: { id: number } | null;
   latest_run: { id: number } | null;
 }
 
 export function useTicketAction(t: ActionTarget) {
   const navigate = useNavigate();
   const [, setParams] = useSearchParams();
+  const target = useDispatchTarget(t);
   const dispatch = useDispatch(t.key);
   const cancel = useCancelRun(t.key);
   const patch = usePatchTicket(t.key);
@@ -40,7 +45,7 @@ export function useTicketAction(t: ActionTarget) {
       case "approve":
       case "retry":
       case "dispatch":
-        dispatch.mutate(undefined);
+        dispatch.mutate({ target: target.value });
         return;
       case "cancel":
         if (t.latest_run) cancel.mutate(t.latest_run.id);
@@ -75,6 +80,8 @@ export function useTicketAction(t: ActionTarget) {
     /** Errors of the plain actions; a resolve error shows inside the confirm instead. */
     error,
     reset,
+    /** Where Dispatch run, Approve and Retry send the run (TargetPicker shows the choice). */
+    target,
     /** The open Complete / Abandon confirm (src/features/actions/ResolveConfirm.tsx). */
     confirm: confirming && {
       outcome: confirming,

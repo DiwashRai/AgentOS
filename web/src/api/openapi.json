@@ -289,6 +289,152 @@
         "title": "ClaimResponse",
         "type": "object"
       },
+      "ClientPollRequest": {
+        "additionalProperties": false,
+        "description": "POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run.",
+        "properties": {
+          "wait_s": {
+            "default": 25,
+            "maximum": 25.0,
+            "minimum": 0.0,
+            "title": "Wait S",
+            "type": "integer"
+          }
+        },
+        "title": "ClientPollRequest",
+        "type": "object"
+      },
+      "ClientPollResponse": {
+        "additionalProperties": false,
+        "description": "`run: null` = nothing queued for the client's user within `wait_s`.",
+        "properties": {
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientRunAssignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "run"
+        ],
+        "title": "ClientPollResponse",
+        "type": "object"
+      },
+      "ClientRunAssignment": {
+        "additionalProperties": false,
+        "description": "A run handed to a client: its worker claims it at `server_url` with `dispatch_token`\n(`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker.",
+        "properties": {
+          "dispatch_token": {
+            "title": "Dispatch Token",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "server_url": {
+            "title": "Server Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "server_url",
+          "dispatch_token"
+        ],
+        "title": "ClientRunAssignment",
+        "type": "object"
+      },
+      "ClientToken": {
+        "additionalProperties": false,
+        "description": "One of the signed-in user's client tokens (Settings > My client). The token itself is\nshown only once, when it is created. `online`: it polled within the last minute.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "last_seen_at",
+          "online"
+        ],
+        "title": "ClientToken",
+        "type": "object"
+      },
+      "ClientTokenCreate": {
+        "additionalProperties": false,
+        "description": "POST /api/me/clients. `name` is stripped (a machine, e.g. \"work laptop\").",
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ClientTokenCreate",
+        "type": "object"
+      },
+      "ClientTokenCreated": {
+        "additionalProperties": false,
+        "description": "The new token, in plaintext this once (only its digest is stored), and the server URL the\nclient polls (`worker.py --client --server <server_url>`).",
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/ClientToken"
+          },
+          "server_url": {
+            "title": "Server Url",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client",
+          "token",
+          "server_url"
+        ],
+        "title": "ClientTokenCreated",
+        "type": "object"
+      },
       "CompleteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -400,6 +546,7 @@
       },
       "DispatchRequest": {
         "additionalProperties": false,
+        "description": "`target: \"client\"` queues the run for the caller's own client: only the ticket's owner may\n(403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs\npolls; cancel works as for any queued run.",
         "properties": {
           "from_stage": {
             "anyOf": [
@@ -411,6 +558,15 @@
               }
             ],
             "title": "From Stage"
+          },
+          "target": {
+            "default": "server",
+            "enum": [
+              "server",
+              "client"
+            ],
+            "title": "Target",
+            "type": "string"
           }
         },
         "title": "DispatchRequest",
@@ -2065,7 +2221,7 @@
       },
       "NowInfo": {
         "additionalProperties": false,
-        "description": "Server-written \"Now / Next\" line. The UI renders it; it never derives it.\n\n`actor` is a non-human label only (the running stage, later \"CI\" or \"Queue\"). `person` is who\nthe ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.\ne.g. running:   actor=\"Implement\", run_id=42, text=\"Run API test suite\"\n                \u2192 \"Implement \u00b7 run #42 \u00b7 \u2026\"\n     queued:    run_id=42, text=\"queued for a runner\"\n     blocked:   run_id=42, text=\"Review failed: retry or adjust\"\n     needs_you: person=None, text=\"review plan and continue\" \u2192 \"Waiting on you \u00b7 \u2026\"\n     waiting:   person=Sam, text=\"review plan and continue\"  \u2192 \"Waiting on Sam Lee \u00b7 \u2026\"\n     inbox:     run_id=None, text=\"add context, then dispatch\"",
+        "description": "Server-written \"Now / Next\" line. The UI renders it; it never derives it.\n\n`actor` is a non-human label only (the running stage, later \"CI\" or \"Queue\"). `person` is who\nthe ticket waits on: the owner today; approver, human-stage assignee or PR reviewer later.\ne.g. running:   actor=\"Implement\", run_id=42, text=\"Run API test suite\"\n                \u2192 \"Implement \u00b7 run #42 \u00b7 \u2026\"\n     queued:    run_id=42, text=\"queued for a runner\"\n                (a client run: text=\"waiting for Sam Lee's client\")\n     blocked:   run_id=42, text=\"Review failed: retry or adjust\"\n     needs_you: person=None, text=\"review plan and continue\" \u2192 \"Waiting on you \u00b7 \u2026\"\n     waiting:   person=Sam, text=\"review plan and continue\"  \u2192 \"Waiting on Sam Lee \u00b7 \u2026\"\n     inbox:     run_id=None, text=\"add context, then dispatch\"",
         "properties": {
           "actor": {
             "anyOf": [
@@ -2608,6 +2764,17 @@
             ],
             "title": "Cancel Requested At"
           },
+          "client_online": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Online"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -2723,6 +2890,14 @@
             "title": "Status",
             "type": "string"
           },
+          "target": {
+            "enum": [
+              "server",
+              "client"
+            ],
+            "title": "Target",
+            "type": "string"
+          },
           "ticket_key": {
             "title": "Ticket Key",
             "type": "string"
@@ -2743,6 +2918,8 @@
           "launch_ref",
           "launch_url",
           "log_delivery",
+          "target",
+          "client_online",
           "stage_runs"
         ],
         "title": "RunDetail",
@@ -2762,6 +2939,17 @@
               }
             ],
             "title": "Cancel Requested At"
+          },
+          "client_online": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Online"
           },
           "created_at": {
             "format": "date-time",
@@ -2871,6 +3059,14 @@
             "title": "Status",
             "type": "string"
           },
+          "target": {
+            "enum": [
+              "server",
+              "client"
+            ],
+            "title": "Target",
+            "type": "string"
+          },
           "ticket_key": {
             "title": "Ticket Key",
             "type": "string"
@@ -2890,7 +3086,9 @@
           "error",
           "launch_ref",
           "launch_url",
-          "log_delivery"
+          "log_delivery",
+          "target",
+          "client_online"
         ],
         "title": "RunSummary",
         "type": "object"
@@ -5483,6 +5681,147 @@
         ]
       }
     },
+    "/api/me/clients": {
+      "get": {
+        "operationId": "list_clients_api_me_clients_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ClientToken"
+                  },
+                  "title": "Response List Clients Api Me Clients Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "List Clients",
+        "tags": [
+          "clients"
+        ]
+      },
+      "post": {
+        "description": "The token is in this answer only; store it on the client machine.",
+        "operationId": "create_client_api_me_clients_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientTokenCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientTokenCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Create Client",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/api/me/clients/{client_id}": {
+      "delete": {
+        "description": "Its next poll gets 401. Runs it already started end through their own tokens.",
+        "operationId": "revoke_client_api_me_clients__client_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Revoke Client",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
     "/api/people": {
       "get": {
         "description": "Everyone who can be a ticket owner or be mentioned (any signed-in user may list).",
@@ -7993,6 +8332,58 @@
           }
         },
         "summary": "Events",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/poll": {
+      "post": {
+        "description": "A client's long poll: the oldest run its user dispatched to \"My client\", waiting up to\n`wait_s` for one. 401/403 at once for a bad token. Async, and each db step runs in a thread\nonly while it runs, so idle polls hold no threadpool thread while they wait.",
+        "operationId": "poll_api_worker_poll_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientPollRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientPollResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Poll",
         "tags": [
           "worker"
         ]

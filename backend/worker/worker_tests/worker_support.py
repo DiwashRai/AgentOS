@@ -135,10 +135,14 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
         "POLL_S": 0.02,
         "READER_JOIN_S": 0.5,
         "GIT_TIMEOUT_S": 60.0,
+        "CLIENT_POLL_TIMEOUT_S": 5.0,
+        "CLIENT_BACKOFF_CAP_S": 0.05,
+        "CLIENT_REAP_S": 0.01,
     }.items():
         monkeypatch.setattr(worker, name, value)
     monkeypatch.delenv("AGENTOS_SHELL", raising=False)
     monkeypatch.delenv("AGENTOS_TOKEN", raising=False)
+    monkeypatch.delenv("AGENTOS_CLIENT_TOKEN", raising=False)
 
 
 @pytest.fixture(autouse=True)

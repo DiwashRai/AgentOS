@@ -3,9 +3,9 @@ from a ticket source (§12), the board list and detail, patch and pipeline edits
 
 The board is batch-loaded: a fixed number of queries for any number of tickets (tickets + owners,
 latest runs + creators, their stage_runs, the ever-succeeded GROUP BY, TASKS.md of running
-tickets (of the ticket, for the detail), chat counts). Ticket id lists are bound as one JSON array
-(`json_each(?)`), so the SQL stays constant. Facts go through the pure `board.derive`, then
-`board.for_viewer`.
+tickets (of the ticket, for the detail), chat counts, which client-run creators have a client
+online). Ticket id lists are bound as one JSON array (`json_each(?)`), so the SQL stays constant.
+Facts go through the pure `board.derive`, then `board.for_viewer`.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from agentos.broker import Broker
+from agentos.clients.service import CLIENT_LAUNCHER, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -25,6 +26,7 @@ from agentos.files.service import write_version
 from agentos.models import (
     BaseBranchInfo,
     BaseBranchSource,
+    DispatchTarget,
     FieldMapping,
     ImportRequest,
     ImportResult,
@@ -243,6 +245,7 @@ class _Facts:
     ever: dict[int, set[str]] = field(default_factory=lambda: defaultdict(set))
     plans: dict[int, Plan] = field(default_factory=dict)  # parsed current TASKS.md
     chat: dict[int, int] = field(default_factory=dict)
+    online: set[int] = field(default_factory=set)  # creators of latest client runs with a client on
 
 
 def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> _Facts:
@@ -281,6 +284,13 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
                 facts.plans[f["owner_id"]] = parse_plan(f["content"])
     for c in conn.execute(_SQL_CHAT_COUNTS, (ids,)).fetchall():
         facts.chat[c["ticket_id"]] = c["n"]
+    creators = [
+        run["created_by"]
+        for run in facts.latest.values()
+        if run["launcher"] == CLIENT_LAUNCHER and run["created_by"] is not None
+    ]
+    if creators:
+        facts.online = online_user_ids(conn, creators, utcnow())
     return facts
 
 
@@ -300,10 +310,12 @@ def _run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
         created_at=from_db(run["created_at"]),
         started_at=from_db_opt(run["started_at"]),
         finished_at=from_db_opt(run["finished_at"]),
+        target=run_target(run["launcher"]),
+        creator_name=run["creator_name"],
     )
 
 
-def _run_summary(run: Row, ticket_key: str) -> RunSummary:
+def _run_summary(run: Row, ticket_key: str, online: set[int]) -> RunSummary:
     return RunSummary(
         id=run["id"],
         ticket_key=ticket_key,
@@ -319,12 +331,26 @@ def _run_summary(run: Row, ticket_key: str) -> RunSummary:
         launch_ref=run["launch_ref"],
         launch_url=launch_url(run["launcher"], run["launch_ref"]),
         log_delivery=log_delivery(run["launcher"]),
+        target=run_target(run["launcher"]),
+        client_online=client_online(run["launcher"], run["created_by"], online),
     )
+
+
+def run_target(launcher: str) -> DispatchTarget:
+    return "client" if launcher == CLIENT_LAUNCHER else "server"
+
+
+def client_online(launcher: str, created_by: int | None, online: set[int]) -> bool | None:
+    """A client run: whether its creator has a client online (`online`: such user ids, from
+    `clients.service.online_user_ids`). Null for a server run."""
+    if launcher != CLIENT_LAUNCHER:
+        return None
+    return created_by in online
 
 
 def launch_url(launcher: str, launch_ref: str | None) -> str | None:
     """The launcher's page for a run: the GitHub and mailbox launchers' ref is the Actions run URL;
-    the local launcher's is a PID (no page)."""
+    the local launcher's is a PID and a client run's the client's name (no page)."""
     if (
         launcher in ("github", "mailbox")
         and launch_ref is not None
@@ -335,7 +361,8 @@ def launch_url(launcher: str, launch_ref: str | None) -> str | None:
 
 
 def log_delivery(launcher: str) -> LogDelivery:
-    """Mailbox runs replay their recorded events when the GitHub job ends; the rest stream them."""
+    """Mailbox runs replay their recorded events when the GitHub job ends; the rest (client runs
+    included) stream them."""
     return "at_end" if launcher == "mailbox" else "live"
 
 
@@ -410,7 +437,7 @@ def _summary_fields(
         "now": view.now,
         "tasks": tasks,
         "chat_count": facts.chat.get(row["id"], 0),
-        "latest_run": _run_summary(run, row["key"]) if run is not None else None,
+        "latest_run": _run_summary(run, row["key"], facts.online) if run is not None else None,
         "source": _source(row),
         "repo_name": row["repo"],
         "pr_url": row["pr_url"],

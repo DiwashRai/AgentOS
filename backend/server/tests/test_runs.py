@@ -11,10 +11,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
-from agentos.models import RunSummary, TicketDetail, TicketSummary
+from agentos.models import Me, RunSummary, TicketDetail, TicketSummary
 from tests.run_support import CSRF, RunDriver, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
+LoginFn = Callable[..., Me]
 
 
 def put_pipeline(client: TestClient, key: str, edit: Callable[[dict[str, Any]], None]) -> None:
@@ -216,6 +217,57 @@ def test_shell_stage_without_command_is_rejected(
     r = runs.dispatch(t.key, "lint")
     assert error(r) == (422, "invalid_stage")
     assert "no command" in r.json()["error"]["message"]
+
+
+# ------------------------------------------------------------------ dispatch target
+
+
+def test_the_owner_can_dispatch_to_their_client(
+    client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
+) -> None:
+    ann = login("ann")
+    t = create_ticket(owner_id=ann.id)
+    run = runs.queue(t.key, target="client")
+    assert (run.target, run.client_online, run.launch_url) == ("client", False, None)
+    assert runs.db_run(run.id)["launcher"] == "client"
+    latest = TicketDetail.model_validate(client.get(f"/api/tickets/{t.key}").json()).latest_run
+    assert latest is not None
+    assert (latest.target, latest.client_online) == ("client", False)
+
+
+def test_only_the_owner_can_dispatch_to_a_client(
+    client: TestClient,
+    login: LoginFn,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
+) -> None:
+    ann = login("ann")
+    owned = create_ticket(owner_id=ann.id)
+    unowned = create_ticket()
+    assert error(runs.dispatch(unowned.key, target="client")) == (403, "forbidden")
+    login("bob")
+    assert error(runs.dispatch(owned.key, target="client")) == (403, "forbidden")
+    assert run_count(ctx) == 0
+
+
+@pytest.mark.parametrize("target", [None, "server"])
+def test_the_server_target_uses_the_configured_launcher(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, target: str | None
+) -> None:
+    run = runs.queue(create_ticket().key, target=target)
+    assert (run.target, run.client_online) == ("server", None)
+    assert runs.db_run(run.id)["launcher"] == "local"
+
+
+def test_a_waiting_client_run_blocks_another_dispatch(
+    client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
+) -> None:
+    ann = login("ann")
+    t = create_ticket(owner_id=ann.id)
+    runs.queue(t.key, target="client")
+    assert error(runs.dispatch(t.key)) == (409, "run_active")
+    assert error(runs.dispatch(t.key, target="client")) == (409, "run_active")
 
 
 # ------------------------------------------------------------------ reads

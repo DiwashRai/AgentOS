@@ -2,6 +2,7 @@
 // display (`now`, `rail[].gate`, `latest_run`, `repo_name`, `owner`); they never derive board
 // state. Selection beyond `useBoard().groups` (the team rack) is over `attention` + ownership only.
 import type { Schemas } from "../../api/client";
+import { clientWait, type OnlineKey } from "../../domain/clients";
 import type { Counts } from "../../domain/counts";
 import { firstName } from "../../domain/format";
 import type { Groups } from "../../domain/groups";
@@ -221,14 +222,16 @@ export function stateLine(t: Pick<Ticket, "attention" | "now" | "latest_run" | "
 // ------------------------------------------------------------------ the rack
 
 export interface RackGroup<T> {
-  /** Stable id: `mine-queued` or `repo:<name>`. */
+  /** Stable id: `mine-queued`, `mine-client:<wait>` or `repo:<name>`. */
   id: string;
-  /** Mono caps head: the repo name, or "Yours, waiting for a runner". */
+  /** The head: the repo name, "Yours, waiting for a runner", or "Yours, waiting for Sam's client". */
   name: string;
+  /** A client group's client state, shown beside the head. */
+  online?: OnlineKey | undefined;
   items: T[];
 }
 
-type RackTicket = Pick<Ticket, "key" | "attention" | "owner" | "repo_name">;
+type RackTicket = Pick<Ticket, "key" | "attention" | "owner" | "repo_name" | "now" | "latest_run">;
 
 export const NO_REPO = "No repo";
 export const MINE_QUEUED = "Yours, waiting for a runner";
@@ -237,18 +240,43 @@ const runningFirst = (a: RackTicket, b: RackTicket) =>
   Number(a.attention === "queued") - Number(b.attention === "queued") || a.key.localeCompare(b.key);
 
 /**
- * The rack's groups: my queued runs first ("Yours, waiting for a runner", from `atWork`), then
- * the team's other running/queued tickets (not mine) grouped by `repo_name` (alphabetical, no
- * repo last), running before queued within a repo.
+ * My queued runs (from `atWork`): the ones waiting for the server's runner under MINE_QUEUED, then
+ * the ones waiting for a client, one group per wait (the server's "waiting for Sam's client" and
+ * whether that client is online).
+ */
+function mineQueuedGroups<T extends RackTicket>(atWork: readonly T[]): RackGroup<T>[] {
+  const runner: T[] = [];
+  const clients = new Map<string, RackGroup<T>>();
+  for (const t of atWork) {
+    if (statusKind(t) !== "queued") continue;
+    const wait = clientWait(t);
+    if (!wait) {
+      runner.push(t);
+      continue;
+    }
+    // One creator's client runs share the wait and the online state.
+    const id = `mine-client:${wait.text}`;
+    const group = clients.get(id);
+    if (group) group.items.push(t);
+    else clients.set(id, { id, name: `Yours, ${wait.text}`, online: wait.online, items: [t] });
+  }
+
+  const out: RackGroup<T>[] = [];
+  if (runner.length > 0) out.push({ id: "mine-queued", name: MINE_QUEUED, items: runner });
+  return [...out, ...clients.values()];
+}
+
+/**
+ * The rack's groups: my queued runs first (mineQueuedGroups), then the team's other running/queued
+ * tickets (not mine) grouped by `repo_name` (alphabetical, no repo last), running before queued
+ * within a repo.
  */
 export function rackGroups<T extends RackTicket>(
   tickets: readonly T[],
   atWork: readonly T[],
   me: MeRef,
 ): RackGroup<T>[] {
-  const out: RackGroup<T>[] = [];
-  const mineQueued = atWork.filter((t) => statusKind(t) === "queued");
-  if (mineQueued.length > 0) out.push({ id: "mine-queued", name: MINE_QUEUED, items: mineQueued });
+  const out: RackGroup<T>[] = mineQueuedGroups(atWork);
 
   const byRepo = new Map<string, T[]>();
   for (const t of tickets) {

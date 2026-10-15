@@ -18,7 +18,15 @@ router = APIRouter(prefix="/api", tags=["runs"], responses=ERROR_RESPONSES)
 @router.post("/tickets/{key}/runs", status_code=201)
 def dispatch(key: str, body: DispatchRequest, user: Writer, ctx: Ctx) -> RunSummary:
     return service.dispatch(
-        ctx.db, ctx.broker, ctx.runtimes, ctx.space, ctx.launcher.name, key, user, body.from_stage
+        ctx.db,
+        ctx.broker,
+        ctx.runtimes,
+        ctx.space,
+        ctx.launcher.name,
+        key,
+        user,
+        body.from_stage,
+        body.target,
     )
 
 
