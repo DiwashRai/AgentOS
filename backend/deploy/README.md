@@ -157,7 +157,8 @@ to the template.
 **Repo credentials = the job's `GITHUB_TOKEN`.** The workflow grants it `contents: write` and
 `pull-requests: write` on this repo only, and it expires with the job. The worker step gets it as
 `GH_TOKEN` (for `gh`: the open-pr stage, the PR lookup), and git uses it through gh's credential
-helper, set for that step only via `GIT_CONFIG_*` (nothing is written to `~/.gitconfig`). Caveat:
+helper to clone and fetch, set for that step only via `GIT_CONFIG_*` (nothing is written to
+`~/.gitconfig`). Commits are published through the API, not `git push` (below). Caveat:
 PRs opened with `GITHUB_TOKEN` don't trigger other workflows (e.g. CI). When that matters, use a
 GitHub App token or a fine-grained token (one repo; contents + pull requests) from a repo secret
 instead. Registering the runner with `--ephemeral` gives every run a fresh runner.
@@ -167,6 +168,40 @@ token is single-use: the worker's claim binds its own token. The job masks the t
 anything else and never interpolates inputs into its scripts. Its `timeout-minutes: 720` is
 only a backstop. The real limit is the run's time budget (the sum of its stages' `timeout_s`
 plus 15 min). Past it, the reaper fails the run and the worker stops on its next call.
+
+### Publication on Actions
+
+Some organisations let CI write to GitHub only through the REST API (`git push` from a runner is
+refused). So when the worker runs on GitHub Actions (`GITHUB_ACTIONS=true`) with `GH_TOKEN` set,
+it publishes each stage's commits through the Git Data API (blobs, trees, commits, then one ref
+write with `force: false`) instead of `git push`. It talks to `GITHUB_API_URL` (right on GHES too)
+and takes owner/repo from the ticket's repo URL, never from `GITHUB_REPOSITORY`. The local
+launcher, a client and a plain `worker.py` still use `git push`. There is no setting for this.
+
+- **What a workflow must give the worker:** run on GitHub Actions, set `GH_TOKEN` for the worker
+  step and grant `contents: write`. Both shipped workflows (`agentos-worker.yml`,
+  `agentos-mailbox.yml`) do; a custom workflow needs nothing else.
+- **Setup fails fast:** before the clone, the worker posts an empty blob to the ticket's repo. A
+  401/403/404 fails setup with "the job's token only writes to the repo the workflow runs in".
+- **One repo per token:** `GITHUB_TOKEN` writes only to the repo the workflow runs in, so tickets
+  on other repos fail at setup. Multi-repo setups must give the worker step a broader token as
+  `GH_TOKEN` themselves (e.g. a GitHub App installation token); AgentOS doesn't mint one.
+- **What it refuses:** an agent's amend or rebase of already-published commits ("push rejected"),
+  a commit message that isn't UTF-8, and commits touching `.github/workflows/` (GitHub refuses
+  those for `GITHUB_TOKEN`: "push failed: ..."). Signatures are dropped; commits aren't
+  "Verified". Each commit's tree is checked against the local one before the ref moves.
+- **Rate limits:** text goes inline in the tree and binary blobs are deduplicated, so a stage
+  costs a handful of calls. Rate-limit answers are waited out within a bounded budget, then the
+  stage fails with GitHub's message.
+- **Mailbox runs** publish their code branch the same way; their context and events still go
+  through the outbox to Artifactory.
+
+**Checking against the real API** (by hand, never in CI): from `backend/`, with `GH_TOKEN` set to
+a token that can write the repo's contents, run `uv run python worker/live_publish.py
+<owner/repo>` (use a scratch repo). It clones the repo, publishes added, modified, deleted,
+executable, symlinked and binary files, a merge and an empty commit to a throwaway branch, checks
+the remote tree and that a second publish fast-forwards, prints PASS or FAIL, and deletes the
+branch. `GITHUB_API_URL` / `GITHUB_SERVER_URL` default to github.com.
 
 **WSL2 runner and `AGENTOS_WORKER_URL`.** The container publishes host port 8080 on Windows.
 Inside WSL2, `127.0.0.1` means the WSL VM, not Windows, unless WSL uses mirrored networking:
@@ -188,7 +223,8 @@ server (`AGENTOS_WORKER_URL` would be unreachable). Nothing dials back: for each
 uploads `runs/<run>/manifest.json` (the run, with every bundle file) and `runs/<run>/worker.py` to
 an Artifactory generic folder and dispatches `github/agentos-mailbox.yml`. Its three jobs:
 **fetch** (Artifactory secret) downloads and checksums both files; **work** (no Artifactory
-secret) runs the worker, which runs the agent, pushes the branch and records its results to
+secret) runs the worker, which runs the agent, publishes the branch (through the GitHub API, see
+[Publication on Actions](#publication-on-actions)) and records its results to
 `outbox.jsonl`; **publish** (Artifactory secret) uploads `runs/<run>/outbox.jsonl`. The server
 polls the Actions run, downloads the outbox, replays it through the same checks as HTTP mode, and
 deletes the run's folder. `<run>` is `<run id>-<16 hex>`, unique per run.

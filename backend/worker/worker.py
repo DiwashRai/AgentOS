@@ -8,6 +8,12 @@ emit the manifest's warnings -> for each stage execution: run it, sync context f
 (repo mode) commit, pre-push guard, push -> (repo mode) look up the branch's PR with `gh` -> flush
 events -> complete (with `pr_url` if found).
 
+Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
+each stage's commits go through the Git Data API of the ticket's repo at GITHUB_API_URL (see
+publish_branch): blobs, a tree per commit (checked against the local tree), the commits with
+their parents mapped, then one ref write with `force: false`. Setup first checks the token can
+write there. A GitHub failure fails the stage; it is never a lost run or an unreachable server.
+
 Every output line goes out as a log event. An agent stage's output is also printed on stderr as
 it arrives, as readable `[stage id] ...` lines (see Echo), so a job console or the launcher's log
 file shows the run live; AGENTOS_ECHO=0 turns that off.

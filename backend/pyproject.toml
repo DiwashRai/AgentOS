@@ -45,7 +45,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = ["server", "worker"]
 explicit_package_bases = true
-files = ["server/agentos", "server/tests", "worker/worker.py", "worker/worker_tests"]
+files = ["server/agentos", "server/tests", "worker/worker.py", "worker/live_publish.py", "worker/worker_tests"]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
