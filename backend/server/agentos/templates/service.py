@@ -1,7 +1,7 @@
 """The default template (SPEC §4, §15): append-only versions, current = the max version.
 
-Its scaffold is rendered into a ticket at creation (`tickets.template_id` records the exact
-version) and never linked afterwards, so a template edit only affects tickets created after it.
+Its scaffold is rendered into a ticket at creation and never linked afterwards, so a template
+edit only affects tickets created after it.
 The exception is `defaults` (the Space's default runtime/model/effort): it is read from the
 current version whenever a run's stages are resolved, so a change reaches every ticket whose
 stages leave them null.
@@ -14,7 +14,6 @@ seed; a template save copies it over unchanged.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
 from pydantic import TypeAdapter
 
@@ -28,12 +27,6 @@ from agentos.space_store import read_area, runtime_entries_of
 
 DEFAULT_NAME = "default"
 _SCAFFOLD = TypeAdapter(list[FileEntry])
-
-
-@dataclass(frozen=True, slots=True)
-class TemplateRow:
-    id: int
-    template: Template
 
 
 def _scaffold_json(entries: list[FileEntry]) -> str:
@@ -55,22 +48,19 @@ def seed_default(db: Database) -> None:
         )
 
 
-def current(conn: Conn) -> TemplateRow:
+def current(conn: Conn) -> Template:
     """The current default template. Seeded at startup, so a missing row is a server bug."""
     row = conn.execute(
-        "SELECT id, version, pipeline, scaffold, defaults FROM templates WHERE name = ? "
+        "SELECT version, scaffold, defaults FROM templates WHERE name = ? "
         "ORDER BY version DESC LIMIT 1",
         (DEFAULT_NAME,),
     ).fetchone()
     if row is None:
         raise RuntimeError("the default template is missing (seed_default did not run)")
-    return TemplateRow(
-        id=row["id"],
-        template=Template(
-            scaffold=_SCAFFOLD.validate_json(row["scaffold"]),
-            defaults=TemplateDefaults.model_validate_json(row["defaults"]),
-            version=row["version"],
-        ),
+    return Template(
+        scaffold=_SCAFFOLD.validate_json(row["scaffold"]),
+        defaults=TemplateDefaults.model_validate_json(row["defaults"]),
+        version=row["version"],
     )
 
 
@@ -100,7 +90,7 @@ def current_defaults(conn: Conn) -> TemplateDefaults:
 
 def get_template(db: Database) -> Template:
     with db.read() as conn:
-        return current(conn).template
+        return current(conn)
 
 
 def get_defaults(db: Database) -> TemplateDefaults:
@@ -121,7 +111,7 @@ def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
             raise ApiError(
                 422, "validation_error", f"defaults.runtime: unknown runtime {runtime!r}"
             )
-        template = current(conn).template
+        template = current(conn)
         if body.base_version != template.version:
             raise ApiError(409, "stale_version", "The template was changed by someone else")
         defaults = template.defaults if body.defaults is None else body.defaults
@@ -138,7 +128,7 @@ def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
                 actor.id,
             ),
         )
-        return current(conn).template
+        return current(conn)
 
 
 def _runtime_names(conn: Conn) -> frozenset[str]:

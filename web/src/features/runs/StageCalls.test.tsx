@@ -9,7 +9,7 @@ const PROMPT = "Review the change.\nSECRET-LOOKING-PROMPT-BODY";
 const MANIFEST: Manifest = {
   protocol: 1,
   run_id: 7,
-  ticket: { key: "AOS-1", slug: "aos-1", title: "A ticket" },
+  ticket: { key: "AOS-1", title: "A ticket" },
   workspace: { mode: "repo", repo_url: null, branch: null, base_branch: null },
   limits: { max_file_bytes: 1, max_line_bytes: 1 },
   sync_dirs: [],

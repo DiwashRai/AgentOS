@@ -1814,10 +1814,6 @@
             "title": "Key",
             "type": "string"
           },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -1825,7 +1821,6 @@
         },
         "required": [
           "key",
-          "slug",
           "title"
         ],
         "title": "ManifestTicket",
@@ -4257,10 +4252,6 @@
             "title": "Skill Name",
             "type": "string"
           },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
           "source": {
             "anyOf": [
               {
@@ -4352,7 +4343,6 @@
           "dispatch_block",
           "updated_at",
           "description",
-          "slug",
           "skill_name",
           "workspace_mode",
           "repo_url",

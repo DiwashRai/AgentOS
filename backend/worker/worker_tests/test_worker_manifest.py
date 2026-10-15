@@ -29,7 +29,7 @@ def test_accepts_the_shared_contract_fixture() -> None:
     assert m.branch == "agent/AOS-42"
     assert [f.mode for f in m.files].count("block") == 2
     assert [f.path for f in m.files if not f.sync] == [".claude/skills/review-checklist/SKILL.md"]
-    assert m.sync_dirs == (".claude/skills/context-aos-42-fix-login-bug",)
+    assert m.sync_dirs == (".claude/skills/context-aos-42",)
     assert [s.kind for s in m.stages] == ["agent", "shell", "agent"]
     implement, lint, review = m.stages
     assert implement.argv is not None
@@ -300,7 +300,7 @@ def test_rejects_non_objects(raw: object) -> None:
     "path",
     [
         "AGENTS.md",
-        ".claude/skills/context-aos-42-fix-login-bug/TASKS.md",
+        ".claude/skills/context-aos-42/TASKS.md",
         "out/report v2.md",
         "a/b@c+d-e_f.txt",
         ".hidden",

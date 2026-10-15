@@ -44,7 +44,7 @@ flowchart LR
   - `runs.manifest` stores exactly what was sent at claim, so a run can be inspected and a claim retry is idempotent.
   - `tickets.pr_url` holds the last PR a worker reported.
 - **Some tables are append-only.**
-  - `templates`: the current template is `max(version)` per name, and `tickets.template_id` pins the version a ticket was copied from. This keeps provenance for "update open tickets from template". Where: `templates/service.py`.
+  - `templates`: the current template is `max(version)` per name. A ticket's scaffold is rendered from the current version at creation and never linked afterwards, so a template edit only affects new tickets. Where: `templates/service.py`.
   - `file_versions`: `content = NULL` means deleted, and a write that changes nothing appends nothing. Where: `files/service.py` `write_version()`.
   - `run_events` is keyed by `(run_id, seq)` and inserted `ON CONFLICT DO NOTHING`, so worker retries are safe.
 - **Enum columns have no CHECK constraints.** The `Literal`s in `models.py` are the only definition. SQLite can't ALTER a CHECK, so adding a status, source or type would otherwise mean rebuilding a table.

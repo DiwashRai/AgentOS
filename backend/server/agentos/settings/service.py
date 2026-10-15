@@ -318,7 +318,7 @@ def _check_runtimes_unused(conn: Conn, removed: list[str]) -> None:
     """409 `in_use` naming each removed runtime the template's `defaults` or a workflow's agent
     stage still uses. Tickets' own pipelines aren't checked: a stage pinned to a removed runtime
     fails its dispatch (422 `invalid_stage`) until the ticket's pipeline is edited."""
-    template = current_template(conn).template
+    template = current_template(conn)
     pinned = workflows.runtime_uses(conn, removed)
     problems: list[str] = []
     for name in removed:

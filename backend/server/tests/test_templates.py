@@ -99,7 +99,7 @@ def test_put_checks_the_scaffold_renders(authed: TestClient) -> None:
 
 
 def test_new_tickets_render_the_current_scaffold(
-    authed: TestClient, ctx: AppContext, create_ticket: CreateTicket
+    authed: TestClient, create_ticket: CreateTicket
 ) -> None:
     before = create_ticket("Before")
     current = get_template(authed)
@@ -114,8 +114,3 @@ def test_new_tickets_render_the_current_scaffold(
     assert [f["path"] for f in files] == ["NOTES.md"]
     content = authed.get(f"/api/tickets/{after.key}/files/NOTES.md").json()["content"]
     assert content == f"Notes for {after.key}"
-    with ctx.db.read() as conn:
-        rows = conn.execute(
-            "SELECT t.key, tpl.version FROM tickets t JOIN templates tpl ON tpl.id = t.template_id"
-        ).fetchall()
-    assert {r["key"]: r["version"] for r in rows} == {before.key: 1, after.key: 2}

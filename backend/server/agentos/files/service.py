@@ -178,12 +178,10 @@ def _check_fits(conn: Conn, ticket_id: int, path: str, size: int) -> None:
 
 
 def _touch_ticket(conn: Conn, ticket_id: int, path: str, content: str | None, stamp: str) -> None:
-    t = conn.execute(
-        "SELECT key, slug, workspace_mode FROM tickets WHERE id = ?", (ticket_id,)
-    ).fetchone()
+    t = conn.execute("SELECT key, repo FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     if t is None:
         raise ApiError(404, "ticket_not_found", f"No ticket with id {ticket_id}")
-    tasks_md = names(t["key"], t["slug"], t["workspace_mode"]).tasks_md
+    tasks_md = names(t["key"], "repo" if t["repo"] is not None else "none").tasks_md
     if path_key(path) != path_key(tasks_md):
         conn.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (stamp, ticket_id))
         return

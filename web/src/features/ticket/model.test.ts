@@ -64,7 +64,6 @@ function detail(over: Partial<Detail> = {}): Detail {
     plan: null,
     repo_url: null,
     skill_name: "aos-1",
-    slug: "a-ticket",
     workspace_mode: "repo",
     ...over,
   };

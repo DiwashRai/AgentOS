@@ -24,7 +24,6 @@ D = ".claude/skills/context-aos-42"
 
 TICKET = TicketRef(
     key="AOS-42",
-    slug="",
     title="Fix login bug: session expires early",
     description="Sessions expire after 5 minutes instead of 14 days.",
     type="bug",

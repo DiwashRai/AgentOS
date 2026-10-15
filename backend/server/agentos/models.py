@@ -505,7 +505,6 @@ class TicketWorkflow(ApiModel):
 
 class TicketDetail(TicketSummary):
     description: str
-    slug: str
     skill_name: str
     # `repo_name` set → "repo". `repo_url` is resolved from the catalog (null if the repo left
     # it); `base_branch` is the resolved one: the ticket's own, else (unless a mapping left it
@@ -1099,7 +1098,6 @@ class ChatPost(ApiModel):
 
 class ManifestTicket(ApiModel):
     key: str
-    slug: str
     title: str
 
 

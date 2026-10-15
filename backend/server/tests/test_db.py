@@ -48,8 +48,8 @@ def tables(conn: Conn) -> set[str]:
 
 def add_ticket(conn: Conn, key: str = "AOS-1") -> int:
     cursor = conn.execute(
-        "INSERT INTO tickets(key, slug, title, workspace_mode, pipeline, created_at, updated_at)"
-        " VALUES (?, 'slug', 'Title', 'none', '{}', ?, ?)",
+        "INSERT INTO tickets(key, title, pipeline, created_at, updated_at)"
+        " VALUES (?, 'Title', '{}', ?, ?)",
         (key, NOW, NOW),
     )
     assert cursor.lastrowid is not None

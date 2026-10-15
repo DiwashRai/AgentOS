@@ -1450,8 +1450,6 @@ export interface components {
         ManifestTicket: {
             /** Key */
             key: string;
-            /** Slug */
-            slug: string;
             /** Title */
             title: string;
         };
@@ -2322,8 +2320,6 @@ export interface components {
             resolution: components["schemas"]["Resolution"] | null;
             /** Skill Name */
             skill_name: string;
-            /** Slug */
-            slug: string;
             source: components["schemas"]["SourceLink"] | null;
             /**
              * State

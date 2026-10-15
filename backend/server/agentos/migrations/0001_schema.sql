@@ -37,11 +37,9 @@ CREATE TABLE templates(id INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEG
 -- `pr_url`: the PR for the ticket's branch, as last reported by a worker.
 -- `workflow_*`: the workflow whose pipeline the ticket copied (at creation or a switch);
 -- `workflow_id` goes NULL when the workflow is deleted, the name and version stay.
-CREATE TABLE tickets(id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, slug TEXT NOT NULL, title TEXT NOT NULL,
+CREATE TABLE tickets(id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '', type TEXT NOT NULL DEFAULT 'task', priority TEXT NOT NULL DEFAULT 'normal',
-  labels TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL DEFAULT 'open',
-  workspace_mode TEXT NOT NULL, repo_url TEXT, base_branch TEXT,
-  template_id INTEGER REFERENCES templates,                -- the exact template version it was copied from
+  labels TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL DEFAULT 'open', base_branch TEXT,
   pipeline TEXT NOT NULL, pipeline_version INTEGER NOT NULL DEFAULT 1, owner_id INTEGER REFERENCES users,
   source TEXT, external_id TEXT, source_url TEXT,
   tasks_done INTEGER, tasks_total INTEGER,                 -- from parse_plan(TASKS.md) on every version write

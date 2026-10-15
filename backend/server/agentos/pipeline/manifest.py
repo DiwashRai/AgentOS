@@ -299,7 +299,7 @@ def build_manifest(
     `bundle` is the ticket's current (non-deleted) files → `sync=True`. In no-repo mode the
     workspace's `repo_url`/`base_branch`/`branch` are null.
     """
-    n = names(ticket.key, ticket.slug, ticket.workspace_mode)
+    n = names(ticket.key, ticket.workspace_mode)
     files = [ManifestFile(path=f.path, content=f.content, mode=f.mode, sync=True) for f in bundle]
     repo = ticket.workspace_mode == "repo"
     stages = render_stages(
@@ -313,7 +313,7 @@ def build_manifest(
     )
     return Manifest(
         run_id=run_id,
-        ticket=ManifestTicket(key=ticket.key, slug=ticket.slug, title=ticket.title),
+        ticket=ManifestTicket(key=ticket.key, title=ticket.title),
         workspace=ManifestWorkspace(
             mode=ticket.workspace_mode,
             repo_url=ticket.repo_url if repo else None,

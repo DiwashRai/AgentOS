@@ -37,7 +37,6 @@ RUNTIMES = RuntimesConfig(
 )
 TICKET = TicketRef(
     key="AOS-42",
-    slug="fix-login-bug",
     title="Fix login bug: session expires early",
     description="Sessions expire after 5 minutes instead of 14 days.",
     type="bug",
@@ -46,7 +45,7 @@ TICKET = TicketRef(
     base_branch="main",
     workspace_mode="repo",
 )
-D = ".claude/skills/context-aos-42-fix-login-bug"
+D = ".claude/skills/context-aos-42"
 NONE = TemplateDefaults()  # no Space defaults: the config's default_runtime, no model
 
 
@@ -209,7 +208,6 @@ def test_build_manifest_default_ticket() -> None:
     assert m.run_id == 42
     assert m.ticket.model_dump() == {
         "key": "AOS-42",
-        "slug": "fix-login-bug",
         "title": TICKET.title,
     }
     assert m.workspace.model_dump() == {

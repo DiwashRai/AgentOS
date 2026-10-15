@@ -1,4 +1,4 @@
-"""Tickets (SPEC §4, §10, §13): create (key, slug, template copy, scaffold = bundle v1), import
+"""Tickets (SPEC §4, §10, §13): create (key, workflow copy, scaffold = bundle v1), import
 from a ticket source (§12), the board list and detail, patch and pipeline edits.
 
 The board is batch-loaded: a fixed number of queries for any number of tickets (tickets + owners,
@@ -136,8 +136,7 @@ def get_ticket_row(conn: Conn, key: str) -> Row:
 
 
 def workspace_mode(row: Row) -> WorkspaceMode:
-    """Derived from `repo` alone (SPEC §17): the stored `workspace_mode` column only mirrors it.
-    A legacy ticket whose URL matched no catalog entry has no `repo`, so it acts as no-repo."""
+    """Derived from `repo` alone (SPEC §17): a ticket with no `repo` is a no-repo ticket."""
     return "repo" if row["repo"] is not None else "none"
 
 
@@ -153,7 +152,6 @@ def ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
     repo = resolve_workspace(row, space)
     return TicketRef(
         key=row["key"],
-        slug=row["slug"],
         title=row["title"],
         description=row["description"],
         type=row["type"],
@@ -265,7 +263,7 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
     # TASKS.md content is only read by the "now" line of a running ticket (its next task), and by
     # the detail.
     wanted = [
-        [r["id"], names(r["key"], r["slug"], workspace_mode(r)).tasks_md]
+        [r["id"], names(r["key"], workspace_mode(r)).tasks_md]
         for r in rows
         if with_plan or (r["id"] in facts.latest and facts.latest[r["id"]]["status"] == "running")
     ]
@@ -421,11 +419,10 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
     fields, next_stage, active = _summary_fields(row, facts, space, viewer_id)
     plan = facts.plans.get(row["id"])
     repo = resolve_workspace(row, space)
-    n = names(row["key"], row["slug"], repo.mode)
+    n = names(row["key"], repo.mode)
     return TicketDetail(
         **fields,
         description=row["description"],
-        slug=row["slug"],
         skill_name=n.skill_name,
         workspace_mode=repo.mode,
         repo_url=repo.url,
@@ -482,8 +479,8 @@ def _base_branch_info(row: Row, repo: ResolvedRepo) -> BaseBranchInfo | None:
 
 
 def create_ticket(db: Database, space: SpaceConfig, user: Me, body: TicketCreate) -> TicketDetail:
-    """Allocate the key, copy the current template's pipeline, render its scaffold and write it as
-    bundle v1, all in one transaction (a render error leaves no ticket and no used key).
+    """Allocate the key, copy the workflow's pipeline, render the current template's scaffold and
+    write it as bundle v1, all in one transaction (a render error leaves no ticket and no used key).
 
     `repo` omitted → the Space's `default_repo`; null → no-repo mode; not in the catalog → 422.
     `base_branch` given → the ticket's own (`manual`, set by the creator); null → `default`: the
@@ -550,7 +547,6 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     render error leaves nothing behind). A no-repo ticket gets `requires_repo` stages disabled."""
     resolved = space.resolve(new.repo, new.base_branch, source=new.base_branch_source)
     now = utcnow()
-    slug = ""  # the skill dir is named by the key alone; older tickets keep their title slug
     workflow = workflows.for_ticket(conn, new.workflow_id)
     template = templates.current(conn)
     pipeline = workflow.pipeline
@@ -559,7 +555,6 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     source = new.source
     ref = TicketRef(
         key=new.key,
-        slug=slug,
         title=new.title,
         description=new.description,
         type=new.type,
@@ -568,31 +563,28 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
         base_branch=resolved.base_branch,
         workspace_mode=resolved.mode,
     )
-    scaffold = render_scaffold(template.template.scaffold, ref)
+    scaffold = render_scaffold(template.scaffold, ref)
     cursor = conn.execute(
-        "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
-        "workspace_mode, repo, base_branch, base_branch_source, base_branch_set_by, "
-        "base_branch_source_value, base_branch_reason, template_id, "
+        "INSERT INTO tickets(key, title, description, type, priority, labels, state, "
+        "repo, base_branch, base_branch_source, base_branch_set_by, "
+        "base_branch_source_value, base_branch_reason, "
         "pipeline, pipeline_version, workflow_id, workflow_name, workflow_version, "
         "owner_id, source, external_id, source_url, created_by, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, "
+        "VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?, ?)",
         (
             new.key,
-            slug,
             new.title,
             new.description,
             new.type,
             new.priority,
             json.dumps(new.labels),
-            resolved.mode,
             new.repo,
             new.base_branch,
             new.base_branch_source,
             new.base_branch_set_by,
             new.base_branch_source_value,
             new.base_branch_reason,
-            template.id,
             pipeline.model_dump_json(),
             workflow.id,
             workflow.name,
@@ -847,8 +839,7 @@ def patch_ticket(
     db: Database, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
     """Apply the set fields. `state`, `repo` and `base_branch` changes → 409 `run_active` while a
-    run is active. The slug never changes (it names the skill directory). A `state` change clears
-    the resolution (`resolve_ticket` sets it).
+    run is active. A `state` change clears the resolution (`resolve_ticket` sets it).
 
     `repo` must be a catalog name (422 otherwise); null switches to no-repo mode, which clears
     `base_branch` and disables the pipeline's `requires_repo` stages (as creation does). Another
@@ -917,14 +908,13 @@ def patch_ticket(
         conn.execute(
             "UPDATE tickets SET title = :title, description = :description, type = :type, "
             "priority = :priority, labels = :labels, state = :state, repo = :repo, "
-            "workspace_mode = :workspace_mode, base_branch = :base_branch, "
+            "base_branch = :base_branch, "
             "base_branch_source = :base_branch_source, base_branch_set_by = :base_branch_set_by, "
             "base_branch_reason = :base_branch_reason, owner_id = :owner_id, "
             "updated_at = :updated_at WHERE id = :id",
             {
                 **values,
                 **base,
-                "workspace_mode": "repo" if values["repo"] is not None else "none",
                 "updated_at": now,
                 "id": row["id"],
             },

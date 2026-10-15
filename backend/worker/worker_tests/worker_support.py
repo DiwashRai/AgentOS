@@ -314,7 +314,7 @@ def make_manifest(
     return {
         "protocol": 1,
         "run_id": run_id,
-        "ticket": {"key": KEY, "slug": "fix-login-bug", "title": "Fix login bug"},
+        "ticket": {"key": KEY, "title": "Fix login bug"},
         "workspace": {
             "mode": "repo" if repo else "none",
             "repo_url": repo_url,

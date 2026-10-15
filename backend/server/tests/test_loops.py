@@ -63,7 +63,6 @@ RUNTIMES = RuntimesConfig(
 )
 TICKET = TicketRef(
     key="AOS-1",
-    slug="",
     title="T",
     description="",
     type="task",
