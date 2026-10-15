@@ -1371,14 +1371,3 @@ class CompleteRequest(ApiModel):
     # The PR for the run's `branch`, as last reported by a worker (repo mode, when one exists).
     # The server stores it only if it passes `validate_pr_url`; an invalid one is ignored.
     pr_url: str | None = Field(default=None, max_length=500)
-
-
-# ------------------------------------------------------------------ live updates (SSE)
-
-
-class StreamEvent(ApiModel):
-    """Payload of each `data:` line on GET /api/stream. Notifications only: refetch on receipt."""
-
-    type: Literal["ticket", "chat", "run"]
-    key: str
-    id: int | None = None

@@ -3753,43 +3753,6 @@
         "title": "StageStartedEvent",
         "type": "object"
       },
-      "StreamEvent": {
-        "additionalProperties": false,
-        "description": "Payload of each `data:` line on GET /api/stream. Notifications only: refetch on receipt.",
-        "properties": {
-          "id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Id"
-          },
-          "key": {
-            "title": "Key",
-            "type": "string"
-          },
-          "type": {
-            "enum": [
-              "ticket",
-              "chat",
-              "run"
-            ],
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "key"
-        ],
-        "title": "StreamEvent",
-        "type": "object"
-      },
       "SyncFile": {
         "additionalProperties": false,
         "properties": {
@@ -6504,20 +6467,6 @@
         "summary": "Put Space",
         "tags": [
           "settings"
-        ]
-      }
-    },
-    "/api/stream": {
-      "get": {
-        "operationId": "stream_api_stream_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Stream",
-        "tags": [
-          "stream"
         ]
       }
     },

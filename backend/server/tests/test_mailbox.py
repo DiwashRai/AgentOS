@@ -163,7 +163,7 @@ def test_a_run_cancelled_during_the_send_cancels_the_github_run(
     ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox
 ) -> None:
     def reaped_meanwhile(run_id: int) -> None:
-        service.end(runs.ctx.db, runs.ctx.broker, run_id, "failed", "reaped meanwhile")
+        service.end(runs.ctx.db, run_id, "failed", "reaped meanwhile")
 
     mailbox.on_send = reaped_meanwhile
     run_id = launch(runs, mailbox, ticket.key)
@@ -216,13 +216,13 @@ def test_replay_is_idempotent(
 
     monkeypatch.setattr(worker_api, "complete", crash)
     with pytest.raises(RuntimeError):
-        service.replay(runs.ctx.db, runs.ctx.broker, run_id, outbox)
+        service.replay(runs.ctx.db, run_id, outbox)
     before = counts(runs.ctx, run_id, tasks_path(ticket))
     assert before == (3, 2)
     monkeypatch.setattr(worker_api, "complete", real_complete)
-    assert service.replay(runs.ctx.db, runs.ctx.broker, run_id, outbox) == "completed"
+    assert service.replay(runs.ctx.db, run_id, outbox) == "completed"
     assert counts(runs.ctx, run_id, tasks_path(ticket)) == before
-    assert service.replay(runs.ctx.db, runs.ctx.broker, run_id, outbox) == "gone"
+    assert service.replay(runs.ctx.db, run_id, outbox) == "gone"
     assert counts(runs.ctx, run_id, tasks_path(ticket)) == before
     assert runs.get(run_id).status == "gated"
 

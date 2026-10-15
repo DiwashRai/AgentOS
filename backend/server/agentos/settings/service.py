@@ -16,7 +16,6 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from agentos.broker import Broker
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database
 from agentos.errors import ApiError
@@ -424,29 +423,26 @@ def get_mappings(db: Database) -> FieldMappings:
 
 
 def put_mappings(
-    db: Database, store: SpaceStore, broker: Broker, actor: Me, body: FieldMappingsUpdate
+    db: Database, store: SpaceStore, actor: Me, body: FieldMappingsUpdate
 ) -> FieldMappings:
     """Replace the field mappings (at most one per target; each rule's `value` valid for its
     target, else 422 naming the rule). Then, in the same transaction, re-apply a `base_branch`
     mapping to every ticket `_SQL_MAPPED_TICKETS` selects, from the Jira value stored at import
-    (no Jira call), and publish each changed ticket after the commit. Hand-set (`manual`),
-    repo-default (`default`) and locked tickets are never touched; with the `base_branch` mapping
-    removed, mapped tickets keep what they have."""
+    (no Jira call). Hand-set (`manual`), repo-default (`default`) and locked tickets are never
+    touched; with the `base_branch` mapping removed, mapped tickets keep what they have."""
     check_mappings(body.mappings)
     with db.tx() as conn:
         row = _current(conn, "mappings", body.base_version)
         value = mappings_value(list(body.mappings))
         write_area(conn, "mappings", value, version=row.version + 1, actor_id=actor.id)
-        changed = _reapply_base_branch(conn, mapping_for(body.mappings, "base_branch"))
+        _reapply_base_branch(conn, mapping_for(body.mappings, "base_branch"))
         result = _mappings_settings(_row(conn, "mappings"))
     store.invalidate()
-    for key in changed:
-        broker.ticket(key)
     return result
 
 
-def _reapply_base_branch(conn: Conn, mapping: FieldMapping | None) -> list[str]:
-    """The keys of the tickets whose base branch (or blank reason) changed."""
+def _reapply_base_branch(conn: Conn, mapping: FieldMapping | None) -> None:
+    """Set each mapped ticket's base branch (and blank reason) from `mapping`'s rules."""
     rows = conn.execute(_SQL_MAPPED_TICKETS).fetchall()
     if mapping is None:
         if rows:
@@ -455,9 +451,9 @@ def _reapply_base_branch(conn: Conn, mapping: FieldMapping | None) -> list[str]:
                 "base branch",
                 len(rows),
             )
-        return []
+        return
     now = to_db(utcnow())
-    changed: list[str] = []
+    changed = 0
     for row in rows:
         values = split_values(row["base_branch_source_value"])
         mapped = apply_rules(mapping.rules, values, mapping.field_name)
@@ -468,13 +464,12 @@ def _reapply_base_branch(conn: Conn, mapping: FieldMapping | None) -> list[str]:
             "WHERE id = ?",
             (mapped.value, mapped.reason, now, row["id"]),
         )
-        changed.append(row["key"])
+        changed += 1
     log.info(
         "Field mappings: re-applied base_branch rules to %d ticket(s); %d changed",
         len(rows),
-        len(changed),
+        changed,
     )
-    return changed
 
 
 def _mappings_settings(row: AreaRow) -> FieldMappings:

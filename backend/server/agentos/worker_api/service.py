@@ -13,7 +13,6 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from agentos.broker import Broker
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError
@@ -31,7 +30,7 @@ from agentos.pipeline.manifest import build_manifest
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status, plan_run
 from agentos.pipeline.space import SpaceConfig
-from agentos.runs.service import TERMINAL, finish, run_ticket_key, token_hash
+from agentos.runs.service import TERMINAL, finish, token_hash
 from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
 from agentos.validate import path_key, validate_path, validate_pr_url
@@ -63,12 +62,10 @@ def _unauthorized(what: str) -> ApiError:
 class _Claim:
     manifest: Manifest | None = None
     error: ApiError | None = None
-    changed: tuple[str, int] | None = None  # (ticket key, run id) when the run changed state
 
 
 def claim(
     db: Database,
-    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     dispatch_token: str,
@@ -78,8 +75,6 @@ def claim(
     as it is now (the bundle locks from here). A safe retry with the same worker token returns
     the stored manifest; another worker token → 409 `already_claimed`; terminal → 410."""
     outcome = _claim(db, runtimes, space, token_hash(dispatch_token), token_hash(worker_token))
-    if outcome.changed is not None:
-        broker.run(*outcome.changed)
     if outcome.error is not None:
         raise outcome.error
     if outcome.manifest is None:  # pragma: no cover - _claim sets one or the other
@@ -105,13 +100,12 @@ def _claim(
             return _Claim(manifest=Manifest.model_validate_json(run["manifest"]))
         if run["status"] != "dispatched":
             raise _gone(run["id"], run["status"])
-        changed = (run_ticket_key(conn, run["id"]), run["id"])
         try:
             manifest = _build(conn, run, runtimes, space)
         except ApiError as exc:
             error = f"cannot build the manifest: {exc.message}"
             finish(conn, run["id"], "failed", ("dispatched",), now=now, error=error)
-            return _Claim(error=_gone(run["id"], f"failed: {error}"), changed=changed)
+            return _Claim(error=_gone(run["id"], f"failed: {error}"))
         stamp = to_db(now)
         try:
             cursor = conn.execute(
@@ -123,7 +117,7 @@ def _claim(
             raise ApiError(409, "already_claimed", "That worker token is already in use") from exc
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-        return _Claim(manifest=manifest, changed=changed)
+        return _Claim(manifest=manifest)
 
 
 def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
@@ -166,12 +160,9 @@ def _live_run(conn: Conn, worker_token: str) -> Row:
     return run
 
 
-def post_events(
-    db: Database, broker: Broker, worker_token: str, events: Sequence[RunEvent]
-) -> bool:
+def post_events(db: Database, worker_token: str, events: Sequence[RunEvent]) -> bool:
     """Store events idempotently on `(run_id, seq)`, move stage_runs along, refresh
     `last_seen_at` (an empty batch is the heartbeat). Returns whether a cancel was requested.
-    A stage that started or finished publishes `run` (log lines don't: the UI polls the log).
 
     Beyond MAX_EVENTS_PER_RUN stored events, `log` events are dropped (the worker already
     replaces its own overflow with one `warning`; this is the server-side backstop, logged here
@@ -190,7 +181,6 @@ def post_events(
             "SELECT COUNT(*) FROM run_events WHERE run_id = ?", (run_id,)
         ).fetchone()[0]
         dropped = 0
-        stages_moved = 0
         started = False  # a new `stage_started` was stored
         stage_ids = set(json.loads(run["stage_ids"]))
         for ev in events:
@@ -208,10 +198,10 @@ def post_events(
             at = to_db(min(ev.ts, now_dt))
             if ev.type == "stage_started":
                 started = True
-                stages_moved += _start_stage(conn, run_id, ev.stage_id, ev.data.round, at)
+                _start_stage(conn, run_id, ev.stage_id, ev.data.round, at)
             elif ev.type == "stage_finished":
                 # The running stage_run of that stage (else a pending one: a missed start).
-                stages_moved += conn.execute(
+                conn.execute(
                     "UPDATE stage_runs SET status = ?, exit_code = ?, reason = ?, finished_at = ? "
                     "WHERE run_id = ? AND idx = (SELECT idx FROM stage_runs "
                     "  WHERE run_id = ? AND stage_id = ? AND status IN ('running', 'pending') "
@@ -225,28 +215,26 @@ def post_events(
                         run_id,
                         ev.stage_id,
                     ),
-                ).rowcount
+                )
             elif ev.type == "verdict":
-                stages_moved += conn.execute(
+                conn.execute(
                     "UPDATE stage_runs SET verdict = ? WHERE run_id = ? AND stage_id = ? "
                     "AND status = 'running'",
                     (ev.data.verdict, run_id, ev.stage_id),
-                ).rowcount
+                )
         if dropped:
             log.warning("run %s: over %s events, dropped %s log events", run_id, stored, dropped)
-        locked = started and _lock_base_branch(conn, run)
+        if started:
+            _lock_base_branch(conn, run)
         conn.execute("UPDATE runs SET last_seen_at = ? WHERE id = ?", (now, run_id))
-        key = run_ticket_key(conn, run_id) if stages_moved or locked else None
-    if key is not None:
-        broker.run(key, run_id)  # also publishes ticket(key): the lock shows on the ticket
     return run["cancel_requested_at"] is not None
 
 
-def _start_stage(conn: Conn, run_id: int, stage_id: str, round_: int, at: str) -> int:
+def _start_stage(conn: Conn, run_id: int, stage_id: str, round_: int, at: str) -> None:
     """Mark the stage_run a `stage_started` begins: the stage's planned (pending) row after the
     last one that started. With none (a later round of a loop block, whose rows aren't planned at
     dispatch), insert one right after the last started row, moving the pending rows after it one
-    place down, so `idx` stays the execution order. Returns the rows moved (1)."""
+    place down, so `idx` stays the execution order."""
     last: int = conn.execute(
         "SELECT COALESCE(MAX(idx), -1) FROM stage_runs WHERE run_id = ? AND status != 'pending'",
         (run_id,),
@@ -257,26 +245,27 @@ def _start_stage(conn: Conn, run_id: int, stage_id: str, round_: int, at: str) -
         (run_id, stage_id, last),
     ).fetchone()[0]
     if planned is not None:
-        return conn.execute(
+        conn.execute(
             "UPDATE stage_runs SET status = 'running', started_at = ?, round = ? "
             "WHERE run_id = ? AND idx = ?",
             (at, round_, run_id, planned),
-        ).rowcount
+        )
+        return
     # Two steps, as idx is part of the key: k → -k-1 → k+1.
     conn.execute(
         "UPDATE stage_runs SET idx = -idx - 1 WHERE run_id = ? AND idx > ?", (run_id, last)
     )
     conn.execute("UPDATE stage_runs SET idx = -idx WHERE run_id = ? AND idx < 0", (run_id,))
-    return conn.execute(
+    conn.execute(
         "INSERT INTO stage_runs(run_id, idx, stage_id, round, status, started_at) "
         "VALUES (?, ?, ?, ?, 'running', ?)",
         (run_id, last + 1, stage_id, round_, at),
-    ).rowcount
+    )
 
 
-def _lock_base_branch(conn: Conn, run: Row) -> bool:
+def _lock_base_branch(conn: Conn, run: Row) -> None:
     """Lock the base branch of the run's ticket on the run's first stored `stage_started`, if no
-    run locked it before (request 22A). Returns whether it locked it now.
+    run locked it before (request 22A).
 
     Why then: the worker emits `stage_started` only after `_setup_workspace` succeeded, i.e. the
     ticket branch was checked out from `origin/{base_branch}` (or from an existing
@@ -289,17 +278,16 @@ def _lock_base_branch(conn: Conn, run: Row) -> bool:
     A ticket that followed the repo default is pinned to the branch the run started from (its
     manifest), so a later change to the repo's `default_branch` doesn't move locked work.
     """
-    cursor = conn.execute(
+    conn.execute(
         "UPDATE tickets SET base_branch_locked_by_run = ?, base_branch = COALESCE(base_branch, "
         "(SELECT json_extract(manifest, '$.workspace.base_branch') FROM runs WHERE id = ?)) "
         "WHERE id = ? AND repo IS NOT NULL AND base_branch_locked_by_run IS NULL",
         (run["id"], run["id"], run["ticket_id"]),
     )
-    return cursor.rowcount > 0
 
 
 def sync(
-    db: Database, broker: Broker, worker_token: str, stage_id: str, files: Sequence[SyncFile]
+    db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]
 ) -> dict[str, int]:
     """Write the worker's context files back as new versions authored by the run (SPEC §9.4.1).
 
@@ -327,9 +315,6 @@ def sync(
                 author_stage=stage_id,
             )
             versions[path] = version or 0
-        key = run_ticket_key(conn, run["id"]) if entries else None
-    if key is not None:  # files (maybe) changed; unchanged ones appended nothing
-        broker.ticket(key)
     return versions
 
 
@@ -354,7 +339,7 @@ def _check_sync_entry(manifest: Manifest, f: SyncFile) -> tuple[str, SyncFile]:
     return path, f
 
 
-def complete(db: Database, broker: Broker, worker_token: str, body: CompleteRequest) -> None:
+def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:
     """running → gated|succeeded (completed, per `completion_status`), failed or cancelled.
     Repeating the final status of a terminal run is a no-op; anything else on a terminal run →
     410."""
@@ -380,12 +365,8 @@ def complete(db: Database, broker: Broker, worker_token: str, body: CompleteRequ
                 )
         else:
             status = "cancelled"
-        finished = finish(conn, run["id"], status, ("running",), now=now, error=error)
-        if finished:
+        if finish(conn, run["id"], status, ("running",), now=now, error=error):
             _store_pr_url(conn, run, body.pr_url)
-        key = run_ticket_key(conn, run["id"])
-    if finished:
-        broker.run(key, run["id"])
 
 
 def _store_pr_url(conn: Conn, run: Row, pr_url: str | None) -> None:

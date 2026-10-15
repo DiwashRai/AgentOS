@@ -17,7 +17,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from agentos.broker import Broker
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -487,9 +486,7 @@ def _base_branch_info(row: Row, repo: ResolvedRepo) -> BaseBranchInfo | None:
 # ------------------------------------------------------------------ create
 
 
-def create_ticket(
-    db: Database, broker: Broker, space: SpaceConfig, user: Me, body: TicketCreate
-) -> TicketDetail:
+def create_ticket(db: Database, space: SpaceConfig, user: Me, body: TicketCreate) -> TicketDetail:
     """Allocate the key, copy the current template's pipeline, render its scaffold and write it as
     bundle v1, all in one transaction (a render error leaves no ticket and no used key).
 
@@ -528,9 +525,7 @@ def create_ticket(
                 workflow_id=body.workflow_id,
             ),
         )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -631,7 +626,6 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
 
 def import_ticket(
     db: Database,
-    broker: Broker,
     space: SpaceConfig,
     source: TicketSource | None,
     user: Me,
@@ -722,9 +716,7 @@ def import_ticket(
         if conn.execute("SELECT 1 FROM tickets WHERE key = ?", (new.key,)).fetchone():
             raise ApiError(409, "key_taken", f"Another ticket already has the key {new.key}")
         _insert_ticket(conn, space, user, new)
-        result = ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
-    broker.ticket(new.key)
-    return result
+        return ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
 
 
 def _check_import_key(projects: Sequence[str], key: str) -> None:
@@ -862,7 +854,7 @@ def _base_branch_provenance(
 
 
 def patch_ticket(
-    db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: TicketPatch
+    db: Database, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
     """Apply the set fields. `state`, `repo` and `base_branch` changes → 409 `run_active` while a
     run is active. The slug never changes (it names the skill directory). A `state` change clears
@@ -958,16 +950,14 @@ def patch_ticket(
                     "WHERE id = ?",
                     (stripped.model_dump_json(), row["id"]),
                 )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 _RESOLVED_STATE: dict[ResolveOutcome, str] = {"completed": "done", "abandoned": "closed"}
 
 
 def resolve_ticket(
-    db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
+    db: Database, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
 ) -> TicketDetail:
     """Close the ticket as `completed` (state done) or `abandoned` (state closed), with an optional
     note (stripped; blank → null). 409 `run_active` while a run is active. Resolving a resolved
@@ -983,14 +973,11 @@ def resolve_ticket(
             "resolved_by = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
             (_RESOLVED_STATE[body.outcome], body.outcome, note, user.id, now, now, row["id"]),
         )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 def put_pipeline(
     db: Database,
-    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     key: str,
@@ -1013,14 +1000,11 @@ def put_pipeline(
                         f"stage {stage.id}: requires a repo; this ticket has none",
                     )
         _store_pipeline(conn, row, space, runtimes, pipeline)
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 def switch_workflow(
     db: Database,
-    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     key: str,
@@ -1047,9 +1031,7 @@ def switch_workflow(
             "WHERE id = ?",
             (workflow.id, workflow.name, workflow.version, row["id"]),
         )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 def _pipeline_row(conn: Conn, key: str, base_version: int) -> Row:

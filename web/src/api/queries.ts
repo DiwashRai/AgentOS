@@ -1,5 +1,5 @@
 // The only place components reach the server. Hooks + one hierarchical query-key factory, so
-// SSE invalidation (src/api/stream.ts, later) and mutations target keys in one place.
+// polling reads and mutation invalidations target keys in one place.
 // ESLint forbids importing `api`/`unwrap` outside src/api/.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -85,8 +85,7 @@ export function useLogout() {
   });
 }
 
-/** Every open ticket. The backend's SSE stream is still pings-only, so the board polls every 3 s
- *  until src/api/stream.ts maps real events to invalidations. Polling pauses in background tabs. */
+/** Every open ticket. The board polls every 3 s; polling pauses in background tabs. */
 export function useTickets() {
   return useQuery({
     queryKey: keys.tickets(),
@@ -593,7 +592,7 @@ export function useDeleteFile(key: string) {
 
 // ------------------------------------------------------------------ chat (Talk)
 
-/** The latest messages, oldest first. Polled until SSE ships. */
+/** The latest messages, oldest first. Polled every 3 s, like the board. */
 export function useChat(key: string | null) {
   return useQuery({
     queryKey: keys.chat(key ?? ""),

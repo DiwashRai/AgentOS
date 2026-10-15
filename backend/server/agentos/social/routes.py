@@ -29,4 +29,4 @@ def list_chat(
 
 @router.post("/chat", status_code=201)
 def post_chat(key: str, body: ChatPost, user: CurrentUser, ctx: Ctx) -> ChatMessage:
-    return service.post_chat(ctx.db, ctx.broker, key, user, body.body)
+    return service.post_chat(ctx.db, key, user, body.body)

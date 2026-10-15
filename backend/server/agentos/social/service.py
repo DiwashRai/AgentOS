@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from agentos.broker import Broker
 from agentos.clock import from_db, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -34,7 +33,7 @@ def list_chat(
     return [_message(r, key) for r in rows]
 
 
-def post_chat(db: Database, broker: Broker, key: str, user: Me, body: str) -> ChatMessage:
+def post_chat(db: Database, key: str, user: Me, body: str) -> ChatMessage:
     """Any signed-in user. 422 for a blank body (length limits come from `ChatPost`)."""
     if not body.strip():
         raise ApiError(422, "validation_error", "body: must not be blank")
@@ -45,9 +44,7 @@ def post_chat(db: Database, broker: Broker, key: str, user: Me, body: str) -> Ch
             (ticket_id, user.id, body, to_db(utcnow())),
         )
         row = conn.execute(_SQL_ONE, (cursor.lastrowid,)).fetchone()
-    message = _message(row, key)
-    broker.chat(key, message.id)
-    return message
+    return _message(row, key)
 
 
 def _ticket_id(conn: Conn, key: str) -> int:

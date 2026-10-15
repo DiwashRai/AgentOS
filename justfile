@@ -44,7 +44,7 @@ gen-api:
     cd backend; uv run python -m agentos.openapi_export ../web/src/api/openapi.json
     cd web; npm run gen:api
 
-# Real backend on :8000 (one instance only). Short graceful shutdown so open SSE streams
+# Real backend on :8000 (one instance only). Short graceful shutdown so open connections
 # don't block --reload.
 [working-directory('backend')]
 dev-backend:

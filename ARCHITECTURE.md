@@ -5,7 +5,6 @@ How the system fits together and why. Each decision is written as **rule**, then
 ```mermaid
 flowchart LR
   UI["Web app (React)<br/>web/"] -- "/api (cookie + X-AgentOS)" --> S
-  UI -. "GET /api/stream (SSE, no client yet)" .- S
   subgraph S["Server: one FastAPI process"]
     R["routes → service"] --> DB[("SQLite<br/>DATA_DIR/agentos.db")]
     D["dispatcher loop"] --> DB
@@ -63,7 +62,7 @@ flowchart LR
 
 ## Run lifecycle & loops
 - **States: `queued → dispatched → running → succeeded | gated | failed | cancelled`.** Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means another actor already moved the run. Where: `runs/service.py`.
-- **`finish()` is the only way into a terminal state.** It runs in the caller's transaction, cancels unfinished stage runs, sets `finished_at` and bumps the ticket's `updated_at`. Callers publish to the broker after commit. Where: `runs/service.py` `finish()`.
+- **`finish()` is the only way into a terminal state.** It runs in the caller's transaction, cancels unfinished stage runs, sets `finished_at` and bumps the ticket's `updated_at`. Where: `runs/service.py` `finish()`.
 - **Each ticket has at most one active run.** A partial unique index `runs_one_active` covers queued/dispatched/running, and `dispatch()` maps the IntegrityError to 409 `run_active`. One ticket has one branch and one locked bundle, so parallel runs are excluded by design. Where: `migrations/0001_init.sql`, `runs/service.py` `dispatch()`.
 - **The dispatcher ticks every 2 s.** It moves the launcher's oldest queued run to dispatched while the active (dispatched or running) runs are under `launcher.max_concurrency` (None = unlimited). It then calls `launch()` outside any transaction, and a launch exception fails the run. Where: `runs/dispatcher.py` `tick()`, `runs/service.py` `mark_next_dispatched()`.
 - **The reaper ticks every 15 s, and its rules run in order:**
@@ -151,13 +150,13 @@ flowchart LR
 - **Components reach the server only through hooks in `web/src/api/queries.ts`,** which own one hierarchical query-key factory. ESLint forbids importing `api`/`unwrap` elsewhere. Where: `web/eslint.config.js`.
 - **API types are generated** (`openapi.json` → `schema.ts` via `just gen-api`). The frontend never edits them.
 - **Layers:** `app/` (router, providers, shell), `features/` (one folder per view), `ui/` (kit primitives), `domain/` (pure selection over server fields: counts, groups, words; it never invents a state), `styles/` (tokens).
-- **Live updates come from polling** (3 s for lists, 1 s for an active run) until an EventSource client exists. The server side of SSE is built: `broker.py` publishes after each commit and `stream.py` serves `GET /api/stream` with a 15 s ping.
+- **Live updates come from polling** (3 s for lists, 1 s for an active run). TanStack pauses it in background tabs. Where: `web/src/api/queries.ts`.
 
 ## Enforcement
 - **import-linter** (`backend/pyproject.toml`, 7 contracts):
   1. The pure core (`models`, `validate`, `pipeline`, `*.board`) imports no web, db, HTTP client or config.
   2. Inside a feature, the layers run `routes → deps → loops → service → board`.
-  3. Routes, deps, `meta` and `stream` reach the database only through services.
+  3. Routes, deps and `meta` reach the database only through services.
   4. Only `agentos.db` imports `sqlite3`.
   5. Only the HTTP layer imports FastAPI/Starlette/uvicorn; services raise the pure `ApiError`, which `http_errors.py` translates.
   6. Plugins (`launchers`, `sources`, `stores`) import no db, services, routes or FastAPI.
@@ -168,7 +167,6 @@ flowchart LR
 - **Closed error codes:** `models.ErrorCode` is the full set, and the UI branches on them (e.g. 409 `stale_version` / `run_active` / `bundle_locked`).
 
 ## Planned, not built
-- An SSE client in the web app (the server side exists).
 - Jira comments and comment sync: write-back will be official comments only (a resolve note is a candidate), with no status transitions. **Talk is never synced to Jira.**
 - Intake auto take-in: a per-query `auto_take_in`, **off by default**. Tickets it imports have no owner, and Intake still never dispatches.
 - Teams, edited in Settings › Teams, with Jira's team field mapped to `ticket.team_id`. Everyone in the Space sees every ticket, and My queue stays personal. All teams groups by team, or by repo when no teams are set up.
@@ -178,7 +176,7 @@ flowchart LR
 - GitHub Issues and Todoist sources; validation of the Copilot runtime; workspace snapshots for no-repo tickets.
 - Human stages, approvers, review→fix loops, `Stage.when` conditions.
 - OIDC/SSO login; GitHub OIDC for claim.
-- Postgres behind `db.py`; LISTEN/NOTIFY behind `broker.py`.
+- Postgres behind `db.py`.
 
 ## Never
 - Presence indicators.

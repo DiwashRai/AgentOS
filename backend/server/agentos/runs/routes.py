@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api", tags=["runs"], responses=ERROR_RESPONSES)
 @router.post("/tickets/{key}/runs", status_code=201)
 def dispatch(key: str, body: DispatchRequest, user: Writer, ctx: Ctx) -> RunSummary:
     return service.dispatch(
-        ctx.db, ctx.broker, ctx.runtimes, ctx.space, ctx.launcher.name, key, user, body.from_stage
+        ctx.db, ctx.runtimes, ctx.space, ctx.launcher.name, key, user, body.from_stage
     )
 
 
@@ -40,7 +40,7 @@ def get_manifest(run_id: int, _: CurrentUser, ctx: Ctx) -> Manifest:
 
 @router.post("/runs/{run_id}/cancel")
 def cancel_run(run_id: int, _: Writer, ctx: Ctx) -> RunSummary:
-    return service.cancel(ctx.db, ctx.broker, run_id)
+    return service.cancel(ctx.db, run_id)
 
 
 @router.get("/runs/{run_id}/events")

@@ -61,5 +61,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD python -c "import os, urllib.request as u; u.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('AGENTOS_PORT', '8000'), timeout=4)"
 
 # Migrations (with an automatic backup of an existing db) run in the app's lifespan.
-# A short graceful shutdown so open SSE streams don't hold up a stop.
+# A short graceful shutdown so open connections don't hold up a stop.
 CMD ["sh", "-c", "exec uvicorn --factory agentos.main:create_app --app-dir server --host \"$AGENTOS_HOST\" --port \"$AGENTOS_PORT\" --timeout-graceful-shutdown 5"]

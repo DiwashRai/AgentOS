@@ -427,8 +427,6 @@ def test_saving_re_applies_to_unlocked_mapped_tickets_only(
     jira: FakeJira,
     runs: RunDriver,
     create_ticket: CreateTicket,
-    ctx: AppContext,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     save(authed, FIX_VERSIONS)
     for key, name in [
@@ -450,8 +448,6 @@ def test_saving_re_applies_to_unlocked_mapped_tickets_only(
     native = create_ticket("Native")  # `default`: the repo default
     before = {k: detail(authed, k) for k in ("SCRUM-3", "SCRUM-4", "SCRUM-5", "SCRUM-6")}
     jira.calls.clear()
-    published: list[str] = []
-    monkeypatch.setattr(ctx.broker, "ticket", published.append)
 
     rules = [
         {"match": "version_3*", "value": "App-3.Latest"},
@@ -460,7 +456,6 @@ def test_saving_re_applies_to_unlocked_mapped_tickets_only(
     ]
     save(authed, {**FIX_VERSIONS, "rules": rules})
     assert jira.calls == []  # from the stored values, no Jira call
-    assert sorted(published) == ["SCRUM-1", "SCRUM-2"]
     assert branch(detail(authed, "SCRUM-1")) == ("App-3.Latest", "mapping", "version_3.0", None)
     assert branch(detail(authed, "SCRUM-2")) == ("App-1.New", "mapping", "version_1.0", None)
     for key, was in before.items():
@@ -476,9 +471,7 @@ def test_saving_re_applies_to_unlocked_mapped_tickets_only(
         "No rule matches version_1.0",
     )
     # Removing the mapping leaves mapped tickets as they are.
-    published.clear()
     save(authed)
-    assert published == []
     assert detail(authed, "SCRUM-1").base_branch == "App-3.Latest"
     assert detail(authed, "SCRUM-2").base_branch is None
 

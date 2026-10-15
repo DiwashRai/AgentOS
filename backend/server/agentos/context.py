@@ -10,7 +10,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentos.broker import Broker
 from agentos.config import (
     MOVED_AREA,
     MOVED_ENV,
@@ -88,8 +87,6 @@ class AppContext:
     login_limiter: RateLimiter = field(default_factory=_login_limiter)
     intake_cache: IntakeCache = field(default_factory=_intake_cache)
     jira_fields_cache: JiraFieldsCache = field(default_factory=_jira_fields_cache)
-    # SSE notifications: services publish after commit; the lifespan binds it to the loop.
-    broker: Broker = field(default_factory=Broker)
 
     @property
     def space(self) -> SpaceConfig:

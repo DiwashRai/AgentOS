@@ -46,8 +46,7 @@ src/styles/    tokens.css, base.css, fonts.css
 - Login sets `me` and invalidates `keys.all`. Logout removes the ticket cache and sets `me` to `null`.
 
 ## Polling
-- The server has an SSE stream, but the client doesn't subscribe to it yet, so reads poll with `refetchInterval`. The intervals are constants in `queries.ts`: 3 s for the board and ticket reads, 1 s for an active run and its events, 60 s for Intake. The pending page polls `me` every 15 s. TanStack pauses polling in background tabs.
-- When SSE is wired, event → invalidation mapping belongs in `src/api/` next to `keys`, in one place.
+- Reads poll with `refetchInterval`. The intervals are constants in `queries.ts`: 3 s for the board and ticket reads, 1 s for an active run and its events, 60 s for Intake. The pending page polls `me` every 15 s. TanStack pauses polling in background tabs.
 - Run events are fetched incrementally (after the last `seq`) and capped at 5,000 per run in memory (`MAX_EVENTS`).
 
 ## queryClient behaviour (`src/app/queryClient.ts`)
@@ -116,4 +115,4 @@ src/styles/    tokens.css, base.css, fonts.css
 ## Not built on purpose
 - Never: presence, online dots or typing indicators.
 - Not in our model, so not drawn even where the design pack shows them: watchers and a "Watching" rack, reviewers, reactions, a runner pool gauge, queue positions, runner names, acceptance criteria (the TASKS.md plan stands in for them).
-- Not yet: the SSE client (see Polling), the Activity tab, Context diff, the Manifest view, row glides.
+- Not yet: the Activity tab, Context diff, the Manifest view, row glides.

@@ -92,7 +92,7 @@ layers = [
 [[tool.importlinter.contracts]]
 name = "The HTTP layer reaches the database only through services"
 type = "forbidden"
-source_modules = ["agentos.*.routes", "agentos.*.deps", "agentos.meta", "agentos.stream"]
+source_modules = ["agentos.*.routes", "agentos.*.deps", "agentos.meta"]
 forbidden_modules = ["agentos.db", "sqlite3"]
 allow_indirect_imports = true
 broken_contract_guidance = "Routes parse input, call one service function and return its result. Services own transactions (db.tx())."
@@ -109,7 +109,7 @@ name = "Only the HTTP layer imports FastAPI/Starlette"
 type = "forbidden"
 source_modules = [
     "agentos.*.service", "agentos.*.board", "agentos.*.dispatcher", "agentos.*.reaper",
-    "agentos.db", "agentos.config", "agentos.broker", "agentos.errors",
+    "agentos.db", "agentos.config", "agentos.errors",
     "agentos.launchers", "agentos.sources", "agentos.stores",
 ]
 forbidden_modules = ["fastapi", "starlette", "uvicorn"]

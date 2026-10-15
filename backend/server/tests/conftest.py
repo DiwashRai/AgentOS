@@ -5,7 +5,6 @@ template db the session app's startup migrated and seeded."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import shutil
@@ -17,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -93,7 +91,6 @@ class SessionServer:
 
     app: FastAPI
     client: TestClient
-    portal: BlockingPortal
     template_db: Path
 
 
@@ -118,9 +115,7 @@ def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session
         template_db = root / "template.db"
         shutil.copyfile(settings.db_path, template_db)
 
-        portal = client.portal
-        assert portal is not None
-        yield SessionServer(app, client, portal, template_db)
+        yield SessionServer(app, client, template_db)
 
 
 @pytest.fixture
@@ -135,18 +130,15 @@ def ctx(
     session_server: SessionServer, settings: Settings, launcher: FakeLauncher
 ) -> Iterator[AppContext]:
     """This test's context on the session app: a fresh copy of the template db, built from this
-    test's `settings` and `launcher`, its broker on the app's loop."""
+    test's `settings` and `launcher`."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(session_server.template_db, settings.db_path)
     context = build_context(settings, launcher=launcher)
-    loop = session_server.portal.call(asyncio.get_running_loop)
-    context.broker.bind(loop)
 
     app = session_server.app
     app.state.ctx = context
     yield context
 
-    session_server.portal.call(context.broker.close)
     del app.state.ctx  # a request that outlives its test fails loudly
     assert not app.dependency_overrides, "tests must not modify the shared app"
 
