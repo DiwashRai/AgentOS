@@ -43,7 +43,7 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 | `just container-build` / `-run` / `-logs` / `-stop` | Server image. Docker by default (`just engine=podman ...` or `CONTAINER_ENGINE`); host port 8080; needs `backend/deploy/.env.container` copied from `container.env.example`. See `backend/deploy/README.md` |
 
 ## Gates
-- `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest`.
+- `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
 - `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `vitest run`.
 - The pre-commit hook runs the fast gates (format + lint) for each half that has staged files. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web gates. Run the full scoped gate yourself before committing.
 - **Never weaken a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
