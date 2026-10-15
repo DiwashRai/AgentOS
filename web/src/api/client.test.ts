@@ -31,15 +31,25 @@ describe("unwrap", () => {
   });
 
   it("throws the envelope's code", async () => {
-    const error = { error: { code: "stale_version", message: "changed" } };
+    const error = { error: { code: "stale_version", message: "changed", issues: [] } };
     const call = unwrap(Promise.resolve({ error, response: new Response(null, { status: 409 }) }));
     await expect(call).rejects.toMatchObject({ status: 409, code: "stale_version" });
+  });
+
+  it("carries every issue of a 422", async () => {
+    const issues = [
+      { loc: ["repos", 0, "url"], message: "a" },
+      { loc: ["name"], message: "b" },
+    ];
+    const error = { error: { code: "validation_error", message: "repos.0.url: a", issues } };
+    const call = unwrap(Promise.resolve({ error, response: new Response(null, { status: 422 }) }));
+    await expect(call).rejects.toMatchObject({ code: "validation_error", issues });
   });
 
   it("throws on an empty-body proxy error instead of treating it as success", async () => {
     const response = new Response(null, { status: 502, statusText: "Bad Gateway" });
     const call = unwrap(Promise.resolve({ error: "", response }));
     await expect(call).rejects.toBeInstanceOf(ApiError);
-    await expect(call).rejects.toMatchObject({ status: 502, code: "http_error" });
+    await expect(call).rejects.toMatchObject({ status: 502, code: "http_error", issues: [] });
   });
 });

@@ -5,9 +5,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { usePreviewIntake } from "../../../api/queries";
 import { OpenIcon } from "../../../app/icons";
+import { Field, fieldStyles as f } from "../../../editor";
 import { Button, ChevronIcon, IconButton, ZoneHead } from "../../../ui";
 import { typeText } from "../../intake/model";
-import { Field, fieldStyles as f } from "../../pipeline/fields";
 import s from "./IntakeSettings.module.css";
 import {
   addQuery,

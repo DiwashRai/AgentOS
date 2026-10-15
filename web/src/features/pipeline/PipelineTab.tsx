@@ -4,20 +4,19 @@
 import { useState } from "react";
 
 import { useConfig, useDispatch, useMe, useSavePipeline, useTicket } from "../../api/queries";
+import {
+  describeSaveError,
+  fixFirst,
+  pageStyles as s,
+  SaveBar,
+  Select,
+  useDraft,
+} from "../../editor";
 import { Button } from "../../ui";
 import { WorkflowStrip } from "../workflows";
-import { Select } from "./fields";
-import {
-  configDefaults,
-  describeSaveError,
-  issueCount,
-  runnableStages,
-  pipelineIssues,
-} from "./model";
-import s from "./pages.module.css";
+import { configDefaults, issueCount, runnableStages, pipelineIssues, samePipeline } from "./model";
 import { PipelineEditor } from "./PipelineEditor";
-import { SaveBar } from "./SaveBar";
-import { usePipelineDraft } from "./useDraft";
+import p from "./pipelinePages.module.css";
 
 export function PipelineTab({ ticketKey }: { ticketKey: string }) {
   const ticket = useTicket(ticketKey);
@@ -26,7 +25,7 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
   const save = useSavePipeline(ticketKey);
   const dispatch = useDispatch(ticketKey);
   const t = ticket.data;
-  const draft = usePipelineDraft(t?.pipeline, t?.pipeline_version);
+  const draft = useDraft(t?.pipeline, t?.pipeline_version, samePipeline);
   const [from, setFrom] = useState<string | null>(null);
 
   if (ticket.isPending || config.isPending) {
@@ -77,13 +76,7 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
         meta={`${String(value.stages.length)} stages · this ticket's copy`}
         dirty={draft.dirty}
         readOnly={!canWrite}
-        saveDisabledReason={
-          active
-            ? "A run is active"
-            : issues > 0
-              ? `Fix ${issues === 1 ? "1 issue" : `${String(issues)} issues`} first`
-              : undefined
-        }
+        saveDisabledReason={active ? "A run is active" : fixFirst(issues)}
         saving={save.isPending}
         problem={save.error ? describeSaveError(save.error) : null}
         onDiscard={() => {
@@ -104,7 +97,7 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
         }}
         extra={
           canWrite ? (
-            <span className={s.runFrom}>
+            <span className={p.runFrom}>
               <Select
                 size="sm"
                 aria-label="Stage to run from"

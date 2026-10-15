@@ -1,10 +1,21 @@
-/* Pipeline tab and Template page: a content column in kit values. */
+/* An editor page in kit values: the content column, its save bar, banner and quiet lines. */
 .page {
   display: flex;
   flex-direction: column;
   gap: 16px;
   min-width: 0;
   max-width: 1080px;
+}
+
+/* one document's save bar and fields (DocumentSection); a page may stack two */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.section + .section {
+  margin-top: var(--sp-8);
 }
 
 /* a label: sentence case, 12/500 --ink-3 (refresh §3.4, §6) */
@@ -65,18 +76,10 @@
 .spacer {
   flex: 1;
 }
-.actions,
-.runFrom {
+.actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-.runFrom {
-  padding-right: 14px;
-  border-right: 1px solid var(--rule);
-}
-.runFrom > span {
-  max-width: 220px;
 }
 
 .problem {
@@ -106,64 +109,4 @@
   font-size: var(--fs-control);
   font-weight: 600;
   color: var(--ink-1);
-}
-
-/* Space defaults page: a sheet with three fields (kit .ao-sheet) */
-.defaults {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.sheet {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  align-items: start;
-  max-width: 760px;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  box-shadow: var(--row-edge);
-}
-@media (max-width: 600px) {
-  .sheet {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.scaffold {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
-}
-.files {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  box-shadow: var(--row-edge);
-}
-.file {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  padding: 0 14px;
-}
-.file + .file {
-  border-top: 1px solid var(--rule-soft);
-}
-.path {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
 }

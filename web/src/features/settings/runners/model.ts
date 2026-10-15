@@ -395,12 +395,6 @@ export function runtimesIssueCount(issues: RuntimesIssues): number {
   return issues.form.length + issues.rows.reduce((n, r) => n + Object.keys(r).length, 0);
 }
 
-/** "Fix 1 issue first" / "Fix N issues first", or undefined when there are none. */
-export function fixFirst(n: number): string | undefined {
-  if (n === 0) return undefined;
-  return `Fix ${n === 1 ? "1 issue" : `${String(n)} issues`} first`;
-}
-
 /**
  * Placeholders that won't be replaced, and groups that won't work as typed, as advice (the
  * server accepts them; they'd reach the CLI literally). A placeholder is replaced only in its own

@@ -2,8 +2,8 @@
 // with Artifactory carrying each run in and out) dispatch each run's workflow. The launcher and
 // the token come from the server's env (read-only here); the repo, workflow file and ref are read
 // at every dispatch. Controlled; the page owns the draft and the save.
+import { Field, fieldStyles as f } from "../../../editor";
 import { cx } from "../../../ui";
-import { Field, fieldStyles as f } from "../../pipeline/fields";
 import {
   dispatchesWorkflow,
   launcherLabel,

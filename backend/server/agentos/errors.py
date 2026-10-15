@@ -29,16 +29,18 @@ class ApiError(Exception):
         self.issues = list(issues)
 
 
-def issue_text(loc: Sequence[str | int], message: str) -> str:
-    """`a.0.b: message`, the envelope message of a validation error; just the message at the root."""
-    where = ".".join(str(part) for part in loc)
-    return f"{where}: {message}" if where else message
-
-
 def validation_error(issues: Sequence[ValidationIssue]) -> ApiError:
-    """A 422 `validation_error` listing every issue (at least one); its message is the first's."""
+    """A 422 `validation_error` listing every issue (at least one). Its message is the first
+    issue as `a.0.b: message` (just the message when `loc` is empty)."""
     first = issues[0]
-    return ApiError(422, "validation_error", issue_text(first.loc, first.message), issues)
+    where = ".".join(str(part) for part in first.loc)
+    message = f"{where}: {first.message}" if where else first.message
+    return ApiError(422, "validation_error", message, issues)
+
+
+def field_error(loc: Sequence[str | int], message: str) -> ApiError:
+    """A 422 `validation_error` with one issue at `loc`."""
+    return validation_error([ValidationIssue(loc=list(loc), message=message)])
 
 
 # Declared on every route so generated clients know the error shape.

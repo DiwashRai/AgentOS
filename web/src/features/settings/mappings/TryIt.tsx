@@ -3,8 +3,8 @@
 // result (or why it's blank). Controlled: the card owns the input and the preview mutation.
 import { useId } from "react";
 
+import { fieldStyles as f } from "../../../editor";
 import { Button, cx } from "../../../ui";
-import { fieldStyles as f } from "../../pipeline/fields";
 import s from "./Mappings.module.css";
 import { ruleWord, type TargetSpec, type TryLine, type TryMode } from "./model";
 

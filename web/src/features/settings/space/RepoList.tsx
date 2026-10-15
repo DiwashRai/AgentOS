@@ -3,8 +3,8 @@
 // Controlled; the page owns the draft and the save.
 import { useEffect, useRef, useState } from "react";
 
+import { Field, fieldStyles as f } from "../../../editor";
 import { Button, cx, Tag } from "../../../ui";
-import { Field, fieldStyles as f } from "../../pipeline/fields";
 import {
   newRepoRow,
   openTickets,

@@ -6,7 +6,6 @@ import {
   addRule,
   fieldOptions,
   fieldsProblem,
-  fixLine,
   formOf,
   isBlankMapping,
   issueCount,
@@ -111,7 +110,6 @@ describe("draft and body", () => {
 describe("validate", () => {
   it("passes the saved document", () => {
     expect(issueCount(validate(formOf(DOC)))).toBe(0);
-    expect(fixLine(0)).toBeUndefined();
   });
 
   it("flags a missing field, empty or long matches, and bad branch names", () => {
@@ -136,7 +134,6 @@ describe("validate", () => {
     expect(issues.rules[2]).toEqual({ value: "Required." });
     expect(issues.rules[3]?.value).toBe("Must not end in /, . or .lock.");
     expect(issueCount([issues])).toBe(6);
-    expect(fixLine(6)).toBe("Fix 6 issues first");
   });
 
   it("caps the rule count", () => {

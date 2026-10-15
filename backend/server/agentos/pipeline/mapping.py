@@ -15,9 +15,16 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from agentos.errors import ApiError
-from agentos.models import FieldMapping, MappingRule, MappingTarget
-from agentos.validate import validate_base_branch
+from agentos.models import (
+    MAX_MAPPINGS,
+    FieldMapping,
+    FieldMappingEntry,
+    MappingRule,
+    MappingsDoc,
+    MappingTarget,
+    ValidationIssue,
+)
+from agentos.validate import base_branch_problem, parsed, too_many
 
 # How a mapping's raw values are stored (`tickets.base_branch_source_value`) and read back.
 VALUE_SEPARATOR = ", "
@@ -98,35 +105,52 @@ def mapping_for(mappings: Sequence[FieldMapping], target: MappingTarget) -> Fiel
     return next((m for m in mappings if m.target == target), None)
 
 
-def check_mappings(mappings: Sequence[FieldMapping]) -> None:
-    """The checks pydantic can't do: at most one mapping per target, and each rule's `value` is
-    valid for its target. 422 `validation_error` naming the mapping and rule index."""
+def check_mappings(
+    doc: MappingsDoc, prefix: Sequence[str | int] = ("value",)
+) -> tuple[tuple[FieldMapping, ...] | None, list[ValidationIssue]]:
+    """The field mappings document, every problem at `<prefix>.mappings.<i>...`: each mapping as
+    `check_mapping` checks it, and at most one mapping per target. Answers the normalised mappings
+    (trimmed), or None when there is any issue."""
+    issues = too_many(doc.mappings, MAX_MAPPINGS, (*prefix, "mappings"))
+    mappings: list[FieldMapping] = []
     seen: set[str] = set()
-    for i, mapping in enumerate(mappings):
-        if mapping.target in seen:
-            raise ApiError(
-                422,
-                "validation_error",
-                f"mappings.{i}.target: {mapping.target!r} has a mapping already",
-            )
-        seen.add(mapping.target)
-        check_mapping(mapping, f"mappings.{i}")
+    for i, entry in enumerate(doc.mappings):
+        if entry.target in seen:
+            loc: list[str | int] = [*prefix, "mappings", i, "target"]
+            message = f"{entry.target!r} has a mapping already"
+            issues.append(ValidationIssue(loc=loc, message=message))
+        seen.add(entry.target)
+
+        mapping, problems = check_mapping(entry, (*prefix, "mappings", i))
+        issues += problems
+        if mapping is not None:
+            mappings.append(mapping)
+
+    return (None if issues else tuple(mappings)), issues
 
 
-def check_mapping(mapping: FieldMapping, prefix: str = "mapping") -> None:
-    for j, rule in enumerate(mapping.rules):
-        try:
-            _check_value(mapping.target, rule.value)
-        except ApiError as exc:
-            message = exc.message.split(": ", 1)[-1]
-            raise ApiError(
-                422, "validation_error", f"{prefix}.rules.{j}.value: {message}"
-            ) from None
+def check_mapping(
+    entry: FieldMappingEntry, prefix: Sequence[str | int] = ("mapping",)
+) -> tuple[FieldMapping | None, list[ValidationIssue]]:
+    """One mapping, every problem at `<prefix>...`: its fields and rules (`FieldMapping`), and each
+    rule's `value` valid for the target (checked even when another field fails)."""
+    mapping, issues = parsed(FieldMapping, entry.model_dump(), prefix)
+
+    reported = {tuple(issue.loc) for issue in issues}
+    for j, rule in enumerate(entry.rules):
+        loc: list[str | int] = [*prefix, "rules", j, "value"]
+        if tuple(loc) in reported:
+            continue
+        if problem := _value_problem(entry.target, rule.value.strip()):
+            issues.append(ValidationIssue(loc=loc, message=problem))
+
+    return (None if issues else mapping), issues
 
 
-def _check_value(target: MappingTarget, value: str) -> None:
+def _value_problem(target: MappingTarget, value: str) -> str | None:
     if target == "base_branch":
-        validate_base_branch(value)
+        return base_branch_problem(value)
+    return None
 
 
 def _and(items: Sequence[str]) -> str:

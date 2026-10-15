@@ -2,8 +2,8 @@
 // Controlled; the page owns the draft and the save.
 import { useState } from "react";
 
+import { Field, fieldStyles as f, Select } from "../../../editor";
 import { cx } from "../../../ui";
-import { Field, fieldStyles as f, Select } from "../../pipeline/fields";
 import { claimHint, CLAIM_MAX_S, CLAIM_MIN_S, type SpaceForm, type SpaceIssues } from "./model";
 import { ProjectKeys } from "./ProjectKeys";
 import s from "./Space.module.css";

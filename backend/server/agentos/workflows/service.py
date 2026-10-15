@@ -3,7 +3,7 @@
 Applying one copies its pipeline into a ticket (at creation or a switch, `tickets.service`), and
 the ticket records the workflow's id, name and version then; editing a workflow later never
 changes existing tickets. Exactly one workflow is the default (`is_default`): what a ticket gets
-when it names none. It can't be deleted; another becomes the default through Settings > Space.
+when it names none. It can't be deleted; another becomes the default first (`make_default`).
 
 A fresh or upgraded db gets "Standard" from the default template's pipeline at startup
 (`seed_standard`), so there is always a default.
@@ -97,10 +97,9 @@ def get_default_id(db: Database) -> int:
 
 
 def set_default(conn: Conn, workflow_id: int) -> bool:
-    """Make `workflow_id` the default (inside the caller's transaction; Settings > Space). 422
-    `validation_error` if there is no such workflow. Returns whether the default changed."""
-    if conn.execute("SELECT 1 FROM workflows WHERE id = ?", (workflow_id,)).fetchone() is None:
-        raise ApiError(422, "validation_error", f"default_workflow_id: no workflow {workflow_id}")
+    """Make `workflow_id` the default (inside the caller's transaction). 404 `not_found` if there
+    is no such workflow. Returns whether the default changed."""
+    get(conn, workflow_id)
     if default_id(conn) == workflow_id:
         return False
     conn.execute("UPDATE workflows SET is_default = 0 WHERE is_default = 1")
@@ -180,6 +179,15 @@ def update_workflow(db: Database, actor: Me, workflow_id: int, body: WorkflowUpd
             )
         except IntegrityError:
             raise _name_taken(body.name) from None
+        return get(conn, workflow_id)
+
+
+def make_default(db: Database, workflow_id: int) -> Workflow:
+    """Make `workflow_id` the default; the one before stops being it. Its version is unchanged
+    (the default is not part of the workflow's content). 404 `not_found`."""
+    with db.tx() as conn:
+        if set_default(conn, workflow_id):
+            log.info("Workflows: %d is the default now", workflow_id)
         return get(conn, workflow_id)
 
 

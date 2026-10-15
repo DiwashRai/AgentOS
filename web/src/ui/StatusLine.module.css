@@ -1,0 +1,19 @@
+/* A quiet status line (loading, permission, errors): sentence case (refresh: no mono caps). */
+
+/* in a page's content column: a meta line */
+.line {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+
+/* alone in a view: padded, at the control size */
+.inset {
+  padding: 14px 18px;
+  font-size: var(--fs-control);
+  line-height: 1.4;
+}
+
+.line[data-error] {
+  color: var(--blocked);
+}

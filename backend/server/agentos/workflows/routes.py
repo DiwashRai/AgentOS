@@ -1,5 +1,5 @@
 """Workflow routes (request 23B): any approved user lists them (the New ticket form and the
-Pipeline tab pick one); admins create, edit and delete them."""
+Pipeline tab pick one); admins create, edit and delete them and pick the default."""
 
 from __future__ import annotations
 
@@ -28,6 +28,14 @@ def create_workflow(body: WorkflowCreate, user: Admin, ctx: Ctx) -> Workflow:
 @router.put("/{workflow_id}")
 def update_workflow(workflow_id: int, body: WorkflowUpdate, user: Admin, ctx: Ctx) -> Workflow:
     return service.update_workflow(ctx.db, user, workflow_id, body)
+
+
+@router.post("/{workflow_id}/default")
+def make_default(workflow_id: int, _: Admin, ctx: Ctx) -> Workflow:
+    """Make this workflow the one a new ticket gets when it names none (`/api/config`
+    `default_workflow_id`); the previous default stops being it. Answers the workflow, now
+    `default`. 404 `not_found` for an unknown id."""
+    return service.make_default(ctx.db, workflow_id)
 
 
 @router.delete("/{workflow_id}", status_code=204)

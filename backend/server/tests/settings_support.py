@@ -75,7 +75,6 @@ def _write(ctx: AppContext, area: Area, value: dict[str, Any]) -> None:
     with ctx.db.tx() as conn:
         row = read_area(conn, area)
         write_area(conn, area, value, version=row.version + 1 if row else 1, actor_id=None)
-    ctx.space_store.invalidate()
 
 
 def set_space(ctx: AppContext, **changes: Any) -> None:

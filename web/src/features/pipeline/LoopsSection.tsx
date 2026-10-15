@@ -1,7 +1,7 @@
 // The pipeline editor's loops: each loop block's first and last stage and its round cap, with the
 // block's roles and its problems inline. The block is also drawn around its stage rows.
+import { Field, Select } from "../../editor";
 import { Button, ZoneHead } from "../../ui";
-import { Field, Select } from "./fields";
 import {
   blockRoles,
   countOptions,

@@ -4,6 +4,7 @@ import type { components, paths } from "./schema";
 
 export type Schemas = components["schemas"];
 export type ErrorCode = Schemas["ErrorDetail"]["code"];
+export type ValidationIssue = Schemas["ValidationIssue"];
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -18,12 +19,17 @@ export const csrfMiddleware: Middleware = {
 export const api = createClient<paths>({ baseUrl: "", credentials: "same-origin" });
 api.use(csrfMiddleware);
 
-/** A failed API call. `code` comes from the error envelope, or `http_error` if there was none. */
+/**
+ * A failed API call. `code` comes from the error envelope, or `http_error` if there was none.
+ * `issues` lists every problem of a 422, each at its field `loc` (relative to the request body;
+ * empty = the request as a whole); it is empty on other errors and without an envelope.
+ */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: ErrorCode,
     message: string,
+    readonly issues: readonly ValidationIssue[] = [],
   ) {
     super(message);
     this.name = "ApiError";
@@ -33,7 +39,14 @@ export class ApiError extends Error {
 function isEnvelope(value: unknown): value is Schemas["ErrorBody"] {
   if (typeof value !== "object" || value === null || !("error" in value)) return false;
   const detail: unknown = value.error;
-  return typeof detail === "object" && detail !== null && "code" in detail && "message" in detail;
+  return (
+    typeof detail === "object" &&
+    detail !== null &&
+    "code" in detail &&
+    "message" in detail &&
+    "issues" in detail &&
+    Array.isArray(detail.issues)
+  );
 }
 
 /**
@@ -46,7 +59,10 @@ export async function unwrap<T>(
 ): Promise<T> {
   const { data, error, response } = await call;
   if (response.ok) return data as T;
-  if (isEnvelope(error)) throw new ApiError(response.status, error.error.code, error.error.message);
+  if (isEnvelope(error)) {
+    const { code, message, issues } = error.error;
+    throw new ApiError(response.status, code, message, issues);
+  }
   throw new ApiError(
     response.status,
     "http_error",

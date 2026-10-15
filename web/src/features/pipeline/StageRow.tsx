@@ -2,8 +2,8 @@
 // expands to the stage's settings. A disabled stage reads as "skipped", as everywhere else.
 import { useEffect, useId, useRef } from "react";
 
-import { Button, ChevronIcon, cx, IconButton, Tag } from "../../ui";
-import { Field, fieldStyles as f, Select, Toggle } from "./fields";
+import { Field, fieldStyles as f, Select, Toggle } from "../../editor";
+import { Button, ChevronIcon, cx, IconButton, Tag, text } from "../../ui";
 import {
   agentHint,
   countOptions,
@@ -429,7 +429,7 @@ function LoopSettings(props: {
   return (
     <div className={s.grid3}>
       <div className={f.field}>
-        <span className={f.label}>In a loop</span>
+        <span className={text.label}>In a loop</span>
         <Toggle
           checked={stage.check}
           disabled={readOnly}
@@ -441,7 +441,7 @@ function LoopSettings(props: {
         >
           Check
         </Toggle>
-        <span className={f.note}>
+        <span className={text.meta}>
           Inside a loop, this stage passes or fails the round with a verdict.
         </span>
       </div>

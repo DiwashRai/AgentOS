@@ -18,7 +18,6 @@ from agentos.context import AppContext
 from agentos.models import (
     AppConfig,
     ChatMessage,
-    FieldMappings,
     FileContent,
     FileInfo,
     FileVersionInfo,
@@ -26,6 +25,7 @@ from agentos.models import (
     IntakeSettings,
     JiraField,
     Manifest,
+    MappingSettings,
     Me,
     Person,
     RepoSettings,
@@ -67,9 +67,11 @@ def test_every_get_matches_its_model(
     # A repo without a default branch (request 22A), for a blank, blocked ticket.
     repos = check(client, "/api/settings/repos", RepoSettings)
     bare = {"name": "bare", "url": "https://github.com/o/bare.git", "default_branch": None}
-    entries = [*(r.model_dump(exclude={"open_ticket_count"}) for r in repos.repos), bare]
+    entries = [*(r.model_dump() for r in repos.value.repos), bare]
     put = client.put(
-        "/api/settings/repos", json={"repos": entries, "base_version": 1}, headers=CSRF
+        "/api/settings/repos",
+        json={"value": {"repos": entries}, "base_version": 1},
+        headers=CSRF,
     )
     assert put.status_code == 200, put.text
     create_ticket("Blank ticket", repo="bare")
@@ -125,18 +127,17 @@ def test_every_get_matches_its_model(
     # Settings: seeded (updated_by null), then saved by someone (updated_by set).
     space = check(client, "/api/settings/space", SpaceSettings)
     assert space.updated_by is None
-    body = space.model_dump(exclude={"version", "updated_at", "updated_by"})
-    saved = client.put(
-        "/api/settings/space", json={**body, "base_version": space.version}, headers=CSRF
-    )
+    body = {"value": space.value.model_dump(), "base_version": space.version}
+    saved = client.put("/api/settings/space", json=body, headers=CSRF)
     assert saved.status_code == 200, saved.text
     assert check(client, "/api/settings/space", SpaceSettings).updated_by is not None
-    assert check(client, "/api/settings/repos", RepoSettings).repos
-    queries = {"queries": [{"id": None, "name": "To do", "jql": "x"}], "base_version": 1}
-    assert client.put("/api/settings/intake", json=queries, headers=CSRF).status_code == 200
-    assert check(client, "/api/settings/intake", IntakeSettings).queries
-    # Field mappings (request 22B), and the Jira field picker against a mocked Jira.
-    assert check(client, "/api/settings/mappings", FieldMappings).mappings == []
+    assert check(client, "/api/settings/repos", RepoSettings).open_ticket_counts["bare"] == 1
+    queries = [{"id": None, "name": "To do", "jql": "x"}]
+    body = {"value": {"queries": queries}, "base_version": 1}
+    assert client.put("/api/settings/intake", json=body, headers=CSRF).status_code == 200
+    assert check(client, "/api/settings/intake", IntakeSettings).value.queries
+    # Field mappings, and the Jira field picker against a mocked Jira.
+    assert check(client, "/api/settings/mappings", MappingSettings).value.mappings == []
     mapping = {
         "target": "base_branch",
         "source": "jira",
@@ -144,9 +145,9 @@ def test_every_get_matches_its_model(
         "field_name": "Fix versions",
         "rules": [{"match": "version_1*", "value": "App-1.Latest"}],
     }
-    body = {"mappings": [mapping], "base_version": 1}
+    body = {"value": {"mappings": [mapping]}, "base_version": 1}
     assert client.put("/api/settings/mappings", json=body, headers=CSRF).status_code == 200
-    assert check(client, "/api/settings/mappings", FieldMappings).updated_by is not None
+    assert check(client, "/api/settings/mappings", MappingSettings).updated_by is not None
     fields = [{"id": "fixVersions", "name": "Fix versions", "schema": {"type": "array"}}]
     ctx.jira = JiraClient(
         "https://jira.example.com",
@@ -160,9 +161,10 @@ def test_every_get_matches_its_model(
     assert client.put("/api/settings/runtimes", json=body, headers=CSRF).status_code == 200
     assert check(client, "/api/settings/runtimes", RuntimeSettings).updated_by is not None
     runner = check(client, "/api/settings/runner", RunnerSettings)
-    body = {"github_repo": "o/r", "workflow": runner.workflow, "ref": "main", "base_version": 1}
+    value = runner.value.model_dump() | {"github_repo": "o/r"}
+    body = {"value": value, "base_version": 1}
     assert client.put("/api/settings/runner", json=body, headers=CSRF).status_code == 200
-    assert check(client, "/api/settings/runner", RunnerSettings).github_repo == "o/r"
+    assert check(client, "/api/settings/runner", RunnerSettings).value.github_repo == "o/r"
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
     assert len(summaries) == 5
     assert any(s.latest_run is not None for s in summaries)

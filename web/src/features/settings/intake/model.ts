@@ -2,7 +2,7 @@
 // server gives it an id), the PUT body, validation that mirrors the server (models.py
 // IntakeQueryIn / IntakeSettingsUpdate), and what a row's "Test query" line says.
 import type { Schemas } from "../../../api/client";
-import { describeSaveError } from "../../pipeline/model";
+import { describeSaveError } from "../../../editor/save";
 
 export type IntakeSettings = Schemas["IntakeSettings"];
 export type IntakeSettingsUpdate = Schemas["IntakeSettingsUpdate"];
@@ -128,12 +128,6 @@ export function validate(form: IntakeForm): Issues {
 
 export function issueCount(issues: Issues): number {
   return issues.form.length + issues.rows.reduce((n, r) => n + Object.keys(r).length, 0);
-}
-
-/** SaveBar's reason Save is off, or undefined. */
-export function fixLine(count: number): string | undefined {
-  if (count === 0) return undefined;
-  return `Fix ${count === 1 ? "1 issue" : `${String(count)} issues`} first`;
 }
 
 // ------------------------------------------------------------------ Test query

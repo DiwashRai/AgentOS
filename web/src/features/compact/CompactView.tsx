@@ -16,7 +16,6 @@ import {
 import { useSearchParams } from "react-router";
 
 import { isShortcut } from "../../app/keys";
-import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
@@ -24,10 +23,10 @@ import { useSearchQuery } from "../../app/useSearchQuery";
 import { repoShort } from "../../domain/format";
 import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
-import { Age, ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, TickBadge } from "../../ui";
+import { Age, ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, StatusLine, TickBadge } from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { NewTicketPrompt, NoMatches } from "../queue/QueueView";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import s from "./Compact.module.css";
 import {
   byFilter,
@@ -173,9 +172,9 @@ export function CompactView() {
   };
 
   let body;
-  if (board.isPending) body = <Quiet>Loading</Quiet>;
+  if (board.isPending) body = <StatusLine inset>Loading</StatusLine>;
   else if (board.error)
-    body = <Quiet error>{`Can't reach the server · ${board.error.message}`}</Quiet>;
+    body = <StatusLine inset error>{`Can't reach the server · ${board.error.message}`}</StatusLine>;
   else if (board.tickets.length === 0) body = <NewTicketPrompt />;
   else if (groups.length === 0)
     body =

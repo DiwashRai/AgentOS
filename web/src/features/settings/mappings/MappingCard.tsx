@@ -4,8 +4,8 @@
 import { useState } from "react";
 
 import { usePreviewMapping } from "../../../api/queries";
+import { Field, fieldStyles as f, Select } from "../../../editor";
 import { Button, cx, LinkButton } from "../../../ui";
-import { Field, fieldStyles as f, Select } from "../../pipeline/fields";
 import s from "./Mappings.module.css";
 import {
   fieldKind,

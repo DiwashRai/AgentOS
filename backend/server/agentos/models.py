@@ -687,10 +687,14 @@ class IntakeQuery(ApiModel):
 
 # ------------------------------------------------------------------ settings (edited in the app)
 #
-# Admin-only (GET and PUT). Each area is one document: GET returns it with `version`,
-# `updated_at` and `updated_by` (null = seeded on first start, not saved by anyone); PUT sends it
-# back whole as an `*Update` (no read-only fields) with `base_version` → 409 `stale_version` if
-# someone else saved first. Changes apply without a restart.
+# Admin-only (GET, PUT and validate). Space, repos, intake, runner and field mappings share one
+# versioned-document shape: GET answers `{value, version, updated_at, updated_by}` (`updated_by`
+# null = seeded on first start, not saved by anyone; read-only extras sit beside `value`); PUT
+# sends `{value, base_version}` → 409 `stale_version` if someone else saved first; POST
+# `.../validate` sends `{value}` and runs the same checks without saving (204, or the 422 a save
+# would give). A `*Doc` carries types only: the rules live once, in `pipeline.space` /
+# `pipeline.mapping`, and one 422 lists every problem at its `value...` field. Changes apply
+# without a restart.
 
 KEY_PREFIX_PATTERN = r"^[A-Z][A-Z0-9]{0,9}$"
 JIRA_PROJECT_PATTERN = r"^[A-Z][A-Z0-9_]+$"
@@ -715,77 +719,74 @@ def _stripped(value: str) -> str:
     return value.strip()
 
 
-class SpaceSettings(ApiModel):
-    """Settings > Space. `key_prefix` only affects new native tickets (stored keys never change).
-    `jira_projects`: signing in needs browse access to one of them (AGENTOS_ADMINS people
-    excepted); imports and intake only take issues from them."""
+REPO_URL_MAX = 500
+
+
+class SettingsMeta(ApiModel):
+    """What every settings document's read carries beside its `value`."""
+
+    version: int
+    updated_at: AwareDatetime
+    updated_by: Person | None
+
+
+class SpaceDoc(ApiModel):
+    """Settings > Space. `key_prefix` only affects new native tickets (stored keys never change);
+    it can't be one of `jira_projects` (native keys would take real Jira keys). `jira_projects`:
+    signing in needs browse access to one of them (AGENTOS_ADMINS people excepted), so at least one
+    is needed while sign-in is with Jira; imports and intake only take issues from them."""
 
     name: str
     default_repo: str | None  # a repo catalog name: what a new ticket gets when it names none
     key_prefix: str
     jira_projects: list[str]
     claim_timeout_s: int  # a dispatched run whose worker never connects fails after this
-    # The workflow a new ticket gets when it names none (request 23B).
-    default_workflow_id: int
-    version: int
-    updated_at: AwareDatetime
-    updated_by: Person | None
+
+
+class SpaceSettings(SettingsMeta):
+    value: SpaceDoc
+
+
+class SpaceSettingsValidate(ApiModel):
+    value: SpaceDoc
 
 
 class SpaceSettingsUpdate(ApiModel):
-    """PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,
-    `key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project
-    repeats, `jira_projects` is empty while sign-in is with Jira, or `default_workflow_id` isn't a
-    workflow."""
-
-    name: str = Field(min_length=1, max_length=SPACE_NAME_MAX)
-    default_repo: str | None
-    key_prefix: str = Field(pattern=KEY_PREFIX_PATTERN)
-    jira_projects: list[JiraProjectKey] = Field(max_length=MAX_JIRA_PROJECTS)
-    claim_timeout_s: int = Field(ge=CLAIM_TIMEOUT_MIN_S, le=CLAIM_TIMEOUT_MAX_S)
-    # Omitted/null = keep the current default.
-    default_workflow_id: int | None = None
+    value: SpaceDoc
     base_version: int
-
-    @field_validator("name")
-    @classmethod
-    def _name(cls, value: str) -> str:
-        return _stripped(value)
 
 
 class RepoEntry(ApiModel):
-    name: str
-    url: str
-    default_branch: str | None  # null = none (tickets need their own base branch)
-    # Open tickets that use this repo: removing it is refused (409 `in_use`) while this is > 0.
-    open_ticket_count: int
-
-
-class RepoSettings(ApiModel):
-    """Settings > Repos: the Space's repo catalog. Tickets reference a repo by name, so changing a
-    URL or default branch reaches every ticket that uses it."""
-
-    repos: list[RepoEntry]
-    version: int
-    updated_at: AwareDatetime
-    updated_by: Person | None
-
-
-class RepoEntryIn(ApiModel):
     """`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).
     `default_branch`: null or blank = none (then each ticket on the repo needs its own)."""
 
-    name: str = Field(pattern=REPO_NAME_PATTERN)
-    url: str = Field(min_length=1, max_length=500)
-    default_branch: str | None = Field(max_length=255)
+    name: str
+    url: str
+    default_branch: str | None
+
+
+class ReposDoc(ApiModel):
+    """Settings > Repos: the Space's repo catalog, in order. Tickets reference a repo by name, so
+    changing a URL or default branch reaches every ticket that uses it. Names are unique and
+    can't be renamed (a missing name = removed, a new one = added). Removing a repo that open
+    tickets or the Space's `default_repo` use → 409 `in_use` on save; done and closed tickets keep
+    the name."""
+
+    repos: list[RepoEntry]
+
+
+class RepoSettings(SettingsMeta):
+    value: ReposDoc
+    # Open tickets per catalog repo: removing one is refused (409 `in_use`) while it is > 0.
+    open_ticket_counts: dict[str, int]
+
+
+class RepoSettingsValidate(ApiModel):
+    value: ReposDoc
 
 
 class RepoSettingsUpdate(ApiModel):
-    """PUT /api/settings/repos: the whole catalog, in order. Names are unique and can't be renamed
-    (a missing name = removed, a new one = added). Removing a repo that open tickets or the
-    Space's `default_repo` use → 409 `in_use`; done and closed tickets keep the name."""
-
-    repos: list[RepoEntryIn] = Field(max_length=MAX_REPOS)
+    value: ReposDoc
     base_version: int
 
 
@@ -804,33 +805,32 @@ class IntakeQuerySpec(ApiModel):
         return _stripped(value)
 
 
-class IntakeSettings(ApiModel):
-    """Settings > Intake: the queries, in tab order."""
+class IntakeQueryEntry(ApiModel):
+    """`id: null` = a new query: the server makes a unique id from its name. Sent ids are kept
+    (always set when read)."""
 
-    queries: list[IntakeQuerySpec]
-    version: int
-    updated_at: AwareDatetime
-    updated_by: Person | None
+    id: str | None
+    name: str
+    jql: str
 
 
-class IntakeQueryIn(ApiModel):
-    """`id: null` = a new query: the server makes a unique id from its name. Sent ids are kept."""
+class IntakeDoc(ApiModel):
+    """Settings > Intake: the queries, in tab order. The JQL isn't checked against Jira (it might
+    be down): use the preview. Saving drops the intake cache."""
 
-    id: str | None = Field(pattern=INTAKE_QUERY_ID_PATTERN)
-    name: str = Field(min_length=1, max_length=INTAKE_NAME_MAX)
-    jql: str = Field(min_length=1, max_length=JQL_MAX)
+    queries: list[IntakeQueryEntry]
 
-    @field_validator("name", "jql")
-    @classmethod
-    def _not_blank(cls, value: str) -> str:
-        return _stripped(value)
+
+class IntakeSettings(SettingsMeta):
+    value: IntakeDoc
+
+
+class IntakeSettingsValidate(ApiModel):
+    value: IntakeDoc
 
 
 class IntakeSettingsUpdate(ApiModel):
-    """PUT /api/settings/intake. The JQL isn't checked against Jira (it might be down): use the
-    preview. Saving drops the intake cache."""
-
-    queries: list[IntakeQueryIn] = Field(max_length=MAX_INTAKE_QUERIES)
+    value: IntakeDoc
     base_version: int
 
 
@@ -901,35 +901,33 @@ class RuntimeSettingsUpdate(ApiModel):
     base_version: int
 
 
-class RunnerSettings(ApiModel):
-    """Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow. Read at
-    every launch (no restart). `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN
-    is set) come from the server's env and are read-only. `github_repo` null = none set: with the
-    github launcher, runs then fail at launch saying so."""
+class RunnerDoc(ApiModel):
+    """Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow, read at
+    every launch (no restart). `github_repo`: `owner/name`, or null = none set (with the github
+    launcher, runs then fail at launch saying so); `workflow`: a .yml file name in that repo's
+    .github/workflows/; `ref`: the branch or tag the workflow file is on."""
 
-    launcher: LauncherName
     github_repo: str | None
     workflow: str
     ref: str
+
+
+class RunnerSettings(SettingsMeta):
+    """`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the
+    server's env and are read-only."""
+
+    value: RunnerDoc
+    launcher: LauncherName
     token_set: bool
-    version: int
-    updated_at: AwareDatetime
-    updated_by: Person | None
+
+
+class RunnerSettingsValidate(ApiModel):
+    value: RunnerDoc
 
 
 class RunnerSettingsUpdate(ApiModel):
-    """PUT /api/settings/runner. `github_repo`: `owner/name` or null; `workflow`: a .yml file name
-    in that repo's .github/workflows/; `ref`: the branch or tag the workflow file is on."""
-
-    github_repo: str | None = Field(pattern=GITHUB_REPO_PATTERN, max_length=200)
-    workflow: str = Field(pattern=GITHUB_WORKFLOW_PATTERN, max_length=200)
-    ref: str = Field(min_length=1, max_length=GIT_REF_MAX)
+    value: RunnerDoc
     base_version: int
-
-    @field_validator("ref")
-    @classmethod
-    def _ref(cls, value: str) -> str:
-        return _stripped(value)
 
 
 class IntakePreviewRequest(ApiModel):
@@ -999,24 +997,44 @@ class FieldMapping(ApiModel):
         return _stripped(value)
 
 
-class FieldMappings(ApiModel):
-    """Settings > Field mappings: at most one mapping per target. A `base_branch` mapping sets an
-    imported (manual import or Intake Take in) repo ticket's base branch from the Jira field; no
-    match leaves it blank and blocked from dispatch (the repo default does not fill it)."""
+class MappingRuleEntry(ApiModel):
+    """A rule as sent and read (the rules are `MappingRule`'s)."""
 
-    mappings: list[FieldMapping]
-    version: int
-    updated_at: AwareDatetime
-    updated_by: Person | None
+    match: str
+    value: str
 
 
-class FieldMappingsUpdate(ApiModel):
-    """PUT /api/settings/mappings: the whole list. 422 `validation_error` naming the mapping and
-    rule (`mappings.0.rules.3.value: ...`) or a target listed twice. Saving re-applies the rules
-    to every unlocked ticket whose base branch came from a mapping (from its stored Jira value; no
-    Jira call), except during a run; hand-set and locked tickets are never touched."""
+class FieldMappingEntry(ApiModel):
+    """A mapping as sent and read (the rules are `FieldMapping`'s)."""
 
-    mappings: list[FieldMapping] = Field(max_length=MAX_MAPPINGS)
+    target: MappingTarget
+    source: Literal["jira"]
+    field: str
+    field_name: str
+    rules: list[MappingRuleEntry]
+
+
+class MappingsDoc(ApiModel):
+    """Settings > Field mappings: at most one mapping per target, each rule's `value` valid for
+    its target. A `base_branch` mapping sets an imported (manual import or Intake Take in) repo
+    ticket's base branch from the Jira field; no match leaves it blank and blocked from dispatch
+    (the repo default does not fill it). Saving re-applies the rules to every unlocked ticket
+    whose base branch came from a mapping (from its stored Jira value; no Jira call), except
+    during a run; hand-set and locked tickets are never touched."""
+
+    mappings: list[FieldMappingEntry]
+
+
+class MappingSettings(SettingsMeta):
+    value: MappingsDoc
+
+
+class MappingSettingsValidate(ApiModel):
+    value: MappingsDoc
+
+
+class MappingSettingsUpdate(ApiModel):
+    value: MappingsDoc
     base_version: int
 
 
@@ -1030,13 +1048,14 @@ class JiraField(ApiModel):
 
 class MappingPreviewRequest(ApiModel):
     """ "Try it": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira
-    key or browse link, read with the service account). Exactly one of `values` / `issue`."""
+    key or browse link, read with the service account). Exactly one of `values` / `issue`; the
+    other is null. `mapping` is checked as on save."""
 
-    mapping: FieldMapping
+    mapping: FieldMappingEntry
     values: list[Annotated[str, Field(max_length=PREVIEW_VALUE_MAX)]] | None = Field(
-        default=None, max_length=MAX_PREVIEW_VALUES
+        max_length=MAX_PREVIEW_VALUES
     )
-    issue: str | None = Field(default=None, min_length=1, max_length=2000)
+    issue: str | None = Field(min_length=1, max_length=2000)
 
     @model_validator(mode="after")
     def _one_input(self) -> Self:

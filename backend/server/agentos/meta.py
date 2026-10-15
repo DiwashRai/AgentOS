@@ -21,7 +21,8 @@ def health() -> Health:
 
 @router.get("/config")
 def app_config(ctx: Ctx) -> AppConfig:
-    settings, runtimes, space = ctx.settings, ctx.runtimes, ctx.space
+    snapshot = ctx.snapshot()
+    settings, runtimes, space = ctx.settings, snapshot.runtimes, snapshot.space
     defaults = space_defaults(templates.get_defaults(ctx.db), runtimes)
     return AppConfig(
         auth_mode="dev" if settings.dev_auth else "jira",

@@ -11,14 +11,18 @@ import {
   useSaveRunnerSettings,
   useSaveRuntimeSettings,
 } from "../../../api/queries";
-import { describeSaveError } from "../../pipeline/model";
-import pages from "../../pipeline/pages.module.css";
-import { SaveBar } from "../../pipeline/SaveBar";
-import { useDraft, useUnsavedWarning } from "../../pipeline/useDraft";
-import { useNow } from "../../runs/useNow";
+import {
+  describeSaveError,
+  fixFirst,
+  pageStyles as pages,
+  SaveBar,
+  useDraft,
+  useUnsavedWarning,
+} from "../../../editor";
+import { StatusLine } from "../../../ui";
+import { useNow } from "../../../ui/useNow";
 import { isForbidden, savedLine } from "../common";
 import {
-  fixFirst,
   rowsFrom,
   runnerBody,
   runnerForm,
@@ -34,18 +38,6 @@ import s from "./Runners.module.css";
 import { RuntimesEditor } from "./RuntimesEditor";
 
 const ADMINS_ONLY = "Only admins can change runners.";
-
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
-}
 
 export function RunnersPage() {
   const me = useMe();
@@ -64,14 +56,14 @@ export function RunnersPage() {
   const runtimes = useDraft(savedRows, rt?.version, sameRuntimes, { warn: false });
   useUnsavedWarning(runner.dirty || runtimes.dirty);
 
-  if (me.isPending) return <Line>Loading runners</Line>;
-  if (!isAdmin) return <Line>{ADMINS_ONLY}</Line>;
+  if (me.isPending) return <StatusLine>Loading runners</StatusLine>;
+  if (!isAdmin) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
   if (runnerQ.isError || runtimesQ.isError) {
     const e = runnerQ.error ?? runtimesQ.error;
-    if (isForbidden(e)) return <Line>{ADMINS_ONLY}</Line>;
-    return <Line error>{`Can't load runners · ${e?.message ?? ""}`}</Line>;
+    if (isForbidden(e)) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+    return <StatusLine error>{`Can't load runners · ${e?.message ?? ""}`}</StatusLine>;
   }
-  if (!r || !rt) return <Line>Loading runners</Line>;
+  if (!r || !rt) return <StatusLine>Loading runners</StatusLine>;
 
   const runnerValue = runner.value ?? runnerForm(r);
   const runnerIssues = validateRunner(runnerValue);

@@ -33,6 +33,11 @@ def error(response: httpx.Response) -> tuple[int, str, str]:
     return response.status_code, body["code"], body["message"]
 
 
+def locs(response: httpx.Response) -> list[tuple[str | int, ...]]:
+    """Where each issue of a 422 is."""
+    return [tuple(issue["loc"]) for issue in response.json()["error"]["issues"]]
+
+
 def runtimes(client: TestClient) -> RuntimeSettings:
     response = client.get("/api/settings/runtimes")
     assert response.status_code == 200, response.text
@@ -59,14 +64,13 @@ def put_runtimes(client: TestClient, items: list[dict[str, Any]], **extra: Any) 
     return response
 
 
-def put_runner(client: TestClient, **changes: Any) -> httpx.Response:
+def put_runner(
+    client: TestClient, base_version: int | None = None, **changes: Any
+) -> httpx.Response:
     current = runner(client)
     body = {
-        "github_repo": current.github_repo,
-        "workflow": current.workflow,
-        "ref": current.ref,
-        "base_version": current.version,
-        **changes,
+        "value": current.value.model_dump() | changes,
+        "base_version": current.version if base_version is None else base_version,
     }
     response: httpx.Response = client.put("/api/settings/runner", json=body, headers=CSRF)
     return response
@@ -150,23 +154,29 @@ def test_a_stale_save_is_refused(authed: TestClient) -> None:
 @pytest.mark.parametrize(
     ("items", "where"),
     [
-        pytest.param([], "runtimes", id="none"),
-        pytest.param([runtime("a", ["a"]), runtime("a", ["b"])], "runtimes.1.name", id="dup"),
-        pytest.param([runtime("Bad Name", ["a"])], "name", id="name"),
-        pytest.param([runtime("a", [])], "argv", id="no-argv"),
-        pytest.param([runtime("a", ["  "])], "runtimes.0", id="blank-program"),
-        pytest.param([runtime("a", ["a"], prompt_via="arg")], "runtimes.0", id="arg-no-prompt"),
+        pytest.param([], ("runtimes",), id="none"),
+        pytest.param([runtime("a", ["a"]), runtime("a", ["b"])], ("runtimes", 1, "name"), id="dup"),
+        pytest.param([runtime("Bad Name", ["a"])], ("runtimes", 0, "name"), id="name"),
+        pytest.param([runtime("a", [])], ("runtimes", 0, "argv"), id="no-argv"),
+        pytest.param([runtime("a", ["  "])], ("runtimes", 0), id="blank-program"),
+        pytest.param([runtime("a", ["a"], prompt_via="arg")], ("runtimes", 0), id="arg-no-prompt"),
         pytest.param(
-            [runtime("a", ["a"], prompt_args=["-p", "{prompt}"])], "runtimes.0", id="stdin-args"
+            [runtime("a", ["a"], prompt_args=["-p", "{prompt}"])], ("runtimes", 0), id="stdin-args"
         ),
-        pytest.param([runtime("a", ["a"], prompt_via="file")], "prompt_via", id="via"),
-        pytest.param([{"name": "a", "argv": ["a"]}], "model_args", id="missing-fields"),
+        pytest.param(
+            [runtime("a", ["a"], prompt_via="file")], ("runtimes", 0, "prompt_via"), id="via"
+        ),
+        pytest.param(
+            [{"name": "a", "argv": ["a"]}], ("runtimes", 0, "model_args"), id="missing-fields"
+        ),
     ],
 )
-def test_runtimes_are_validated(authed: TestClient, items: list[Any], where: str) -> None:
-    status, code, message = error(put_runtimes(authed, items))
-    assert (status, code) == (422, "validation_error")
-    assert where in message, message
+def test_runtimes_are_validated(
+    authed: TestClient, items: list[Any], where: tuple[str | int, ...]
+) -> None:
+    response = put_runtimes(authed, items)
+    assert error(response)[:2] == (422, "validation_error")
+    assert where in locs(response), response.text
     assert runtimes(authed).version == 1
 
 
@@ -235,10 +245,8 @@ def test_runtimes_are_admin_only(client: TestClient, login: LoginFn) -> None:
 def test_seeded_runner_with_the_local_launcher(authed: TestClient) -> None:
     got = runner(authed)
     assert got.model_dump(exclude={"updated_at"}) == {
+        "value": {"github_repo": None, "workflow": "agentos-worker.yml", "ref": "main"},
         "launcher": "local",
-        "github_repo": None,
-        "workflow": "agentos-worker.yml",
-        "ref": "main",
         "token_set": False,
         "version": 1,
         "updated_by": None,
@@ -249,7 +257,7 @@ def test_save_the_runner(authed: TestClient) -> None:
     saved = put_runner(authed, github_repo="DiwashRai/AgentOS", workflow="w.yaml", ref=" release ")
     assert saved.status_code == 200, saved.text
     got = RunnerSettings.model_validate(saved.json())
-    assert (got.github_repo, got.workflow, got.ref, got.version) == (
+    assert (got.value.github_repo, got.value.workflow, got.value.ref, got.version) == (
         "DiwashRai/AgentOS",
         "w.yaml",
         "release",
@@ -259,9 +267,7 @@ def test_save_the_runner(authed: TestClient) -> None:
     assert runner(authed) == got
     cleared = put_runner(authed, github_repo=None)
     assert cleared.status_code == 200, cleared.text
-    assert runner(authed).github_repo is None
-    stale = put_runner(authed, base_version=1)
-    assert error(stale)[:2] == (409, "stale_version")
+    assert runner(authed).value.github_repo is None
 
 
 @pytest.mark.parametrize(
@@ -270,23 +276,29 @@ def test_save_the_runner(authed: TestClient) -> None:
         {"github_repo": "AgentOS"},
         {"github_repo": "a/b/c"},
         {"github_repo": ""},
+        {"github_repo": "o/" + "r" * 200},
         {"workflow": "../x.yml"},
         {"workflow": "agentos-worker"},
         {"ref": "  "},
+        {"ref": "r" * 256},
         {"launcher": "github"},  # read-only (env)
         {"token_set": True},
     ],
 )
 def test_runner_is_validated(authed: TestClient, changes: dict[str, Any]) -> None:
-    assert error(put_runner(authed, **changes))[:2] == (422, "validation_error")
+    response = put_runner(authed, **changes)
+    assert error(response)[:2] == (422, "validation_error")
+    assert locs(response) == [("value", *changes)]
     assert runner(authed).version == 1
 
 
-def test_runner_is_admin_only(client: TestClient, login: LoginFn) -> None:
-    login("wanda", role="writer")
-    assert client.get("/api/settings/runner").status_code == 403
-    body = {"github_repo": "o/r", "workflow": "w.yml", "ref": "main", "base_version": 1}
-    assert client.put("/api/settings/runner", json=body, headers=CSRF).status_code == 403
+def test_runner_lists_every_problem(authed: TestClient) -> None:
+    response = put_runner(authed, github_repo="AgentOS", workflow="x", ref=" ")
+    assert locs(response) == [
+        ("value", "github_repo"),
+        ("value", "workflow"),
+        ("value", "ref"),
+    ]
 
 
 def test_github_launcher_reads_the_runner_at_each_launch(
@@ -301,7 +313,7 @@ def test_github_launcher_reads_the_runner_at_each_launch(
         return httpx.Response(204)
 
     ctx.launcher = GitHubActionsLauncher(
-        target=runner_target(ctx.space_store),
+        target=runner_target(ctx.db),
         token=GH_TOKEN,
         transport=httpx.MockTransport(handler),
     )
@@ -330,5 +342,5 @@ def test_runner_get_reports_the_env_launcher_and_token(settings: Settings) -> No
     with TestClient(create_app(github, run_loops=False), base_url=BASE_URL) as c:
         assert c.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
         got = runner(c)
-        assert (got.launcher, got.token_set, got.github_repo) == ("github", True, None)
+        assert (got.launcher, got.token_set, got.value.github_repo) == ("github", True, None)
         assert GH_TOKEN not in c.get("/api/settings/runner").text

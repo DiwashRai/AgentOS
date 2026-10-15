@@ -3,25 +3,14 @@
 // would 403 anyway). Renders a content column; the route wraps it in the shell's TopBar + Surface.
 import { ApiError } from "../../api/client";
 import { useMe, usePatchUser, useUsers } from "../../api/queries";
-import pages from "../pipeline/pages.module.css";
-import { useNow } from "../runs/useNow";
+import { pageStyles as pages } from "../../editor";
+import { StatusLine } from "../../ui";
+import { useNow } from "../../ui/useNow";
 import { describePatchError, locksFor, sortUsers, summary, type User } from "./model";
 import { UserRow } from "./UserRow";
 import s from "./Users.module.css";
 
 const ADMINS_ONLY = "Only admins can manage users.";
-
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
-}
 
 /** One row with its own mutation, so pending and error belong to that row only. */
 function PatchableRow({ user, meId, now }: { user: User; meId: number | undefined; now: number }) {
@@ -48,13 +37,13 @@ export function UsersPage() {
   const users = useUsers(isAdmin);
   const now = useNow(60_000);
 
-  if (me.isPending) return <Line>Loading users</Line>;
-  if (!isAdmin) return <Line>{ADMINS_ONLY}</Line>;
-  if (users.isPending) return <Line>Loading users</Line>;
+  if (me.isPending) return <StatusLine>Loading users</StatusLine>;
+  if (!isAdmin) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+  if (users.isPending) return <StatusLine>Loading users</StatusLine>;
   if (users.isError) {
     const e = users.error;
-    if (e instanceof ApiError && e.status === 403) return <Line>{ADMINS_ONLY}</Line>;
-    return <Line error>{`Can't load users · ${e.message}`}</Line>;
+    if (e instanceof ApiError && e.status === 403) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+    return <StatusLine error>{`Can't load users · ${e.message}`}</StatusLine>;
   }
 
   const list = sortUsers(users.data);

@@ -1,4 +1,5 @@
-"""The single error envelope: {"error": {"code", "message", "issues"}} for every non-2xx response."""
+"""The single error envelope, `{"error": {"code", "message", "issues"}}`, for every non-2xx
+response."""
 
 from __future__ import annotations
 

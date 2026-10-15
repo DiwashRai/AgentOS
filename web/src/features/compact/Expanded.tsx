@@ -16,7 +16,7 @@ import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import { planView, plainText, stagesText } from "../peek/model";
 import { usePeek } from "../peek/usePeek";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import { clockTime, fullTime } from "../talk/thread";
 import { ticketPath } from "../ticket/model";
 import s from "./Compact.module.css";

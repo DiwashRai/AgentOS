@@ -139,3 +139,6 @@
 .tile {
   min-width: 0;
 }
+.narrow {
+  max-width: 160px;
+}

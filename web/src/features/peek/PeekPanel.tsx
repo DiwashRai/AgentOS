@@ -14,7 +14,7 @@ import { words } from "../../domain/words";
 import { Button, cx, Kbd, linkClass, RunMeter, StageGlyph, StatusMark, Stepper } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import { meterOf, runNumber, runSeconds, statusMark } from "../queue/model";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import { Talk } from "../talk/Talk";
 import { PrLink } from "../ticket/PrLink";
 import { firstParagraph, plainText, planView, stagesText } from "./model";

@@ -57,7 +57,10 @@ def import_ticket(body: ImportRequest, user: Writer, ctx: Ctx, response: Respons
     """Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with
     `created: false` and the ticket it was imported as before. A `base_branch` field mapping
     (Settings > Field mappings) sets a repo ticket's base branch from its Jira field."""
-    result = service.import_ticket(ctx.db, ctx.space, ctx.jira_source, user, body, ctx.mappings)
+    snapshot = ctx.snapshot()
+    result = service.import_ticket(
+        ctx.db, snapshot.space, ctx.jira_source, user, body, snapshot.mappings
+    )
     response.status_code = 201 if result.created else 200
     return result
 
@@ -81,7 +84,8 @@ def resolve_ticket(key: str, body: ResolveRequest, user: Writer, ctx: Ctx) -> Ti
 
 @router.put("/{key}/pipeline")
 def put_pipeline(key: str, body: PipelineUpdate, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.put_pipeline(ctx.db, ctx.runtimes, ctx.space, key, user, body)
+    snapshot = ctx.snapshot()
+    return service.put_pipeline(ctx.db, snapshot.runtimes, snapshot.space, key, user, body)
 
 
 @router.post("/{key}/workflow")
@@ -90,4 +94,5 @@ def switch_workflow(key: str, body: WorkflowSwitch, user: Writer, ctx: Ctx) -> T
     `run_active` during one, `stale_version` on a stale `base_version`; 404 `not_found` for an
     unknown workflow). The rail keeps the run history of stages the new pipeline shares by id;
     new stages start pending."""
-    return service.switch_workflow(ctx.db, ctx.runtimes, ctx.space, key, user, body)
+    snapshot = ctx.snapshot()
+    return service.switch_workflow(ctx.db, snapshot.runtimes, snapshot.space, key, user, body)

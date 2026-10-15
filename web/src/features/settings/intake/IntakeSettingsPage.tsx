@@ -6,30 +6,21 @@ import { useMemo } from "react";
 import { Link as RouterLink } from "react-router";
 
 import { useIntakeSettings, useMe, useSaveIntakeSettings } from "../../../api/queries";
-import { linkClass } from "../../../ui";
-import { describeSaveError } from "../../pipeline/model";
-import pages from "../../pipeline/pages.module.css";
-import { SaveBar } from "../../pipeline/SaveBar";
-import { useDraft } from "../../pipeline/useDraft";
-import { useNow } from "../../runs/useNow";
+import {
+  describeSaveError,
+  fixFirst,
+  pageStyles as pages,
+  SaveBar,
+  useDraft,
+} from "../../../editor";
+import { linkClass, StatusLine } from "../../../ui";
+import { useNow } from "../../../ui/useNow";
 import { isForbidden, savedLine } from "../common";
-import { fixLine, formOf, issueCount, sameForm, toBody, validate, type IntakeForm } from "./model";
+import { formOf, issueCount, sameForm, toBody, validate, type IntakeForm } from "./model";
 import s from "./IntakeSettings.module.css";
 import { QueryEditor } from "./QueryEditor";
 
 const ADMINS_ONLY = "Only admins can change intake queries.";
-
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
-}
 
 export function IntakeSettingsPage() {
   const me = useMe();
@@ -41,12 +32,12 @@ export function IntakeSettingsPage() {
   const saved = useMemo<IntakeForm | undefined>(() => (data ? formOf(data) : undefined), [data]);
   const draft = useDraft(saved, data?.version, sameForm);
 
-  if (me.isPending) return <Line>Loading intake queries</Line>;
-  if (!isAdmin) return <Line>{ADMINS_ONLY}</Line>;
-  if (settings.isPending) return <Line>Loading intake queries</Line>;
+  if (me.isPending) return <StatusLine>Loading intake queries</StatusLine>;
+  if (!isAdmin) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+  if (settings.isPending) return <StatusLine>Loading intake queries</StatusLine>;
   if (settings.isError) {
-    if (isForbidden(settings.error)) return <Line>{ADMINS_ONLY}</Line>;
-    return <Line error>{`Can't load intake queries · ${settings.error.message}`}</Line>;
+    if (isForbidden(settings.error)) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+    return <StatusLine error>{`Can't load intake queries · ${settings.error.message}`}</StatusLine>;
   }
 
   const doc = settings.data;
@@ -60,7 +51,7 @@ export function IntakeSettingsPage() {
         meta={savedLine(doc, now)}
         dirty={draft.dirty}
         readOnly={false}
-        saveDisabledReason={fixLine(issues)}
+        saveDisabledReason={fixFirst(issues)}
         saving={save.isPending}
         problem={save.error ? describeSaveError(save.error) : null}
         onDiscard={() => {

@@ -35,16 +35,22 @@ MUTATING_ROLES: dict[tuple[str, str], Role] = {
     ("PUT", "/api/template"): "admin",
     ("POST", "/api/workflows"): "admin",
     ("PUT", "/api/workflows/{workflow_id}"): "admin",
+    ("POST", "/api/workflows/{workflow_id}/default"): "admin",
     ("DELETE", "/api/workflows/{workflow_id}"): "admin",
     ("PATCH", "/api/users/{user_id}"): "admin",
     ("PUT", "/api/settings/space"): "admin",
+    ("POST", "/api/settings/space/validate"): "admin",
     ("PUT", "/api/settings/repos"): "admin",
+    ("POST", "/api/settings/repos/validate"): "admin",
     ("PUT", "/api/settings/intake"): "admin",
+    ("POST", "/api/settings/intake/validate"): "admin",
     ("POST", "/api/settings/intake/preview"): "admin",
     ("PUT", "/api/settings/mappings"): "admin",
+    ("POST", "/api/settings/mappings/validate"): "admin",
     ("POST", "/api/settings/mappings/preview"): "admin",
     ("PUT", "/api/settings/runtimes"): "admin",
     ("PUT", "/api/settings/runner"): "admin",
+    ("POST", "/api/settings/runner/validate"): "admin",
 }
 PUBLIC_GETS = {"/api/health", "/api/config", "/api/worker/worker.py"}
 ADMIN_GETS = {

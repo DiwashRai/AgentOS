@@ -33,7 +33,6 @@ const SPACE: SpaceSettings = {
   key_prefix: "AOS",
   jira_projects: ["SCRUM", "PLAT"],
   default_repo: "agentos",
-  default_workflow_id: 1,
   claim_timeout_s: 900,
 };
 

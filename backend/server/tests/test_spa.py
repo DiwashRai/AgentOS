@@ -102,7 +102,9 @@ def test_api_paths_are_never_shadowed(client_name: str, request: pytest.FixtureR
     assert client.get("/api/health").json() == {"status": "ok"}
     for response in (client.get("/api/nope"), client.get("/api"), client.get("/api/")):
         assert response.status_code == 404
-        assert response.json() == {"error": {"code": "not_found", "message": "Not Found"}}
+        assert response.json() == {
+            "error": {"code": "not_found", "message": "Not Found", "issues": []}
+        }
     # An unknown API path stays a 404 for every method; a known path with the wrong method a 405.
     assert client.post("/api/nope", headers=CSRF).status_code == 404
     assert client.delete("/api/health", headers=CSRF).status_code == 405

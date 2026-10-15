@@ -10,17 +10,20 @@ import {
   useMe,
   useSaveMappingSettings,
 } from "../../../api/queries";
-import { describeSaveError } from "../../pipeline/model";
-import pages from "../../pipeline/pages.module.css";
-import { SaveBar } from "../../pipeline/SaveBar";
-import { useDraft } from "../../pipeline/useDraft";
-import { useNow } from "../../runs/useNow";
+import {
+  describeSaveError,
+  fixFirst,
+  pageStyles as pages,
+  SaveBar,
+  useDraft,
+} from "../../../editor";
+import { StatusLine } from "../../../ui";
+import { useNow } from "../../../ui/useNow";
 import { isForbidden, savedLine } from "../common";
 import { MappingCard, type FieldsState } from "./MappingCard";
 import s from "./Mappings.module.css";
 import {
   addMapping,
-  fixLine,
   formOf,
   indexOf,
   isBlankMapping,
@@ -38,18 +41,6 @@ import {
 
 const ADMINS_ONLY = "Only admins can change field mappings.";
 
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
-}
-
 export function MappingsPage() {
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
@@ -61,12 +52,12 @@ export function MappingsPage() {
   const saved = useMemo<MappingsForm | undefined>(() => (data ? formOf(data) : undefined), [data]);
   const draft = useDraft(saved, data?.version, sameForm);
 
-  if (me.isPending) return <Line>Loading field mappings</Line>;
-  if (!isAdmin) return <Line>{ADMINS_ONLY}</Line>;
-  if (settings.isPending) return <Line>Loading field mappings</Line>;
+  if (me.isPending) return <StatusLine>Loading field mappings</StatusLine>;
+  if (!isAdmin) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+  if (settings.isPending) return <StatusLine>Loading field mappings</StatusLine>;
   if (settings.isError) {
-    if (isForbidden(settings.error)) return <Line>{ADMINS_ONLY}</Line>;
-    return <Line error>{`Can't load field mappings · ${settings.error.message}`}</Line>;
+    if (isForbidden(settings.error)) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
+    return <StatusLine error>{`Can't load field mappings · ${settings.error.message}`}</StatusLine>;
   }
 
   const doc = settings.data;
@@ -91,7 +82,7 @@ export function MappingsPage() {
         meta={savedLine(doc, now)}
         dirty={draft.dirty}
         readOnly={false}
-        saveDisabledReason={fixLine(issueCount(issues))}
+        saveDisabledReason={fixFirst(issueCount(issues))}
         saving={save.isPending}
         problem={save.error ? describeSaveError(save.error) : null}
         onDiscard={() => {

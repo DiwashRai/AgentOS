@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "../../api/client";
 import {
   blockRoles,
   CLI_DEFAULT,
   configDefaults,
   defaultsBody,
-  describeSaveError,
   draftFrom,
   drawnBlocks,
   formatTimeout,
@@ -353,17 +351,6 @@ describe("helpers", () => {
     expect(formatTimeout(900)).toBe("15 min");
     expect(formatTimeout(90)).toBe("90 s");
     expect(formatTimeout(Number.NaN)).toBe("");
-  });
-
-  it("describeSaveError maps the 409s", () => {
-    expect(describeSaveError(new ApiError(409, "stale_version", "x"))).toEqual({
-      text: "Changed by someone else. Reload (your draft will be lost).",
-      reload: true,
-    });
-    expect(describeSaveError(new ApiError(409, "run_active", "x")).text).toMatch(/run is active/);
-    expect(
-      describeSaveError(new ApiError(422, "invalid_pipeline", "stage lint: needs a command")),
-    ).toEqual({ text: "stage lint: needs a command", reload: false });
   });
 });
 

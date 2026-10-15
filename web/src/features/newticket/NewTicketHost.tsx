@@ -14,8 +14,8 @@ import {
   useWorkflows,
 } from "../../api/queries";
 import { words } from "../../domain/words";
-import { Button, CloseIcon, IconButton, cx } from "../../ui";
-import { Field, Select, fieldStyles as f } from "../pipeline/fields";
+import { Field, Select, fieldStyles as f } from "../../editor";
+import { Button, CloseIcon, IconButton, cx, text } from "../../ui";
 import { WorkflowPicker } from "../workflows";
 import { defaultWorkflow, workflowIdOf } from "../workflows/model";
 import {
@@ -69,7 +69,7 @@ function ImportRow({
         });
       }}
     >
-      <label htmlFor="import-ref" className={f.label}>
+      <label htmlFor="import-ref" className={text.label}>
         Import from Jira
       </label>
       <div className={s.importRow}>

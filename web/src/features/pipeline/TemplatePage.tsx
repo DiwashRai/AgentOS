@@ -6,12 +6,11 @@
 import { Link as RouterLink } from "react-router";
 
 import { useConfig, useMe, useSaveTemplate, useTemplate } from "../../api/queries";
+import { describeSaveError, fixFirst, pageStyles as s, SaveBar, useDraft } from "../../editor";
 import { linkClass, Tag, ZoneHead } from "../../ui";
 import { DefaultsSection } from "./DefaultsSection";
-import { defaultsBody, describeSaveError, sameDefaults, validateDefaults } from "./model";
-import s from "./pages.module.css";
-import { SaveBar } from "./SaveBar";
-import { useDraft } from "./useDraft";
+import { defaultsBody, sameDefaults, validateDefaults } from "./model";
+import p from "./pipelinePages.module.css";
 
 const WORKFLOWS_PATH = "/settings/workflows";
 
@@ -50,11 +49,7 @@ export function TemplatePage() {
         meta={`version ${String(data.version)}`}
         dirty={draft.dirty}
         readOnly={!isAdmin}
-        saveDisabledReason={
-          issues > 0
-            ? `Fix ${issues === 1 ? "1 issue" : `${String(issues)} issues`} first`
-            : undefined
-        }
+        saveDisabledReason={fixFirst(issues)}
         saving={save.isPending}
         problem={save.error ? describeSaveError(save.error) : null}
         onDiscard={() => {
@@ -104,7 +99,7 @@ export function TemplatePage() {
         onChange={draft.edit}
       />
 
-      <section className={s.scaffold} aria-labelledby="scaffold-head">
+      <section className={p.scaffold} aria-labelledby="scaffold-head">
         <ZoneHead
           id="scaffold-head"
           title="Scaffold"
@@ -114,10 +109,10 @@ export function TemplatePage() {
         {data.scaffold.length === 0 ? (
           <p className={s.quiet}>No scaffold files.</p>
         ) : (
-          <ul className={s.files}>
+          <ul className={p.files}>
             {data.scaffold.map((file) => (
-              <li key={file.path} className={s.file}>
-                <code className={s.path}>{file.path}</code>
+              <li key={file.path} className={p.file}>
+                <code className={p.path}>{file.path}</code>
                 <Tag
                   title={file.mode === "block" ? "Appended as a marked block" : "Replaces the file"}
                 >

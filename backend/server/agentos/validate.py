@@ -1,20 +1,27 @@
 """Input validators: paths, keys, repo URLs, branches, block content, sizes (SPEC §4, §6).
 
-Pure: no web, db or http imports (enforced by import-linter). Every validator raises
-`ApiError(422, "validation_error", "<field>: <why>")` (size limits: 413 `too_large`) and returns
-the value to store. `pydantic_issues` turns pydantic's errors into `ValidationIssue`s.
+Pure: no web, db or http imports (enforced by import-linter). Every `validate_*` / `check_*`
+raises `ApiError(422, "validation_error", "<field>: <why>")` (size limits: 413 `too_large`) and
+returns the value to store. The repo URL and branch rules are also `*_problem` functions that
+return what is wrong (or None), for pydantic validators and other checks that collect issues.
+`pydantic_issues` turns pydantic's errors into `ValidationIssue`s; `parsed` and `too_many` collect
+them for checks that report every problem at once.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence, Sized
+from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
+from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
-from agentos.errors import ApiError
+from agentos.errors import ApiError, field_error
 from agentos.models import ValidationIssue
+
+_M = TypeVar("_M", bound=BaseModel)
 
 # ------------------------------------------------------------------ limits (SPEC §6)
 
@@ -44,6 +51,13 @@ def _invalid(field: str, why: str) -> ApiError:
     return ApiError(422, "validation_error", f"{field}: {why}")
 
 
+def _valid_at(field: str, value: str, problem: str | None) -> str:
+    """`value`, or a 422 with one issue at `field`."""
+    if problem is not None:
+        raise field_error([field], problem)
+    return value
+
+
 # ------------------------------------------------------------------ pydantic errors → issues
 
 
@@ -54,8 +68,8 @@ def pydantic_issues(
     strip_body: bool = False,
 ) -> list[ValidationIssue]:
     """One issue per pydantic error, its `loc` behind `prefix` (a leading `body` dropped first
-    with `strip_body`). A validator's ValueError gives its own text, without pydantic's
-    `Value error, ` prefix."""
+    with `strip_body`). A validator's ValueError gives its own text (the exception in the error's
+    `ctx`), without pydantic's `Value error, ` prefix."""
     issues: list[ValidationIssue] = []
     for error in errors:
         loc = list(error["loc"])
@@ -63,10 +77,32 @@ def pydantic_issues(
             loc = loc[1:]
 
         raised = error.get("ctx", {}).get("error")
-        message = str(raised) if isinstance(raised, Exception) else error["msg"]
+        if error["type"] == "value_error" and isinstance(raised, ValueError):
+            message = str(raised)
+        else:
+            message = error["msg"]
 
         issues.append(ValidationIssue(loc=[*prefix, *loc], message=message))
     return issues
+
+
+def parsed(
+    model: type[_M], data: Mapping[str, Any], prefix: Sequence[str | int] = ()
+) -> tuple[_M | None, list[ValidationIssue]]:
+    """`model` from `data` and no issues, or None and every problem, each at `prefix` + its
+    field."""
+    try:
+        return model.model_validate(data), []
+    except ValidationError as exc:
+        return None, pydantic_issues(exc.errors(), prefix)
+
+
+def too_many(items: Sized, limit: int, loc: Sequence[str | int]) -> list[ValidationIssue]:
+    """One issue at `loc` when `items` holds more than `limit`, worded as pydantic's."""
+    if len(items) <= limit:
+        return []
+    message = f"List should have at most {limit} items, not {len(items)}"
+    return [ValidationIssue(loc=list(loc), message=message)]
 
 
 # ------------------------------------------------------------------ file paths
@@ -140,51 +176,56 @@ _SCP_RE = re.compile(r"git@([^:/@]+):(.+)")
 _PORT_RE = re.compile(r"[0-9]{1,5}")
 
 
-def _check_host(host: str) -> None:
-    if not _HOST_RE.fullmatch(host):
-        raise _invalid("repo_url", f"invalid host {host!r}")
+def _host_problem(host: str) -> str | None:
+    return None if _HOST_RE.fullmatch(host) else f"invalid host {host!r}"
 
 
-def validate_repo_url(url: str) -> str:
-    """`https://host/path`, `ssh://[git@]host[:port]/path` or `git@host:path`.
+def repo_url_problem(url: str) -> str | None:
+    """What is wrong with a repo URL, or None. Valid: `https://host/path`,
+    `ssh://[git@]host[:port]/path` or `git@host:path`.
 
     No userinfo other than `git@` (so no embedded credentials), no leading `-` (option injection
     into git), no whitespace or control characters, no query or fragment.
     """
     if not url:
-        raise _invalid("repo_url", "must not be empty")
+        return "must not be empty"
     if len(url) > MAX_REPO_URL_CHARS:
-        raise _invalid("repo_url", f"longer than {MAX_REPO_URL_CHARS} characters")
+        return f"longer than {MAX_REPO_URL_CHARS} characters"
     if url.startswith("-"):
-        raise _invalid("repo_url", "must not start with '-'")
+        return "must not start with '-'"
     if any(c.isspace() or not c.isprintable() for c in url):
-        raise _invalid("repo_url", "must not contain whitespace or control characters")
+        return "must not contain whitespace or control characters"
 
     scp = _SCP_RE.fullmatch(url)
     if scp and "://" not in url:
         host, path = scp.groups()
-        _check_host(host)
-        if path.startswith("-"):
-            raise _invalid("repo_url", "path must not start with '-'")
-        return url
+        if problem := _host_problem(host):
+            return problem
+        return "path must not start with '-'" if path.startswith("-") else None
 
     parts = urlsplit(url)
     if parts.scheme not in ("https", "ssh"):
-        raise _invalid("repo_url", "must be https://..., ssh://... or git@host:path")
+        return "must be https://..., ssh://... or git@host:path"
     if parts.query or parts.fragment or "?" in url or "#" in url:
-        raise _invalid("repo_url", "must not have a query or fragment")
+        return "must not have a query or fragment"
     netloc = parts.netloc
     if "@" in netloc:
         user, _, netloc = netloc.rpartition("@")
         if parts.scheme != "ssh" or user != "git":
-            raise _invalid("repo_url", "must not contain credentials or a user other than git@")
+            return "must not contain credentials or a user other than git@"
     host, sep, port = netloc.partition(":")
-    _check_host(host)
+    if problem := _host_problem(host):
+        return problem
     if sep and not _PORT_RE.fullmatch(port):
-        raise _invalid("repo_url", f"invalid port {port!r}")
+        return f"invalid port {port!r}"
     if parts.path.strip("/") == "":
-        raise _invalid("repo_url", "must include a repository path")
-    return url
+        return "must include a repository path"
+    return None
+
+
+def validate_repo_url(url: str) -> str:
+    """`url`, or a 422 with one issue at `repo_url` (`repo_url_problem`)."""
+    return _valid_at("repo_url", url, repo_url_problem(url))
 
 
 def validate_pr_url(url: str) -> str:
@@ -215,20 +256,24 @@ def validate_pr_url(url: str) -> str:
 _BRANCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
 
 
-def validate_base_branch(branch: str) -> str:
-    """SPEC §6, plus git's rule that no `/`-component starts with `.` or ends in `.lock`."""
+def base_branch_problem(branch: str) -> str | None:
+    """What is wrong with a branch name, or None. SPEC §6, plus git's rule that no
+    `/`-component starts with `.` or ends in `.lock`."""
     if not _BRANCH_RE.fullmatch(branch):
-        raise _invalid("base_branch", "must match [A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
+        return "must match [A-Za-z0-9][A-Za-z0-9._/-]{0,199}"
     if ".." in branch or "//" in branch:
-        raise _invalid("base_branch", "must not contain '..' or '//'")
+        return "must not contain '..' or '//'"
     if branch.endswith(("/", ".", ".lock")):
-        raise _invalid("base_branch", "must not end in '/', '.' or '.lock'")
+        return "must not end in '/', '.' or '.lock'"
     for comp in branch.split("/"):
         if comp.startswith(".") or comp.endswith(".lock"):
-            raise _invalid(
-                "base_branch", f"component {comp!r} must not start with '.' or end in '.lock'"
-            )
-    return branch
+            return f"component {comp!r} must not start with '.' or end in '.lock'"
+    return None
+
+
+def validate_base_branch(branch: str) -> str:
+    """`branch`, or a 422 with one issue at `base_branch` (`base_branch_problem`)."""
+    return _valid_at("base_branch", branch, base_branch_problem(branch))
 
 
 # ------------------------------------------------------------------ content

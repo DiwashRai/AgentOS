@@ -6,7 +6,6 @@ import {
   commandPreview,
   dispatchesWorkflow,
   effortArgs,
-  fixFirst,
   hasSessions,
   launcherLabel,
   linesToArgs,
@@ -274,12 +273,6 @@ describe("validateRuntimes", () => {
     expect(validateRuntimes([]).form).toHaveLength(1);
     const many = Array.from({ length: 21 }, (_, i) => ({ ...CLAUDE, name: `r${String(i)}` }));
     expect(check(...many).form).toHaveLength(1);
-  });
-
-  it("says how many issues to fix", () => {
-    expect(fixFirst(0)).toBeUndefined();
-    expect(fixFirst(1)).toBe("Fix 1 issue first");
-    expect(fixFirst(3)).toBe("Fix 3 issues first");
   });
 });
 

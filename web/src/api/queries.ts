@@ -149,7 +149,8 @@ export function useSaveTemplate() {
 // ------------------------------------------------------------------ workflows
 // Named pipeline presets. Anyone signed in reads them (New ticket, the Pipeline tab); admins
 // create, edit and delete them. Applying one copies it into a ticket, so a workflow save never
-// touches a ticket. The default is the Space's `default_workflow_id` (useSaveSpaceSettings).
+// touches a ticket. Exactly one is the default (`Workflow.default`, /api/config
+// `default_workflow_id`); useSetDefaultWorkflow moves it.
 
 /** Every workflow, by name, with its full pipeline. */
 export function useWorkflows() {
@@ -193,6 +194,25 @@ export function useDeleteWorkflow() {
   });
 }
 
+/** Make a workflow the default (admin; 404 `not_found`). It moves every workflow's `default` flag
+ *  and /api/config's `default_workflow_id`, which new tickets read. */
+export function useSetDefaultWorkflow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      unwrap(
+        api.POST("/api/workflows/{workflow_id}/default", {
+          params: { path: { workflow_id: id } },
+        }),
+      ),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.workflows() }),
+        queryClient.invalidateQueries({ queryKey: keys.config() }),
+      ]),
+  });
+}
+
 /** Replace a ticket's pipeline with a copy of a workflow's (writer). 409 `run_active` /
  *  `stale_version`, 404 `not_found`, 422 `invalid_pipeline` / `render_error`. */
 export function useSwitchWorkflow(key: string) {
@@ -217,8 +237,7 @@ export function useSpaceSettings(enabled = true) {
   });
 }
 
-/** Saving the Space changes /api/config (name, default repo, key prefix, default workflow), and
- *  `default_workflow_id` moves each workflow's `default` flag. */
+/** Saving the Space changes /api/config (name, default repo, key prefix). */
 export function useSaveSpaceSettings() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -229,7 +248,6 @@ export function useSaveSpaceSettings() {
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: keys.config() }),
         queryClient.invalidateQueries({ queryKey: keys.intake() }),
-        queryClient.invalidateQueries({ queryKey: keys.workflows() }),
       ]);
     },
   });

@@ -12,11 +12,16 @@ import {
   useSaveSpaceSettings,
   useSpaceSettings,
 } from "../../../api/queries";
-import { describeSaveError } from "../../pipeline/model";
-import pages from "../../pipeline/pages.module.css";
-import { SaveBar } from "../../pipeline/SaveBar";
-import { useDraft, useUnsavedWarning } from "../../pipeline/useDraft";
-import { useNow } from "../../runs/useNow";
+import {
+  describeSaveError,
+  fixFirst,
+  pageStyles as pages,
+  SaveBar,
+  useDraft,
+  useUnsavedWarning,
+} from "../../../editor";
+import { StatusLine } from "../../../ui";
+import { useNow } from "../../../ui/useNow";
 import { isForbidden, savedLine } from "../common";
 import {
   repoIssueCount,
@@ -34,23 +39,6 @@ import s from "./Space.module.css";
 import { SpaceFields } from "./SpaceFields";
 
 const ADMINS_ONLY = "Only admins can change Space settings.";
-
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
-}
-
-function fixFirst(issues: number): string | undefined {
-  if (issues === 0) return undefined;
-  return `Fix ${issues === 1 ? "1 issue" : `${String(issues)} issues`} first`;
-}
 
 export function SpacePage() {
   const me = useMe();
@@ -74,15 +62,16 @@ export function SpacePage() {
   const repos = useDraft(savedRepos, reposDoc.data?.version, sameRepoRows, { warn: false });
   useUnsavedWarning(space.dirty || repos.dirty);
 
-  if (me.isPending) return <Line>Loading Space settings</Line>;
-  if (!isAdmin) return <Line>{ADMINS_ONLY}</Line>;
+  if (me.isPending) return <StatusLine>Loading Space settings</StatusLine>;
+  if (!isAdmin) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
   const failed = spaceDoc.error ?? reposDoc.error ?? config.error;
   if (isForbidden(spaceDoc.error) || isForbidden(reposDoc.error)) {
-    return <Line>{ADMINS_ONLY}</Line>;
+    return <StatusLine>{ADMINS_ONLY}</StatusLine>;
   }
-  if (failed) return <Line error>{`Can't load Space settings · ${failed.message}`}</Line>;
+  if (failed)
+    return <StatusLine error>{`Can't load Space settings · ${failed.message}`}</StatusLine>;
   if (!spaceDoc.data || !reposDoc.data || !config.data) {
-    return <Line>Loading Space settings</Line>;
+    return <StatusLine>Loading Space settings</StatusLine>;
   }
 
   const spaceData = spaceDoc.data;

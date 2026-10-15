@@ -127,7 +127,7 @@ def test_mutations_require_the_csrf_header(client: TestClient, ctx: AppContext) 
     response = client.post("/api/auth/login", json={"username": "alice"})
     assert response.status_code == 403
     assert set(response.json()) == {"error"}
-    assert set(response.json()["error"]) == {"code", "message"}
+    assert set(response.json()["error"]) == {"code", "message", "issues"}
     assert error_code(response) == "csrf_header_missing"
     assert rows(ctx, "SELECT * FROM users") == []
 

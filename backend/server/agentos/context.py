@@ -23,10 +23,16 @@ from agentos.ratelimit import RateLimiter
 from agentos.sources.jira import JiraClient, JiraSearch, JiraSource
 from agentos.space_store import (
     Area,
-    SpaceStore,
+    Snapshot,
+    load_snapshot,
+    load_space,
+    mappings_of,
     mappings_value,
     missing_areas,
+    read_area,
+    runner_of,
     runner_value,
+    runtimes_of,
     runtimes_value,
     seed,
     space_values,
@@ -63,9 +69,6 @@ class AppContext:
     settings: Settings
     db: Database
     launcher: Launcher
-    # The Space's settings, repo catalog, intake queries, runtimes and runner (db `settings`,
-    # edited in the app).
-    space_store: SpaceStore
     # The Jira REST client when AGENTOS_JIRA_URL is set (tests swap in a MockTransport one).
     jira: JiraClient | None = None
     # Jira login attempts per (client IP, submitted email/username).
@@ -73,25 +76,36 @@ class AppContext:
     intake_cache: IntakeCache = field(default_factory=_intake_cache)
     jira_fields_cache: JiraFieldsCache = field(default_factory=_jira_fields_cache)
 
+    # The settings areas (db `settings`, edited in the app) are read from the db on each access,
+    # so a save applies at once. A caller that needs several areas takes one `snapshot()`.
+
     @property
     def space(self) -> SpaceConfig:
-        """The Space as currently saved (cached; a settings save clears the cache)."""
-        return self.space_store.current()
+        """The Space's settings, repo catalog and intake queries as currently saved."""
+        with self.db.read() as conn:
+            return load_space(conn)
 
     @property
     def runtimes(self) -> RuntimesConfig:
         """The agent runtimes as currently saved (Settings > Runners); the first is the default."""
-        return self.space_store.runtimes()
+        with self.db.read() as conn:
+            return runtimes_of(read_area(conn, "runtimes"))
 
     @property
     def runner(self) -> RunnerSection:
         """Where the github launcher dispatches runs, as currently saved (Settings > Runners)."""
-        return self.space_store.runner()
+        return read_runner(self.db)
 
     @property
     def mappings(self) -> tuple[FieldMapping, ...]:
         """The Jira field mappings as currently saved (Settings > Field mappings)."""
-        return self.space_store.mappings()
+        with self.db.read() as conn:
+            return mappings_of(read_area(conn, "mappings"))
+
+    def snapshot(self) -> Snapshot:
+        """Every settings area as currently saved, read in one transaction."""
+        with self.db.read() as conn:
+            return load_snapshot(conn)
 
     @property
     def jira_source(self) -> JiraSource | None:
@@ -118,11 +132,10 @@ def build_context(settings: Settings, launcher: Launcher | None = None) -> AppCo
     db = Database(settings.db_path)
     db.migrate()
     seed_settings(db)
-    store = SpaceStore(db)
     if launcher is None:
-        launcher = _launcher(settings, store)
+        launcher = _launcher(settings, db)
     jira = JiraClient(settings.jira_url, settings.jira_deployment) if settings.jira_url else None
-    return AppContext(settings=settings, db=db, launcher=launcher, space_store=store, jira=jira)
+    return AppContext(settings=settings, db=db, launcher=launcher, jira=jira)
 
 
 def seed_settings(db: Database) -> list[Area]:
@@ -145,20 +158,26 @@ def seed_settings(db: Database) -> list[Area]:
     return seeded
 
 
-def runner_target(store: SpaceStore) -> Callable[[], GitHubTarget]:
+def read_runner(db: Database) -> RunnerSection:
+    """Settings > Runners as currently saved."""
+    with db.read() as conn:
+        return runner_of(read_area(conn, "runner"))
+
+
+def runner_target(db: Database) -> Callable[[], GitHubTarget]:
     """What the github launcher asks at every launch: Settings > Runners as currently saved."""
 
     def target() -> GitHubTarget:
-        runner = store.runner()
+        runner = read_runner(db)
         return GitHubTarget(repo=runner.github_repo, workflow=runner.workflow, ref=runner.ref)
 
     return target
 
 
-def _launcher(settings: Settings, store: SpaceStore) -> Launcher:
+def _launcher(settings: Settings, db: Database) -> Launcher:
     if settings.launcher == "local":
         return LocalProcessLauncher.from_settings(settings, WORKER_PATH)
-    github = _github_launcher(settings, store)
+    github = _github_launcher(settings, db)
     if settings.launcher == "github":
         return github
     url, user, password = (
@@ -172,12 +191,12 @@ def _launcher(settings: Settings, store: SpaceStore) -> Launcher:
     return MailboxLauncher(github=github, store=artifactory, worker_path=WORKER_PATH)
 
 
-def _github_launcher(settings: Settings, store: SpaceStore) -> GitHubActionsLauncher:
+def _github_launcher(settings: Settings, db: Database) -> GitHubActionsLauncher:
     if settings.github_token is None:  # pragma: no cover - startup_checks requires it
         raise ConfigError([f"AGENTOS_LAUNCHER={settings.launcher} needs AGENTOS_GITHUB_TOKEN"])
     try:
         return GitHubActionsLauncher(
-            target=runner_target(store),
+            target=runner_target(db),
             token=settings.github_token.get_secret_value(),
             api_url=settings.github_api_url,
             api_version=settings.github_api_version,

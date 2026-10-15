@@ -3,7 +3,7 @@
 // MappingRule, validate.py `validate_base_branch`), where a 422 points, the field picker's options,
 // and what "Try it" shows. The server owns the wildcard matcher: nothing here matches rules.
 import { ApiError, type Schemas } from "../../../api/client";
-import { describeSaveError } from "../../pipeline/model";
+import { describeSaveError } from "../../../editor/save";
 import { checkBranch } from "../space/model";
 
 export type FieldMappings = Schemas["FieldMappings"];
@@ -253,12 +253,6 @@ export function mappingIssueCount(m: MappingIssues): number {
 
 export function issueCount(issues: readonly MappingIssues[]): number {
   return issues.reduce((n, m) => n + mappingIssueCount(m), 0);
-}
-
-/** SaveBar's reason Save is off, or undefined. */
-export function fixLine(count: number): string | undefined {
-  if (count === 0) return undefined;
-  return `Fix ${count === 1 ? "1 issue" : `${String(count)} issues`} first`;
 }
 
 // ------------------------------------------------------------------ the server's 422

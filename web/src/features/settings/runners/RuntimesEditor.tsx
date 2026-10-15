@@ -4,8 +4,8 @@
 // page owns the draft and the save.
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { Field, fieldStyles as f, Select } from "../../../editor";
 import { Button, ChevronIcon, cx, IconButton, Tag } from "../../../ui";
-import { Field, fieldStyles as f, Select } from "../../pipeline/fields";
 import {
   addRuntime,
   argsToLines,

@@ -24,7 +24,7 @@ import { RunLog } from "./RunLog";
 import { duration, isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
 import s from "./RunsTab.module.css";
 import { StageCalls } from "./StageCalls";
-import { useNow } from "./useNow";
+import { useNow } from "../../ui/useNow";
 
 type RunSummary = Schemas["RunSummary"];
 type RunDetail = Schemas["RunDetail"];

@@ -3,8 +3,8 @@
 // "Try it" matched is lit (the server says which; nothing here matches). Controlled.
 import { useEffect, useId, useRef, useState } from "react";
 
+import { fieldStyles as f } from "../../../editor";
 import { Button, ChevronIcon, cx, IconButton } from "../../../ui";
-import { fieldStyles as f } from "../../pipeline/fields";
 import s from "./Mappings.module.css";
 import {
   addRule,

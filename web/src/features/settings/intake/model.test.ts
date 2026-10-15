@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../api/client";
 import {
   addQuery,
-  fixLine,
   formOf,
   issueCount,
   JQL_MAX,
@@ -124,12 +123,6 @@ describe("validate", () => {
     expect(issues.form).toHaveLength(1);
     expect(issueCount(issues)).toBe(1);
     expect(validate(many.slice(1)).form).toEqual([]);
-  });
-
-  it("says how many issues block Save", () => {
-    expect(fixLine(0)).toBeUndefined();
-    expect(fixLine(1)).toBe("Fix 1 issue first");
-    expect(fixLine(3)).toBe("Fix 3 issues first");
   });
 });
 

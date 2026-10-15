@@ -34,11 +34,12 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
         if run_id is None:
             return launched
         launched.append(run_id)
+        snapshot = ctx.snapshot()
         try:
             manifest = worker_api.claim(
                 ctx.db,
-                ctx.runtimes,
-                ctx.space,
+                snapshot.runtimes,
+                snapshot.space,
                 dispatch_token,
                 secrets.token_urlsafe(32),
             )

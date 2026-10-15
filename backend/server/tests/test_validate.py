@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +13,12 @@ from agentos.errors import ApiError
 from agentos.validate import (
     MAX_BUNDLE_BYTES,
     MAX_FILE_BYTES,
+    base_branch_problem,
     block_markers,
     check_bundle_size,
     check_file_size,
     check_unique_paths,
+    repo_url_problem,
     validate_base_branch,
     validate_block_content,
     validate_key,
@@ -104,6 +107,7 @@ def test_invalid_keys(key: str) -> None:
     ],
 )
 def test_valid_repo_urls(url: str) -> None:
+    assert repo_url_problem(url) is None
     assert validate_repo_url(url) == url
 
 
@@ -139,11 +143,24 @@ def test_valid_repo_urls(url: str) -> None:
     ],
 )
 def test_invalid_repo_urls(url: str) -> None:
-    _rejects(validate_repo_url, url)
+    assert repo_url_problem(url) is not None
 
 
-def test_repo_url_message_names_field() -> None:
-    assert _rejects(validate_repo_url, "file:///x").startswith("repo_url: ")
+@pytest.mark.parametrize(
+    ("check", "value", "field"),
+    [
+        (validate_repo_url, "file:///x", "repo_url"),
+        (validate_base_branch, "a..b", "base_branch"),
+    ],
+)
+def test_a_wrapper_rejects_at_its_field(
+    check: Callable[[str], str], value: str, field: str
+) -> None:
+    with pytest.raises(ApiError) as e:
+        check(value)
+    assert (e.value.status, e.value.code) == (422, "validation_error")
+    assert [issue.loc for issue in e.value.issues] == [[field]]
+    assert e.value.message.startswith(f"{field}: ")
 
 
 # ------------------------------------------------------------------ PR URLs
@@ -190,6 +207,7 @@ def test_invalid_pr_urls(url: str) -> None:
     "branch", ["main", "develop", "release/1.2", "feature/a-b_c.d", "v2", "A" * 200]
 )
 def test_valid_branches(branch: str) -> None:
+    assert base_branch_problem(branch) is None
     assert validate_base_branch(branch) == branch
 
 
@@ -218,7 +236,7 @@ def test_valid_branches(branch: str) -> None:
     ],
 )
 def test_invalid_branches(branch: str) -> None:
-    _rejects(validate_base_branch, branch)
+    assert base_branch_problem(branch) is not None
 
 
 # ------------------------------------------------------------------ block content & sizes

@@ -9,7 +9,6 @@ import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useConfig, useImportTicket, useIntake, useRefreshIntake } from "../../api/queries";
-import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useSearchQuery } from "../../app/useSearchQuery";
@@ -28,11 +27,12 @@ import {
   LinkButton,
   litRowClass,
   PriorityIcon,
+  StatusLine,
   StatusMark,
   TypeIcon,
 } from "../../ui";
 import { importErrorText } from "../newticket/importForm";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import s from "./Intake.module.css";
 import {
   ageText,
@@ -350,9 +350,11 @@ export function IntakeView() {
   };
 
   let body;
-  if (intake.isPending) body = <Quiet>Loading</Quiet>;
+  if (intake.isPending) body = <StatusLine inset>Loading</StatusLine>;
   else if (intake.error)
-    body = <Quiet error>{`Can't reach the server · ${intake.error.message}`}</Quiet>;
+    body = (
+      <StatusLine inset error>{`Can't reach the server · ${intake.error.message}`}</StatusLine>
+    );
   else if (queries.length === 0)
     body = (
       <p className={s.none}>

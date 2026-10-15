@@ -32,7 +32,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Services own transactions and raise `ApiError(status, code, message)` with a code from `models.ErrorCode`.
 - Auth deps (`auth/deps.py`): `CurrentUser` (any approved user; `pending` gets 403 `pending_approval`), `Writer`, `Admin`, and `SignedIn` (`pending` included; only `GET /api/me`). Role deps run before body validation, so a too-low role gets 403 even with a bad body.
 - Every non-GET `/api/*` request except `/api/worker/*` needs the `X-AgentOS: 1` header (`csrf.py`).
-- `AppContext` (`context.py`) is built once in the lifespan and holds settings, db, launcher, space store, Jira client and caches. Loops and tests use it directly.
+- `AppContext` (`context.py`) is built once in the lifespan and holds settings, db, launcher, Jira client and caches, and reads the settings areas per access. Loops and tests use it directly.
 - `create_app()` is cheap and side-effect free (the OpenAPI export runs it without config). Config checks, migrations, seeding and the background loops run in the lifespan in `main.py`.
 
 ## API contract
@@ -50,7 +50,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 
 ## Settings and config
 - `config.Settings` reads `AGENTOS_*` env + `backend/.env` with `extra="forbid"`: a new var must be added to `Settings`, and a typo fails startup.
-- Admin-editable settings (Space, repo catalog, intake queries, runtimes, runner) live in the db `settings` table, one JSON document per area. `space_store.SpaceStore` is the cached read side (`ctx.space`, `ctx.runtimes`, `ctx.runner`); every save must call `store.invalidate()` so it applies without a restart.
+- Admin-editable settings (Space, repo catalog, intake queries, runtimes, runner, field mappings) live in the db `settings` table, one JSON document per area (`space_store.py`: read, write, seed, documents ↔ models). Nothing caches them: `ctx.space`, `ctx.runtimes`, `ctx.runner` and `ctx.mappings` each read the current row(s) in one `db.read()`, and a caller that needs several areas takes one `ctx.snapshot()`. A save applies at the next read, without a restart.
 - A fresh db gets each area's built-in defaults at version 1, updated_by NULL (`context.seed_settings`: Space "AgentOS"/`AOS`, no repos or intake queries, the `claude` + `copilot` runtimes, the default runner, no mappings). Every save needs the area's row, so the seed must cover every area.
 - New settings go in the db, not env, unless they are a URL, a secret, startup/dev config, or decide who may sign in. `deploy/README.md` lists what the env keeps.
 

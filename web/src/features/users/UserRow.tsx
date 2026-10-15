@@ -4,8 +4,8 @@
 // page wires `onPatch` to the mutation and passes its pending state and error back in.
 import { useState } from "react";
 
+import { Select } from "../../editor";
 import { Avatar, Button, Tag } from "../../ui";
-import { Select } from "../pipeline/fields";
 import {
   APPROVED_ROLE,
   isWaiting,

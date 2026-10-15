@@ -1,10 +1,10 @@
-// The header of a pipeline page: title, meta, the unsaved marker, extra controls, Discard / Save,
-// and the save error (with Reload on a 409 stale_version).
+// The header of an editor page: title, meta, the unsaved marker, extra controls, Discard / Save,
+// the save error (with Reload on a 409 stale_version) and the form-level issues.
 import type { ReactNode } from "react";
 
-import { Button } from "../../ui";
-import type { SaveProblem } from "./model";
+import { Button } from "../ui";
 import s from "./pages.module.css";
+import type { SaveProblem } from "./save";
 
 export interface SaveBarProps {
   title: string;
@@ -15,6 +15,8 @@ export interface SaveBarProps {
   saveDisabledReason: string | undefined;
   saving: boolean;
   problem: SaveProblem | null;
+  /** Problems with the document as a whole (form-level issues), shown under the bar. */
+  issues?: readonly string[] | undefined;
   onSave: () => void;
   onDiscard: () => void;
   onReload: () => void;
@@ -66,6 +68,11 @@ export function SaveBar(props: SaveBarProps) {
           ) : null}
         </p>
       ) : null}
+      {props.issues?.map((msg) => (
+        <p key={msg} className={s.problem} role="alert">
+          {msg}
+        </p>
+      ))}
     </>
   );
 }

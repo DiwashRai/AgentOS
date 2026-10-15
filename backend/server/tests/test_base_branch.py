@@ -316,17 +316,15 @@ def test_settings_repos_take_an_empty_default_branch(
     authed: TestClient, create_ticket: CreateTicket
 ) -> None:
     repos = RepoSettings.model_validate(authed.get("/api/settings/repos").json())
-    body = {
-        "repos": [
-            {"name": "r", "url": "https://github.com/o/r.git", "default_branch": ""},
-            {"name": "docs", "url": "git@github.com:o/docs.git", "default_branch": None},
-        ],
-        "base_version": repos.version,
-    }
+    entries = [
+        {"name": "r", "url": "https://github.com/o/r.git", "default_branch": ""},
+        {"name": "docs", "url": "git@github.com:o/docs.git", "default_branch": None},
+    ]
+    body = {"value": {"repos": entries}, "base_version": repos.version}
     response = authed.put("/api/settings/repos", json=body, headers=CSRF)
     assert response.status_code == 200, response.text
     saved = RepoSettings.model_validate(response.json())
-    assert [(r.name, r.default_branch) for r in saved.repos] == [("r", None), ("docs", None)]
+    assert [(r.name, r.default_branch) for r in saved.value.repos] == [("r", None), ("docs", None)]
     config = authed.get("/api/config").json()
     assert [r["default_branch"] for r in config["repos"]] == [None, None]
     t = create_ticket()

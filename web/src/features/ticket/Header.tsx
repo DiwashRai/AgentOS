@@ -21,7 +21,7 @@ import {
 } from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import { BaseBranchField } from "./BaseBranchField";
 import s from "./Header.module.css";
 import { PrLink } from "./PrLink";
