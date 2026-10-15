@@ -42,6 +42,7 @@ one (401/403 included).
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import ctypes
 import http.client
@@ -2096,6 +2097,167 @@ class GitHub:
         return message
 
 
+class GitRunner(Protocol):
+    """Runs git in the workspace (Run._git)."""
+
+    def __call__(self, *args: str, stdin: bytes | None = None) -> GitResult: ...
+
+
+def _git_out(git: GitRunner, *args: str, stdin: bytes | None = None) -> bytes:
+    r = git(*args, stdin=stdin)
+    if r.code:
+        raise PublishError(f"push failed: git {args[0]} failed: {r.tail()}")
+    return r.out
+
+
+def _read_blobs(git: GitRunner, shas: list[str]) -> dict[str, bytes]:
+    """Blob contents from the object DB (`git cat-file --batch`), never the working tree."""
+    if not shas:
+        return {}
+    out = _git_out(git, "cat-file", "--batch", stdin="".join(f"{s}\n" for s in shas).encode())
+    blobs: dict[str, bytes] = {}
+    pos = 0
+    for sha in shas:
+        end = out.find(b"\n", pos)
+        header = out[pos:end].split() if end >= 0 else []
+        if len(header) != 3 or header[1] != b"blob" or not header[2].isdigit():
+            raise PublishError(f"push failed: cannot read blob {sha[:12]}")
+        size = int(header[2])
+        blobs[sha] = out[end + 1 : end + 1 + size]
+        pos = end + 1 + size + 1
+    return blobs
+
+
+def _github(github: GitHub, method: str, path: str, body: Any) -> Any:
+    try:
+        return github.call(method, path, body)
+    except GitHubError as exc:
+        raise PublishError(f"push failed: {exc.message}") from None
+
+
+def _publish_commit(
+    git: GitRunner, github: GitHub, sha: str, remote: dict[str, str], uploaded: set[str]
+) -> str:
+    """Recreate one local commit on GitHub; its parents are already there. The remote sha."""
+    commit = parse_commit(sha, _git_out(git, "cat-file", "commit", sha))
+    if not commit.parents:
+        raise PublishError(f"push failed: commit {sha[:12]} has no parent")
+    first = commit.parents[0]
+    diffs = parse_diff_tree(_git_out(git, "diff-tree", "-r", "-z", "--no-renames", first, sha))
+    blobs = _read_blobs(git, list(dict.fromkeys(d.new_sha for d in diffs if d.needs_content)))
+
+    entries: list[dict[str, Any]] = []
+    for d in diffs:
+        entry, upload = tree_entry(d, blobs.get(d.new_sha))
+        if upload is not None and d.new_sha not in uploaded:
+            content = base64.b64encode(upload).decode("ascii")
+            blob = _github(github, "POST", "/git/blobs", {"content": content, "encoding": "base64"})
+            if blob.get("sha") != d.new_sha:
+                raise PublishError(f"publish mismatch: blob {d.path}")
+            uploaded.add(d.new_sha)
+        entries.append(entry)
+
+    tree = commit.tree
+    if entries:
+        base = _git_out(git, "rev-parse", f"{first}^{{tree}}").decode().strip()
+        answer = _github(github, "POST", "/git/trees", {"base_tree": base, "tree": entries})
+        if answer.get("sha") != commit.tree:
+            raise PublishError(f"publish mismatch: the tree of commit {sha[:12]} differs")
+
+    body = {
+        "message": commit.message,
+        "tree": tree,
+        "parents": [remote.get(p, p) for p in commit.parents],
+        "author": commit.author.body(),
+        "committer": commit.committer.body(),
+    }
+    return str(_github(github, "POST", "/git/commits", body)["sha"])
+
+
+def _write_ref(github: GitHub, branch: str, sha: str, exists: bool) -> None:
+    """Move the branch to `sha`, never forced. An unknown outcome is settled by reading it back."""
+    quoted = urllib.parse.quote(branch, safe="/")
+    body: dict[str, Any]
+    try:
+        if exists:
+            body = {"sha": sha, "force": False}
+            github.call("PATCH", f"/git/refs/heads/{quoted}", body, ref_write=True)
+        else:
+            body = {"ref": f"refs/heads/{branch}", "sha": sha}
+            github.call("POST", "/git/refs", body, ref_write=True)
+    except GitHubError as exc:
+        failure = exc
+    else:
+        return
+
+    if failure.action == "rejected":
+        raise PublishError("push rejected")
+    if failure.action == "check":
+        try:
+            ref = github.call("GET", f"/git/ref/heads/{quoted}")
+        except GitHubError:
+            ref = None
+        if isinstance(ref, dict) and ref.get("object", {}).get("sha") == sha:
+            return
+    raise PublishError(f"push failed: {failure.message}")
+
+
+def publish_branch(
+    git: GitRunner,
+    github: GitHub,
+    branch: str,
+    pushed_head: str,
+    exists: bool,
+    before_ref: Callable[[], None] = lambda: None,
+) -> tuple[str, int]:
+    """Publish HEAD's commits since `pushed_head` to `branch` through the Git Data API: each
+    commit's changes as a tree on its first parent's, every parent mapped local -> remote, then
+    one ref write (`exists`: PATCH, else POST). `before_ref` runs right before the ref write.
+    Returns (the branch's new remote sha, commits published); raises PublishError."""
+    head = _git_out(git, "rev-parse", "HEAD").decode().strip()
+    r = git("merge-base", "--is-ancestor", pushed_head, head)
+    if r.code == 1:
+        raise PublishError("push rejected")
+    if r.code:
+        raise PublishError(f"push failed: git merge-base failed: {r.tail()}")
+
+    listed = _git_out(
+        git, "rev-list", "--reverse", "--topo-order", head, "--not", pushed_head, "--remotes=origin"
+    )
+    commits = listed.decode().split()
+    remote: dict[str, str] = {}
+    uploaded: set[str] = set()
+    for sha in commits:
+        remote[sha] = _publish_commit(git, github, sha, remote, uploaded)
+
+    target = remote.get(head, head)
+    before_ref()
+    _write_ref(github, branch, target, exists)
+    return target, len(commits)
+
+
+def track_published(git: GitRunner, branch: str, sha: str) -> str | None:
+    """After a publish: move the local branch onto the remote commit `sha` (same tree) and make
+    git see it as pushed (remote-tracking ref, upstream). Returns why it failed, or None."""
+    head = git("rev-parse", "HEAD")
+    if head.code or head.out.decode().strip() != sha:
+        r = git("fetch", "-q", "--no-tags", "origin", sha)
+        if r.code:
+            return f"published, fetch failed: {r.tail()}"
+        r = git("reset", "-q", "--soft", sha)
+        if r.code:
+            return f"published, fetch failed: git reset: {r.tail()}"
+    for args in (
+        ("update-ref", f"refs/remotes/origin/{branch}", sha),
+        ("config", f"branch.{branch}.remote", "origin"),
+        ("config", f"branch.{branch}.merge", f"refs/heads/{branch}"),
+    ):
+        r = git(*args)
+        if r.code:
+            return f"published, fetch failed: git {args[0]}: {r.tail()}"
+    return None
+
+
 # ---------------------------------------------------------------- the run
 
 
@@ -2689,13 +2851,36 @@ class Run:
         head = r.out.decode().strip()
         if head == self.pushed_head:
             return None
-        if isinstance(self.events.failure, RunGone):  # taken away while we were committing
-            raise self.events.failure
+        self._check_gone()
+        if self.github is not None:
+            return self._publish(stage_id, self.github)
         r = self._git("push", "-u", "origin", str(self.m.branch), show=True, stage_id=stage_id)
         if r.code:
             return "push rejected" if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
         self.pushed_head = head
         return None
+
+    def _check_gone(self) -> None:
+        if isinstance(self.events.failure, RunGone):  # taken away while we were committing
+            raise self.events.failure
+
+    def _publish(self, stage_id: str | None, github: GitHub) -> str | None:
+        """API mode's push: publish through the Git Data API, then make the local branch the
+        published one. A GitHub failure is the stage's failure reason."""
+        branch = str(self.m.branch)
+        try:
+            sha, count = publish_branch(
+                self._git, github, branch, self.pushed_head, self.branch_exists, self._check_gone
+            )
+        except PublishError as exc:
+            return str(exc)
+        self.pushed_head = sha
+        self.branch_exists = True
+
+        message = f"published {count} commit(s) to {branch} through the GitHub API ({sha[:12]})"
+        say(message)
+        self.events.log(stage_id, "system", message)
+        return track_published(self._git, branch, sha)
 
     def _save_offline(self) -> None:
         stage_id = self.current_stage or "setup"

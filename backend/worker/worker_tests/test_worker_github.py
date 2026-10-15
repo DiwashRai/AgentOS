@@ -296,3 +296,15 @@ def test_api_mode_without_the_api_url_fails_setup(
     assert done["status"] == "failed"
     assert "GITHUB_API_URL" in done["error"]
     assert not origin.has_branch(BRANCH)
+
+
+def test_a_token_off_actions_still_pushes_with_git(
+    server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghs_secret")
+    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
+    assert origin.has_branch(BRANCH)
