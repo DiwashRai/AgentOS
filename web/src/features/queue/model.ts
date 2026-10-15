@@ -7,7 +7,7 @@ import type { Counts } from "../../domain/counts";
 import { firstName } from "../../domain/format";
 import type { Groups } from "../../domain/groups";
 import { isMine, type MeRef, statusKind } from "../../domain/status";
-import { runLine, sourceWord } from "../../domain/ticketView";
+import { runLine, sourceRef } from "../../domain/ticketView";
 
 type Ticket = Schemas["TicketSummary"];
 
@@ -39,7 +39,7 @@ export function subLine(
   me: MeRef,
 ): string {
   const parts: string[] = [];
-  const src = sourceWord(t);
+  const src = sourceRef(t);
   if (src) parts.push(src);
   if (t.repo_name) parts.push(t.repo_name);
 

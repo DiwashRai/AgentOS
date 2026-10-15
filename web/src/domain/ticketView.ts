@@ -172,11 +172,17 @@ export function sourceWord(t: Pick<Ticket, "key" | "source">): string | null {
   return t.source.external_id === t.key ? name : `${name} ${t.source.external_id}`;
 }
 
+/** The source name with its external id, always ("Jira SCRUM-8"), as My queue rows show it.
+ *  Null for our own tickets. */
+export function sourceRef(t: Pick<Ticket, "source">): string | null {
+  if (!t.source) return null;
+  return `${sourceNames[t.source.source]} ${t.source.external_id}`;
+}
+
 /** The ticket named by where it lives: the source name with its external id for an imported
  *  ticket ("Jira PLAT-1"), our key for our own. */
 export function sourceLabel(t: Pick<Ticket, "key" | "source">): string {
-  if (!t.source) return t.key;
-  return `${sourceNames[t.source.source]} ${t.source.external_id}`;
+  return sourceRef(t) ?? t.key;
 }
 
 // ------------------------------------------------------------------ row look

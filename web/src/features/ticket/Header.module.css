@@ -51,6 +51,8 @@
   color: var(--ink-2);
   margin: 0 0 var(--sp-6);
   max-width: 62ch;
+  /* The lead keeps the description's line breaks (Jira text is line-structured). */
+  white-space: pre-line;
 }
 
 /* Byline: labels 12 --ink-3, values 600 --ink-1. Items top-aligned, so one that grows lines under

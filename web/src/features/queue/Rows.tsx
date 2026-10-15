@@ -10,7 +10,7 @@ import type { MeRef } from "../../domain/status";
 import {
   outcomeLine,
   rowLook,
-  sourceWord,
+  sourceRef,
   statusLine,
   statusMark,
   waitAge,
@@ -164,7 +164,7 @@ function StateCell({ ticket: t }: { ticket: Ticket }) {
 /** Done recently: flat; the person and repo, the age, and the outcome right-aligned. */
 function DoneCells({ ticket: t, now }: { ticket: Ticket; now: number }) {
   const out = outcomeLine(t);
-  const src = sourceWord(t);
+  const src = sourceRef(t);
   const where = [src, t.repo_name].filter(Boolean).join(" · ");
   return (
     <>

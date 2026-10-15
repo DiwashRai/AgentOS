@@ -8,6 +8,7 @@ import {
   rowLook,
   runLine,
   sourceLabel,
+  sourceRef,
   sourceWord,
   stageCount,
   statusLine,
@@ -332,6 +333,12 @@ it("puts the external id beside the source name only when it isn't the key", () 
   const jira = { source: "jira" as const, external_id: "SCRUM-6", url: "" };
   expect(sourceWord(ticket({ key: "SCRUM-6", source: jira }))).toBe("Jira");
   expect(sourceWord(ticket({ key: "AOS-3", source: jira }))).toBe("Jira SCRUM-6");
+});
+
+it("keeps the external id on My queue rows even when it is the key", () => {
+  const jira = { source: "jira" as const, external_id: "SCRUM-8", url: "" };
+  expect(sourceRef(ticket({ key: "SCRUM-8", source: jira }))).toBe("Jira SCRUM-8");
+  expect(sourceRef(ticket({ key: "AOS-5", source: null }))).toBeNull();
 });
 
 it("labels an imported ticket by its external id and our own by its key", () => {
