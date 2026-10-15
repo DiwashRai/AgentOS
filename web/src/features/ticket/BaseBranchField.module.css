@@ -16,7 +16,7 @@
 }
 /* "Locked by run #12" after a locked value */
 .lock {
-  margin-left: 3px;
+  margin-left: var(--sp-1);
   font-size: var(--fs-meta);
   font-weight: 400;
   color: var(--ink-3);
@@ -26,15 +26,15 @@
 .value {
   display: inline-flex;
   align-items: baseline;
-  gap: 5px;
+  gap: var(--sp-2);
 }
 
 /* At rest, editable: transparent until hovered, like the owner select. */
 .value {
   height: 22px;
   align-items: center;
-  margin: -3px 0 -3px -6px;
-  padding: 0 5px;
+  margin: calc(-1 * var(--sp-1)) 0 calc(-1 * var(--sp-1)) calc(-1 * var(--sp-3));
+  padding: 0 var(--sp-2);
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -62,21 +62,21 @@
 .edit {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-2);
   margin: 0;
   font-weight: 400;
 }
 .row {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
 }
 .input {
   width: 26ch;
   min-width: 0;
   height: 24px;
   margin: -1px 0;
-  padding: 0 7px;
+  padding: 0 var(--sp-3);
   border: 1px solid var(--rule);
   border-radius: var(--r-control);
   background: var(--field);

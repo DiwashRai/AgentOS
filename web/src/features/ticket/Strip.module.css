@@ -1,8 +1,8 @@
-/* The now band (refresh mock §5.4 .ticket__now): 11px 12px, r8. On you the --you-tint band; every
+/* The now band (refresh mock §5.4 .ticket__now): --sp-5 --sp-6 padding, r8. On you the --you-tint band; every
    other state the same band, quiet (no blue). */
 .slot {
   flex: none;
-  margin-top: 10px;
+  margin-top: var(--sp-5);
 }
 
 /* Band swap: fade + 4px rise, 420ms (DESIGN §14). */
@@ -19,8 +19,8 @@
 .band {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 11px 12px;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-6);
   border-radius: var(--r-row);
   font-size: 13px;
   line-height: 1.35;
@@ -37,7 +37,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 8px;
+  gap: var(--sp-3) var(--sp-4);
   min-width: 0;
 }
 .line > :first-child {
@@ -49,7 +49,7 @@
 .text {
   flex: 0 1 auto;
   min-width: 0;
-  margin-left: 6px;
+  margin-left: var(--sp-3);
   font-size: var(--fs-control);
   color: var(--ink-2);
   overflow: hidden;
@@ -62,7 +62,7 @@
 }
 /* The instruction on you (mock .ticket__now-text): 13 / 500 --ink-1, 14px after the ask. */
 .instr {
-  margin-left: 14px;
+  margin-left: var(--sp-7);
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-1);
@@ -81,9 +81,9 @@
 .end {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-7);
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: var(--sp-4);
   font-size: var(--fs-meta);
   white-space: nowrap;
 }
@@ -103,7 +103,7 @@
 
 /* The plan being signed off, under the band (mock .plan margin-top 18). */
 .plan {
-  margin-top: 18px;
+  margin-top: var(--sp-9);
 }
 
 @media (prefers-reduced-motion: reduce) {

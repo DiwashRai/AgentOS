@@ -1,7 +1,7 @@
 // The only place components reach the server. Hooks + one hierarchical query-key factory, so
 // polling reads and mutation invalidations target keys in one place.
 // ESLint forbids importing `api`/`unwrap` outside src/api/.
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryKey, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError, type Schemas, unwrap } from "./client";
 
@@ -225,77 +225,101 @@ export function useSwitchWorkflow(key: string) {
 }
 
 // ------------------------------------------------------------------ settings (admin)
-// One document per area: GET it whole, PUT it back whole with `base_version` (409 `stale_version`
-// if someone saved first; 409 `in_use` when a removal would break something). Admin only, so
-// callers gate on `enabled`. A save puts the answer in the cache and refetches what reads it.
+// One document per area: GET it whole (`{value, version, ...}`), PUT the value back whole with
+// `base_version` (409 `stale_version` if someone saved first; 409 `in_use` when a removal would
+// break something), POST `.../validate` to check a value without saving (204, or the save's 422).
+// Admin only, so callers gate on `enabled`. A save puts the answer in the cache and refetches what
+// reads it.
 
-export function useSpaceSettings(enabled = true) {
+/** The versioned Settings documents: what GET reads, and the `value` PUT and validate take. */
+export interface SettingsDocuments {
+  space: { read: Schemas["SpaceSettings"]; value: Schemas["SpaceDoc"] };
+  repos: { read: Schemas["RepoSettings"]; value: Schemas["ReposDoc"] };
+  intake: { read: Schemas["IntakeSettings"]; value: Schemas["IntakeDoc"] };
+  runner: { read: Schemas["RunnerSettings"]; value: Schemas["RunnerDoc"] };
+  mappings: { read: Schemas["MappingSettings"]; value: Schemas["MappingsDoc"] };
+}
+
+export type DocumentArea = keyof SettingsDocuments;
+export type SettingsRead<A extends DocumentArea> = SettingsDocuments[A]["read"];
+export type SettingsValue<A extends DocumentArea> = SettingsDocuments[A]["value"];
+
+interface DocumentCalls<A extends DocumentArea> {
+  get: () => Promise<SettingsRead<A>>;
+  put: (body: { value: SettingsValue<A>; base_version: number }) => Promise<SettingsRead<A>>;
+  validate: (body: { value: SettingsValue<A> }) => Promise<unknown>;
+}
+
+const documents: { [A in DocumentArea]: DocumentCalls<A> } = {
+  space: {
+    get: () => unwrap(api.GET("/api/settings/space")),
+    put: (body) => unwrap(api.PUT("/api/settings/space", { body })),
+    validate: (body) => unwrap(api.POST("/api/settings/space/validate", { body })),
+  },
+  repos: {
+    get: () => unwrap(api.GET("/api/settings/repos")),
+    put: (body) => unwrap(api.PUT("/api/settings/repos", { body })),
+    validate: (body) => unwrap(api.POST("/api/settings/repos/validate", { body })),
+  },
+  intake: {
+    get: () => unwrap(api.GET("/api/settings/intake")),
+    put: (body) => unwrap(api.PUT("/api/settings/intake", { body })),
+    validate: (body) => unwrap(api.POST("/api/settings/intake/validate", { body })),
+  },
+  runner: {
+    get: () => unwrap(api.GET("/api/settings/runner")),
+    put: (body) => unwrap(api.PUT("/api/settings/runner", { body })),
+    validate: (body) => unwrap(api.POST("/api/settings/runner/validate", { body })),
+  },
+  mappings: {
+    get: () => unwrap(api.GET("/api/settings/mappings")),
+    put: (body) => unwrap(api.PUT("/api/settings/mappings", { body })),
+    validate: (body) => unwrap(api.POST("/api/settings/mappings/validate", { body })),
+  },
+};
+
+/** What else a save refetches, by area. */
+const savedRefetches: Record<DocumentArea, readonly QueryKey[]> = {
+  /** Saving the Space changes /api/config (name, default repo, key prefix). */
+  space: [keys.config(), keys.intake()],
+  /** Saving the repos changes /api/config's catalog and every ticket's resolved repo URL/branch. */
+  repos: [keys.config(), keys.tickets()],
+  /** Saving the queries drops the server's intake cache, so the Intake view refetches. */
+  intake: [keys.intake()],
+  /** The runner is read at each dispatch; nothing else in the UI reads it. */
+  runner: [],
+  /** Saving re-applies a `base_branch` mapping to the unlocked tickets it set, so every ticket read
+   *  (the board and each ticket's base branch) refetches. */
+  mappings: [keys.tickets()],
+};
+
+/** One Settings document (`{value, version, updated_at, updated_by}` plus the area's read-only
+ *  extras). */
+export function useSettings<A extends DocumentArea>(area: A, enabled = true) {
   return useQuery({
-    queryKey: keys.settings("space"),
-    queryFn: () => unwrap(api.GET("/api/settings/space")),
+    queryKey: keys.settings(area),
+    queryFn: documents[area].get,
     enabled,
   });
 }
 
-/** Saving the Space changes /api/config (name, default repo, key prefix). */
-export function useSaveSpaceSettings() {
+/** Save `{value, base_version}`; the answer replaces the cached document. */
+export function useSaveSettings<A extends DocumentArea>(area: A) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: Schemas["SpaceSettingsUpdate"]) =>
-      unwrap(api.PUT("/api/settings/space", { body })),
+    mutationFn: documents[area].put,
     onSuccess: (data) => {
-      queryClient.setQueryData(keys.settings("space"), data);
-      return Promise.all([
-        queryClient.invalidateQueries({ queryKey: keys.config() }),
-        queryClient.invalidateQueries({ queryKey: keys.intake() }),
-      ]);
+      queryClient.setQueryData(keys.settings(area), data);
+      return Promise.all(
+        savedRefetches[area].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      );
     },
   });
 }
 
-export function useRepoSettings(enabled = true) {
-  return useQuery({
-    queryKey: keys.settings("repos"),
-    queryFn: () => unwrap(api.GET("/api/settings/repos")),
-    enabled,
-  });
-}
-
-/** Saving the repos changes /api/config's catalog and every ticket's resolved repo URL/branch. */
-export function useSaveRepoSettings() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: Schemas["RepoSettingsUpdate"]) =>
-      unwrap(api.PUT("/api/settings/repos", { body })),
-    onSuccess: (data) => {
-      queryClient.setQueryData(keys.settings("repos"), data);
-      return Promise.all([
-        queryClient.invalidateQueries({ queryKey: keys.config() }),
-        queryClient.invalidateQueries({ queryKey: keys.tickets() }),
-      ]);
-    },
-  });
-}
-
-export function useIntakeSettings(enabled = true) {
-  return useQuery({
-    queryKey: keys.settings("intake"),
-    queryFn: () => unwrap(api.GET("/api/settings/intake")),
-    enabled,
-  });
-}
-
-/** Saving the queries drops the server's intake cache, so the Intake view refetches. */
-export function useSaveIntakeSettings() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: Schemas["IntakeSettingsUpdate"]) =>
-      unwrap(api.PUT("/api/settings/intake", { body })),
-    onSuccess: (data) => {
-      queryClient.setQueryData(keys.settings("intake"), data);
-      return queryClient.invalidateQueries({ queryKey: keys.intake() });
-    },
-  });
+/** Check `{value}` with the save's rules without saving: resolves on 204, throws the 422. */
+export function useValidateSettings<A extends DocumentArea>(area: A) {
+  return useMutation({ mutationFn: documents[area].validate });
 }
 
 /** "Test query": runs a JQL live (not cached, nothing saved), at most 5 items. A mutation, so it
@@ -328,48 +352,6 @@ export function useSaveRuntimeSettings() {
         queryClient.invalidateQueries({ queryKey: keys.config() }),
         queryClient.invalidateQueries({ queryKey: keys.template() }),
       ]);
-    },
-  });
-}
-
-export function useRunnerSettings(enabled = true) {
-  return useQuery({
-    queryKey: keys.settings("runner"),
-    queryFn: () => unwrap(api.GET("/api/settings/runner")),
-    enabled,
-  });
-}
-
-/** The runner is read at each dispatch; nothing else in the UI reads it. */
-export function useSaveRunnerSettings() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: Schemas["RunnerSettingsUpdate"]) =>
-      unwrap(api.PUT("/api/settings/runner", { body })),
-    onSuccess: (data) => {
-      queryClient.setQueryData(keys.settings("runner"), data);
-    },
-  });
-}
-
-export function useMappingSettings(enabled = true) {
-  return useQuery({
-    queryKey: keys.settings("mappings"),
-    queryFn: () => unwrap(api.GET("/api/settings/mappings")),
-    enabled,
-  });
-}
-
-/** Saving re-applies a `base_branch` mapping to the unlocked tickets it set, so every ticket read
- *  (the board and each ticket's base branch) refetches. */
-export function useSaveMappingSettings() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: Schemas["FieldMappingsUpdate"]) =>
-      unwrap(api.PUT("/api/settings/mappings", { body })),
-    onSuccess: (data) => {
-      queryClient.setQueryData(keys.settings("mappings"), data);
-      return queryClient.invalidateQueries({ queryKey: keys.tickets() });
     },
   });
 }

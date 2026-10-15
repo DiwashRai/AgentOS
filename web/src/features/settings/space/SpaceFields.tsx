@@ -1,20 +1,15 @@
-// The Space settings fields (name, key prefix, Jira projects, default repo, claim timeout).
-// Controlled; the page owns the draft and the save.
-import { useState } from "react";
-
-import { Field, fieldStyles as f, Select } from "../../../editor";
-import { cx } from "../../../ui";
-import { claimHint, CLAIM_MAX_S, CLAIM_MIN_S, type SpaceForm, type SpaceIssues } from "./model";
+// The Space settings fields (name, key prefix, Jira projects, default repo, claim timeout), each
+// showing the server's issues at its path. Controlled; the page owns the document and the save.
+import { errorAt, Field, Input, messagesAt, pathOf, Select, type Issues } from "../../../editor";
+import { claimHint, defaultRepoOptions, NO_REPO, type SpaceForm } from "./model";
 import { ProjectKeys } from "./ProjectKeys";
 import s from "./Space.module.css";
 
-const NONE = "";
-
 export interface SpaceFieldsProps {
   value: SpaceForm;
-  issues: SpaceIssues;
+  issues: Issues;
   readOnly: boolean;
-  /** The saved repo catalog's names: `default_repo` must be one of them. */
+  /** The saved repo catalog's names: what the default repo can be. */
   repoNames: readonly string[];
   /** Sign-in is with Jira, so the projects decide who may ask for access. */
   jiraAuth: boolean;
@@ -25,28 +20,24 @@ export interface SpaceFieldsProps {
 
 export function SpaceFields(props: SpaceFieldsProps) {
   const { value, issues, readOnly, onChange } = props;
-  const [typingError, setTypingError] = useState<string | null>(null);
   const set = (patch: Partial<SpaceForm>) => {
     onChange({ ...value, ...patch });
   };
 
-  const repoOptions = [
-    { value: NONE, label: "None" },
-    ...props.repoNames.map((n) => ({ value: n, label: n })),
+  // Issues about one project key name it, since the message alone doesn't.
+  const keyIssues = (index: number) => messagesAt(issues, pathOf("jira_projects", index));
+  const projectMessages = [
+    ...messagesAt(issues, "jira_projects"),
+    ...value.jira_projects.flatMap((key, i) => keyIssues(i).map((m) => `${key}: ${m}`)),
   ];
-  // A saved default that left the catalog still shows (the error says why).
-  if (value.default_repo !== null && !props.repoNames.includes(value.default_repo)) {
-    repoOptions.push({ value: value.default_repo, label: value.default_repo });
-  }
 
   const prefix = value.key_prefix.trim();
   return (
     <div className={s.sheet}>
-      <Field label="Name" error={issues.name} hint="Shown in the top bar.">
+      <Field label="Name" error={errorAt(issues, "name")} hint="Shown in the top bar.">
         {({ id, describedBy, invalid }) => (
-          <input
+          <Input
             id={id}
-            className={f.input}
             value={value.name}
             readOnly={readOnly}
             autoComplete="off"
@@ -61,18 +52,17 @@ export function SpaceFields(props: SpaceFieldsProps) {
 
       <Field
         label="Key prefix"
-        error={issues.key_prefix}
+        error={errorAt(issues, "key_prefix")}
         hint={`New tickets made here are numbered ${prefix}-1, ${prefix}-2… Existing keys never change.`}
       >
         {({ id, describedBy, invalid }) => (
-          <input
+          <Input
             id={id}
-            className={cx(f.input, f.mono)}
+            mono
             value={value.key_prefix}
             readOnly={readOnly}
             spellCheck={false}
             autoComplete="off"
-            maxLength={10}
             aria-describedby={describedBy}
             aria-invalid={invalid}
             onChange={(e) => {
@@ -85,7 +75,7 @@ export function SpaceFields(props: SpaceFieldsProps) {
       <Field
         label="Jira projects"
         className={s.wide}
-        error={typingError ?? issues.jira_projects}
+        error={projectMessages.length === 0 ? undefined : projectMessages.join(" ")}
         hint={
           props.jiraAuth
             ? "Signing in needs access to one of these (admins excepted; new people still wait for approval). Intake and imports only take issues from them."
@@ -98,18 +88,18 @@ export function SpaceFields(props: SpaceFieldsProps) {
             describedBy={describedBy}
             invalid={invalid}
             value={value.jira_projects}
+            flagged={(i) => keyIssues(i).length > 0}
             readOnly={readOnly}
             onChange={(jira_projects) => {
               set({ jira_projects });
             }}
-            onTypingError={setTypingError}
           />
         )}
       </Field>
 
       <Field
         label="Default repo"
-        error={issues.default_repo}
+        error={errorAt(issues, "default_repo")}
         hint={
           props.reposDirty
             ? "Save the repos below first to choose a new one."
@@ -121,11 +111,11 @@ export function SpaceFields(props: SpaceFieldsProps) {
             id={id}
             aria-describedby={describedBy}
             aria-invalid={invalid}
-            value={value.default_repo ?? NONE}
+            value={value.default_repo ?? NO_REPO}
             disabled={readOnly}
-            options={repoOptions}
+            options={defaultRepoOptions(props.repoNames, value.default_repo)}
             onChange={(v) => {
-              set({ default_repo: v === NONE ? null : v });
+              set({ default_repo: v === NO_REPO ? null : v });
             }}
           />
         )}
@@ -133,18 +123,16 @@ export function SpaceFields(props: SpaceFieldsProps) {
 
       <Field
         label="Claim timeout (seconds)"
-        error={issues.claim_timeout_s}
+        error={errorAt(issues, "claim_timeout_s")}
         hint={claimHint(value.claim_timeout_s)}
       >
         {({ id, describedBy, invalid }) => (
-          <input
+          <Input
             id={id}
-            className={cx(f.input, f.mono, s.timeout)}
+            mono
+            className={s.timeout}
             type="number"
             inputMode="numeric"
-            min={CLAIM_MIN_S}
-            max={CLAIM_MAX_S}
-            step={1}
             value={value.claim_timeout_s}
             readOnly={readOnly}
             aria-describedby={describedBy}

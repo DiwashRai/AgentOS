@@ -129,10 +129,23 @@ function RepoSection({ title, doc }: { title: string; doc: DocumentState<Read, R
   );
 }
 
-function OnePage({ server, viewerRole, live }: { server: Server; viewerRole: string; live: boolean }) {
+function OnePage({
+  server,
+  viewerRole,
+  live,
+}: {
+  server: Server;
+  viewerRole: string;
+  live: boolean;
+}) {
   const doc = useRepoDocument(server, "one", live);
   return (
-    <DocumentPage viewer={{ role: viewerRole }} adminsOnly={ADMINS_ONLY} noun="repo" sources={[doc]}>
+    <DocumentPage
+      viewer={{ role: viewerRole }}
+      adminsOnly={ADMINS_ONLY}
+      noun="repo"
+      sources={[doc]}
+    >
       {() => <RepoSection title="Repo" doc={doc} />}
     </DocumentPage>
   );

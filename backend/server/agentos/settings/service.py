@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database
-from agentos.errors import ApiError, validation_error
+from agentos.errors import ApiError, field_error, validation_error
 from agentos.intake import service as intake
 from agentos.models import (
     FieldMapping,
@@ -210,7 +210,7 @@ def _check_space(
     section, issues = check_space(value)
     if env.jira_auth and not value.jira_projects:
         loc: list[str | int] = [*VALUE, "jira_projects"]
-        message = "at least one is needed while people sign in with Jira"
+        message = "At least one is needed while people sign in with Jira."
         issues.append(ValidationIssue(loc=loc, message=message))
     return (None if issues else section), issues
 
@@ -220,7 +220,7 @@ def _space_db_check(conn: Conn, value: SpaceDoc) -> list[ValidationIssue]:
     default = value.default_repo
     if default is None or default in {r.name for r in _repos(conn)}:
         return []
-    message = f"{default!r} is not in this Space's repos"
+    message = f"{default} isn't one of this Space's repos."
     return [ValidationIssue(loc=[*VALUE, "default_repo"], message=message)]
 
 
@@ -445,7 +445,7 @@ def _issue_values(source: JiraSource | None, ref: str, field_id: str) -> list[st
         raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
     key = source.parse_ref(ref)
     if key is None:
-        raise ApiError(422, "validation_error", "issue: not a Jira issue key or link to one")
+        raise field_error(["issue"], "Not a Jira issue key or a link to one.")
     try:
         return source.read_fields(key, [field_id]).get(field_id, [])
     except JiraNotFound:

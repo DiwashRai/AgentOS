@@ -111,13 +111,13 @@ def check_mappings(
     """The field mappings document, every problem at `<prefix>.mappings.<i>...`: each mapping as
     `check_mapping` checks it, and at most one mapping per target. Answers the normalised mappings
     (trimmed), or None when there is any issue."""
-    issues = too_many(doc.mappings, MAX_MAPPINGS, (*prefix, "mappings"))
+    issues = too_many(doc.mappings, MAX_MAPPINGS, (*prefix, "mappings"), "mappings")
     mappings: list[FieldMapping] = []
     seen: set[str] = set()
     for i, entry in enumerate(doc.mappings):
         if entry.target in seen:
             loc: list[str | int] = [*prefix, "mappings", i, "target"]
-            message = f"{entry.target!r} has a mapping already"
+            message = "This target has a mapping already."
             issues.append(ValidationIssue(loc=loc, message=message))
         seen.add(entry.target)
 

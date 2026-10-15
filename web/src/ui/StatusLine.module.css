@@ -9,7 +9,7 @@
 
 /* alone in a view: padded, at the control size */
 .inset {
-  padding: 14px 18px;
+  padding: var(--sp-7) var(--sp-9);
   font-size: var(--fs-control);
   line-height: 1.4;
 }

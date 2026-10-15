@@ -1,172 +1,158 @@
-// The repo catalog: one card per repo (name, URL, default branch, open tickets), Add and Remove.
-// A saved repo's name is fixed (rename = remove + add); only a new row's name is editable.
-// Controlled; the page owns the draft and the save.
-import { useEffect, useRef, useState } from "react";
-
-import { Field, fieldStyles as f } from "../../../editor";
-import { Button, cx, Tag } from "../../../ui";
+// The repo catalog on the kit's ListEditor: one row per repo (name, URL, default branch, open
+// tickets), Add and Remove. A saved repo's name is fixed (rename = remove + add); only a new row's
+// name is editable. Removing a repo still in use is refused by the server on save (409 `in_use`);
+// the confirmation shows its open-ticket count. Controlled; the page owns the document and the save.
 import {
+  errorAt,
+  Field,
+  Input,
+  ListEditor,
+  messagesAt,
+  pathOf,
+  type Issues,
+} from "../../../editor";
+import { cx, Tag, text } from "../../../ui";
+import {
+  isBlankRepo,
   newRepoRow,
   openTickets,
-  removeBlock,
+  removeText,
+  repoLabel,
   urlHint,
   type RepoRow,
-  type ReposValidation,
+  type ReposForm,
 } from "./model";
 import s from "./Space.module.css";
 
 export interface RepoListProps {
-  rows: readonly RepoRow[];
-  issues: ReposValidation;
+  value: ReposForm;
+  issues: Issues;
   readOnly: boolean;
-  /** The *saved* Space default repo (the server refuses to remove it). */
+  /** Open tickets per saved repo name, as the server counted them. */
+  openCounts: Readonly<Record<string, number>>;
+  /** The saved Space default repo (tagged on its row). */
   savedDefault: string | null;
-  onChange: (rows: RepoRow[]) => void;
+  onChange: (value: ReposForm) => void;
 }
 
 export function RepoList(props: RepoListProps) {
-  const { rows, issues, readOnly, savedDefault, onChange } = props;
-  const [focusKey, setFocusKey] = useState<string | null>(null);
-  const names = useRef(new Map<string, HTMLInputElement>());
-
-  useEffect(() => {
-    if (focusKey === null) return;
-    names.current.get(focusKey)?.focus();
-    setFocusKey(null);
-  }, [focusKey]);
+  const { value, issues, readOnly, openCounts, savedDefault, onChange } = props;
+  const countOf = (row: RepoRow) => (row.fresh ? 0 : (openCounts[row.name] ?? 0));
 
   const patch = (key: string, p: Partial<RepoRow>) => {
-    onChange(rows.map((r) => (r.key === key ? { ...r, ...p } : r)));
+    onChange({ repos: value.repos.map((r) => (r.key === key ? { ...r, ...p } : r)) });
   };
 
   return (
-    <>
-      {rows.length === 0 ? (
-        <p className={cx(s.repos, s.empty)}>
-          No repos. Tickets run without a repo until one is added.
-        </p>
-      ) : (
-        <ul className={s.repos}>
-          {rows.map((row, i) => {
-            const rowIssues = issues.rows[i] ?? {};
-            const block = removeBlock(row, savedDefault);
-            const label = row.fresh ? row.name.trim() || "new repo" : row.name;
-            return (
-              <li key={row.key} className={s.repo}>
-                <div className={s.repoHead}>
-                  <span className={cx(s.repoName, row.fresh && s.unnamed)}>
-                    {row.fresh ? row.name.trim() || "New repo" : row.name}
-                  </span>
-                  {row.fresh ? (
-                    <Tag>New</Tag>
-                  ) : (
-                    <span className={s.count}>{openTickets(row.open_ticket_count)}</span>
+    <ListEditor
+      name="Repos"
+      className={s.repos}
+      rows={value.repos}
+      readOnly={readOnly}
+      label={repoLabel}
+      create={newRepoRow}
+      addLabel="Add repo"
+      isBlank={isBlankRepo}
+      confirmText={(row, label) => removeText(label, countOf(row))}
+      empty="No repos. Tickets run without a repo until one is added."
+      issue={messagesAt(issues, "repos")}
+      onChange={(repos) => {
+        onChange({ repos });
+      }}
+    >
+      {(row) => {
+        const at = (field?: string) =>
+          field === undefined ? pathOf("repos", row.key) : pathOf("repos", row.key, field);
+        // A saved row has no name field, so issues about its name show beside it.
+        const rowIssues = [
+          ...messagesAt(issues, at()),
+          ...(row.fresh ? [] : messagesAt(issues, at("name"))),
+        ];
+        return (
+          <div className={s.repo}>
+            <div className={s.repoHead}>
+              <span className={cx(s.repoName, row.fresh && s.unnamed)}>
+                {row.fresh ? row.name.trim() || "New repo" : row.name}
+              </span>
+              {row.fresh ? (
+                <Tag>New</Tag>
+              ) : (
+                <span className={s.count}>{openTickets(countOf(row))}</span>
+              )}
+              {!row.fresh && row.name === savedDefault ? <Tag>Default</Tag> : null}
+            </div>
+
+            {rowIssues.map((msg) => (
+              <p key={msg} className={text.error} role="alert">
+                {msg}
+              </p>
+            ))}
+
+            <div className={s.repoFields} data-fresh={row.fresh ? "" : undefined}>
+              {row.fresh ? (
+                <Field
+                  label="Name"
+                  error={errorAt(issues, at("name"))}
+                  hint="Tickets refer to it by this name. It can't change once saved."
+                >
+                  {({ id, describedBy, invalid }) => (
+                    <Input
+                      id={id}
+                      mono
+                      value={row.name}
+                      readOnly={readOnly}
+                      placeholder="e.g. agentos"
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid}
+                      onChange={(e) => {
+                        patch(row.key, { name: e.target.value.toLowerCase() });
+                      }}
+                    />
                   )}
-                  {!row.fresh && row.name === savedDefault ? <Tag>Default</Tag> : null}
-                  <span className={s.spacer} />
-                  <Button
-                    size="sm"
-                    variant="quiet"
-                    disabled={readOnly || block !== undefined}
-                    title={block ?? `Remove ${label}`}
-                    aria-label={`Remove ${label}`}
-                    onClick={() => {
-                      onChange(rows.filter((r) => r.key !== row.key));
+                </Field>
+              ) : null}
+              <Field label="URL" error={errorAt(issues, at("url"))} hint={urlHint(row.url)}>
+                {({ id, describedBy, invalid }) => (
+                  <Input
+                    id={id}
+                    mono
+                    value={row.url}
+                    readOnly={readOnly}
+                    placeholder="https://github.com/owner/repo.git"
+                    spellCheck={false}
+                    autoComplete="off"
+                    aria-describedby={describedBy}
+                    aria-invalid={invalid}
+                    onChange={(e) => {
+                      patch(row.key, { url: e.target.value });
                     }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-                <div className={s.repoFields} data-fresh={row.fresh ? "" : undefined}>
-                  {row.fresh ? (
-                    <Field
-                      label="Name"
-                      error={rowIssues.name}
-                      hint="Tickets refer to it by this name. It can't change once saved."
-                    >
-                      {({ id, describedBy, invalid }) => (
-                        <input
-                          id={id}
-                          ref={(el) => {
-                            if (el) names.current.set(row.key, el);
-                            else names.current.delete(row.key);
-                          }}
-                          className={cx(f.input, f.mono)}
-                          value={row.name}
-                          readOnly={readOnly}
-                          placeholder="e.g. agentos"
-                          spellCheck={false}
-                          autoComplete="off"
-                          aria-describedby={describedBy}
-                          aria-invalid={invalid}
-                          onChange={(e) => {
-                            patch(row.key, { name: e.target.value.toLowerCase() });
-                          }}
-                        />
-                      )}
-                    </Field>
-                  ) : null}
-                  <Field label="URL" error={rowIssues.url} hint={urlHint(row.url)}>
-                    {({ id, describedBy, invalid }) => (
-                      <input
-                        id={id}
-                        className={cx(f.input, f.mono)}
-                        value={row.url}
-                        readOnly={readOnly}
-                        placeholder="https://github.com/owner/repo.git"
-                        spellCheck={false}
-                        autoComplete="off"
-                        aria-describedby={describedBy}
-                        aria-invalid={invalid}
-                        onChange={(e) => {
-                          patch(row.key, { url: e.target.value });
-                        }}
-                      />
-                    )}
-                  </Field>
-                  <Field label="Default branch" error={rowIssues.default_branch}>
-                    {({ id, describedBy, invalid }) => (
-                      <input
-                        id={id}
-                        className={cx(f.input, f.mono)}
-                        value={row.default_branch}
-                        placeholder="None: each ticket sets its own"
-                        readOnly={readOnly}
-                        spellCheck={false}
-                        autoComplete="off"
-                        aria-describedby={describedBy}
-                        aria-invalid={invalid}
-                        onChange={(e) => {
-                          patch(row.key, { default_branch: e.target.value });
-                        }}
-                      />
-                    )}
-                  </Field>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {issues.form.map((problem) => (
-        <p key={problem} className={s.problem} role="alert">
-          {problem}
-        </p>
-      ))}
-
-      <Button
-        size="sm"
-        className={s.add}
-        disabled={readOnly}
-        onClick={() => {
-          const row = newRepoRow(rows);
-          onChange([...rows, row]);
-          setFocusKey(row.key);
-        }}
-      >
-        Add repo
-      </Button>
-    </>
+                  />
+                )}
+              </Field>
+              <Field label="Default branch" error={errorAt(issues, at("default_branch"))}>
+                {({ id, describedBy, invalid }) => (
+                  <Input
+                    id={id}
+                    mono
+                    value={row.default_branch}
+                    placeholder="None: each ticket sets its own"
+                    readOnly={readOnly}
+                    spellCheck={false}
+                    autoComplete="off"
+                    aria-describedby={describedBy}
+                    aria-invalid={invalid}
+                    onChange={(e) => {
+                      patch(row.key, { default_branch: e.target.value });
+                    }}
+                  />
+                )}
+              </Field>
+            </div>
+          </div>
+        );
+      }}
+    </ListEditor>
   );
 }

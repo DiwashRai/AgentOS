@@ -7,36 +7,36 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-zone);
-  padding: 14px 18px 18px;
+  padding: var(--sp-7) var(--sp-9) var(--sp-9);
 }
 .list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
 }
 /* an empty row after a zone sits 12px under it (mock `.queue .empty-row`) */
 .emptyZone:not(:first-child) {
-  margin-top: calc(12px - var(--sp-zone));
+  margin-top: calc(var(--sp-6) - var(--sp-zone));
 }
 .tiles {
   display: grid;
   grid-template-columns: repeat(var(--n, 5), minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 8px;
+  gap: var(--sp-5);
+  margin-top: var(--sp-4);
 }
 .rack {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0 20px;
+  gap: 0 var(--sp-9);
   align-items: start;
-  margin-top: 6px;
+  margin-top: var(--sp-3);
 }
 .rack > div {
   min-width: 0;
 }
 .rackGroup + .rackGroup {
-  margin-top: 10px;
+  margin-top: var(--sp-5);
 }
 
 /* ---------- shared bits ---------- */
@@ -56,16 +56,16 @@
   text-align: right;
 }
 .empty {
-  margin: 4px 0 0;
-  padding: 0 2px;
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-1);
   font-size: var(--fs-control);
   color: var(--ink-2);
 }
 .nothing {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 2px;
+  gap: var(--sp-7);
+  padding: var(--sp-7) var(--sp-1);
 }
 .nothing > .empty {
   margin: 0;
@@ -74,7 +74,7 @@
 .stat {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 
 /* hover = lift only, transform only: no shadow, no surface or border change (refresh §3.1).
@@ -105,9 +105,9 @@
      and every row's ask column shares one x (a rare third button still widens its own row) */
   grid-template-columns: 150px 82px minmax(0, 1fr) 1px 300px 48px minmax(208px, max-content);
   align-items: center;
-  column-gap: 14px;
+  column-gap: var(--sp-7);
   min-height: var(--h-item);
-  padding: 9px 12px 9px 14px;
+  padding: var(--sp-4) var(--sp-6) var(--sp-4) var(--sp-7);
   border-radius: var(--r-row);
   position: relative;
 }
@@ -119,8 +119,8 @@
 }
 .flat {
   min-height: var(--h-quiet);
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-3);
   background: var(--row-flat);
   box-shadow: inset 0 0 0 1px var(--row-flat-edge);
 }
@@ -168,7 +168,7 @@
 .title {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
   font-size: var(--fs-row-title);
   font-weight: 500;
@@ -193,7 +193,7 @@
 .sub {
   font-size: var(--fs-meta);
   color: var(--ink-3);
-  margin-top: 2px;
+  margin-top: var(--sp-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -212,7 +212,7 @@
 .ask1 {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
   font-size: var(--fs-ui);
   white-space: nowrap;
@@ -222,7 +222,7 @@
   min-width: 0;
 }
 .ask2 {
-  margin-top: 3px;
+  margin-top: var(--sp-1);
   font-size: var(--fs-control);
   color: var(--ink-2);
   white-space: nowrap;
@@ -238,7 +238,7 @@
 .who {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
   min-width: 0;
   font-size: var(--fs-meta);
   color: var(--ink-3);
@@ -251,7 +251,7 @@
 }
 .outcome {
   min-width: 0;
-  padding-right: 4px;
+  padding-right: var(--sp-2);
   font-size: var(--fs-control);
   color: var(--ink-2);
   text-align: right;
@@ -267,12 +267,12 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 3px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 .btns {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-4);
   align-items: center;
   justify-content: flex-end;
 }
@@ -280,7 +280,7 @@
 .confirm {
   grid-column: 1 / -1;
   justify-self: end;
-  margin: 2px 0 4px;
+  margin: var(--sp-1) 0 var(--sp-2);
 }
 .err {
   max-width: 100%;
@@ -295,10 +295,10 @@
 .overflow {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
   height: 32px;
-  margin-top: 4px;
-  padding: 0 4px 0 14px;
+  margin-top: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-7);
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
@@ -320,17 +320,17 @@
     0 0 0 1px var(--row-raised-edge),
     var(--row-raised-shadow);
   border-radius: 10px;
-  padding: 10px 13px 9px;
+  padding: var(--sp-5) var(--sp-6) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
   position: relative;
 }
 .tileHd {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 .tileHd > span:first-child {
@@ -341,7 +341,7 @@
 .tileEl {
   flex: none;
   margin-left: auto;
-  padding-left: 6px;
+  padding-left: var(--sp-3);
   font-size: var(--fs-meta);
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
@@ -361,7 +361,7 @@
 .tileMeta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   font-size: var(--fs-meta);
   color: var(--ink-3);
   min-width: 0;
@@ -373,7 +373,7 @@
 .tileNow {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--sp-4);
   font-size: var(--fs-control);
   color: var(--ink-2);
   min-width: 0;
@@ -391,7 +391,7 @@
 .gh {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   height: 32px;
   font-size: var(--fs-control);
   font-weight: 600;
@@ -414,10 +414,10 @@
   display: grid;
   grid-template-columns: 12px 84px minmax(0, 1fr) 36px 30px 20px;
   align-items: center;
-  column-gap: 8px;
+  column-gap: var(--sp-4);
   height: 30px;
-  padding: 0 6px;
-  margin: 0 -6px;
+  padding: 0 var(--sp-3);
+  margin: 0 calc(-1 * var(--sp-3));
   border-radius: 6px;
   cursor: pointer;
   transition: transform var(--t-fast) var(--ease-out);
@@ -457,7 +457,7 @@
     grid-template-areas:
       "stage key title age acts"
       ". . ask ask ask";
-    row-gap: 6px;
+    row-gap: var(--sp-3);
   }
   .stage {
     grid-area: stage;

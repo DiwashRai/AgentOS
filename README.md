@@ -29,7 +29,7 @@ Open http://127.0.0.1:5173 and sign in with any username. Dev auth only works on
 ## Checks
 | Command | What |
 |---|---|
-| `just check` | Every gate: ruff, mypy (incl. the worker on Python 3.11), import-linter, pytest, then tsc, ESLint, Prettier, Vitest |
+| `just check` | Every gate: ruff, mypy (incl. the worker on Python 3.11), import-linter, pytest, then tsc, ESLint, Prettier, the CSS spacing check, Vitest |
 | `just check-backend` / `just check-web` | One half only |
 | `just fmt-backend` / `just fmt-web` | Auto-format one half |
 | `just gen-api` | Regenerate `web/src/api/openapi.json` + `schema.ts` after an API change. Commit them with the backend change; a test fails when they're stale |

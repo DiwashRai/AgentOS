@@ -6,8 +6,8 @@
 .head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 0 6px;
+  gap: var(--sp-5);
+  margin: 0 0 var(--sp-3);
   font-family: var(--font-display);
   font-size: var(--fs-heading);
   line-height: 1.35;
@@ -51,13 +51,13 @@
 
 /* TASKS.md sections (2+ headings): a small sentence-case heading with the section's own k of n. */
 .sec + .sec {
-  margin-top: 14px;
+  margin-top: var(--sp-7);
 }
 .secHead {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 2px 0 4px;
+  gap: var(--sp-4);
+  padding: var(--sp-1) 0 var(--sp-2);
   border-bottom: 1px solid var(--rule);
   font-size: var(--fs-meta);
   font-weight: 600;
@@ -84,12 +84,12 @@
 .item {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
-  gap: 0 12px;
+  gap: 0 var(--sp-6);
   /* One line sits centred in the 38px item; a wrapped one keeps the mark on its first line. */
   align-items: start;
   align-content: center;
   min-height: 38px;
-  padding: 8px 0;
+  padding: var(--sp-4) 0;
   border-bottom: 1px solid var(--rule-soft);
   font-size: 13.5px;
   line-height: 1.4;
@@ -97,7 +97,7 @@
   overflow-wrap: anywhere;
 }
 .item > :first-child {
-  margin-top: 2.5px;
+  margin-top: var(--sp-1);
 }
 .item:last-child {
   border-bottom: 0;

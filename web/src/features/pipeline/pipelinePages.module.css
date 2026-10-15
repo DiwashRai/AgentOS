@@ -3,8 +3,8 @@
 .runFrom {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding-right: 14px;
+  gap: var(--sp-3);
+  padding-right: var(--sp-7);
   border-right: 1px solid var(--rule);
 }
 .runFrom > span {
@@ -15,15 +15,15 @@
 .defaults {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
 }
 .sheet {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--sp-6);
   align-items: start;
   max-width: 760px;
-  padding: 14px 16px;
+  padding: var(--sp-7) var(--sp-8);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-sheet);
@@ -38,8 +38,8 @@
 .scaffold {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
+  gap: var(--sp-5);
+  margin-top: var(--sp-4);
 }
 .files {
   list-style: none;
@@ -54,9 +54,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-6);
   min-height: 40px;
-  padding: 0 14px;
+  padding: 0 var(--sp-7);
 }
 .file + .file {
   border-top: 1px solid var(--rule-soft);

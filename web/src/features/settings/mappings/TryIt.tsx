@@ -1,10 +1,11 @@
 // Settings › Field mappings: "Try it" runs the unsaved rules through the server's matcher, on a
 // Jira issue's field or on typed values, and shows what was read, the rule that matched and the
-// result (or why it's blank). Controlled: the card owns the input and the preview mutation.
+// result (or why it's blank, or the server's issues). Controlled: the row owns the input and the
+// preview.
 import { useId } from "react";
 
-import { fieldStyles as f } from "../../../editor";
-import { Button, cx } from "../../../ui";
+import { Input } from "../../../editor";
+import { Button } from "../../../ui";
 import s from "./Mappings.module.css";
 import { ruleWord, type TargetSpec, type TryLine, type TryMode } from "./model";
 
@@ -29,8 +30,8 @@ export interface TryItProps {
   mode: TryMode;
   text: string;
   line: TryLine;
-  /** Why Try it is off, or undefined. */
-  block: string | undefined;
+  /** Something is typed to run on. */
+  canRun: boolean;
   onMode: (mode: TryMode) => void;
   onText: (text: string) => void;
   onRun: () => void;
@@ -40,7 +41,12 @@ export function TryIt(props: TryItProps) {
   const id = useId();
   const current = MODES.find((m) => m.mode === props.mode) ?? MODES[0];
   const pending = props.line.kind === "pending";
-  const disabled = props.block !== undefined || pending;
+  const disabled = !props.canRun || pending;
+  const block = props.canRun
+    ? undefined
+    : props.mode === "issue"
+      ? "Type an issue key or link"
+      : "Type a value";
 
   return (
     <div className={s.try} role="group" aria-labelledby={`${id}-k`}>
@@ -73,8 +79,9 @@ export function TryIt(props: TryItProps) {
             </button>
           ))}
         </span>
-        <input
-          className={cx(f.input, f.mono, s.tryInput)}
+        <Input
+          mono
+          className={s.tryInput}
           value={props.text}
           placeholder={current?.placeholder}
           spellCheck={false}
@@ -85,7 +92,7 @@ export function TryIt(props: TryItProps) {
             props.onText(e.target.value);
           }}
         />
-        <Button type="submit" size="sm" disabled={disabled} title={props.block}>
+        <Button type="submit" size="sm" disabled={disabled} title={block}>
           {pending ? "Trying…" : "Try it"}
         </Button>
       </form>
@@ -112,7 +119,11 @@ function TryResult({ spec, line }: { spec: TargetSpec; line: TryLine }) {
     case "error":
       return (
         <div className={s.result} role="status">
-          <p className={s.resultError}>{line.text}</p>
+          {line.lines.map((msg, i) => (
+            <p key={`${String(i)}:${msg}`} className={s.resultError}>
+              {msg}
+            </p>
+          ))}
         </div>
       );
     case "result":

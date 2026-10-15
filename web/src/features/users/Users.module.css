@@ -17,7 +17,7 @@
 
 .table thead th {
   height: 34px;
-  padding: 0 14px;
+  padding: 0 var(--sp-7);
   text-align: left;
   white-space: nowrap;
   font-size: var(--fs-meta);
@@ -28,7 +28,7 @@
 
 .user td,
 .user th {
-  padding: 9px 14px;
+  padding: var(--sp-4) var(--sp-7);
   vertical-align: middle;
   text-align: left;
   font-weight: inherit;
@@ -46,21 +46,21 @@
 .who {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
   min-width: 220px;
 }
 
 .names {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 
 .name {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   color: var(--ink-1);
   font-weight: 500;
   white-space: nowrap;
@@ -83,7 +83,7 @@
 .status {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
 }
 
 .role > span:first-child {
@@ -91,14 +91,14 @@
   flex: none;
 }
 
-/* the role hint and lock note may wrap, so a narrow page keeps every column in view */
+/* the role hint and config note may wrap, so a narrow page keeps every column in view */
 .hint {
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 
-/* a config admin's lock, said out loud in place of the role hint */
-.locked {
+/* a config admin (the server's env_admin), said in place of the role hint */
+.config {
   font-size: var(--fs-meta);
   color: var(--ink-2);
 }
@@ -124,14 +124,14 @@
 
 /* the confirm / error line under a row */
 .note > td {
-  padding: 0 14px 10px 50px;
+  padding: 0 var(--sp-7) var(--sp-5) calc(var(--sp-11) + var(--sp-9));
 }
 
 .confirm {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 10px;
+  gap: var(--sp-4) var(--sp-5);
   color: var(--ink-1);
 }
 

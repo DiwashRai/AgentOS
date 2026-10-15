@@ -10,8 +10,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 14px 0;
+  gap: var(--sp-5);
+  padding: var(--sp-7) 0;
   background: var(--rail);
   /* the theme menu's button reads these */
   --rail-focus: var(--rail-on-ink);
@@ -30,7 +30,7 @@
   background: var(--accent);
   display: grid;
   place-items: center;
-  margin-bottom: 2px;
+  margin-bottom: var(--sp-1);
   box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
@@ -97,5 +97,5 @@
 }
 
 .avatar {
-  margin-top: 6px;
+  margin-top: var(--sp-3);
 }

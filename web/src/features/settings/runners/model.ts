@@ -1,12 +1,12 @@
-// Settings › Runners, pure core: the runner target form and the runtimes list (rows with a stable
-// client key, stripped from the PUT body), edits, client checks that mirror models.py
-// (`RunnerSettingsUpdate`, `RuntimeEntry`, `RuntimeSettingsUpdate`) and pipeline/runtime.py
+// Settings › Runners, pure core: the runner target form (the server checks it), and the runtimes
+// list (rows with a stable client key, stripped from the PUT body), edits, client checks that
+// mirror models.py (`RuntimeEntry`, `RuntimeSettingsUpdate`) and pipeline/runtime.py
 // (`RuntimeSpec`), and the command preview, which assembles argv the way manifest.py
 // `resolve_agent` does. The server stays the authority: its 422 / 409 message is shown as-is.
 import type { Schemas } from "../../../api/client";
 
 export type RunnerSettings = Schemas["RunnerSettings"];
-export type RunnerUpdate = Schemas["RunnerSettingsUpdate"];
+export type RunnerDoc = Schemas["RunnerDoc"];
 export type RuntimeEntry = Schemas["RuntimeEntry"];
 export type RuntimeSettings = Schemas["RuntimeSettings"];
 export type RuntimesUpdate = Schemas["RuntimeSettingsUpdate"];
@@ -18,10 +18,6 @@ export const RUNTIME_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 export const MAX_RUNTIMES = 20;
 export const MAX_RUNTIME_ARGS = 50;
 export const RUNTIME_ARG_MAX = 1000;
-export const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-export const GITHUB_WORKFLOW_RE = /^[A-Za-z0-9_.-]+\.ya?ml$/;
-export const GITHUB_FIELD_MAX = 200;
-export const GIT_REF_MAX = 255;
 
 /** The placeholder each argument group replaces (manifest.py `_substitute`, `_with_session`).
  *  argv has none. `{session}` may be part of an argument; the others replace a whole one. */
@@ -72,45 +68,24 @@ export interface RunnerForm {
   ref: string;
 }
 
-export function runnerForm(s: RunnerSettings): RunnerForm {
-  return { github_repo: s.github_repo ?? "", workflow: s.workflow, ref: s.ref };
+/** The document's value as the form shows it (a null repo is an empty input). */
+export function runnerForm(value: RunnerDoc): RunnerForm {
+  return { github_repo: value.github_repo ?? "", workflow: value.workflow, ref: value.ref };
 }
 
-/** Raw comparison, so a draft keeps exactly what was typed (the body trims). */
+/** Raw comparison, so a draft keeps exactly what was typed (the value trims). */
 export function sameRunner(a: RunnerForm, b: RunnerForm): boolean {
   return a.github_repo === b.github_repo && a.workflow === b.workflow && a.ref === b.ref;
 }
 
-export function runnerBody(f: RunnerForm, baseVersion: number): RunnerUpdate {
+/** The value a save or check sends: fields trimmed, an empty repo as null (none set). */
+export function runnerValue(f: RunnerForm): RunnerDoc {
   const repo = f.github_repo.trim();
-  return {
-    github_repo: repo === "" ? null : repo,
-    workflow: f.workflow.trim(),
-    ref: f.ref.trim(),
-    base_version: baseVersion,
-  };
+  return { github_repo: repo === "" ? null : repo, workflow: f.workflow.trim(), ref: f.ref.trim() };
 }
 
-export type RunnerField = keyof RunnerForm;
-export type RunnerIssues = Partial<Record<RunnerField, string>>;
-
-export function validateRunner(f: RunnerForm): RunnerIssues {
-  const out: RunnerIssues = {};
-  const repo = f.github_repo.trim();
-  if (repo !== "") {
-    if (repo.length > GITHUB_FIELD_MAX) out.github_repo = `At most ${String(GITHUB_FIELD_MAX)}.`;
-    else if (!GITHUB_REPO_RE.test(repo)) out.github_repo = "Use owner/name, e.g. acme/agentos.";
-  }
-  const workflow = f.workflow.trim();
-  if (workflow.length > GITHUB_FIELD_MAX) out.workflow = `At most ${String(GITHUB_FIELD_MAX)}.`;
-  else if (!GITHUB_WORKFLOW_RE.test(workflow)) {
-    out.workflow = "A file name ending in .yml or .yaml, e.g. agentos-worker.yml.";
-  }
-  const ref = f.ref.trim();
-  if (ref === "") out.ref = "Name the branch or tag the workflow file is on.";
-  else if (ref.length > GIT_REF_MAX) out.ref = `At most ${String(GIT_REF_MAX)} characters.`;
-  return out;
-}
+/** The runner fields that show their own issues; anything else goes in the save bar. */
+export const RUNNER_FIELDS: readonly (keyof RunnerForm)[] = ["github_repo", "workflow", "ref"];
 
 export type Launcher = RunnerSettings["launcher"];
 

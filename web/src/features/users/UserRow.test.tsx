@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { locksFor, type User } from "./model";
+import { ENV_ADMIN_NOTE, type User } from "./model";
 import { UserRow, type UserRowProps } from "./UserRow";
 
 const maya: User = {
@@ -21,10 +21,9 @@ function render(over: Partial<UserRowProps> = {}) {
   const props: UserRowProps = {
     user: maya,
     self: false,
-    locks: locksFor(maya, 1),
     now: Date.parse("2026-10-11T12:00:00Z"),
     pending: false,
-    error: null,
+    errors: [],
     onPatch: () => undefined,
     ...over,
   };
@@ -51,19 +50,18 @@ describe("UserRow", () => {
     expect(selectTag(html)).not.toContain("disabled");
   });
 
-  it("locks role and Disable on your own row, saying why", () => {
-    const html = render({ self: true, locks: locksFor(maya, 3) });
+  it("keeps role and Disable usable on your own row (the server refuses, not the row)", () => {
+    const html = render({ self: true });
     expect(html).toContain(">You<");
-    expect(selectTag(html)).toContain("disabled");
-    expect(html).toContain('title="You can&#x27;t change your own role. Another admin can."');
-    expect(html).toContain('title="You can&#x27;t disable yourself. Another admin can."');
+    expect(selectTag(html)).not.toContain("disabled");
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Disable<\/button>/);
   });
 
   it("offers Enable for a disabled person and marks the row", () => {
     const html = render({ user: { ...maya, disabled: true } });
     expect(html).toContain("data-disabled");
     expect(html).toContain("Disabled");
-    expect(html).toContain(">Enable<");
+    expect(html).toMatch(/<button[^>]*aria-label="Enable Maya Chen"[^>]*>Enable<\/button>/);
   });
 
   it("shows the role being set and disables controls while pending", () => {
@@ -102,19 +100,16 @@ describe("UserRow", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve<\/button>/);
   });
 
-  it("locks a config admin's role and Disable, saying so on the row", () => {
-    const admin: User = { ...maya, role: "admin", env_admin: true };
-    const html = render({ user: admin, locks: locksFor(admin, 1) });
-    expect(selectTag(html)).toContain("disabled");
-    expect(html).toContain(">Set in server config (AGENTOS_ADMINS)<");
+  it("says a config admin is set in server config, in place of the hint, with controls usable", () => {
+    const html = render({ user: { ...maya, role: "admin", env_admin: true } });
+    expect(html).toContain(`>${ENV_ADMIN_NOTE}<`);
     expect(html).not.toContain("Also users and the template");
-    expect(html.match(/title="Set in server config \(AGENTOS_ADMINS\)"/g)).toHaveLength(2);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Disable<\/button>/);
+    expect(selectTag(html)).not.toContain("disabled");
   });
 
-  it("shows a failed change inline", () => {
-    const html = render({ error: "You can't demote yourself" });
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("You can&#x27;t demote yourself");
+  it("shows a failed change's problems inline, and nothing without one", () => {
+    expect(render()).not.toContain('role="alert"');
+    const html = render({ errors: ["demote"] });
+    expect(html).toMatch(/role="alert"[^>]*>demote</);
   });
 });

@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import (
     BaseModel,
@@ -51,6 +51,7 @@ from agentos.models import (
     SpaceDoc,
     ValidationIssue,
     WorkspaceMode,
+    matching,
 )
 from agentos.validate import base_branch_problem, parsed, repo_url_problem, too_many
 
@@ -90,7 +91,13 @@ class RepoSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = Field(pattern=REPO_NAME_PATTERN)
+    name: Annotated[
+        str,
+        matching(
+            REPO_NAME_PATTERN,
+            "Lowercase letters, digits, . _ or -, starting with a letter or digit, at most 64.",
+        ),
+    ]
     url: str = Field(max_length=REPO_URL_MAX)
     # None = no default branch: each ticket on the repo needs its own. Omitted → "main"; null or
     # blank → None.
@@ -126,7 +133,10 @@ class SpaceSection(BaseModel):
     default_repo: str | None = None
     # Before `key_prefix`: its validator checks the prefix against the projects.
     jira_projects: tuple[JiraProjectKey, ...] = Field(default=(), max_length=MAX_JIRA_PROJECTS)
-    key_prefix: str = Field(default=DEFAULT_KEY_PREFIX, pattern=KEY_PREFIX_PATTERN)
+    key_prefix: Annotated[
+        str,
+        matching(KEY_PREFIX_PATTERN, "Up to 10 capital letters or digits, starting with a letter."),
+    ] = DEFAULT_KEY_PREFIX
     claim_timeout_s: int = Field(
         default=DEFAULT_CLAIM_TIMEOUT_S, ge=CLAIM_TIMEOUT_MIN_S, le=CLAIM_TIMEOUT_MAX_S
     )
@@ -135,7 +145,7 @@ class SpaceSection(BaseModel):
     @classmethod
     def _name(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("must not be blank")
+            raise ValueError("Required.")
         return value.strip()
 
     @field_validator("jira_projects")
@@ -144,18 +154,19 @@ class SpaceSection(BaseModel):
         seen: set[str] = set()
         for key in value:
             if key in seen:
-                raise ValueError(f"{key!r} is listed twice")
+                raise ValueError(f"{key} is listed twice.")
             seen.add(key)
         return value
 
     @field_validator("key_prefix")
     @classmethod
     def _prefix(cls, value: str, info: ValidationInfo) -> str:
-        """Not one of the projects (absent from `info.data` when they are invalid themselves)."""
+        """Not one of the projects (absent from `info.data` when they are invalid themselves):
+        native keys would take real Jira keys, whose issues then can't be imported."""
         if value in info.data.get("jira_projects", ()):
             raise ValueError(
-                f"{value!r} is one of jira_projects (native keys would take real Jira keys, "
-                "which then can't be imported); pick another prefix"
+                f"{value} is also a Jira project, so new tickets would take its real keys. "
+                "Pick another prefix."
             )
         return value
 
@@ -175,15 +186,29 @@ class RunnerSection(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    github_repo: str | None = Field(default=None, pattern=GITHUB_REPO_PATTERN, max_length=200)
-    workflow: str = Field(default=DEFAULT_WORKFLOW, pattern=GITHUB_WORKFLOW_PATTERN, max_length=200)
+    github_repo: (
+        Annotated[
+            str,
+            Field(max_length=200),
+            matching(GITHUB_REPO_PATTERN, "Use owner/name, e.g. acme/agentos."),
+        ]
+        | None
+    ) = None
+    workflow: Annotated[
+        str,
+        Field(max_length=200),
+        matching(
+            GITHUB_WORKFLOW_PATTERN,
+            "A file name ending in .yml or .yaml, e.g. agentos-worker.yml.",
+        ),
+    ] = DEFAULT_WORKFLOW
     ref: str = Field(default=DEFAULT_BRANCH, min_length=1, max_length=GIT_REF_MAX)
 
     @field_validator("ref")
     @classmethod
     def _ref(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("must not be blank")
+            raise ValueError("Name the branch or tag the workflow file is on.")
         return value.strip()
 
 
@@ -335,7 +360,7 @@ def check_repos(
     doc: ReposDoc, prefix: Sequence[str | int] = VALUE
 ) -> tuple[tuple[RepoSpec, ...] | None, list[ValidationIssue]]:
     """Each repo's fields, and no name twice."""
-    issues = too_many(doc.repos, MAX_REPOS, (*prefix, "repos"))
+    issues = too_many(doc.repos, MAX_REPOS, (*prefix, "repos"), "repos")
     specs: list[RepoSpec] = []
     names: set[str] = set()
     for i, entry in enumerate(doc.repos):
@@ -343,7 +368,7 @@ def check_repos(
         issues += problems
         if entry.name in names:
             loc: list[str | int] = [*prefix, "repos", i, "name"]
-            issues.append(ValidationIssue(loc=loc, message=f"{entry.name!r} is listed twice"))
+            issues.append(ValidationIssue(loc=loc, message=f"{entry.name} is listed twice."))
         names.add(entry.name)
         if spec is not None:
             specs.append(spec)
@@ -362,7 +387,7 @@ def check_intake(
 ) -> tuple[tuple[IntakeQuerySpec, ...] | None, list[ValidationIssue]]:
     """Each query's fields, and no sent id twice. A query with `id: None` gets a new id made from
     its name (`query_id`), unique among the sent ones and the ones made before it."""
-    issues = too_many(doc.queries, MAX_INTAKE_QUERIES, (*prefix, "queries"))
+    issues = too_many(doc.queries, MAX_INTAKE_QUERIES, (*prefix, "queries"), "queries")
     taken = {q.id for q in doc.queries if q.id is not None}
     seen: set[str] = set()
     specs: list[IntakeQuerySpec] = []
@@ -373,7 +398,7 @@ def check_intake(
             taken.add(qid)
         elif qid in seen:
             loc: list[str | int] = [*prefix, "queries", i, "id"]
-            issues.append(ValidationIssue(loc=loc, message=f"{qid!r} is listed twice"))
+            issues.append(ValidationIssue(loc=loc, message=f"{qid} is listed twice."))
         else:
             seen.add(qid)
 

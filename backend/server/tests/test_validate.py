@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from agentos.errors import ApiError
+from agentos.models import ValidationIssue, matching
 from agentos.validate import (
     MAX_BUNDLE_BYTES,
     MAX_FILE_BYTES,
@@ -18,6 +20,7 @@ from agentos.validate import (
     check_bundle_size,
     check_file_size,
     check_unique_paths,
+    parsed,
     repo_url_problem,
     validate_base_branch,
     validate_block_content,
@@ -36,6 +39,49 @@ def _rejects(fn: object, value: str, code: str = "validation_error", status: int
         fn(value)
     assert (e.value.status, e.value.code) == (status, code)
     return e.value.message
+
+
+# ------------------------------------------------------------------ pydantic errors as UI text
+
+
+class _Rules(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=5)
+    timeout: int = Field(ge=60, le=100)
+    tags: list[str] = Field(max_length=2)
+    prefix: Annotated[str, matching(r"^[A-Z]+$", "Capital letters only.")]
+
+
+_VALID: dict[str, Any] = {"name": "n", "timeout": 60, "tags": [], "prefix": "AOS"}
+
+
+@pytest.mark.parametrize(
+    ("change", "field", "message"),
+    [
+        ({"name": ""}, "name", "Required."),
+        ({"name": "abcdef"}, "name", "At most 5 characters."),
+        ({"name": None}, "name", "Required."),  # missing (dropped below)
+        ({"timeout": 59}, "timeout", "At least 60."),
+        ({"timeout": 101}, "timeout", "At most 100."),
+        ({"timeout": "soon"}, "timeout", "Must be a whole number."),
+        ({"tags": ["a", "b", "c"]}, "tags", "At most 2 items."),
+        ({"prefix": "aos"}, "prefix", "Capital letters only."),
+        ({"prefix": "AOS\n"}, "prefix", "Capital letters only."),  # `$` doesn't skip a newline
+        ({"prefix": ""}, "prefix", "Required."),
+        ({"owner": "me"}, "owner", "Unknown field."),
+    ],
+)
+def test_pydantic_errors_read_as_ui_text(change: dict[str, Any], field: str, message: str) -> None:
+    data = {k: v for k, v in {**_VALID, **change}.items() if v is not None}
+    model, issues = parsed(_Rules, data, ("value",))
+    assert model is None
+    assert issues == [ValidationIssue(loc=["value", field], message=message)]
+
+
+def test_matching_keeps_what_the_pattern_accepts() -> None:
+    model, issues = parsed(_Rules, _VALID)
+    assert (model, issues) == (_Rules(**_VALID), [])
 
 
 # ------------------------------------------------------------------ paths

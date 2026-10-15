@@ -1,14 +1,4 @@
-/* Settings › Space: two saved sections, each a sheet in kit values (.ao-sheet, .ao-input). */
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-.section + .section {
-  margin-top: 16px;
-}
-
+/* Settings › Space: two saved sections (DocumentSection), in kit values (.ao-sheet, .ao-input). */
 .note {
   margin: 0;
   font-size: var(--fs-meta);
@@ -20,10 +10,10 @@
 .sheet {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 16px;
+  gap: var(--sp-7) var(--sp-8);
   align-items: start;
   max-width: 760px;
-  padding: 16px;
+  padding: var(--sp-8);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-sheet);
@@ -41,9 +31,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
   min-height: 34px;
-  padding: 4px 6px;
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--rule);
   border-radius: var(--r-control);
   background: var(--field);
@@ -63,9 +53,9 @@
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-1);
   height: 24px;
-  padding: 0 4px 0 8px;
+  padding: 0 var(--sp-2) 0 var(--sp-4);
   border: 1px solid var(--rule);
   border-radius: 6px;
   background: var(--surface);
@@ -73,8 +63,11 @@
   font-size: 12px;
   color: var(--ink-1);
 }
+.chip[data-invalid] {
+  border-color: var(--blocked);
+}
 .keys[data-readonly] .chip {
-  padding-right: 8px;
+  padding-right: var(--sp-4);
 }
 .chip > button {
   display: inline-grid;
@@ -104,7 +97,7 @@
   flex: 1 1 120px;
   min-width: 100px;
   height: 24px;
-  padding: 0 4px;
+  padding: 0 var(--sp-2);
   border: 0;
   background: transparent;
   color: var(--ink-1);
@@ -116,33 +109,25 @@
   color: var(--ink-3);
 }
 
-/* the repo catalog: one card per repo, in a framed list (kit .ao-sheet rows) */
+/* the repo catalog: one ListEditor row per repo, its head line level with Remove */
 .repos {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   max-width: 1080px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  box-shadow: var(--row-edge);
 }
 .repo {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 16px 14px;
+  gap: var(--sp-5);
   min-width: 0;
 }
-.repo + .repo {
-  border-top: 1px solid var(--rule-soft);
+.repo > p {
+  margin: 0;
 }
 .repoHead {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  min-height: 28px;
+  gap: var(--sp-4) var(--sp-6);
+  min-height: 34px;
   min-width: 0;
 }
 .repoName {
@@ -162,33 +147,15 @@
   color: var(--ink-3);
   white-space: nowrap;
 }
-.spacer {
-  flex: 1;
-}
 .repoFields {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
-  gap: 12px 16px;
+  gap: var(--sp-6) var(--sp-8);
   align-items: start;
 }
 .repoFields[data-fresh] {
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 3fr) minmax(0, 1fr);
 }
-.empty {
-  margin: 0;
-  padding: 14px 16px;
-  font-size: var(--fs-control);
-  color: var(--ink-3);
-}
-.add {
-  align-self: flex-start;
-}
-.problem {
-  margin: 0;
-  font-size: var(--fs-meta);
-  color: var(--blocked);
-}
-
 @media (max-width: 640px) {
   .sheet,
   .repoFields,
@@ -198,9 +165,8 @@
   .timeout {
     max-width: none;
   }
-  .sheet,
-  .repo {
-    padding-left: 12px;
-    padding-right: 12px;
+  .sheet {
+    padding-left: var(--sp-6);
+    padding-right: var(--sp-6);
   }
 }

@@ -1,5 +1,5 @@
 /* Labelled stepper (ticket header, peek): DESIGN §13.3 in the visual refresh's form (mock §4.5,
-   HANDOFF §5 "Stepper"). Bars 3px (skipped 1.5px) on one 10px track, gates an 8px diamond on the
+   HANDOFF §5 "Stepper"). Bars 3px (skipped 1.5px) on one 11px track, gates an 8px diamond on the
    same track, so every name shares one baseline. Past = --progress bar, --ink-1 500 name; upcoming
    --track / --ink-3; current --ink-1 (live = --live, "Live"); a gate on you --waiting with
    "Your move"; the finished last stage gets the tick badge and "Complete" in --done.
@@ -10,13 +10,13 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 .stepper > li {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 .stepper .s {
@@ -26,14 +26,14 @@
 .stepper .bar {
   display: block;
   height: 3px;
-  margin: 3.5px 0;
+  margin: var(--sp-2) 0;
   border-radius: 2px;
   background: var(--track);
 }
 .stepper .nm {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
   font-size: var(--fs-control);
   line-height: 1.25;
   color: var(--ink-3);
@@ -45,7 +45,7 @@
   font-size: 11.5px;
   line-height: 1.25;
   color: var(--ink-3);
-  margin-top: -3px;
+  margin-top: calc(-1 * var(--sp-1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -72,10 +72,9 @@
 .stepper.isLive .isCur .st {
   color: var(--live-text);
 }
-/* skipped: 1.5px, struck name, "Skipped" */
+/* skipped: 1.5px (the 3px bar scaled, so it stays centred on the track), struck name, "Skipped" */
 .stepper .isSkip .bar {
-  height: 1.5px;
-  margin: 4.25px 0;
+  transform: scaleY(0.5);
   background: var(--progress-soft);
 }
 .stepper .isSkip.isAhead .bar {
@@ -105,18 +104,18 @@
   color: var(--done);
   font-weight: 600;
 }
-/* gates: an 8px diamond on the same 10px track */
+/* gates: an 8px diamond on the same 11px track */
 .stepper .g {
   flex: none;
   align-items: center;
   width: auto;
-  padding: 0 8px;
+  padding: 0 var(--sp-4);
 }
 .stepper .g > u {
   display: block;
   width: 8px;
   height: 8px;
-  margin: 1px 0;
+  margin: 1.5px 0;
   transform: rotate(45deg);
   border-radius: 1.5px;
   box-shadow: inset 0 0 0 1.4px var(--rule-strong);
@@ -155,17 +154,17 @@
   padding: 0 1px;
 }
 .stepper.isCompact {
-  gap: 5px;
+  gap: var(--sp-2);
 }
 .stepper.isCompact .g {
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
 }
 .stepper.isCompact .g:not(.isBare) {
-  padding: 0 6px;
+  padding: 0 var(--sp-3);
 }
 /* a loop stage's round (request 24): its own quiet line under the caption, never clipped into it */
 .stepper .s > .st.round {
-  margin-top: -6px;
+  margin-top: calc(-1 * var(--sp-3));
   color: var(--ink-3);
   font-weight: 400;
 }

@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { locksFor, type User } from "./model";
+import type { User } from "./model";
 import { UserRow } from "./UserRow";
 
 const ana: User = {
@@ -38,10 +38,9 @@ function mount(onPatch: (patch: { role?: User["role"]; disabled?: boolean }) => 
         <UserRow
           user={ana}
           self={false}
-          locks={locksFor(ana, 1)}
           now={Date.parse("2026-10-11T12:00:00Z")}
           pending={false}
-          error={null}
+          errors={[]}
           onPatch={onPatch}
         />
       </table>,

@@ -1,11 +1,18 @@
-// Settings › Field mappings: one card per target (today only Base branch). Without a mapping it
-// says what imports do instead and offers "Add a mapping"; with one, it edits the Jira field, the
-// ordered rules and runs "Try it" (one preview mutation per card, so its result belongs here).
-import { useState } from "react";
+// Settings › Field mappings: one mapping's row in the mappings list. It edits the Jira field, the
+// ordered rules and runs "Try it" on the unsaved mapping (its input and result belong to the row,
+// so they follow it). Issues are the document's, placed by row key.
+import { useId, useState } from "react";
 
-import { usePreviewMapping } from "../../../api/queries";
-import { Field, fieldStyles as f, Select } from "../../../editor";
-import { Button, cx, LinkButton } from "../../../ui";
+import {
+  errorAt,
+  Field,
+  Input,
+  messagesAt,
+  Select,
+  usePreview,
+  type Issues,
+} from "../../../editor";
+import { Button, LinkButton, text } from "../../../ui";
 import s from "./Mappings.module.css";
 import {
   fieldKind,
@@ -13,16 +20,16 @@ import {
   fieldsProblem,
   kindWord,
   listMissing,
-  NAME_ISSUE,
+  mappingPath,
   previewRequest,
-  tryBlock,
+  specOf,
   tryLine,
   typedField,
   type JiraField,
-  type MappingDraft,
-  type MappingIssues,
-  type RuleRow,
-  type TargetSpec,
+  type MappingForm,
+  type MappingPreview,
+  type MappingPreviewRequest,
+  type MappingRow,
   type TryMode,
 } from "./model";
 import { RulesEditor } from "./RulesEditor";
@@ -38,138 +45,113 @@ export interface FieldsState {
 }
 
 export interface MappingCardProps {
-  spec: TargetSpec;
-  draft: MappingDraft | undefined;
-  issues: MappingIssues | undefined;
+  row: MappingRow;
+  issues: Issues;
   fields: FieldsState;
+  /** Runs the preview ("Try it"); nothing is saved. */
+  preview: (body: MappingPreviewRequest) => Promise<MappingPreview>;
   readOnly: boolean;
-  onAdd: () => void;
-  onRemove: () => void;
-  onChange: (patch: Partial<Omit<MappingDraft, "target">>) => void;
+  onChange: (item: MappingForm) => void;
 }
 
 export function MappingCard(props: MappingCardProps) {
-  const { spec, draft } = props;
-  const headId = `mapping-${spec.target}`;
+  const { row, issues, readOnly, onChange } = props;
+  const mapping = row.item;
+  const spec = specOf(mapping.target);
+  const headId = useId();
+  const [mode, setMode] = useState<TryMode>("values");
+  const [input, setInput] = useState("");
+
+  const request = previewRequest(mapping, mode, input);
+  const preview = usePreview(props.preview, request);
+  const ruleKeys = mapping.rules.map((r) => r.key);
+  const line = tryLine(preview, ruleKeys, spec);
+
   return (
     <section className={s.card} aria-labelledby={headId}>
-      <div className={s.cardHead}>
-        <h3 id={headId} className={s.cardTitle}>
-          {spec.title}
-        </h3>
-        <span className={s.spacer} />
-        {draft && !props.readOnly ? (
-          <Button
-            size="sm"
-            variant="quiet"
-            aria-label={`Remove the ${spec.title.toLowerCase()} mapping`}
-            onClick={props.onRemove}
-          >
-            Remove mapping
-          </Button>
-        ) : null}
-      </div>
+      <h3 id={headId} className={s.cardTitle}>
+        {spec.title}
+      </h3>
       <p className={s.lead}>{spec.explainer}</p>
-      {draft ? (
-        <MappingBody {...props} draft={draft} issues={props.issues ?? { rules: [], form: [] }} />
-      ) : (
-        <div className={s.empty}>
-          <p className={s.none}>{spec.without}</p>
-          {props.readOnly ? null : (
-            <Button size="sm" onClick={props.onAdd}>
-              Add a mapping
-            </Button>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
+      {messagesAt(issues, mappingPath(row.key)).map((msg) => (
+        <p key={msg} className={text.error} role="alert">
+          {msg}
+        </p>
+      ))}
 
-function MappingBody(props: MappingCardProps & { draft: MappingDraft; issues: MappingIssues }) {
-  const { spec, draft, issues, fields } = props;
-  const preview = usePreviewMapping();
-  const [mode, setMode] = useState<TryMode>("values");
-  const [text, setText] = useState("");
-
-  const request = previewRequest(draft, mode, text);
-  const line = tryLine(
-    {
-      ran: preview.variables,
-      pending: preview.isPending,
-      data: preview.data,
-      error: preview.error,
-    },
-    request,
-  );
-
-  return (
-    <>
       <FieldPicker
-        draft={draft}
-        error={issues.field}
-        fields={fields}
-        readOnly={props.readOnly}
+        mapping={mapping}
+        fieldError={errorAt(issues, mappingPath(row.key, "field"))}
+        nameError={errorAt(issues, mappingPath(row.key, "field_name"))}
+        fields={props.fields}
+        readOnly={readOnly}
         onPick={(field, field_name) => {
-          props.onChange({ field, field_name });
+          onChange({ ...mapping, field, field_name });
         }}
       />
       <RulesEditor
         spec={spec}
-        rules={draft.rules}
-        issues={issues.rules}
-        form={issues.form}
+        mappingKey={row.key}
+        rules={mapping.rules}
+        issues={issues}
         matched={line.kind === "result" ? line.rule : null}
-        readOnly={props.readOnly}
-        onChange={(rules: readonly RuleRow[]) => {
-          props.onChange({ rules });
+        readOnly={readOnly}
+        onChange={(rules) => {
+          onChange({ ...mapping, rules });
         }}
       />
       <TryIt
         spec={spec}
-        fieldName={draft.field_name}
+        fieldName={mapping.field_name}
         mode={mode}
-        text={text}
+        text={input}
         line={line}
-        block={tryBlock(issues, mode, text)}
-        onMode={(next) => {
-          setMode(next);
-          preview.reset();
-        }}
-        onText={setText}
-        onRun={() => {
-          if (request) preview.mutate(request);
-        }}
+        canRun={request !== undefined}
+        onMode={setMode}
+        onText={setInput}
+        onRun={preview.run}
       />
-    </>
+    </section>
   );
 }
 
 interface FieldPickerProps {
-  draft: MappingDraft;
-  error: string | undefined;
+  mapping: MappingForm;
+  fieldError: string | undefined;
+  nameError: string | undefined;
   fields: FieldsState;
   readOnly: boolean;
   onPick: (field: string, fieldName: string) => void;
 }
 
-function FieldPicker({ draft, error, fields, readOnly, onPick }: FieldPickerProps) {
+function FieldPicker({
+  mapping,
+  fieldError,
+  nameError,
+  fields,
+  readOnly,
+  onPick,
+}: FieldPickerProps) {
   const list = fields.data;
   // Typing the id by hand: chosen, or the only way when Jira's list can't load.
   const [typing, setTyping] = useState(false);
   const manual = typing || listMissing(fields);
-  const options = fieldOptions(list, draft);
-  const kind = fieldKind(list, draft.field);
+  const options = fieldOptions(list, mapping);
+  const kind = fieldKind(list, mapping.field);
   const problem = fields.error ? fieldsProblem(fields.error) : null;
   const hint =
-    draft.field === "" ? (
+    mapping.field === "" ? (
       "The Jira field the rules read, e.g. Fix versions."
     ) : (
       <>
-        id <code className={s.code}>{draft.field}</code>
+        id <code className={s.code}>{mapping.field}</code>
         {kind ? ` · ${kindWord(kind)}` : null}
       </>
     );
+  const pickedError =
+    fieldError === undefined && nameError === undefined
+      ? undefined
+      : [fieldError, nameError].filter((e) => e !== undefined).join(" ");
   const switcher = readOnly ? null : manual ? (
     list ? (
       <LinkButton
@@ -199,14 +181,14 @@ function FieldPicker({ draft, error, fields, readOnly, onPick }: FieldPickerProp
           <Field
             label="Jira field id"
             hint="As Jira names it, e.g. fixVersions or customfield_10042."
-            error={error === NAME_ISSUE ? undefined : error}
+            error={fieldError}
             className={s.picker}
           >
             {({ id, describedBy, invalid }) => (
-              <input
+              <Input
                 id={id}
-                className={cx(f.input, f.mono)}
-                value={draft.field}
+                mono
+                value={mapping.field}
                 placeholder="customfield_10042"
                 readOnly={readOnly}
                 spellCheck={false}
@@ -214,7 +196,7 @@ function FieldPicker({ draft, error, fields, readOnly, onPick }: FieldPickerProp
                 aria-describedby={describedBy}
                 aria-invalid={invalid}
                 onChange={(e) => {
-                  const next = typedField(list, e.target.value, draft.field_name);
+                  const next = typedField(list, e.target.value, mapping.field_name);
                   onPick(next.field, next.field_name);
                 }}
               />
@@ -223,32 +205,31 @@ function FieldPicker({ draft, error, fields, readOnly, onPick }: FieldPickerProp
           <Field
             label="Shown as"
             hint="The name tickets show, e.g. Fix versions."
-            error={error === NAME_ISSUE ? error : undefined}
+            error={nameError}
             className={s.picker}
           >
             {({ id, describedBy, invalid }) => (
-              <input
+              <Input
                 id={id}
-                className={f.input}
-                value={draft.field_name}
+                value={mapping.field_name}
                 placeholder="Fix versions"
                 readOnly={readOnly}
                 autoComplete="off"
                 aria-describedby={describedBy}
                 aria-invalid={invalid}
                 onChange={(e) => {
-                  onPick(draft.field, e.target.value);
+                  onPick(mapping.field, e.target.value);
                 }}
               />
             )}
           </Field>
         </div>
       ) : (
-        <Field label="Jira field" hint={hint} error={error} className={s.picker}>
+        <Field label="Jira field" hint={hint} error={pickedError} className={s.picker}>
           {({ id, describedBy, invalid }) => (
             <Select
               id={id}
-              value={draft.field}
+              value={mapping.field}
               options={options}
               disabled={readOnly || !list}
               aria-describedby={describedBy}

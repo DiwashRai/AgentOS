@@ -11,6 +11,7 @@ import {
   branchView,
   canSaveBranch,
   canUseDefault,
+  checkBranch,
   LOCKED_ERROR,
   LOCKED_TITLE,
   lockNote,
@@ -111,6 +112,19 @@ describe("branchView", () => {
       missing: true,
     });
   });
+});
+
+describe("checkBranch (validate.py validate_base_branch)", () => {
+  it.each(["main", "release/1.2", "feature_x-y"])("accepts %s", (b) => {
+    expect(checkBranch(b)).toBeUndefined();
+  });
+
+  it.each(["", "-x", "a..b", "a//b", "a/", "a.", "a.lock", "a/.b", "x/y.lock/z", "a b"])(
+    "rejects %s",
+    (b) => {
+      expect(checkBranch(b)).toBeDefined();
+    },
+  );
 });
 
 describe("branchError / canSaveBranch", () => {

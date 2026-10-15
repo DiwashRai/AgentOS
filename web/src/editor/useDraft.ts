@@ -1,5 +1,5 @@
-// A draft over a saved copy, shared by the Pipeline tab (a pipeline), the Space defaults page,
-// Workflows, the Settings pages and `useDocument` (one versioned document each). `base` is
+// A draft over a saved copy, shared by the Pipeline tab (a pipeline), the Template page,
+// Workflows, the runtimes editor and `useDocument` (one versioned document each). `base` is
 // the version the draft started from, so a save never silently overwrites someone else's change
 // (the server answers 409 `stale_version` instead).
 import { useEffect, useState } from "react";

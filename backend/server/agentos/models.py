@@ -7,9 +7,19 @@ PATCH bodies reject explicit nulls except for fields that can be cleared.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from typing import Annotated, Any, ClassVar, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
 
 # `pending` = signed in but not approved by an admin yet: only GET /api/me, logout and the public
@@ -709,13 +719,33 @@ MAX_INTAKE_QUERIES = 50
 INTAKE_NAME_MAX = 100
 JQL_MAX = 4000
 
-JiraProjectKey = Annotated[str, Field(pattern=JIRA_PROJECT_PATTERN)]
+
+def matching(pattern: str, message: str | Callable[[str], str]) -> AfterValidator:
+    """A string rule for `Annotated[str, matching(...)]`: an empty value is refused as
+    "Required.", one `pattern` doesn't match whole with `message` (called with the value when it
+    is a function). The same values as `Field(pattern=...)` pass, but the refusal is UI text, not
+    the regex."""
+    compiled = re.compile(pattern)
+
+    def check(value: str) -> str:
+        if not value:
+            raise ValueError("Required.")
+        if not compiled.fullmatch(value):
+            raise ValueError(message if isinstance(message, str) else message(value))
+        return value
+
+    return AfterValidator(check)
+
+
+JiraProjectKey = Annotated[
+    str, matching(JIRA_PROJECT_PATTERN, lambda key: f"{key} isn't a Jira project key.")
+]
 
 
 def _stripped(value: str) -> str:
     """Strip; blank → ValueError (reported as 422 `validation_error` with the field path)."""
     if not value.strip():
-        raise ValueError("must not be blank")
+        raise ValueError("Required.")
     return value.strip()
 
 
@@ -795,7 +825,13 @@ class IntakeQuerySpec(ApiModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    id: str = Field(pattern=INTAKE_QUERY_ID_PATTERN)
+    id: Annotated[
+        str,
+        matching(
+            INTAKE_QUERY_ID_PATTERN,
+            "Lowercase letters, digits, _ or -, starting with a letter or digit, at most 64.",
+        ),
+    ]
     name: str = Field(min_length=1, max_length=INTAKE_NAME_MAX)
     jql: str = Field(min_length=1, max_length=JQL_MAX)
 
@@ -987,7 +1023,14 @@ class FieldMapping(ApiModel):
 
     target: MappingTarget
     source: Literal["jira"]
-    field: str = Field(min_length=1, max_length=JIRA_FIELD_ID_MAX, pattern=JIRA_FIELD_ID_PATTERN)
+    field: Annotated[
+        str,
+        Field(min_length=1, max_length=JIRA_FIELD_ID_MAX),
+        matching(
+            JIRA_FIELD_ID_PATTERN,
+            "Not a Jira field id: letters, digits, _ . : or -, e.g. customfield_10042.",
+        ),
+    ]
     field_name: str = Field(min_length=1, max_length=JIRA_FIELD_NAME_MAX)
     rules: list[MappingRule] = Field(max_length=MAX_MAPPING_RULES)
 
@@ -1060,7 +1103,7 @@ class MappingPreviewRequest(ApiModel):
     @model_validator(mode="after")
     def _one_input(self) -> Self:
         if (self.values is None) == (self.issue is None):
-            raise ValueError("send exactly one of values or issue")
+            raise ValueError("Give exactly one: values or an issue key.")
         return self
 
 

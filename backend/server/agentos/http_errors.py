@@ -53,10 +53,9 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         errors = exc.errors()
-        first = errors[0] if errors else {}
-        where = ".".join(str(p) for p in first.get("loc", ()))
-        message = f"{where}: {first.get('msg', 'invalid')}"
         issues = pydantic_issues(errors, strip_body=True)
+        where = ".".join(str(p) for p in errors[0]["loc"]) if errors else ""
+        message = f"{where}: {issues[0].message if issues else 'Invalid.'}"
         return error_response(422, "validation_error", message, issues=issues)
 
     @app.exception_handler(Exception)

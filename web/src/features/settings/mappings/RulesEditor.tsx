@@ -1,59 +1,35 @@
-// Settings › Field mappings: one mapping's rules as an ordered list (order = priority, the first
-// match wins). Each row is `[match] → [value]`, moves up/down and is removed. The row the last
-// "Try it" matched is lit (the server says which; nothing here matches). Controlled.
-import { useEffect, useId, useRef, useState } from "react";
+// Settings › Field mappings: one mapping's rules, an ordered list (order = priority, the first match
+// wins) on the kit's ListEditor. Each row is `[match] → [value]`. The row the current "Try it"
+// matched is lit (the server says which; nothing here matches). Controlled.
+import { useId } from "react";
 
-import { fieldStyles as f } from "../../../editor";
-import { Button, ChevronIcon, cx, IconButton } from "../../../ui";
+import { errorAt, Input, ListEditor, messagesAt, type Issues } from "../../../editor";
+import { cx, text } from "../../../ui";
 import s from "./Mappings.module.css";
 import {
-  addRule,
-  MAX_RULES,
-  moveRule,
-  patchRule,
-  removeRule,
+  isBlankRule,
+  newRule,
+  ruleFieldName,
+  rulePath,
+  rulesPath,
   ruleWord,
-  type RuleIssues,
   type RuleRow,
   type TargetSpec,
 } from "./model";
 
 export interface RulesEditorProps {
   spec: TargetSpec;
+  mappingKey: string;
   rules: readonly RuleRow[];
-  issues: readonly RuleIssues[];
-  form: readonly string[];
+  issues: Issues;
   /** The rule the current Try it result came from, if any. */
   matched: number | null;
   readOnly: boolean;
   onChange: (rules: readonly RuleRow[]) => void;
 }
 
-export function RulesEditor({
-  spec,
-  rules,
-  issues,
-  form,
-  matched,
-  readOnly,
-  onChange,
-}: RulesEditorProps) {
-  const prefix = useId();
-  const [focusKey, setFocusKey] = useState<string | null>(null);
-  const moveId = (key: string, delta: -1 | 1) => `${prefix}-${key}-${delta < 0 ? "up" : "down"}`;
-  const atLimit = rules.length >= MAX_RULES;
-
-  const move = (key: string, index: number, delta: -1 | 1) => {
-    onChange(moveRule(rules, index, delta));
-    // Reordering can drop focus from the moved row's arrow; put it back (or on the other arrow,
-    // if this one is now disabled at an end).
-    const to = index + delta;
-    const atEnd = delta < 0 ? to === 0 : to === rules.length - 1;
-    const target = moveId(key, atEnd ? (delta < 0 ? 1 : -1) : delta);
-    requestAnimationFrame(() => {
-      document.getElementById(target)?.focus();
-    });
-  };
+export function RulesEditor(props: RulesEditorProps) {
+  const { spec, mappingKey, rules, issues, readOnly, onChange } = props;
 
   return (
     <div className={s.rules}>
@@ -65,184 +41,116 @@ export function RulesEditor({
         </span>
       </div>
 
-      {form.map((msg) => (
-        <p key={msg} className={s.formError} role="alert">
-          {msg}
-        </p>
-      ))}
-
-      {rules.length === 0 ? (
-        <p className={s.none}>No rules: every ticket is left blank.</p>
-      ) : (
-        <ol className={s.ruleList} aria-label="Rules">
-          <li className={s.colHead} aria-hidden="true">
-            <span />
-            <span>Jira value matches</span>
-            <span />
-            <span>{spec.valueLabel}</span>
-            <span />
-          </li>
-          {rules.map((rule, index) => (
-            <RuleLine
-              key={rule.key}
-              rule={rule}
-              index={index}
-              count={rules.length}
-              issues={issues[index] ?? {}}
-              spec={spec}
-              matched={matched === index}
-              readOnly={readOnly}
-              focus={focusKey === rule.key}
-              moveId={moveId}
-              onPatch={(patch) => {
-                onChange(patchRule(rules, index, patch));
-              }}
-              onMove={(delta) => {
-                move(rule.key, index, delta);
-              }}
-              onRemove={() => {
-                onChange(removeRule(rules, index));
-              }}
-            />
-          ))}
-        </ol>
-      )}
-
-      {readOnly ? null : (
-        <div className={s.adds}>
-          <Button
-            size="sm"
-            disabled={atLimit}
-            title={atLimit ? `At most ${String(MAX_RULES)} rules` : undefined}
-            onClick={() => {
-              const next = addRule(rules);
-              setFocusKey(next[next.length - 1]?.key ?? null);
-              onChange(next);
+      <ListEditor
+        name={`${spec.title} rules`}
+        ordered
+        rows={rules}
+        onChange={onChange}
+        label={(_, index) => ruleWord(index).toLowerCase()}
+        create={newRule}
+        addLabel="Add rule"
+        isBlank={isBlankRule}
+        readOnly={readOnly}
+        empty="No rules: every ticket is left blank."
+        issue={messagesAt(issues, rulesPath(mappingKey))}
+      >
+        {(rule, ctx) => (
+          <RuleLine
+            spec={spec}
+            rule={rule}
+            index={ctx.index}
+            issues={issues}
+            mappingKey={mappingKey}
+            matched={props.matched === ctx.index}
+            readOnly={readOnly}
+            onChange={(item) => {
+              onChange(rules.map((r) => (r.key === rule.key ? { ...r, item } : r)));
             }}
-          >
-            + Add rule
-          </Button>
-        </div>
-      )}
+          />
+        )}
+      </ListEditor>
     </div>
   );
 }
 
 interface RuleLineProps {
+  spec: TargetSpec;
   rule: RuleRow;
   index: number;
-  count: number;
-  issues: RuleIssues;
-  spec: TargetSpec;
+  issues: Issues;
+  mappingKey: string;
   matched: boolean;
   readOnly: boolean;
-  focus: boolean;
-  moveId: (key: string, delta: -1 | 1) => string;
-  onPatch: (patch: Partial<Pick<RuleRow, "match" | "value">>) => void;
-  onMove: (delta: -1 | 1) => void;
-  onRemove: () => void;
+  onChange: (item: RuleRow["item"]) => void;
 }
 
-function RuleLine(props: RuleLineProps) {
-  const { rule, index, count, issues, spec, readOnly } = props;
+function RuleLine({
+  spec,
+  rule,
+  index,
+  issues,
+  mappingKey,
+  matched,
+  readOnly,
+  onChange,
+}: RuleLineProps) {
   const id = useId();
-  const matchRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (props.focus) matchRef.current?.focus();
-  }, [props.focus]);
-
   const word = ruleWord(index);
-  const errors = [issues.match, issues.value].filter((e) => e !== undefined);
-  const errId = `${id}-err`;
+  const matchError = errorAt(issues, rulePath(mappingKey, rule.key, "match"));
+  const valueError = errorAt(issues, rulePath(mappingKey, rule.key, "value"));
+  const ruleErrors = messagesAt(issues, rulePath(mappingKey, rule.key));
+  const matchId = `${id}-match`;
+  const valueId = `${id}-value`;
 
   return (
-    <li
-      className={cx(s.rule, props.matched && s.matched)}
-      data-matched={props.matched || undefined}
-    >
-      <span className={s.handle}>
-        {readOnly ? null : (
-          <span className={s.move}>
-            <IconButton
-              id={props.moveId(rule.key, -1)}
-              bare
-              className={s.up}
-              label={`Move ${word.toLowerCase()} up`}
-              disabled={index === 0}
-              onClick={() => {
-                props.onMove(-1);
-              }}
-            >
-              <ChevronIcon />
-            </IconButton>
-            <IconButton
-              id={props.moveId(rule.key, 1)}
-              bare
-              label={`Move ${word.toLowerCase()} down`}
-              disabled={index === count - 1}
-              onClick={() => {
-                props.onMove(1);
-              }}
-            >
-              <ChevronIcon />
-            </IconButton>
-          </span>
-        )}
-        <span className={s.num} aria-hidden="true">
-          {String(index + 1).padStart(2, "0")}
-        </span>
-      </span>
-      <input
-        ref={matchRef}
-        className={cx(f.input, f.mono)}
-        value={rule.match}
+    <div className={cx(s.rule, matched && s.matched)} data-matched={matched || undefined}>
+      <Input
+        mono
+        value={rule.item.match}
         placeholder="version_1*"
         readOnly={readOnly}
         spellCheck={false}
         autoComplete="off"
-        aria-label={`${word}: Jira value matches`}
-        aria-invalid={issues.match !== undefined}
-        aria-describedby={errors.length > 0 ? errId : undefined}
+        aria-label={`${word}: ${ruleFieldName(spec, "match")}`}
+        aria-invalid={matchError !== undefined}
+        aria-describedby={matchError === undefined ? undefined : matchId}
         onChange={(e) => {
-          props.onPatch({ match: e.target.value });
+          onChange({ ...rule.item, match: e.target.value });
         }}
       />
       <span className={s.arrow} aria-hidden="true">
         →
       </span>
-      <input
-        className={cx(f.input, f.mono)}
-        value={rule.value}
+      <Input
+        mono
+        value={rule.item.value}
         placeholder={spec.valuePlaceholder}
         readOnly={readOnly}
         spellCheck={false}
         autoComplete="off"
-        aria-label={`${word}: ${spec.valueLabel.toLowerCase()}`}
-        aria-invalid={issues.value !== undefined}
-        aria-describedby={errors.length > 0 ? errId : undefined}
+        aria-label={`${word}: ${ruleFieldName(spec, "value")}`}
+        aria-invalid={valueError !== undefined}
+        aria-describedby={valueError === undefined ? undefined : valueId}
         onChange={(e) => {
-          props.onPatch({ value: e.target.value });
+          onChange({ ...rule.item, value: e.target.value });
         }}
       />
-      <span className={s.remove}>
-        {props.matched ? <span className={s.hit}>Matched</span> : null}
-        {readOnly ? null : (
-          <Button
-            size="sm"
-            variant="quiet"
-            aria-label={`Remove ${word.toLowerCase()}`}
-            onClick={props.onRemove}
-          >
-            Remove
-          </Button>
-        )}
-      </span>
-      {errors.length > 0 ? (
-        <span id={errId} className={s.ruleErrors}>
-          <span className={s.ruleError}>{issues.match ?? ""}</span>
-          <span className={s.ruleError}>{issues.value ?? ""}</span>
+      <span className={s.hit}>{matched ? "Matched" : null}</span>
+      {matchError === undefined ? null : (
+        <span id={matchId} className={cx(text.error, s.matchError)}>
+          {matchError}
         </span>
-      ) : null}
-    </li>
+      )}
+      {valueError === undefined ? null : (
+        <span id={valueId} className={cx(text.error, s.valueError)}>
+          {valueError}
+        </span>
+      )}
+      {ruleErrors.map((msg) => (
+        <span key={msg} className={cx(text.error, s.ruleError)} role="alert">
+          {msg}
+        </span>
+      ))}
+    </div>
   );
 }

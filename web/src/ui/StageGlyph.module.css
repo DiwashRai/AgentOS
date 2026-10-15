@@ -7,7 +7,7 @@
 .stg {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-4);
   min-width: 0;
   white-space: nowrap;
   vertical-align: middle;
@@ -16,7 +16,7 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-1);
   width: 81px; /* GLYPH_SLOT */
 }
 /* A pipeline too long even at xs: segments shrink (never below 2px) so the label stays at 90px. */
@@ -95,7 +95,7 @@
 .stg > b {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -140,7 +140,7 @@
 
 /* lg: boards and column heads; real sizes, never transform: scale(); no slot */
 .lg .segs {
-  gap: 3px;
+  gap: var(--sp-1);
   width: auto;
 }
 .lg .segs > i {
@@ -165,7 +165,7 @@
 .lg .segs > u {
   width: 8px;
   height: 8px;
-  margin: 0 2px;
+  margin: 0 var(--sp-1);
   box-shadow: inset 0 0 0 1.4px var(--rule-strong);
 }
 .lg .segs > u.isWait {

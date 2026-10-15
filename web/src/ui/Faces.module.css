@@ -1,5 +1,5 @@
 /* A row of avatars. Ported from kit.css `.ao-faces` (2px gap; the kit does not overlap them). */
 .faces {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--sp-1);
 }

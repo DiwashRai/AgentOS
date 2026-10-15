@@ -2,7 +2,6 @@
    `--list-chrome-offset` drops the arrows and Remove to the fields' control line (e.g. past a
    Field label); a page sets it on its `className`. */
 .editor {
-  --list-chrome-offset: 0;
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -52,7 +51,7 @@
   align-items: center;
   gap: var(--sp-2);
   min-height: 34px;
-  margin-top: var(--list-chrome-offset);
+  margin-top: var(--list-chrome-offset, 0);
 }
 
 .move {

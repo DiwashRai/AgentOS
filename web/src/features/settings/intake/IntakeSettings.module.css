@@ -1,108 +1,69 @@
-/* Settings › Intake. Not designed in the pack: kit values, as the Template page's stage sheets
-   (.ao-sheet rows, .ao-k labels) and the Intake view's rows (key, type, title). */
-.queries {
+/* Settings › Intake. Not designed in the pack: kit values, as the Intake view's rows (key, type,
+   title). The rows' chrome comes from the kit's ListEditor. */
+.zone {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
   min-width: 0;
 }
 
-.formError {
+/* the Queries head: the kit's zone head look (title, count, note, hairline) on an h3 */
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 24px;
+  min-width: 0;
+}
+.head > h3 {
   margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+}
+.note {
+  min-width: 0;
   font-size: var(--fs-meta);
-  color: var(--blocked);
-}
-
-.none {
-  margin: 0;
-  padding: 10px 14px;
-  font-size: 13px;
-  color: var(--ink-2);
-}
-
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* a query: kit .ao-sheet */
-.row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-  min-width: 0;
-  padding: 12px 14px 12px 8px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  box-shadow: var(--row-edge);
-}
-
-/* the head line's cells sit in the row's grid, so the body lines up with the name field */
-.line {
-  display: contents;
-}
-.body {
-  grid-column: 2 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-
-/* the arrows and Remove sit on the name input's line, past its label (even with an error under it) */
-.lead,
-.remove {
-  margin-top: calc(var(--fs-meta) * 1.3 + 6px);
-}
-.lead {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 34px;
-}
-.move {
-  display: inline-flex;
-}
-.move button {
-  width: 26px;
-  height: 26px;
-}
-.up svg {
-  transform: rotate(180deg);
-}
-.num {
-  width: 26px;
-  padding-left: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
   color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rule {
+  flex: 1;
+  min-width: 16px;
+  height: 1px;
+  background: var(--rule);
 }
 
-.remove {
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
+/* the arrows and Remove sit on the name input's line, past its label (a Field label + its gap) */
+.queries {
+  --list-chrome-offset: calc(var(--fs-meta) * 1.3 + var(--sp-3));
+}
+
+/* a row: the name, then the JQL, then its Test query line */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
 }
 
 /* the Test query line and its result */
 .test {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
 }
 .testBar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 12px;
+  gap: var(--sp-4) var(--sp-6);
 }
 
 /* a label / status line: sentence case, 12/500 --ink-3 (refresh §3.4, §6) */
@@ -123,9 +84,9 @@
 .result {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
-  padding: 10px 12px;
+  padding: var(--sp-5) var(--sp-6);
   border: 1px solid var(--rule-soft);
   border-radius: 8px;
   background: var(--field);
@@ -147,13 +108,13 @@
   display: grid;
   grid-template-columns: 11ch 11ch minmax(0, 1fr);
   align-items: center;
-  column-gap: 12px;
+  column-gap: var(--sp-6);
   min-height: 28px;
 }
 .key {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
   min-width: 0;
   justify-self: start;
   font-family: var(--font-mono);
@@ -199,29 +160,10 @@
 }
 
 @media (max-width: 600px) {
-  /* arrows and Remove share the first line; the name and the body take the full width */
-  .row {
-    align-items: center;
-    padding-left: 10px;
-  }
-  .lead,
-  .remove {
-    margin-top: 0;
-  }
-  .name {
-    grid-row: 2;
-    grid-column: 1 / -1;
-  }
-  .remove {
-    grid-column: 3;
-  }
-  .body {
-    grid-column: 1 / -1;
-  }
   .item {
     grid-template-columns: auto minmax(0, 1fr);
-    row-gap: 2px;
-    padding: 4px 0;
+    row-gap: var(--sp-1);
+    padding: var(--sp-2) 0;
   }
   .ti {
     grid-column: 1 / -1;

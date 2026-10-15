@@ -1,42 +1,32 @@
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../../api/client";
+import { placeIssues } from "../../../editor/issues";
 import {
-  addMapping,
-  addRule,
   fieldOptions,
   fieldsProblem,
-  formOf,
-  isBlankMapping,
-  issueCount,
+  formKeys,
+  freeTarget,
+  fromForm,
   listMissing,
-  locateIssue,
-  mergeIssues,
-  moveRule,
+  newMapping,
   parseValues,
-  patchMapping,
-  patchRule,
   previewRequest,
-  removeMapping,
-  removeRule,
+  ruleFieldName,
+  ruleWord,
   sameForm,
-  serverIssues,
-  toBody,
-  tryBlock,
-  tryErrorText,
+  SHOWN,
+  specOf,
+  toForm,
+  tryErrorLines,
   tryLine,
   typedField,
-  validate,
-  validateMapping,
-  type FieldMappings,
   type JiraField,
-  type MappingDraft,
+  type MappingForm,
+  type MappingsDoc,
 } from "./model";
 
-const DOC: FieldMappings = {
-  version: 3,
-  updated_at: "2026-10-13T08:00:00Z",
-  updated_by: null,
+const DOC: MappingsDoc = {
   mappings: [
     {
       target: "base_branch",
@@ -51,148 +41,78 @@ const DOC: FieldMappings = {
   ],
 };
 
-function draft(): MappingDraft {
-  const d = formOf(DOC)[0];
-  if (!d) throw new Error("no draft");
-  return d;
+function first(form = toForm(DOC)): { key: string; item: MappingForm } {
+  const row = form.mappings[0];
+  if (!row) throw new Error("no mapping");
+  return row;
 }
 
-describe("draft and body", () => {
-  it("round-trips the saved document, trimming and dropping the rule keys", () => {
-    const form = formOf(DOC);
-    expect(form[0]?.rules.map((r) => r.key)).toEqual(["s:0", "s:1"]);
-    expect(toBody(form, 3)).toEqual({ mappings: DOC.mappings, base_version: 3 });
+describe("form and value", () => {
+  it("round-trips the saved document, trimming and dropping the keys", () => {
+    const form = toForm(DOC);
+    expect(fromForm(form)).toEqual(DOC);
 
-    const edited = patchMapping(form, "base_branch", {
-      rules: patchRule(draft().rules, 0, { match: "  version_1* ", value: " App-1.Latest" }),
-    });
-    expect(toBody(edited, 3).mappings[0]?.rules[0]).toEqual({
-      match: "version_1*",
-      value: "App-1.Latest",
-    });
+    const row = first(form);
+    const [r0, r1] = row.item.rules;
+    if (!r0 || !r1) throw new Error("no rules");
+    const edited = {
+      mappings: [
+        {
+          ...row,
+          item: {
+            ...row.item,
+            field: " fixVersions ",
+            rules: [{ ...r0, item: { match: "  version_1* ", value: " App-1.Latest" } }, r1],
+          },
+        },
+      ],
+    };
+    expect(fromForm(edited)).toEqual(DOC);
   });
 
   it("compares content, not keys", () => {
-    const a = formOf(DOC);
-    const rekeyed = a.map((m) => ({ ...m, rules: m.rules.map((r) => ({ ...r, key: "x" })) }));
-    expect(sameForm(a, rekeyed)).toBe(true);
-    const moved = patchMapping(a, "base_branch", { rules: moveRule(draft().rules, 0, 1) });
+    const a = toForm(DOC);
+    expect(sameForm(a, toForm(DOC))).toBe(true);
+    const row = first(a);
+    const moved = {
+      mappings: [{ ...row, item: { ...row.item, rules: [...row.item.rules].reverse() } }],
+    };
     expect(sameForm(a, moved)).toBe(false);
   });
 
-  it("adds a mapping once, with one empty rule, and removes it", () => {
-    const added = addMapping([], "base_branch");
-    expect(added).toEqual([
-      {
-        target: "base_branch",
-        field: "",
-        field_name: "",
-        rules: [{ key: "n:1", match: "", value: "" }],
-      },
+  it("gives the row keys of the mappings and of each one's rules", () => {
+    const form = toForm(DOC);
+    const row = first(form);
+    const keys = formKeys(form);
+    expect(keys).toEqual({
+      mappings: [row.key],
+      [`mappings.${row.key}.rules`]: row.item.rules.map((r) => r.key),
+    });
+
+    // A rule's issue lands on that rule's field, by key.
+    const [, second] = row.item.rules;
+    const placed = placeIssues(
+      [{ loc: ["value", "mappings", 0, "rules", 1, "value"], message: "bad" }],
+      { keys, shown: SHOWN },
+    );
+    expect([...placed.fields.keys()]).toEqual([
+      `mappings.${row.key}.rules.${second?.key ?? ""}.value`,
     ]);
-    expect(addMapping(added, "base_branch")).toBe(added);
-    expect(added[0] && isBlankMapping(added[0])).toBe(true);
-    expect(isBlankMapping(draft())).toBe(false);
-    expect(removeMapping(formOf(DOC), "base_branch")).toEqual([]);
   });
 
-  it("adds, moves and removes rules", () => {
-    let rules = addRule(draft().rules);
-    rules = addRule(rules);
-    expect(rules.map((r) => r.key)).toEqual(["s:0", "s:1", "n:1", "n:2"]);
-    expect(moveRule(rules, 0, -1)).toBe(rules);
-    expect(moveRule(rules, 3, 1)).toBe(rules);
-    expect(moveRule(rules, 1, -1).map((r) => r.key)).toEqual(["s:1", "s:0", "n:1", "n:2"]);
-    expect(removeRule(rules, 2).map((r) => r.key)).toEqual(["s:0", "s:1", "n:2"]);
-  });
-});
-
-describe("validate", () => {
-  it("passes the saved document", () => {
-    expect(issueCount(validate(formOf(DOC)))).toBe(0);
-  });
-
-  it("flags a missing field, empty or long matches, and bad branch names", () => {
-    const d: MappingDraft = {
-      target: "base_branch",
-      field: "",
-      field_name: "",
-      rules: [
-        { key: "a", match: " ", value: "App-1.Latest" },
-        { key: "b", match: "x".repeat(201), value: "bad..branch" },
-        { key: "c", match: "v3*", value: "" },
-        { key: "d", match: "v4*", value: "release/" },
+  it("offers only targets without a mapping, a new one starting with one empty rule", () => {
+    expect(freeTarget(toForm(DOC))).toBeUndefined();
+    expect(freeTarget({ mappings: [] })).toBe("base_branch");
+    expect(fromForm({ mappings: [newMapping("base_branch")] })).toEqual({
+      mappings: [
+        {
+          target: "base_branch",
+          source: "jira",
+          field: "",
+          field_name: "",
+          rules: [{ match: "", value: "" }],
+        },
       ],
-    };
-    const issues = validateMapping(d);
-    expect(issues.field).toBe("Pick a Jira field, or enter its id.");
-    expect(issues.rules[0]).toEqual({ match: "Required." });
-    expect(issues.rules[1]).toEqual({
-      match: "At most 200 characters.",
-      value: "Must not contain .. or //.",
-    });
-    expect(issues.rules[2]).toEqual({ value: "Required." });
-    expect(issues.rules[3]?.value).toBe("Must not end in /, . or .lock.");
-    expect(issueCount([issues])).toBe(6);
-  });
-
-  it("caps the rule count", () => {
-    const rules = Array.from({ length: 101 }, (_, i) => ({
-      key: String(i),
-      match: `v${String(i)}*`,
-      value: "main",
-    }));
-    expect(validateMapping({ ...draft(), rules }).form).toEqual(["At most 100 rules."]);
-  });
-});
-
-describe("the server's 422", () => {
-  it("locates a save's, FastAPI's and a preview's paths", () => {
-    expect(locateIssue("mappings.0.rules.3.value: not a valid branch")).toEqual({
-      mapping: 0,
-      rule: 3,
-      part: "value",
-      text: "not a valid branch",
-    });
-    expect(
-      locateIssue("body.mappings.1.rules.0.match: String should have at most 200 characters"),
-    ).toMatchObject({ mapping: 1, rule: 0, part: "match" });
-    expect(locateIssue("mapping.rules.2.value: bad")).toMatchObject({ mapping: null, rule: 2 });
-    expect(locateIssue("body.mappings.0.field: String should match pattern")).toMatchObject({
-      mapping: 0,
-      rule: null,
-      part: "field",
-    });
-    expect(locateIssue("mappings.1.target: 'base_branch' has a mapping already")).toBeNull();
-    expect(locateIssue("issue: not a Jira issue key or link to one")).toBeNull();
-  });
-
-  it("puts the issue on its rule while that rule still holds what was sent", () => {
-    const form = formOf(DOC);
-    const sent = toBody(form, 3);
-    const error = new ApiError(422, "validation_error", "mappings.0.rules.1.value: no good");
-    const found = serverIssues(error, sent, form);
-    expect(found?.index).toBe(0);
-    expect(found?.issues.rules[1]).toEqual({ value: "No good" });
-
-    const merged = mergeIssues(validateMapping(draft()), found?.issues);
-    expect(merged.rules[1]).toEqual({ value: "No good" });
-
-    const edited = patchMapping(form, "base_branch", {
-      rules: patchRule(draft().rules, 1, { value: "App-2.Next" }),
-    });
-    expect(serverIssues(error, sent, edited)).toBeNull();
-    // Another code, or no request, names nothing.
-    expect(serverIssues(new ApiError(409, "stale_version", "x"), sent, form)).toBeNull();
-    expect(serverIssues(error, undefined, form)).toBeNull();
-  });
-
-  it("lets the client's own issue win over the server's", () => {
-    const client = { rules: [{ value: "Required." }], form: [] };
-    const server = { rules: [{ value: "Server says", match: "Too long" }], form: [] };
-    expect(mergeIssues(client, server).rules[0]).toEqual({
-      value: "Required.",
-      match: "Too long",
     });
   });
 });
@@ -230,12 +150,6 @@ describe("field picker", () => {
       field: "customfield_10042",
       field_name: "Release",
     });
-    const typed = { ...draft(), field: "customfield_10042", field_name: "" };
-    expect(validateMapping(typed).field).toBe("Name the field, e.g. Fix versions.");
-    expect(validateMapping({ ...typed, field: "custom field" }).field).toBe(
-      "custom field isn't a Jira field id.",
-    );
-    expect(validateMapping({ ...typed, field_name: "Release" }).field).toBeUndefined();
   });
 
   it("starts on typing the id once the list has failed, not while it loads", () => {
@@ -246,72 +160,75 @@ describe("field picker", () => {
 
   it("explains a 501 without Retry, and offers Retry otherwise", () => {
     expect(fieldsProblem(new ApiError(501, "not_implemented", "x")).retry).toBe(false);
-    const bad = fieldsProblem(new ApiError(502, "upstream_error", "Jira didn't answer"));
-    expect(bad).toEqual({ text: "Can't load Jira's fields · Jira didn't answer", retry: true });
+    expect(fieldsProblem(new ApiError(502, "upstream_error", "down")).retry).toBe(true);
   });
 });
 
 describe("Try it", () => {
+  const spec = specOf("base_branch");
+
   it("splits comma-separated values and builds the request from the unsaved rules", () => {
+    const mapping = first().item;
     expect(parseValues(" version_1.0, ,version_2.0 ,")).toEqual(["version_1.0", "version_2.0"]);
-    const req = previewRequest(draft(), "values", "version_1.0");
-    expect(req).toEqual({ mapping: DOC.mappings[0], values: ["version_1.0"] });
-    expect(previewRequest(draft(), "issue", "  PLAT-1 ")).toEqual({
+    expect(previewRequest(mapping, "values", "version_1.0")).toEqual({
+      mapping: DOC.mappings[0],
+      issue: null,
+      values: ["version_1.0"],
+    });
+    expect(previewRequest(mapping, "issue", "  PLAT-1 ")).toEqual({
       mapping: DOC.mappings[0],
       issue: "PLAT-1",
+      values: null,
     });
-    expect(previewRequest(draft(), "values", " , ")).toBeUndefined();
+    expect(previewRequest(mapping, "values", " , ")).toBeUndefined();
+    expect(previewRequest(mapping, "issue", " ")).toBeUndefined();
   });
 
-  it("is off until the field and rules are fine and something is typed", () => {
-    const ok = validateMapping(draft());
-    expect(tryBlock(ok, "values", "")).toBe("Type a value");
-    expect(tryBlock(ok, "issue", " ")).toBe("Type an issue key or link");
-    expect(tryBlock(ok, "values", "v1")).toBeUndefined();
-    expect(tryBlock({ ...ok, field: "Pick a Jira field." }, "values", "v1")).toBe(
-      "Pick a Jira field first",
+  it("shows pending, then the result or the failure", () => {
+    const keys = ["a", "b"];
+    expect(tryLine({ pending: true, result: undefined, error: undefined }, keys, spec).kind).toBe(
+      "pending",
     );
-    expect(tryBlock({ ...ok, rules: [{ value: "Required." }] }, "values", "v1")).toBe(
-      "Fix the rules first",
+    expect(tryLine({ pending: false, result: undefined, error: undefined }, keys, spec).kind).toBe(
+      "none",
     );
-  });
-
-  it("shows a result only while the rules and the input are the ones that ran", () => {
-    const ran = previewRequest(draft(), "values", "version_2.1");
-    const data = { values: ["version_2.1"], value: "App-2.Latest", rule: 1, reason: null };
-    const state = { ran, pending: false, data, error: null };
-    expect(tryLine(state, ran)).toEqual({
+    const result = { values: ["version_2.1"], value: "App-2.Latest", rule: 1, reason: null };
+    expect(tryLine({ pending: false, result, error: undefined }, keys, spec)).toMatchObject({
       kind: "result",
-      read: ["version_2.1"],
-      value: "App-2.Latest",
       rule: 1,
-      reason: null,
     });
-    const changed = previewRequest(
-      { ...draft(), rules: removeRule(draft().rules, 0) },
-      "values",
-      "version_2.1",
+    const failed = tryLine(
+      { pending: false, result: undefined, error: new ApiError(502, "upstream_error", "down") },
+      keys,
+      spec,
     );
-    expect(tryLine(state, changed)).toEqual({ kind: "none" });
-    expect(tryLine({ ...state, pending: true }, ran)).toEqual({ kind: "pending" });
-    expect(tryLine({ ran: undefined, pending: false, data: undefined, error: null }, ran)).toEqual({
-      kind: "none",
-    });
+    expect(failed.kind).toBe("error");
   });
 
-  it("says why a preview failed", () => {
-    expect(tryErrorText(new ApiError(501, "not_implemented", "x"))).toContain("Try a value");
-    expect(tryErrorText(new ApiError(404, "ticket_not_found", "Jira can't see PLAT-9"))).toBe(
-      "Jira can't see PLAT-9. Check the key, or that the service account can see it.",
+  it("puts a 422's issues on the rule, field or input they are about, as the page names them", () => {
+    const error = new ApiError(422, "validation_error", "mapping.rules.1.value: bad", [
+      { loc: ["mapping", "rules", 1, "value"], message: "bad branch" },
+      { loc: ["mapping", "rules", 0, "match"], message: "bad match" },
+      { loc: ["mapping", "field"], message: "bad id" },
+      { loc: ["issue"], message: "not a key" },
+      { loc: [], message: "send one" },
+    ]);
+    const lines = tryErrorLines(error, ["a", "b"], spec);
+    expect(lines).toHaveLength(5);
+    expect(lines.find((l) => l.endsWith("bad branch"))).toMatch(
+      new RegExp(`^${ruleWord(1)} ${ruleFieldName(spec, "value")}:`),
     );
-    expect(tryErrorText(new ApiError(502, "upstream_error", "Jira is down"))).toBe(
-      "Jira didn't answer · Jira is down",
+    expect(lines.find((l) => l.endsWith("bad match"))).toMatch(
+      new RegExp(`^${ruleWord(0)} ${ruleFieldName(spec, "match")}:`),
     );
-    expect(
-      tryErrorText(new ApiError(422, "validation_error", "mapping.rules.0.value: bad name")),
-    ).toBe("Rule 1: Bad name");
-    expect(tryErrorText(new ApiError(422, "validation_error", "issue: not a Jira issue key"))).toBe(
-      "Not a Jira issue key.",
-    );
+    expect(lines.find((l) => l.endsWith("bad id"))).not.toBe("bad id");
+    expect(lines).toContain("not a key");
+    expect(lines).toContain("send one");
+  });
+
+  it("says why a preview failed for the codes it knows", () => {
+    expect(tryErrorLines(new ApiError(501, "not_implemented", "x"), [], spec)).toHaveLength(1);
+    const [notFound] = tryErrorLines(new ApiError(404, "ticket_not_found", "PLAT-9"), [], spec);
+    expect(notFound).toContain("PLAT-9");
   });
 });

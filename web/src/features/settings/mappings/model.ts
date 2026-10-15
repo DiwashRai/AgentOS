@@ -1,28 +1,27 @@
-// Settings › Field mappings, pure: the draft (one mapping per target, each with ordered rules that
-// carry a client-side `key`), the PUT body, checks that mirror the server (models.py FieldMapping /
-// MappingRule, validate.py `validate_base_branch`), where a 422 points, the field picker's options,
-// and what "Try it" shows. The server owns the wildcard matcher: nothing here matches rules.
+// Settings › Field mappings, pure: the form (keyed mappings, each with keyed ordered rules) and the
+// document value it stands for, the row keys a 422's issues map back through, the field picker's
+// options, and what "Try it" sends and shows. The server owns every rule and the wildcard matcher:
+// nothing here checks or matches rules.
 import { ApiError, type Schemas } from "../../../api/client";
+import {
+  issuesOf,
+  pathOf,
+  type FieldPath,
+  type Issues,
+  type SentKeys,
+} from "../../../editor/issues";
+import { keyed, keysOf, newKey, type Keyed } from "../../../editor/list";
 import { describeSaveError } from "../../../editor/save";
-import { checkBranch } from "../space/model";
 
-export type FieldMappings = Schemas["FieldMappings"];
-export type FieldMappingsUpdate = Schemas["FieldMappingsUpdate"];
-export type FieldMapping = Schemas["FieldMapping"];
-export type MappingTarget = FieldMapping["target"];
+export type MappingsDoc = Schemas["MappingsDoc"];
+export type MappingEntry = Schemas["FieldMappingEntry"];
+export type MappingTarget = MappingEntry["target"];
+export type RuleEntry = Schemas["MappingRuleEntry"];
 export type JiraField = Schemas["JiraField"];
 export type MappingPreview = Schemas["MappingPreview"];
 export type MappingPreviewRequest = Schemas["MappingPreviewRequest"];
 
-/** Server limits (models.py MAPPING_MATCH_MAX, MAX_MAPPING_RULES, MAX_PREVIEW_VALUES, …). */
-export const MATCH_MAX = 200;
-export const MAX_RULES = 100;
-export const MAX_PREVIEW_VALUES = 100;
-export const PREVIEW_VALUE_MAX = 1000;
-export const ISSUE_MAX = 2000;
-const FIELD_ID_RE = /^[A-Za-z0-9_.:-]{1,255}$/;
-
-/** The targets a mapping can set, in card order (the closed `MappingTarget` set). */
+/** The targets a mapping can set (the closed `MappingTarget` set), in list order. */
 export interface TargetSpec {
   target: MappingTarget;
   title: string;
@@ -34,8 +33,8 @@ export interface TargetSpec {
   without: string;
 }
 
-export const TARGETS: readonly TargetSpec[] = [
-  {
+const SPECS: Record<MappingTarget, TargetSpec> = {
+  base_branch: {
     target: "base_branch",
     title: "Base branch",
     explainer:
@@ -44,298 +43,119 @@ export const TARGETS: readonly TargetSpec[] = [
     valuePlaceholder: "App-1.Latest",
     without: "No mapping: imported tickets start from their repo's default branch.",
   },
-];
+};
 
-// ------------------------------------------------------------------ draft
+export const TARGETS: readonly TargetSpec[] = Object.values(SPECS);
 
-/** One rule in the draft. `key` is the React key: `s:<n>` for a saved rule, `n:<n>` for a new one. */
-export interface RuleRow {
-  key: string;
-  match: string;
-  value: string;
+export function specOf(target: MappingTarget): TargetSpec {
+  return SPECS[target];
 }
 
-export interface MappingDraft {
+// ------------------------------------------------------------------ form
+
+export type RuleRow = Keyed<RuleEntry>;
+
+export interface MappingForm {
   target: MappingTarget;
   field: string;
   field_name: string;
   rules: readonly RuleRow[];
 }
 
-/** In saved order, so an index here is the index in the PUT body (and in a 422's path). */
-export type MappingsForm = readonly MappingDraft[];
+export type MappingRow = Keyed<MappingForm>;
 
-export function formOf(doc: Pick<FieldMappings, "mappings">): MappingsForm {
-  return doc.mappings.map((m) => ({
+export interface MappingsForm {
+  mappings: readonly MappingRow[];
+}
+
+export function toForm(value: MappingsDoc): MappingsForm {
+  return {
+    mappings: value.mappings.map((m) => ({
+      key: newKey(),
+      item: { target: m.target, field: m.field, field_name: m.field_name, rules: keyed(m.rules) },
+    })),
+  };
+}
+
+/** One mapping as the server takes it, trimmed. */
+export function toMapping(m: MappingForm): MappingEntry {
+  return {
     target: m.target,
-    field: m.field,
-    field_name: m.field_name,
-    rules: m.rules.map((r, i) => ({ key: `s:${String(i)}`, match: r.match, value: r.value })),
-  }));
-}
-
-/** Same content, ignoring the rule keys (so undoing an edit makes the draft clean again). */
-export function sameForm(a: MappingsForm, b: MappingsForm): boolean {
-  return (
-    a.length === b.length &&
-    a.every((m, i) => {
-      const o = b[i];
-      return (
-        o !== undefined &&
-        sameTarget(m.target, o.target) &&
-        m.field === o.field &&
-        m.field_name === o.field_name &&
-        m.rules.length === o.rules.length &&
-        m.rules.every((r, j) => r.match === o.rules[j]?.match && r.value === o.rules[j].value)
-      );
-    })
-  );
-}
-
-/** The server's shape for one draft mapping, trimmed (the server strips too). */
-export function toMapping(d: MappingDraft): FieldMapping {
-  return {
-    target: d.target,
     source: "jira",
-    field: d.field.trim(),
-    field_name: d.field_name.trim(),
-    rules: d.rules.map((r) => ({ match: r.match.trim(), value: r.value.trim() })),
+    field: m.field.trim(),
+    field_name: m.field_name.trim(),
+    rules: m.rules.map((r) => ({ match: r.item.match.trim(), value: r.item.value.trim() })),
   };
 }
 
-export function toBody(form: MappingsForm, baseVersion: number): FieldMappingsUpdate {
-  return { mappings: form.map(toMapping), base_version: baseVersion };
+export function fromForm(form: MappingsForm): MappingsDoc {
+  return { mappings: form.mappings.map((row) => toMapping(row.item)) };
 }
 
-/** Targets compared as plain strings: the closed set has one member today and grows later. */
-function sameTarget(a: string, b: string): boolean {
-  return a === b;
+function content(form: MappingsForm) {
+  return form.mappings.map(({ item }) => ({ ...item, rules: item.rules.map((r) => r.item) }));
 }
 
-export function indexOf(form: MappingsForm, target: MappingTarget): number {
-  return form.findIndex((m) => sameTarget(m.target, target));
+/** Same content, ignoring the row keys (so undoing an edit makes the draft clean again). */
+export function sameForm(a: MappingsForm, b: MappingsForm): boolean {
+  return JSON.stringify(content(a)) === JSON.stringify(content(b));
 }
 
-/** A new mapping for `target` with one empty rule to fill in (no-op if it has one already). */
-export function addMapping(form: MappingsForm, target: MappingTarget): MappingsForm {
-  if (indexOf(form, target) >= 0) return form;
-  return [...form, { target, field: "", field_name: "", rules: [newRule([])] }];
+/** The row keys of every list in the form, by list path: the mappings and each one's rules. */
+export function formKeys(form: MappingsForm): SentKeys {
+  const keys: Record<FieldPath, readonly string[]> = { mappings: keysOf(form.mappings) };
+  for (const row of form.mappings) keys[rulesPath(row.key)] = keysOf(row.item.rules);
+  return keys;
 }
 
-/** Nothing typed yet (no field, every rule empty): removing it needs no confirm. */
-export function isBlankMapping(d: MappingDraft): boolean {
-  return d.field === "" && d.rules.every((r) => r.match.trim() === "" && r.value.trim() === "");
+export function mappingPath(key: string, ...rest: readonly string[]): FieldPath {
+  return pathOf("mappings", key, ...rest);
 }
 
-export function removeMapping(form: MappingsForm, target: MappingTarget): MappingsForm {
-  return form.filter((m) => !sameTarget(m.target, target));
+export function rulesPath(mappingKey: string): FieldPath {
+  return mappingPath(mappingKey, "rules");
 }
 
-export function patchMapping(
-  form: MappingsForm,
-  target: MappingTarget,
-  patch: Partial<Omit<MappingDraft, "target">>,
-): MappingsForm {
-  return form.map((m) => (sameTarget(m.target, target) ? { ...m, ...patch } : m));
+export function rulePath(mappingKey: string, ruleKey: string, part?: "match" | "value"): FieldPath {
+  return part === undefined
+    ? pathOf(rulesPath(mappingKey), ruleKey)
+    : pathOf(rulesPath(mappingKey), ruleKey, part);
 }
 
-function newRule(rules: readonly RuleRow[]): RuleRow {
-  let n = 0;
-  for (const r of rules) {
-    const m = /^n:(\d+)$/.exec(r.key);
-    if (m) n = Math.max(n, Number(m[1]));
-  }
-  return { key: `n:${String(n + 1)}`, match: "", value: "" };
+/** Where the page shows issues; anything deeper lands on the nearest of these. */
+export const SHOWN: readonly FieldPath[] = [
+  "mappings",
+  "mappings.*",
+  "mappings.*.field",
+  "mappings.*.field_name",
+  "mappings.*.rules",
+  "mappings.*.rules.*",
+  "mappings.*.rules.*.match",
+  "mappings.*.rules.*.value",
+];
+
+export function newRule(): RuleRow {
+  return { key: newKey(), item: { match: "", value: "" } };
 }
 
-/** Append an empty rule (last = lowest priority). */
-export function addRule(rules: readonly RuleRow[]): readonly RuleRow[] {
-  return [...rules, newRule(rules)];
+/** The first target without a mapping, or undefined when every target has one. */
+export function freeTarget(form: MappingsForm): MappingTarget | undefined {
+  const taken = new Set<string>(form.mappings.map((row) => row.item.target));
+  return TARGETS.find((t) => !taken.has(t.target))?.target;
 }
 
-export function removeRule(rules: readonly RuleRow[], index: number): readonly RuleRow[] {
-  return rules.filter((_, i) => i !== index);
+/** A new mapping for `target` with one empty rule to fill in. */
+export function newMapping(target: MappingTarget): MappingRow {
+  return { key: newKey(), item: { target, field: "", field_name: "", rules: [newRule()] } };
 }
 
-/** Swap with the rule above (-1) or below (1); out of range = unchanged. Order is priority. */
-export function moveRule(
-  rules: readonly RuleRow[],
-  index: number,
-  delta: -1 | 1,
-): readonly RuleRow[] {
-  const to = index + delta;
-  const a = rules[index];
-  const b = rules[to];
-  if (a === undefined || b === undefined) return rules;
-  const next = [...rules];
-  next[index] = b;
-  next[to] = a;
-  return next;
+/** Nothing typed yet (no field, every rule empty): removing it needs no confirmation. */
+export function isBlankMapping(m: MappingForm): boolean {
+  return m.field === "" && m.rules.every(isBlankRule);
 }
 
-export function patchRule(
-  rules: readonly RuleRow[],
-  index: number,
-  patch: Partial<Pick<RuleRow, "match" | "value">>,
-): readonly RuleRow[] {
-  return rules.map((r, i) => (i === index ? { ...r, ...patch } : r));
-}
-
-// ------------------------------------------------------------------ validation
-
-export interface RuleIssues {
-  match?: string;
-  value?: string;
-}
-
-export interface MappingIssues {
-  field?: string;
-  /** By index, one entry per rule (empty when the rule is fine). */
-  rules: RuleIssues[];
-  /** About the mapping as a whole (too many rules). */
-  form: string[];
-}
-
-/** Each target's check of a rule's `value` (pipeline/mapping.py `_check_value`). */
-const VALUE_CHECKS: Record<MappingTarget, (value: string) => string | undefined> = {
-  base_branch: checkBranch, // validate.py `validate_base_branch`
-};
-
-export function valueIssue(target: MappingTarget, value: string): string | undefined {
-  return VALUE_CHECKS[target](value.trim());
-}
-
-export function matchIssue(match: string): string | undefined {
-  const v = match.trim();
-  if (v === "") return "Required.";
-  if (v.length > MATCH_MAX) return `At most ${String(MATCH_MAX)} characters.`;
-  return undefined;
-}
-
-/** The field issue about the display name (shown under "Shown as" when the id is typed by hand). */
-export const NAME_ISSUE = "Name the field, e.g. Fix versions.";
-
-function fieldIssue(d: MappingDraft): string | undefined {
-  if (d.field.trim() === "") return "Pick a Jira field, or enter its id.";
-  if (!FIELD_ID_RE.test(d.field.trim())) return `${d.field} isn't a Jira field id.`;
-  if (d.field_name.trim() === "") return NAME_ISSUE;
-  return undefined;
-}
-
-export function validateMapping(d: MappingDraft): MappingIssues {
-  const out: MappingIssues = { rules: [], form: [] };
-  const field = fieldIssue(d);
-  if (field !== undefined) out.field = field;
-  out.rules = d.rules.map((r) => {
-    const issues: RuleIssues = {};
-    const match = matchIssue(r.match);
-    const value = valueIssue(d.target, r.value);
-    if (match !== undefined) issues.match = match;
-    if (value !== undefined) issues.value = value;
-    return issues;
-  });
-  if (d.rules.length > MAX_RULES) out.form.push(`At most ${String(MAX_RULES)} rules.`);
-  return out;
-}
-
-/** By index, one entry per mapping. */
-export function validate(form: MappingsForm): MappingIssues[] {
-  return form.map(validateMapping);
-}
-
-function rulesCount(rules: readonly RuleIssues[]): number {
-  return rules.reduce((n, r) => n + Object.keys(r).length, 0);
-}
-
-export function mappingIssueCount(m: MappingIssues): number {
-  return (m.field === undefined ? 0 : 1) + rulesCount(m.rules) + m.form.length;
-}
-
-export function issueCount(issues: readonly MappingIssues[]): number {
-  return issues.reduce((n, m) => n + mappingIssueCount(m), 0);
-}
-
-// ------------------------------------------------------------------ the server's 422
-
-/** Where a 422 `validation_error` points: `mappings.0.rules.3.value: …` (a save; FastAPI's own
- *  check prefixes `body.`) or `mapping.rules.3.value: …` (a preview, so no mapping index). */
-export interface ServerIssue {
-  mapping: number | null;
-  rule: number | null;
-  part: "match" | "value" | "field" | "field_name" | null;
-  text: string;
-}
-
-const ISSUE_RE =
-  /^(?:body\.)?(?:mappings\.(\d+)|mapping)\.(?:rules\.(\d+)\.(match|value)|(field_name|field))\s*:\s*([\s\S]*)$/;
-
-export function locateIssue(message: string): ServerIssue | null {
-  const m = ISSUE_RE.exec(message);
-  if (!m) return null;
-  const part = (m[3] ?? m[4] ?? null) as ServerIssue["part"];
-  return {
-    mapping: m[1] === undefined ? null : Number(m[1]),
-    rule: m[2] === undefined ? null : Number(m[2]),
-    part,
-    text: m[5] ?? "",
-  };
-}
-
-/**
- * A failed save's 422, put on the field it names, for as long as that field still holds what was
- * sent (an edit there drops it). By mapping index, like `validate`; null when it names nothing.
- */
-export function serverIssues(
-  error: unknown,
-  sent: FieldMappingsUpdate | undefined,
-  form: MappingsForm,
-): { index: number; issues: MappingIssues } | null {
-  if (!(error instanceof ApiError) || error.code !== "validation_error" || !sent) return null;
-  const where = locateIssue(error.message);
-  if (where?.mapping == null) return null;
-  const draft = form[where.mapping];
-  const was = sent.mappings[where.mapping];
-  if (!draft || !was || !sameTarget(was.target, draft.target)) return null;
-  const now = toMapping(draft);
-  const issues: MappingIssues = { rules: draft.rules.map(() => ({})), form: [] };
-  const text = sentence(where.text);
-  if (where.rule !== null && (where.part === "match" || where.part === "value")) {
-    const part = where.part;
-    const sentRule = was.rules[where.rule];
-    const nowRule = now.rules[where.rule];
-    const row = issues.rules[where.rule];
-    if (!sentRule || !nowRule || !row || sentRule[part] !== nowRule[part]) return null;
-    row[part] = text;
-  } else if (where.part === "field" || where.part === "field_name") {
-    if (was.field !== now.field || was.field_name !== now.field_name) return null;
-    issues.field = text;
-  } else {
-    return null;
-  }
-  return { index: where.mapping, issues };
-}
-
-/** The client's issues, with the server's filling the places the client found fine. */
-export function mergeIssues(
-  client: MappingIssues,
-  server: MappingIssues | undefined,
-): MappingIssues {
-  if (!server) return client;
-  return {
-    ...(client.field !== undefined
-      ? { field: client.field }
-      : server.field !== undefined
-        ? { field: server.field }
-        : {}),
-    rules: client.rules.map((r, i) => ({ ...server.rules[i], ...r })),
-    form: client.form,
-  };
-}
-
-function sentence(text: string): string {
-  const t = text.trim();
-  if (t === "") return "Not valid.";
-  return t.charAt(0).toUpperCase() + t.slice(1);
+export function isBlankRule(r: RuleRow): boolean {
+  return r.item.match.trim() === "" && r.item.value.trim() === "";
 }
 
 // ------------------------------------------------------------------ the field picker
@@ -352,7 +172,7 @@ export interface FieldOption {
  */
 export function fieldOptions(
   fields: readonly JiraField[] | undefined,
-  current: Pick<MappingDraft, "field" | "field_name">,
+  current: Pick<MappingForm, "field" | "field_name">,
 ): FieldOption[] {
   const list = fields ?? [];
   const names = new Map<string, number>();
@@ -376,7 +196,7 @@ export function typedField(
   fields: readonly JiraField[] | undefined,
   id: string,
   name: string,
-): Pick<MappingDraft, "field" | "field_name"> {
+): Pick<MappingForm, "field" | "field_name"> {
   const known = fields?.find((f) => f.id === id.trim());
   return { field: id, field_name: known ? known.name : name };
 }
@@ -386,7 +206,7 @@ export function listMissing(fields: { pending: boolean; data: unknown }): boolea
   return !fields.pending && fields.data === undefined;
 }
 
-/** The picked field: its id, and what kind of value Jira holds there (when the list has it). */
+/** What kind of value Jira holds in the picked field (when the list has it). */
 export function fieldKind(
   fields: readonly JiraField[] | undefined,
   id: string,
@@ -432,47 +252,97 @@ export function parseValues(text: string): string[] {
 
 /** The preview request for the unsaved mapping and what was typed, or undefined if nothing is. */
 export function previewRequest(
-  draft: MappingDraft,
+  mapping: MappingForm,
   mode: TryMode,
   text: string,
 ): MappingPreviewRequest | undefined {
-  const mapping = toMapping(draft);
+  const sent = toMapping(mapping);
   if (mode === "issue") {
     const issue = text.trim();
-    return issue === "" ? undefined : { mapping, issue };
+    return issue === "" ? undefined : { mapping: sent, issue, values: null };
   }
   const values = parseValues(text);
-  return values.length === 0 ? undefined : { mapping, values };
+  return values.length === 0 ? undefined : { mapping: sent, issue: null, values };
 }
 
-/** Why Try it is off, or undefined. */
-export function tryBlock(issues: MappingIssues, mode: TryMode, text: string): string | undefined {
-  if (issues.field !== undefined) return "Pick a Jira field first";
-  if (rulesCount(issues.rules) > 0 || issues.form.length > 0) return "Fix the rules first";
-  if (mode === "issue") {
-    const t = text.trim();
-    if (t === "") return "Type an issue key or link";
-    if (t.length > ISSUE_MAX) return `At most ${String(ISSUE_MAX)} characters`;
-    return undefined;
+/** Where a preview's 422 issues show: the input, and the mapping's field, name and rules. */
+const TRY_SHOWN: readonly FieldPath[] = [
+  "issue",
+  "values",
+  "mapping",
+  "mapping.field",
+  "mapping.field_name",
+  "mapping.rules",
+  "mapping.rules.*",
+  "mapping.rules.*.match",
+  "mapping.rules.*.value",
+];
+
+/**
+ * A failed preview's 422 as lines: the input's issues as they are, the mapping's prefixed with
+ * the field they are about, named as the page names it ("Rule 2 branch: ..."). `ruleKeys` are the
+ * rules' keys in the order sent.
+ */
+export function tryIssueLines(
+  issues: Issues,
+  ruleKeys: readonly string[],
+  spec: TargetSpec,
+): string[] {
+  const lines: string[] = [];
+  for (const [path, messages] of issues.fields) {
+    const where = tryPlace(path, ruleKeys, spec);
+    for (const message of messages) lines.push(where === "" ? message : `${where}: ${message}`);
   }
-  const values = parseValues(text);
-  if (values.length === 0) return "Type a value";
-  if (values.length > MAX_PREVIEW_VALUES) return `At most ${String(MAX_PREVIEW_VALUES)} values`;
-  if (values.some((v) => v.length > PREVIEW_VALUE_MAX)) {
-    return `Each value at most ${String(PREVIEW_VALUE_MAX)} characters`;
-  }
-  return undefined;
+  return [...lines, ...issues.form];
 }
 
-export function sameRequest(a: MappingPreviewRequest, b: MappingPreviewRequest): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function tryPlace(path: FieldPath, ruleKeys: readonly string[], spec: TargetSpec): string {
+  if (path === "mapping.field") return "Jira field";
+  if (path === "mapping.field_name") return "Shown as";
+  if (path === "mapping.rules") return "Rules";
+  if (path === "mapping") return "Mapping";
+  for (const [i, key] of ruleKeys.entries()) {
+    const rule = pathOf("mapping", "rules", key);
+    if (path === rule) return ruleWord(i);
+    if (path === pathOf(rule, "match")) return `${ruleWord(i)} ${ruleFieldName(spec, "match")}`;
+    if (path === pathOf(rule, "value")) return `${ruleWord(i)} ${ruleFieldName(spec, "value")}`;
+  }
+  return "";
+}
+
+/** Why a preview failed, in the admin's words: one line, or one per issue of a 422. */
+export function tryErrorLines(e: unknown, ruleKeys: readonly string[], spec: TargetSpec): string[] {
+  if (e instanceof ApiError) {
+    switch (e.code) {
+      case "not_implemented":
+        return [
+          "Jira import isn't configured on this server, so issues can't be read. Try a value instead.",
+        ];
+      case "ticket_not_found":
+        return [`${e.message}. Check the key, or that the service account can see it.`];
+      case "upstream_error":
+        return [`Jira didn't answer · ${e.message}`];
+      case "validation_error": {
+        const issues = issuesOf(e, {
+          root: [],
+          keys: { "mapping.rules": ruleKeys },
+          shown: TRY_SHOWN,
+        });
+        const lines = tryIssueLines(issues, ruleKeys, spec);
+        return lines.length > 0 ? lines : [e.message];
+      }
+      default:
+        return [describeSaveError(e).text];
+    }
+  }
+  return [describeSaveError(e).text];
 }
 
 /** What the Try it box shows. `rule` is the matched rule's index (to light its row). */
 export type TryLine =
   | { kind: "none" }
   | { kind: "pending" }
-  | { kind: "error"; text: string }
+  | { kind: "error"; lines: readonly string[] }
   | {
       kind: "result";
       read: readonly string[];
@@ -481,59 +351,27 @@ export type TryLine =
       reason: string | null;
     };
 
-export interface TryState {
-  /** The request the last Try ran (the mutation's variables), if any. */
-  ran: MappingPreviewRequest | undefined;
-  pending: boolean;
-  data: MappingPreview | undefined;
-  error: unknown;
-}
-
-/** Why a preview failed, in the admin's words. */
-export function tryErrorText(e: unknown): string {
-  if (e instanceof ApiError) {
-    switch (e.code) {
-      case "not_implemented":
-        return "Jira import isn't configured on this server, so issues can't be read. Try a value instead.";
-      case "ticket_not_found":
-        return `${e.message}. Check the key, or that the service account can see it.`;
-      case "upstream_error":
-        return `Jira didn't answer · ${e.message}`;
-      case "validation_error": {
-        const where = locateIssue(e.message);
-        if (where !== null && where.rule !== null) {
-          return `Rule ${String(where.rule + 1)}: ${sentence(where.text)}`;
-        }
-        // "issue: not a Jira issue key or link to one" → "Not a Jira issue key or link to one."
-        const issue = /^(?:body\.)?issue\s*:\s*([\s\S]+)$/.exec(e.message);
-        if (issue?.[1] !== undefined) return sentence(issue[1]).replace(/\.?$/, ".");
-        return e.message;
-      }
-      default:
-        return describeSaveError(e).text;
-    }
+/** The Try it line for the current input (`usePreview` drops a result the input moved past). */
+export function tryLine(
+  preview: { pending: boolean; result: MappingPreview | undefined; error: unknown },
+  ruleKeys: readonly string[],
+  spec: TargetSpec,
+): TryLine {
+  if (preview.pending) return { kind: "pending" };
+  if (preview.error !== undefined) {
+    return { kind: "error", lines: tryErrorLines(preview.error, ruleKeys, spec) };
   }
-  return describeSaveError(e).text;
-}
-
-/**
- * The Try it line. A result only counts while the mapping and the input are still the ones that
- * ran, so any edit (a rule, the field, the text, Discard) hides it at once.
- */
-export function tryLine(state: TryState, current: MappingPreviewRequest | undefined): TryLine {
-  if (state.ran === undefined || current === undefined || !sameRequest(state.ran, current)) {
-    return { kind: "none" };
-  }
-  if (state.pending) return { kind: "pending" };
-  if (state.error !== null && state.error !== undefined) {
-    return { kind: "error", text: tryErrorText(state.error) };
-  }
-  const d = state.data;
+  const d = preview.result;
   if (!d) return { kind: "none" };
   return { kind: "result", read: d.values, value: d.value, rule: d.rule, reason: d.reason };
 }
 
-/** "Rule 2" for the matched rule's index. */
+/** "Rule 2" for a rule's index. */
 export function ruleWord(index: number): string {
   return `Rule ${String(index + 1)}`;
+}
+
+/** What a rule's match or value input is called ("Jira value matches", "branch"). */
+export function ruleFieldName(spec: TargetSpec, part: "match" | "value"): string {
+  return part === "match" ? "Jira value matches" : spec.valueLabel.toLowerCase();
 }

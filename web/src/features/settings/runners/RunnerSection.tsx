@@ -1,22 +1,17 @@
 // Settings › Runners › Runner: where the GitHub launchers (github, and mailbox: GitHub Actions
 // with Artifactory carrying each run in and out) dispatch each run's workflow. The launcher and
 // the token come from the server's env (read-only here); the repo, workflow file and ref are read
-// at every dispatch. Controlled; the page owns the draft and the save.
-import { Field, fieldStyles as f } from "../../../editor";
+// at every dispatch. Controlled; the page owns the document and the save, and the server's issues
+// show on their fields.
+import { errorAt, Field, Input, type Issues } from "../../../editor";
 import { cx } from "../../../ui";
-import {
-  dispatchesWorkflow,
-  launcherLabel,
-  type RunnerForm,
-  type RunnerIssues,
-  type RunnerSettings,
-} from "./model";
+import { dispatchesWorkflow, launcherLabel, type RunnerForm, type RunnerSettings } from "./model";
 import s from "./Runners.module.css";
 
 export interface RunnerSectionProps {
   settings: Pick<RunnerSettings, "launcher" | "token_set">;
   value: RunnerForm;
-  issues: RunnerIssues;
+  issues: Issues;
   readOnly: boolean;
   onChange: (value: RunnerForm) => void;
 }
@@ -29,9 +24,9 @@ export function RunnerSection({ settings, value, issues, readOnly, onChange }: R
   const text =
     (field: keyof RunnerForm, placeholder: string) =>
     (ids: { id: string; describedBy: string | undefined; invalid: boolean }) => (
-      <input
+      <Input
         id={ids.id}
-        className={cx(f.input, f.mono)}
+        mono
         value={value[field]}
         placeholder={placeholder}
         readOnly={readOnly}
@@ -74,7 +69,7 @@ export function RunnerSection({ settings, value, issues, readOnly, onChange }: R
       <div className={s.sheet}>
         <Field
           label="GitHub repo"
-          error={issues.github_repo}
+          error={errorAt(issues, "github_repo")}
           hint={
             noRepo && github ? (
               <span className={s.warn}>None set: runs fail at launch until it is.</span>
@@ -87,7 +82,7 @@ export function RunnerSection({ settings, value, issues, readOnly, onChange }: R
         </Field>
         <Field
           label="Workflow"
-          error={issues.workflow}
+          error={errorAt(issues, "workflow")}
           hint="A file in that repo's .github/workflows/."
         >
           {text(
@@ -95,7 +90,11 @@ export function RunnerSection({ settings, value, issues, readOnly, onChange }: R
             settings.launcher === "mailbox" ? "agentos-mailbox.yml" : "agentos-worker.yml",
           )}
         </Field>
-        <Field label="Ref" error={issues.ref} hint="The branch or tag the workflow file is on.">
+        <Field
+          label="Ref"
+          error={errorAt(issues, "ref")}
+          hint="The branch or tag the workflow file is on."
+        >
           {text("ref", "main")}
         </Field>
       </div>

@@ -3,15 +3,15 @@
 Pure: no web, db or http imports (enforced by import-linter). Every `validate_*` / `check_*`
 raises `ApiError(422, "validation_error", "<field>: <why>")` (size limits: 413 `too_large`) and
 returns the value to store. The repo URL and branch rules are also `*_problem` functions that
-return what is wrong (or None), for pydantic validators and other checks that collect issues.
-`pydantic_issues` turns pydantic's errors into `ValidationIssue`s; `parsed` and `too_many` collect
-them for checks that report every problem at once.
+return what is wrong (or None) as UI text, for pydantic validators and other checks that collect
+issues. `pydantic_issues` turns pydantic's errors into `ValidationIssue`s worded as UI text;
+`parsed` and `too_many` collect them for checks that report every problem at once.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence, Sized
+from collections.abc import Callable, Iterable, Mapping, Sequence, Sized
 from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
@@ -61,28 +61,76 @@ def _valid_at(field: str, value: str, problem: str | None) -> str:
 # ------------------------------------------------------------------ pydantic errors → issues
 
 
+def _count(n: object, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _at_least_chars(ctx: dict[str, Any]) -> str:
+    n = ctx["min_length"]
+    return "Required." if n == 1 else f"At least {_count(n, 'character')}."
+
+
+_WHOLE_NUMBER = "Must be a whole number."
+_NUMBER = "Must be a number."
+_OBJECT = "Must be an object."
+
+# UI text for pydantic's error types, from the error's `ctx` (its constraint). A type missing
+# here keeps pydantic's own message.
+_MESSAGES: dict[str, Callable[[dict[str, Any]], str]] = {
+    "missing": lambda ctx: "Required.",
+    "string_too_short": _at_least_chars,
+    "string_too_long": lambda ctx: f"At most {_count(ctx['max_length'], 'character')}.",
+    "too_short": lambda ctx: f"At least {_count(ctx['min_length'], 'item')}.",
+    "too_long": lambda ctx: f"At most {_count(ctx['max_length'], 'item')}.",
+    "greater_than_equal": lambda ctx: f"At least {ctx['ge']}.",
+    "less_than_equal": lambda ctx: f"At most {ctx['le']}.",
+    "greater_than": lambda ctx: f"More than {ctx['gt']}.",
+    "less_than": lambda ctx: f"Less than {ctx['lt']}.",
+    "int_type": lambda ctx: _WHOLE_NUMBER,
+    "int_parsing": lambda ctx: _WHOLE_NUMBER,
+    "int_from_float": lambda ctx: _WHOLE_NUMBER,
+    "float_type": lambda ctx: _NUMBER,
+    "float_parsing": lambda ctx: _NUMBER,
+    "string_type": lambda ctx: "Must be text.",
+    "bool_type": lambda ctx: "Must be true or false.",
+    "bool_parsing": lambda ctx: "Must be true or false.",
+    "list_type": lambda ctx: "Must be a list.",
+    "tuple_type": lambda ctx: "Must be a list.",
+    "model_type": lambda ctx: _OBJECT,
+    "model_attributes_type": lambda ctx: _OBJECT,
+    "dict_type": lambda ctx: _OBJECT,
+    "literal_error": lambda ctx: f"Must be {ctx['expected']}.",
+    "extra_forbidden": lambda ctx: "Unknown field.",
+}
+
+
+def issue_message(error: ErrorDetails) -> str:
+    """One pydantic error as UI text: a validator's ValueError gives its own text (the exception
+    in the error's `ctx`, without pydantic's `Value error, ` prefix), a constraint or type error
+    its `_MESSAGES` entry, anything else pydantic's message."""
+    ctx: dict[str, Any] = error.get("ctx", {})
+    raised = ctx.get("error")
+    if error["type"] == "value_error" and isinstance(raised, ValueError):
+        return str(raised)
+
+    message = _MESSAGES.get(error["type"])
+    return error["msg"] if message is None else message(ctx)
+
+
 def pydantic_issues(
     errors: Iterable[ErrorDetails],
     prefix: Sequence[str | int] = (),
     *,
     strip_body: bool = False,
 ) -> list[ValidationIssue]:
-    """One issue per pydantic error, its `loc` behind `prefix` (a leading `body` dropped first
-    with `strip_body`). A validator's ValueError gives its own text (the exception in the error's
-    `ctx`), without pydantic's `Value error, ` prefix."""
+    """One issue per pydantic error (`issue_message`), its `loc` behind `prefix` (a leading
+    `body` dropped first with `strip_body`)."""
     issues: list[ValidationIssue] = []
     for error in errors:
         loc = list(error["loc"])
         if strip_body and loc[:1] == ["body"]:
             loc = loc[1:]
-
-        raised = error.get("ctx", {}).get("error")
-        if error["type"] == "value_error" and isinstance(raised, ValueError):
-            message = str(raised)
-        else:
-            message = error["msg"]
-
-        issues.append(ValidationIssue(loc=[*prefix, *loc], message=message))
+        issues.append(ValidationIssue(loc=[*prefix, *loc], message=issue_message(error)))
     return issues
 
 
@@ -97,12 +145,13 @@ def parsed(
         return None, pydantic_issues(exc.errors(), prefix)
 
 
-def too_many(items: Sized, limit: int, loc: Sequence[str | int]) -> list[ValidationIssue]:
-    """One issue at `loc` when `items` holds more than `limit`, worded as pydantic's."""
+def too_many(
+    items: Sized, limit: int, loc: Sequence[str | int], noun: str = "items"
+) -> list[ValidationIssue]:
+    """One issue at `loc` when `items` holds more than `limit` ("At most 100 repos.")."""
     if len(items) <= limit:
         return []
-    message = f"List should have at most {limit} items, not {len(items)}"
-    return [ValidationIssue(loc=list(loc), message=message)]
+    return [ValidationIssue(loc=list(loc), message=f"At most {limit} {noun}.")]
 
 
 # ------------------------------------------------------------------ file paths
@@ -177,7 +226,9 @@ _PORT_RE = re.compile(r"[0-9]{1,5}")
 
 
 def _host_problem(host: str) -> str | None:
-    return None if _HOST_RE.fullmatch(host) else f"invalid host {host!r}"
+    if _HOST_RE.fullmatch(host):
+        return None
+    return f"{host} isn't a valid host." if host else "Missing the host."
 
 
 def repo_url_problem(url: str) -> str | None:
@@ -188,38 +239,38 @@ def repo_url_problem(url: str) -> str | None:
     into git), no whitespace or control characters, no query or fragment.
     """
     if not url:
-        return "must not be empty"
+        return "Required."
     if len(url) > MAX_REPO_URL_CHARS:
-        return f"longer than {MAX_REPO_URL_CHARS} characters"
+        return f"At most {MAX_REPO_URL_CHARS} characters."
     if url.startswith("-"):
-        return "must not start with '-'"
+        return "Must not start with -."
     if any(c.isspace() or not c.isprintable() for c in url):
-        return "must not contain whitespace or control characters"
+        return "No spaces or control characters."
 
     scp = _SCP_RE.fullmatch(url)
     if scp and "://" not in url:
         host, path = scp.groups()
         if problem := _host_problem(host):
             return problem
-        return "path must not start with '-'" if path.startswith("-") else None
+        return "The path must not start with -." if path.startswith("-") else None
 
     parts = urlsplit(url)
     if parts.scheme not in ("https", "ssh"):
-        return "must be https://..., ssh://... or git@host:path"
+        return "Use https://host/owner/repo, ssh://git@host/owner/repo or git@host:owner/repo."
     if parts.query or parts.fragment or "?" in url or "#" in url:
-        return "must not have a query or fragment"
+        return "No query (?) or fragment (#)."
     netloc = parts.netloc
     if "@" in netloc:
         user, _, netloc = netloc.rpartition("@")
         if parts.scheme != "ssh" or user != "git":
-            return "must not contain credentials or a user other than git@"
+            return "No credentials in the URL (only git@ on ssh://)."
     host, sep, port = netloc.partition(":")
     if problem := _host_problem(host):
         return problem
     if sep and not _PORT_RE.fullmatch(port):
-        return f"invalid port {port!r}"
+        return "Invalid port."
     if parts.path.strip("/") == "":
-        return "must include a repository path"
+        return "Include the repository path."
     return None
 
 
@@ -259,15 +310,19 @@ _BRANCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
 def base_branch_problem(branch: str) -> str | None:
     """What is wrong with a branch name, or None. SPEC §6, plus git's rule that no
     `/`-component starts with `.` or ends in `.lock`."""
+    if not branch:
+        return "Required."
     if not _BRANCH_RE.fullmatch(branch):
-        return "must match [A-Za-z0-9][A-Za-z0-9._/-]{0,199}"
+        return (
+            "Letters, digits, . _ / or -, starting with a letter or digit, at most 200 characters."
+        )
     if ".." in branch or "//" in branch:
-        return "must not contain '..' or '//'"
+        return "Must not contain .. or //."
     if branch.endswith(("/", ".", ".lock")):
-        return "must not end in '/', '.' or '.lock'"
+        return "Must not end in /, . or .lock."
     for comp in branch.split("/"):
         if comp.startswith(".") or comp.endswith(".lock"):
-            return f"component {comp!r} must not start with '.' or end in '.lock'"
+            return "No part may start with . or end in .lock."
     return None
 
 

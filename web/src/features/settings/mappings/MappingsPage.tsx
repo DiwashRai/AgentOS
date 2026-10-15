@@ -1,41 +1,37 @@
-// Settings › Field mappings (request 22B): Jira field → AgentOS field, by ordered wildcard rules.
-// One document edited with `useDraft` + `SaveBar` like the other Settings pages, one card per
-// target (today only Base branch). Admin only; everyone else gets one quiet line (the API would
-// 403 anyway). Renders a content column; the route wraps it in the Settings top bar + Surface.
-import { useMemo } from "react";
-
+// Settings › Field mappings: Jira field → AgentOS field, by ordered wildcard rules. One versioned
+// document on the kit: the mappings are a list (one per target, today only Base branch), each
+// with its own ordered list of rules; live issues come from the server's validate-only call.
+// Renders a content column; the route wraps it in the Settings top bar + Surface.
 import {
   useJiraFields,
-  useMappingSettings,
   useMe,
-  useSaveMappingSettings,
+  usePreviewMapping,
+  useSaveSettings,
+  useSettings,
+  useValidateSettings,
 } from "../../../api/queries";
 import {
-  describeSaveError,
-  fixFirst,
+  DocumentPage,
+  DocumentSection,
+  ListEditor,
+  messagesAt,
   pageStyles as pages,
-  SaveBar,
-  useDraft,
+  useDocument,
 } from "../../../editor";
-import { StatusLine } from "../../../ui";
-import { useNow } from "../../../ui/useNow";
-import { isForbidden, savedLine } from "../common";
 import { MappingCard, type FieldsState } from "./MappingCard";
 import s from "./Mappings.module.css";
 import {
-  addMapping,
-  formOf,
-  indexOf,
+  formKeys,
+  freeTarget,
+  fromForm,
   isBlankMapping,
-  issueCount,
-  mergeIssues,
-  patchMapping,
-  removeMapping,
+  newMapping,
   sameForm,
-  serverIssues,
+  SHOWN,
+  specOf,
   TARGETS,
-  toBody,
-  validate,
+  toForm,
+  type MappingRow,
   type MappingsForm,
 } from "./model";
 
@@ -44,26 +40,19 @@ const ADMINS_ONLY = "Only admins can change field mappings.";
 export function MappingsPage() {
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
-  const settings = useMappingSettings(isAdmin);
   const jiraFields = useJiraFields(isAdmin);
-  const save = useSaveMappingSettings();
-  const now = useNow(60_000);
-  const data = settings.data;
-  const saved = useMemo<MappingsForm | undefined>(() => (data ? formOf(data) : undefined), [data]);
-  const draft = useDraft(saved, data?.version, sameForm);
+  const preview = usePreviewMapping();
+  const doc = useDocument({
+    query: useSettings("mappings", isAdmin),
+    save: useSaveSettings("mappings"),
+    validate: useValidateSettings("mappings"),
+    toForm,
+    fromForm,
+    same: sameForm,
+    keys: formKeys,
+    shown: SHOWN,
+  });
 
-  if (me.isPending) return <StatusLine>Loading field mappings</StatusLine>;
-  if (!isAdmin) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
-  if (settings.isPending) return <StatusLine>Loading field mappings</StatusLine>;
-  if (settings.isError) {
-    if (isForbidden(settings.error)) return <StatusLine>{ADMINS_ONLY}</StatusLine>;
-    return <StatusLine error>{`Can't load field mappings · ${settings.error.message}`}</StatusLine>;
-  }
-
-  const doc = settings.data;
-  const value = draft.value ?? formOf(doc);
-  const issues = validate(value);
-  const fromServer = serverIssues(save.error, save.variables, value);
   const fields: FieldsState = {
     data: jiraFields.data,
     pending: jiraFields.isPending,
@@ -73,79 +62,67 @@ export function MappingsPage() {
       void jiraFields.refetch();
     },
   };
-  const readOnly = save.isPending;
 
   return (
-    <div className={pages.page}>
-      <SaveBar
-        title="Field mappings"
-        meta={savedLine(doc, now)}
-        dirty={draft.dirty}
-        readOnly={false}
-        saveDisabledReason={fixFirst(issueCount(issues))}
-        saving={save.isPending}
-        problem={save.error ? describeSaveError(save.error) : null}
-        onDiscard={() => {
-          draft.discard();
-          save.reset();
-        }}
-        onReload={() => {
-          draft.discard();
-          save.reset();
-          void settings.refetch();
-        }}
-        onSave={() => {
-          save.mutate(toBody(value, draft.baseVersion ?? doc.version), {
-            onSuccess: () => {
-              draft.discard();
-            },
-          });
-        }}
-      />
-
-      <p className={pages.banner} role="note">
-        <span className={pages.k}>Jira</span>
-        <span>
-          Rules apply when a Jira issue is imported or taken in. Saving re-applies them to tickets a
-          mapping set that haven&apos;t started a run yet; branches set by hand and locked ones stay
-          as they are.
-        </span>
-      </p>
-
-      <div className={s.cards}>
-        {TARGETS.map((spec) => {
-          const index = indexOf(value, spec.target);
-          const mapping = value[index];
-          const client = issues[index];
-          return (
-            <MappingCard
-              key={spec.target}
-              spec={spec}
-              draft={mapping}
-              issues={
-                client &&
-                mergeIssues(client, fromServer?.index === index ? fromServer.issues : undefined)
-              }
-              fields={fields}
-              readOnly={readOnly}
-              onAdd={() => {
-                draft.edit(addMapping(value, spec.target));
-              }}
-              onRemove={() => {
-                const ok =
-                  (mapping !== undefined && isBlankMapping(mapping)) ||
-                  window.confirm(
-                    `Remove the ${spec.title.toLowerCase()} mapping? Tickets it already set keep their branch; new imports won't use it once you save.`,
-                  );
-                if (ok) draft.edit(removeMapping(value, spec.target));
-              }}
-              onChange={(patch) => {
-                draft.edit(patchMapping(value, spec.target, patch));
-              }}
-            />
-          );
-        })}
-      </div>
-    </div>
+    <DocumentPage viewer={me.data} adminsOnly={ADMINS_ONLY} noun="field mappings" sources={[doc]}>
+      {() => (
+        <DocumentSection
+          title="Field mappings"
+          document={doc}
+          description={
+            <p className={pages.banner} role="note">
+              <span className={pages.k}>Jira</span>
+              <span>
+                Rules apply when a Jira issue is imported or taken in. Saving re-applies them to
+                tickets a mapping set that haven&apos;t started a run yet; branches set by hand and
+                locked ones stay as they are.
+              </span>
+            </p>
+          }
+        >
+          {(form) => {
+            const edit = (mappings: readonly MappingRow[]) => {
+              doc.edit({ ...form, mappings });
+            };
+            const target = freeTarget(form);
+            return (
+              <ListEditor
+                name="Mappings"
+                className={s.mappings}
+                rows={form.mappings}
+                onChange={edit}
+                label={(row) => `${specOf(row.item.target).title.toLowerCase()} mapping`}
+                create={target === undefined ? undefined : () => newMapping(target)}
+                addLabel="Add a mapping"
+                isBlank={(row) => isBlankMapping(row.item)}
+                confirmText={(_, name) =>
+                  `Remove the ${name}? Tickets it already set keep their branch; new imports won't use it once you save.`
+                }
+                readOnly={doc.saving}
+                empty={TARGETS.map((t) => t.without).join(" ")}
+                issue={messagesAt(doc.issues, "mappings")}
+              >
+                {(row) => (
+                  <MappingCard
+                    row={row}
+                    issues={doc.issues}
+                    fields={fields}
+                    preview={preview.mutateAsync}
+                    readOnly={doc.saving}
+                    onChange={(item) => {
+                      edit(replaceRow(form, row.key, item));
+                    }}
+                  />
+                )}
+              </ListEditor>
+            );
+          }}
+        </DocumentSection>
+      )}
+    </DocumentPage>
   );
+}
+
+function replaceRow(form: MappingsForm, key: string, item: MappingRow["item"]): MappingRow[] {
+  return form.mappings.map((row) => (row.key === key ? { ...row, item } : row));
 }

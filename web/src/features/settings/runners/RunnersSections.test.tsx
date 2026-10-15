@@ -5,6 +5,7 @@ import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { NO_ISSUES } from "../../../editor";
 import { rowsFrom, validateRuntimes, type RunnerForm, type RuntimeRow } from "./model";
 import { RunnerSection } from "./RunnerSection";
 import { RuntimesEditor } from "./RuntimesEditor";
@@ -226,7 +227,7 @@ describe("RunnerSection", () => {
       <RunnerSection
         settings={{ launcher: "github", token_set: false }}
         value={FORM}
-        issues={{}}
+        issues={NO_ISSUES}
         readOnly={false}
         onChange={() => undefined}
       />,
@@ -242,7 +243,7 @@ describe("RunnerSection", () => {
       <RunnerSection
         settings={{ launcher: "mailbox", token_set: false }}
         value={{ ...FORM, workflow: "" }}
-        issues={{}}
+        issues={NO_ISSUES}
         readOnly={false}
         onChange={() => undefined}
       />,
@@ -259,7 +260,7 @@ describe("RunnerSection", () => {
       <RunnerSection
         settings={{ launcher: "local", token_set: true }}
         value={FORM}
-        issues={{}}
+        issues={NO_ISSUES}
         readOnly={false}
         onChange={onChange}
       />,

@@ -19,10 +19,10 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 2px 14px;
+  gap: var(--sp-1) var(--sp-7);
   width: 100%;
   min-height: 48px;
-  padding: 8px 14px;
+  padding: var(--sp-4) var(--sp-7);
   border: 0;
   background: transparent;
   color: inherit;
@@ -44,7 +44,7 @@
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
 }
 .name {
@@ -75,9 +75,9 @@
 .sheet {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: 12px;
+  gap: var(--sp-6);
   align-items: start;
-  padding: 14px 16px;
+  padding: var(--sp-7) var(--sp-8);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-sheet);
@@ -97,7 +97,7 @@
 .editor {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-8);
   min-width: 0;
 }
 .problem {
@@ -109,7 +109,7 @@
 .inline {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 
 /* the Pipeline tab's strip: "From Standard · v3", Switch workflow…, Save as workflow… */
@@ -117,7 +117,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 12px;
+  gap: var(--sp-4) var(--sp-6);
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
@@ -136,9 +136,9 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
   max-width: 640px;
-  padding: 12px 14px;
+  padding: var(--sp-6) var(--sp-7);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-left: 2px solid var(--ink-1);
@@ -161,7 +161,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .done {
   margin: 0;

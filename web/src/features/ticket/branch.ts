@@ -4,7 +4,6 @@
 // repo default" can be offered. It never derives a lock or the source itself.
 import { ApiError, type Schemas } from "../../api/client";
 import { firstName } from "../../domain/format";
-import { checkBranch } from "../settings/space/model";
 import { actionErrorText, ticketPath } from "./model";
 
 type Detail = Schemas["TicketDetail"];
@@ -59,6 +58,25 @@ export function branchView(t: Pick<Detail, "base_branch" | "base_branch_info">):
     source: info ? sourceLine(info) : null,
     missing: false,
   };
+}
+
+const BRANCH_MAX = 200;
+const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+
+/** validate.py `validate_base_branch`. */
+export function checkBranch(branch: string): string | undefined {
+  if (branch === "") return "Required.";
+  if (!BRANCH_RE.test(branch)) {
+    return `Letters, digits, . _ / or -, starting with a letter or digit (max ${String(BRANCH_MAX)}).`;
+  }
+  if (branch.includes("..") || branch.includes("//")) return "Must not contain .. or //.";
+  if (branch.endsWith("/") || branch.endsWith(".") || branch.endsWith(".lock")) {
+    return "Must not end in /, . or .lock.";
+  }
+  if (branch.split("/").some((c) => c.startsWith(".") || c.endsWith(".lock"))) {
+    return "No part may start with . or end in .lock.";
+  }
+  return undefined;
 }
 
 /** The inline message for an input, or undefined when it is a valid branch name. */

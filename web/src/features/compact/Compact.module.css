@@ -18,11 +18,11 @@
   flex: none;
   display: grid;
   grid-template-columns: var(--crow-cols);
-  column-gap: 14px;
+  column-gap: var(--sp-7);
   align-items: center;
   height: var(--h-col-head);
-  margin: 0 10px;
-  padding: 0 14px;
+  margin: 0 var(--sp-5);
+  padding: 0 var(--sp-7);
   font-size: var(--fs-meta);
   font-weight: 500;
   color: var(--ink-3);
@@ -40,12 +40,12 @@
   min-height: 0;
   overflow: hidden auto;
   /* room for the 2px ink ring at a 2px offset, and the lit halo */
-  padding: 0 10px 16px;
+  padding: 0 var(--sp-5) var(--sp-8);
   scrollbar-width: thin;
   scroll-padding: 12px 0 24px;
 }
 .group {
-  margin-top: 12px;
+  margin-top: var(--sp-6);
 }
 .list > .group:first-child {
   margin-top: 0;
@@ -59,14 +59,14 @@
   display: none;
 }
 .emptyRow {
-  margin-top: 4px;
+  margin-top: var(--sp-2);
 }
 .list > .emptyRow:first-child {
   margin-top: 0;
 }
 .empty {
   margin: 0;
-  padding: 10px 14px;
+  padding: var(--sp-5) var(--sp-7);
   font-size: var(--fs-control);
   color: var(--ink-3);
 }
@@ -80,7 +80,7 @@
 .headNote {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
   font-size: var(--fs-meta);
   font-weight: 500;
   color: var(--ink-1);
@@ -95,8 +95,8 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 11px 14px;
+  gap: var(--sp-9);
+  padding: var(--sp-5) var(--sp-7);
   border-top: 1px solid var(--rule);
   font-size: var(--fs-meta);
   color: var(--ink-3);
@@ -105,11 +105,11 @@
 .keys {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .caps {
   display: inline-flex;
-  gap: 3px;
+  gap: var(--sp-1);
 }
 .grow {
   flex: 1;
@@ -117,7 +117,7 @@
 .sum {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
   color: var(--ink-2);
 }
@@ -136,8 +136,8 @@
   display: flex;
   flex: 0 0.02 auto;
   min-width: 0;
-  gap: 2px;
-  padding: 4px;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
   border-radius: 10px;
   background: var(--recess);
   box-shadow: var(--recess-shadow);
@@ -148,8 +148,8 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-5);
   border: 0;
   border-radius: var(--r-btn-sm);
   background: transparent;
@@ -209,7 +209,7 @@
     box-shadow 0.12s ease;
 }
 .crow + .crow {
-  margin-top: 4px;
+  margin-top: var(--sp-2);
 }
 /* settled: flat on the recess, 4px shorter */
 .crow.isFlat {
@@ -263,11 +263,11 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--crow-cols);
-  column-gap: 14px;
+  column-gap: var(--sp-7);
   align-items: center;
   width: 100%;
   height: var(--h-compact);
-  padding: 0 14px;
+  padding: 0 var(--sp-7);
   border: 0;
   border-radius: var(--r-row);
   background: none;
@@ -304,7 +304,7 @@
 .ti {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -325,7 +325,7 @@
 }
 .now {
   display: flex;
-  gap: 7px;
+  gap: var(--sp-3);
   align-items: center;
   min-width: 0;
   white-space: nowrap;
@@ -382,7 +382,7 @@
 .runline {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
 }
 .agent {
@@ -416,9 +416,9 @@
   height: var(--h-compact);
   display: grid;
   grid-template-columns: var(--crow-cols);
-  column-gap: 14px;
+  column-gap: var(--sp-7);
   align-items: center;
-  padding: 0 14px;
+  padding: 0 var(--sp-7);
   pointer-events: none;
 }
 .addCtx {
@@ -457,9 +457,9 @@
 .grid {
   display: grid;
   grid-template-columns: 1fr 1.08fr 1fr;
-  gap: 32px;
-  margin: 0 14px;
-  padding: 14px 0 16px;
+  gap: var(--sp-11);
+  margin: 0 var(--sp-7);
+  padding: var(--sp-7) 0 var(--sp-8);
   border-top: 1px solid var(--rule-soft);
 }
 .col {
@@ -468,8 +468,8 @@
 .lab {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 8px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
   font-size: var(--fs-meta);
   font-weight: 500;
   color: var(--ink-3);
@@ -492,7 +492,7 @@
   overflow-wrap: anywhere;
 }
 .sub {
-  margin: 4px 0 12px;
+  margin: var(--sp-2) 0 var(--sp-6);
   font-size: var(--fs-control);
   line-height: 1.45;
   color: var(--ink-3);
@@ -500,13 +500,13 @@
 .acts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .confirm {
-  margin-top: 8px;
+  margin-top: var(--sp-4);
 }
 .err {
-  margin: 6px 0 0;
+  margin: var(--sp-3) 0 0;
   font-size: var(--fs-meta);
   color: var(--blocked);
   white-space: nowrap;
@@ -521,13 +521,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 .steps > li {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   min-height: 19px;
   font-size: var(--fs-control);
   color: var(--ink-1);
@@ -549,24 +549,24 @@
 .steps > li.moreItems {
   display: block;
   min-height: 0;
-  padding-left: 22px;
+  padding-left: var(--sp-10);
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 .stepper {
-  margin-top: 12px;
+  margin-top: var(--sp-6);
 }
 
 /* the last Talk message */
 .msg {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
-  gap: 9px;
+  gap: var(--sp-4);
 }
 .who {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--sp-4);
   font-size: var(--fs-control);
   font-weight: 600;
   color: var(--ink-1);
@@ -580,8 +580,8 @@
 .bub {
   max-width: 94%;
   width: fit-content;
-  margin: 3px 0 0;
-  padding: 7px 12px;
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-3) var(--sp-6);
   border-radius: 4px 14px 14px 14px;
   background: var(--bubble);
   color: var(--bubble-ink);
@@ -610,7 +610,7 @@
   }
   .grid {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+    gap: var(--sp-8);
   }
 }
 @container compact (max-width: 560px) {

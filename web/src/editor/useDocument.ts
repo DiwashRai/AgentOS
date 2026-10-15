@@ -124,7 +124,7 @@ export function useDocument<R extends DocumentRead, F>(
   // The first overload is the only way to omit the conversion, and it pins F to the value type.
   const conversion: FormConversion<R, F> = {
     toForm: options.toForm ?? (asIs as unknown as FormConversion<R, F>["toForm"]),
-    fromForm: options.fromForm ?? (asIs as unknown as FormConversion<R, F>["fromForm"]),
+    fromForm: options.fromForm ?? asIs,
   };
   const { toForm, fromForm } = conversion;
   const same = options.same ?? sameJson;
