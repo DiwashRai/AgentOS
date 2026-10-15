@@ -8,7 +8,7 @@
 //                 is the click target (spread the peek's item props on it), or it holds a DataLine.
 //   DataLine      the row's one-line button on `--cols` (Compact): Enter / Space are the button's
 //   DataTitle     the title cell: type and priority icons, then the ellipsized title
-//   DataOverflow  "+N more" under a capped list, with a note and an `aria-expanded` toggle
+//   DataOverflow  "+N more" under a capped list, with a note and a one-way "Show all"
 //   DataFoot      the foot bar: key hints, a grow, then the view's summary
 // DataRow exposes its state as `data-surface` ("raised" | "flat"), `data-you`, `data-open` and
 // `data-edge`, so a view's own cells can follow it (`.row[data-surface="flat"] .upd`).
@@ -194,27 +194,24 @@ export function DataTitle({
 export interface DataOverflowProps {
   /** How many rows the cap hides: "+N more". */
   more: number;
-  /** The toggle's text ("Show all 50"). */
-  toggle: string;
-  /** Whether the list shows every row (the toggle's `aria-expanded`). */
-  expanded: boolean;
-  onToggle: () => void;
-  /** The id of the list the toggle expands. */
-  controls?: string | undefined;
-  /** A quiet note before the toggle, ellipsized ("73 match in Jira, newest 50 listed"). */
+  /** The button's text ("Show all 50"). */
+  label: string;
+  /** Shows every row. The view then drops this line and moves focus to the first row it revealed,
+   *  since the button leaves with it. */
+  onShow: () => void;
+  /** A quiet note before the button, ellipsized ("73 match in Jira, newest 50 listed"). */
   note?: ReactNode;
   /** The note's class (to hide it on a narrow surface). */
   noteClassName?: string | undefined;
   className?: string | undefined;
 }
 
-/** The line under a capped list: "+N more", then the note and the toggle at the right. */
+/** The line under a capped list: "+N more", then the note and a one-way "Show all" at the right.
+ *  It is a reveal, not a toggle: the view renders it only while rows are hidden. */
 export function DataOverflow({
   more,
-  toggle,
-  expanded,
-  onToggle,
-  controls,
+  label,
+  onShow,
   note,
   noteClassName,
   className,
@@ -224,9 +221,7 @@ export function DataOverflow({
       <b>{`+${String(more)} more`}</b>
       <span className={s.overflowEnd}>
         {note ? <span className={cx(s.note, noteClassName)}>{note}</span> : null}
-        <LinkButton aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
-          {toggle}
-        </LinkButton>
+        <LinkButton onClick={onShow}>{label}</LinkButton>
       </span>
     </div>
   );

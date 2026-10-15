@@ -648,6 +648,14 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
               collapsed={false}
               onToggle={noop}
             />
+            <span className={s.cap}>Static, sm (the rack&apos;s head)</span>
+            <GroupHead name="web-portal" size="sm" count={2} />
+            <GroupHead
+              name="Sam's client"
+              size="sm"
+              note={<Badge tone="note">Offline</Badge>}
+              count={1}
+            />
             <EmptyRow lead="All quiet">nothing running, nothing queued</EmptyRow>
           </div>
         </div>
@@ -804,11 +812,12 @@ function LayoutKit({ id }: { id: (x: string) => string }) {
           </Badge>
         </div>
         <div className={s.row}>
-          <span className={s.cap}>Verdict, words, stat, tag</span>
+          <span className={s.cap}>Verdict, words, note, stat, tag</span>
           <Badge tone="pass">Pass</Badge>
           <Badge tone="fail">Fail</Badge>
           <Badge tone="ok">Passed</Badge>
           <Badge tone="bad">Failed</Badge>
+          <Badge tone="note">Offline</Badge>
           <Badge tone="stat">
             <b>2 shipped</b> this week
           </Badge>
@@ -874,6 +883,14 @@ function LayoutKit({ id }: { id: (x: string) => string }) {
           title="Plan"
           level={3}
           id={id("plan-compact")}
+        />
+        <span className={s.cap}>Compact, count inline (Compact&apos;s expanded row)</span>
+        <Checklist
+          plan={planView(FLAT_PLAN.slice(0, 3))}
+          density="compact"
+          title="Plan"
+          level={3}
+          progress="inline"
         />
         <span className={s.cap}>Compact, headless (the label is the view&apos;s)</span>
         <Checklist plan={planView(FLAT_PLAN.slice(0, 3))} density="compact" label="Plan" />
@@ -1090,16 +1107,16 @@ function ListKit({ id }: { id: (x: string) => string }) {
             </DataRow>
           ))}
         </DataRows>
-        <DataOverflow
-          more={all ? 0 : 2}
-          toggle={all ? "Show fewer" : "Show all 3"}
-          expanded={all}
-          controls={id("intake")}
-          note="73 match in Jira, newest 50 listed"
-          onToggle={() => {
-            setAll((v) => !v);
-          }}
-        />
+        {all ? null : (
+          <DataOverflow
+            more={2}
+            label="Show all 3"
+            note="73 match in Jira, newest 50 listed"
+            onShow={() => {
+              setAll(true);
+            }}
+          />
+        )}
         <DataFoot rule={false} hints={[{ keys: ["Esc"], label: "close" }]}>
           <Link href="#kit">Open ticket →</Link>
         </DataFoot>

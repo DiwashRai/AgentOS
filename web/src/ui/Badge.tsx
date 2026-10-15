@@ -5,6 +5,7 @@
 //   counter  a top-bar count: the number, then the caption; zero recedes, `you` is the tinted pill
 //   pass     a check's verdict pill, green; fail: the same in crimson
 //   ok       a passed word in green; bad: a failed word in crimson
+//   note     a quiet word beside a head (a client group's "Offline")
 //   stat     a head's statistic led by a mark (the tick by default): "✓ 2 shipped this week"
 // count and counter carry `data-zero` (and counter `data-you` while tinted), so a view's container
 // queries can hide them without restating the look.
@@ -15,7 +16,7 @@ import { Tag } from "./Tag";
 import { TickBadge } from "./TickBadge";
 
 export type BadgeTone =
-  "tag" | "count" | "status" | "counter" | "pass" | "fail" | "ok" | "bad" | "stat";
+  "tag" | "count" | "status" | "counter" | "pass" | "fail" | "ok" | "bad" | "note" | "stat";
 
 export interface BadgeProps {
   /** The look (default tag). */
@@ -104,6 +105,7 @@ export function Badge({
 
     case "ok":
     case "bad":
+    case "note":
       return (
         <span className={cx(s[tone], className)} title={title}>
           {children}

@@ -13,7 +13,7 @@ import { COUNTERS, type CountKey } from "../domain/counts";
 import { jumpTarget } from "../domain/search";
 import type { StatusKind } from "../domain/status";
 import { words } from "../domain/words";
-import { Badge, Button, Kbd, type MarkKind, StatusMark, useDocumentKey } from "../ui";
+import { Badge, Button, dialogOpen, Kbd, type MarkKind, StatusMark, useDocumentKey } from "../ui";
 import { PlusIcon, SearchIcon } from "./icons";
 import { isShortcut } from "./keys";
 import s from "./TopBar.module.css";
@@ -83,9 +83,9 @@ function Search({ placeholder }: { placeholder: string }) {
   const { q, setQ } = useSearchQuery();
   const { tickets } = useBoard();
   const navigate = useNavigate();
-  // "/" focuses search from anywhere, but never while typing in a field.
+  // "/" focuses search from anywhere, but never while typing in a field or with a dialog open.
   useDocumentKey((e) => {
-    if (e.key !== "/" || !isShortcut(e)) return;
+    if (e.key !== "/" || !isShortcut(e) || dialogOpen()) return;
     e.preventDefault();
     inputRef.current?.focus();
   });

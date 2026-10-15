@@ -47,7 +47,7 @@
   background: var(--progress);
 }
 
-/* compact: a label (12/500 --ink-3) with the count at the far end */
+/* compact: a label (12/500 --ink-3) with the count at the far end or right after it */
 .lab {
   display: flex;
   align-items: center;
@@ -61,6 +61,13 @@
 }
 .labCount {
   margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+/* inline: "· k of n done" right after the label, cut with an ellipsis when narrow */
+.labInline {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 

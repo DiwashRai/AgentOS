@@ -35,10 +35,12 @@
   max-width: 100%;
 }
 
-/* What's happening now (`now.text`, the status line): 12.5 --ink-2 beside a quiet mark, one line
-   unless it wraps. */
+/* What's happening now (`now.text`, the status line): 12.5 --ink-2 beside a quiet mark. The run
+   band's line is cut with text.ellipsis; `.wrap` and `.instr` lines wrap. */
 .text {
   flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   margin-left: var(--sp-3);
   font-size: var(--fs-control);
   color: var(--ink-2);

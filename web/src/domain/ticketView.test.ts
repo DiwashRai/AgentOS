@@ -7,6 +7,7 @@ import {
   outcomeLine,
   rowLook,
   runLine,
+  sourceLabel,
   sourceWord,
   stageCount,
   statusLine,
@@ -331,6 +332,12 @@ it("puts the external id beside the source name only when it isn't the key", () 
   const jira = { source: "jira" as const, external_id: "SCRUM-6", url: "" };
   expect(sourceWord(ticket({ key: "SCRUM-6", source: jira }))).toBe("Jira");
   expect(sourceWord(ticket({ key: "AOS-3", source: jira }))).toBe("Jira SCRUM-6");
+});
+
+it("labels an imported ticket by its external id and our own by its key", () => {
+  const jira = { source: "jira" as const, external_id: "PLAT-1", url: "" };
+  expect(sourceLabel(ticket({ key: "AOS-5", source: jira }))).toBe("Jira PLAT-1");
+  expect(sourceLabel(ticket({ key: "AOS-5", source: null }))).toBe("AOS-5");
 });
 
 it("keeps the reason under the dispatch block", () => {

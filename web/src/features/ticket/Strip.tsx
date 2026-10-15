@@ -18,7 +18,7 @@ import {
   statusLine,
   statusMark,
 } from "../../domain/ticketView";
-import { attentionWords, onlineWords } from "../../domain/words";
+import { attentionWords, onlineWords, statusWords, words as phrases } from "../../domain/words";
 import {
   Checklist,
   EmptyState,
@@ -39,7 +39,7 @@ import s from "./Strip.module.css";
 type Detail = Schemas["TicketDetail"];
 
 /** The status band's line for a ticket nobody has dispatched yet. */
-const INBOX_LINE = "Nobody on it yet · add context, then dispatch";
+const INBOX_LINE = `${phrases.inboxNote} · add context, then dispatch`;
 
 /** One band: the quiet surface, or the you tint; the line first, then what sits under it. */
 function Band({
@@ -143,7 +143,7 @@ function GateBand({ t, parked, tasksPath }: { t: Detail; parked: GateView; tasks
               <StatusMark kind="wait" name={parked.person} ask={parked.label} />
             )}
             {step ? (
-              <span className={cx(text.ellipsis, s.text, s.instr)} title={step}>
+              <span className={cx(s.text, s.instr)} title={step}>
                 {step}
               </span>
             ) : null}
@@ -182,7 +182,7 @@ function OutcomeBand({ t, outcome }: { t: Detail; outcome: OutcomeLine }) {
       line={
         <>
           <StatusMark kind={OUTCOME_KIND[outcome.outcome]} name={outcome.word} />
-          <span className={cx(text.ellipsis, s.text, s.wrap)}>
+          <span className={cx(s.text, s.wrap)}>
             {r ? resolvedBy(r, now) : statusLine(t).reason}
             {r?.note ? (
               <>
@@ -208,17 +208,17 @@ function StatusBand({ t }: { t: Detail }) {
 
   const mark = statusMark(t);
   const kind = mark.kind;
+  // Waiting on nobody in particular reads as the status word, not "Someone".
+  const name = kind === "wait" && !mark.person ? statusWords.wait : mark.name;
   const line = t.attention === "inbox" ? INBOX_LINE : statusLine(t).reason;
   return (
     <Band
       you={kind === "you"}
       line={
         <>
-          <StatusMark kind={kind} name={mark.name} ask={mark.ask} />
+          <StatusMark kind={kind} name={name} ask={mark.ask} />
           {line ? (
-            <span className={cx(text.ellipsis, s.text, s.wrap, kind === "you" && s.instr)}>
-              {line}
-            </span>
+            <span className={cx(s.text, s.wrap, kind === "you" && s.instr)}>{line}</span>
           ) : null}
           {/* "review the result and mark done": the thing to review */}
           {t.pr_url ? (

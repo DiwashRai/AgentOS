@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { useRunEvents } from "../../api/queries";
-import { cx, EmptyState, Link, StatusLine } from "../../ui";
+import { cx, EmptyState, StatusLine } from "../../ui";
 import { buildLines } from "./log";
 import { emptyLogText, type LogDelivery } from "./runFormat";
 import s from "./RunsTab.module.css";
@@ -71,9 +71,9 @@ export function RunLog({ runId, active, queued, stageName, delivery, liveHref }:
         {waiting && liveHref ? (
           <>
             {" "}
-            <Link href={liveHref} target="_blank" rel="noreferrer">
+            <a className={s.textLink} href={liveHref} target="_blank" rel="noreferrer">
               Watch it live on GitHub ↗
-            </Link>
+            </a>
           </>
         ) : null}
       </EmptyState>

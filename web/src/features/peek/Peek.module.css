@@ -99,6 +99,11 @@
 .note {
   color: var(--ink-2);
 }
+/* the server's dispatch block ("Set a base branch first"): needs action, as on the rows */
+.flag {
+  color: var(--you-text);
+  font-weight: 500;
+}
 
 /* Talk fills the rest (min 240px) */
 .talk {

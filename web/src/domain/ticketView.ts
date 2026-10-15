@@ -172,6 +172,13 @@ export function sourceWord(t: Pick<Ticket, "key" | "source">): string | null {
   return t.source.external_id === t.key ? name : `${name} ${t.source.external_id}`;
 }
 
+/** The ticket named by where it lives: the source name with its external id for an imported
+ *  ticket ("Jira PLAT-1"), our key for our own. */
+export function sourceLabel(t: Pick<Ticket, "key" | "source">): string {
+  if (!t.source) return t.key;
+  return `${sourceNames[t.source.source]} ${t.source.external_id}`;
+}
+
 // ------------------------------------------------------------------ row look
 
 /** The 3px status edge (refresh HANDOFF §4): you blue, running vermilion, blocked and abandoned

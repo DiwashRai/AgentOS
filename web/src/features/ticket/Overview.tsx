@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket } from "../../api/queries";
-import { paragraphs, planView } from "../../domain/plan";
+import { firstParagraph, paragraphs, planView } from "../../domain/plan";
 import { words } from "../../domain/words";
 import { fieldStyles as f } from "../../editor";
 import {
@@ -30,9 +30,9 @@ function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   const patch = usePatchTicket(t.key);
   const edit = useInlineEdit<string, Schemas["TicketPatch"]>(patch);
   const draft = edit.draft;
-  // The header's lead is the first paragraph; the body continues from the second.
+  // The header shows the lead; the body is every other paragraph.
   const paras = paragraphs(t.description);
-  const rest = paras.slice(1);
+  const rest = firstParagraph(t.description).rest;
 
   if (draft !== null) {
     return (

@@ -169,20 +169,7 @@
 }
 
 /* ---------- the rack ---------- */
-/* static group head: sentence case (refresh: no caps), aligned with the rack lines that bleed 6px */
-.gh {
-  height: 32px;
-  font-size: var(--fs-control);
-  font-weight: 600;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-.ghRule {
-  flex: 1;
-  height: 1px;
-  background: var(--rule);
-  min-width: 16px;
-}
+/* the group heads are the kit's static GroupHead; the lines bleed 6px so their text meets its edge */
 .rl {
   display: grid;
   grid-template-columns: 12px 84px minmax(0, 1fr) 36px 30px 20px;

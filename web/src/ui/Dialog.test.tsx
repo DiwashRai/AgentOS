@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// The Dialog's keys and focus: Tab wraps inside the panel, Escape closes the top dialog only and
-// stops there, an inner control that stops Escape keeps it open, and focus goes back to the opener.
+// The Dialog's keys and focus: Tab wraps inside the panel, Escape closes the top dialog only (the
+// one painted on top) and stops there, an inner control that stops Escape keeps it open, focus goes
+// back to the opener or the dialog below, and closing waits out `exitMs`.
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -98,6 +99,34 @@ describe("Dialog focus trap", () => {
     expect(document.activeElement).toBe(button("Form last"));
   });
 
+  it("Tab from an inner element that is not a stop goes to the next stop, wrapping", () => {
+    render(
+      <Dialog label="Notes" onClose={vi.fn()}>
+        <button type="button">Notes first</button>
+        <div role="note" aria-label="Middle" tabIndex={-1} />
+        <button type="button">Notes last</button>
+        <div role="note" aria-label="End" tabIndex={-1} />
+      </Dialog>,
+    );
+    const note = (name: string) => {
+      const found = document.querySelector<HTMLElement>(`[role="note"][aria-label="${name}"]`);
+      if (!found) throw new Error(`no note ${name}`);
+      return found;
+    };
+
+    note("Middle").focus();
+    press(note("Middle"), "Tab");
+    expect(document.activeElement).toBe(button("Notes last"));
+
+    note("Middle").focus();
+    press(note("Middle"), "Tab", true);
+    expect(document.activeElement).toBe(button("Notes first"));
+
+    note("End").focus();
+    press(note("End"), "Tab");
+    expect(document.activeElement).toBe(button("Notes first"));
+  });
+
   it("Tab with focus outside the panel lands inside it", () => {
     render(<Form onClose={vi.fn()} />);
 
@@ -178,5 +207,132 @@ describe("Dialog focus return", () => {
 
     render(null);
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("goes to the dialog below when the opener is gone", () => {
+    render(<Form name="Below" onClose={vi.fn()} />);
+    const opener = document.createElement("button");
+    opener.textContent = "Open";
+    document.body.append(opener);
+    opener.focus();
+
+    render(
+      <>
+        <Form name="Below" onClose={vi.fn()} />
+        <Form name="Top" onClose={vi.fn()} />
+      </>,
+    );
+    opener.remove();
+    render(<Form name="Below" onClose={vi.fn()} />);
+
+    expect(document.activeElement).toBe(dialog("Below"));
+  });
+
+  it("starts on the [data-autofocus] element", () => {
+    render(
+      <Dialog label="Search" onClose={vi.fn()}>
+        <button type="button">Search first</button>
+        <input aria-label="Query" data-autofocus />
+      </Dialog>,
+    );
+    expect(document.activeElement).toBe(dialog("Search").querySelector("input"));
+  });
+});
+
+describe("Dialog stacking", () => {
+  it("the dialog painted on top acts, even when it opened first", () => {
+    const style = document.createElement("style");
+    style.textContent = ".raised { z-index: 50 } .lowered { z-index: 40 }";
+    document.head.append(style);
+    const raised = vi.fn();
+    const lowered = vi.fn();
+
+    const both = (
+      <>
+        <Dialog label="Raised" layerClassName="raised" onClose={raised}>
+          <button type="button">Raised first</button>
+        </Dialog>
+        <Dialog label="Lowered" layerClassName="lowered" onClose={lowered}>
+          <button type="button">Lowered first</button>
+        </Dialog>
+      </>
+    );
+    render(both);
+    expect(dialog("Raised").contains(document.activeElement)).toBe(true);
+    blur();
+    press(document.body, "Escape");
+    style.remove();
+
+    expect(raised).toHaveBeenCalledOnce();
+    expect(lowered).not.toHaveBeenCalled();
+  });
+});
+
+describe("Dialog closing", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function reducedMotion(matches: boolean) {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches, media: query }));
+  }
+
+  function Animated({ onClose }: { onClose: () => void }) {
+    return (
+      <Dialog label="Animated" exitMs={260} onClose={onClose}>
+        {(close) => (
+          <button type="button" onClick={close}>
+            Done
+          </button>
+        )}
+      </Dialog>
+    );
+  }
+
+  it("stays rendered for exitMs, then calls onClose", () => {
+    vi.useFakeTimers();
+    reducedMotion(false);
+    const onClose = vi.fn();
+    render(<Animated onClose={onClose} />);
+
+    act(() => {
+      button("Done").click();
+    });
+    act(() => {
+      vi.advanceTimersByTime(259);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialog("Animated").isConnected).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes at once under reduced motion", () => {
+    reducedMotion(true);
+    const onClose = vi.fn();
+    render(<Animated onClose={onClose} />);
+
+    act(() => {
+      button("Done").click();
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("a scrim click closes it", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog label="Peek" scrimLabel="Close peek" onClose={onClose}>
+        <button type="button">Peek first</button>
+      </Dialog>,
+    );
+
+    act(() => {
+      button("Close peek").click();
+    });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

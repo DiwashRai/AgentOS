@@ -9,8 +9,9 @@ import { runLine } from "../../domain/ticketView";
 import { onlineWords } from "../../domain/words";
 import {
   Avatar,
-  CountPill,
+  Badge,
   cx,
+  GroupHead,
   Inline,
   KeyChip,
   RunMeter,
@@ -132,12 +133,12 @@ export function Rack({
         <Stack key={i} gap={5}>
           {col.map((g) => (
             <section key={g.id} aria-label={g.name}>
-              <Inline gap={4} className={s.gh}>
-                <span className={text.ellipsis}>{g.name}</span>
-                {g.online ? <span className={text.label}>{onlineWords[g.online]}</span> : null}
-                <CountPill count={g.items.length} />
-                <span className={s.ghRule} aria-hidden="true" />
-              </Inline>
+              <GroupHead
+                name={g.name}
+                size="sm"
+                note={g.online ? <Badge tone="note">{onlineWords[g.online]}</Badge> : null}
+                count={g.items.length}
+              />
               {g.items.map((t) => (
                 <RackLine key={t.key} ticket={t} onOpen={onOpen} />
               ))}

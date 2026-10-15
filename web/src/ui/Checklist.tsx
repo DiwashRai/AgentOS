@@ -3,7 +3,8 @@
 // capped list. Two densities:
 //   roomy    the Ticket page: a section heading with "k of n done" and the bar; 38px items under
 //            soft rules that wrap; with 2+ TASKS.md sections, each gets a small head with its count
-//   compact  the Peek and Compact: a 12px label with "k of n done" at its end; 19px one-line items
+//   compact  the Peek and Compact: a 12px label with "k of n done" at its end (the Peek) or right
+//            after it, "Plan · k of n done" (Compact); 19px one-line items
 // Without a plan it draws the head and then `empty`.
 import type { ReactNode } from "react";
 import type { PlanItemView, PlanView } from "../domain/plan";
@@ -22,13 +23,15 @@ export interface ChecklistProps {
   title?: ReactNode;
   /** The head's element: h2 (default), h3 or h4. */
   level?: 2 | 3 | 4 | undefined;
-  /** The head's id; the list (or each unheaded list) is labelled by it. */
+  /** The head's id; the list (or each unheaded list) is labelled by it. Without one, a list under a
+   *  string title is named by the title. */
   id?: string | undefined;
   /** The list's accessible name when there is no head. */
   label?: string | undefined;
   /** bar: "k of n done" and the bar (roomy default). count: "k of n done" at the head's end
-   *  (compact default). none: the title alone. */
-  progress?: "bar" | "count" | "none" | undefined;
+   *  (compact default). inline: "· k of n done" right after the title (compact). none: the title
+   *  alone. */
+  progress?: "bar" | "count" | "inline" | "none" | undefined;
   /** Draw the section heads when the plan has 2+ sections (default: roomy only). */
   sections?: boolean | undefined;
   /** Drawn under the head when there is no plan (an EmptyState note). */
@@ -67,7 +70,10 @@ export function Checklist({
 }: ChecklistProps) {
   const H = `h${String(level)}` as "h2" | "h3" | "h4";
   const roomy = density === "roomy";
-  const listName = title !== undefined ? { "aria-labelledby": id } : { "aria-label": label };
+  let listName: { "aria-labelledby"?: string; "aria-label"?: string | undefined };
+  if (title !== undefined && id) listName = { "aria-labelledby": id };
+  else if (typeof title === "string") listName = { "aria-label": title };
+  else listName = { "aria-label": label };
 
   const head =
     title !== undefined ? (
@@ -79,7 +85,9 @@ export function Checklist({
           </span>
         ) : null}
         {plan && progress !== "none" && !roomy ? (
-          <span className={s.labCount}>{`${String(plan.done)} of ${String(plan.total)} done`}</span>
+          <span className={progress === "inline" ? s.labInline : s.labCount}>
+            {`${progress === "inline" ? "· " : ""}${String(plan.done)} of ${String(plan.total)} done`}
+          </span>
         ) : null}
         {plan && progress === "bar" ? (
           <span className={s.bar} aria-hidden="true">

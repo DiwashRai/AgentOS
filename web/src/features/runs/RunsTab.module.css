@@ -262,6 +262,24 @@
 
 /* ---------------------------------------------------------------- log */
 
+/* a link inside a sentence (the empty log's "Watch it live on GitHub"): 500, and it wraps with the
+   sentence in a narrow pane */
+.textLink {
+  color: var(--ink-1);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
+}
+.textLink:hover {
+  text-decoration-color: var(--ink-1);
+}
+.textLink:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
 .log {
   height: min(62vh, 640px);
   overflow: auto;

@@ -1,4 +1,4 @@
-/* Collapsible group head for dense lists (refresh mock §4.2 `.group-head`, HANDOFF §5): 34px,
+/* Group head (collapsible, or static in the rack) for dense lists (refresh mock §4.2 `.group-head`, HANDOFF §5): 34px,
    chevron 10 · icon box 14 · name 13.5/600 · count pill · hairline · right slot. Sentence case. */
 .gh {
   box-sizing: border-box;
@@ -17,6 +17,25 @@
   color: var(--ink-1);
   white-space: nowrap;
   cursor: pointer;
+}
+/* sm: the rack's head, 32px with a 12.5px name in --ink-2 */
+.sm {
+  height: 32px;
+  font-size: var(--fs-control);
+}
+.sm .name {
+  color: var(--ink-2);
+}
+/* static: no chevron and no button; flush with the content's edge, the name ellipsized */
+.static {
+  min-width: 0;
+  padding: 0;
+  cursor: default;
+}
+.static .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .gh:focus-visible {
   outline: 2px solid var(--focus);

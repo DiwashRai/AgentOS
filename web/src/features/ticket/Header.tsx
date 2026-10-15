@@ -8,7 +8,7 @@ import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket, usePeople } from "../../api/queries";
 import { isDispatch, ticketActions, type Action } from "../../domain/actions";
 import { ago, repoShort } from "../../domain/format";
-import { firstParagraph, paragraphs } from "../../domain/plan";
+import { firstParagraph } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { sourceWord, stageCount } from "../../domain/ticketView";
 import {
@@ -174,9 +174,9 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
         <ActionGroup t={t} readOnly={readOnly} target={target} />
       </Inline>
       <h1 className={s.h1}>{t.title}</h1>
-      {lead ? (
-        <p className={s.lead} title={paragraphs(t.description)[0]}>
-          {lead}
+      {lead.text ? (
+        <p className={s.lead} title={lead.raw}>
+          {lead.text}
         </p>
       ) : null}
       <dl className={s.byline}>

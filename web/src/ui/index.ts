@@ -40,7 +40,7 @@ export {
   type DataTitleProps,
   type KeyHint,
 } from "./DataList";
-export { Dialog, DialogTitle, type DialogProps, type DialogTitleProps } from "./Dialog";
+export { Dialog, dialogOpen, DialogTitle, type DialogProps, type DialogTitleProps } from "./Dialog";
 export { Disclosure, Fold, type DisclosureProps, type FoldProps } from "./Disclosure";
 export { EmptyRow, type EmptyRowProps } from "./EmptyRow";
 export { EmptyState, type EmptyForm, type EmptyStateProps } from "./EmptyState";

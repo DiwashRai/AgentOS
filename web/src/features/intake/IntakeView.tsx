@@ -4,7 +4,7 @@
 // Jira, the button takes it in, so the row itself is not a click target: it lights up on hover or
 // focus (never moves) and Take in fills blue. Every list and number comes from model.ts; this view
 // only lays them out.
-import { useEffect, useId, useMemo, useState } from "react";
+import { type Ref, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
@@ -54,6 +54,7 @@ import {
   type IntakeQuery,
   jqlHref,
   nameId,
+  ROW_CAP,
   searchItems,
   sharedPrefix,
   toTakeIn,
@@ -127,11 +128,14 @@ function Assignee({ person }: { person: IntakeItem["assignee"] }) {
 
 function IntakeRow({
   item,
+  keyRef,
   now,
   taken,
   onTaken,
 }: {
   item: IntakeItem;
+  /** The row's Jira key link (its first tab stop). */
+  keyRef?: Ref<HTMLAnchorElement> | undefined;
   now: number;
   taken: Taken | undefined;
   onTaken: (key: string, result: Schemas["ImportResult"]) => void;
@@ -145,6 +149,7 @@ function IntakeRow({
       className={s.row}
     >
       <a
+        ref={keyRef}
         className={s.key}
         href={item.url}
         target="_blank"
@@ -244,7 +249,16 @@ function IntakeGroup({
   onTaken: (key: string, result: Schemas["ImportResult"]) => void;
 }) {
   const bodyId = useId();
-  const rowsId = useId();
+
+  // "Show all" leaves with the rows it reveals, so focus moves to the first revealed row's key
+  // (the row at ROW_CAP) when it mounts.
+  const revealing = useRef(false);
+  const focusRevealed = useCallback((el: HTMLAnchorElement | null) => {
+    if (!el || !revealing.current) return;
+    revealing.current = false;
+    el.focus();
+  }, []);
+
   const items = searchItems(q.items, query);
   const { shown, rest } = visibleRows(items, expanded);
   const href = jqlHref(jiraUrl, q.jql);
@@ -275,11 +289,12 @@ function IntakeGroup({
   } else
     body = (
       <>
-        <DataRows id={rowsId}>
-          {shown.map((item) => (
+        <DataRows>
+          {shown.map((item, i) => (
             <IntakeRow
               key={item.key}
               item={item}
+              keyRef={i === ROW_CAP ? focusRevealed : undefined}
               now={now}
               taken={taken.get(item.key)}
               onTaken={onTaken}
@@ -289,10 +304,11 @@ function IntakeGroup({
         {rest > 0 && (
           <DataOverflow
             more={rest}
-            toggle={`Show all ${String(items.length)}`}
-            expanded={expanded}
-            onToggle={onExpand}
-            controls={rowsId}
+            label={`Show all ${String(items.length)}`}
+            onShow={() => {
+              revealing.current = true;
+              onExpand();
+            }}
             note={cap}
             noteClassName={s.cap}
             className={s.more}

@@ -132,8 +132,22 @@ export function paragraphs(text: string): string[] {
     .filter(Boolean);
 }
 
-/** The description's lead: its first paragraph as plain text ("" when there is none). The body
- *  continues from `paragraphs(text)[1]`. */
-export function firstParagraph(text: string): string {
-  return plainText(paragraphs(text)[0] ?? "");
+export interface Lead {
+  /** The first paragraph with any plain text, as plain text ("" when there is none). */
+  text: string;
+  /** That paragraph as written (for a title). */
+  raw: string;
+  /** Every other paragraph, in order: the body under the lead. */
+  rest: string[];
+}
+
+/** The description's lead: its first paragraph that says something once markdown is stripped,
+ *  so a paragraph holding only an image is skipped. */
+export function firstParagraph(text: string): Lead {
+  const paras = paragraphs(text);
+  const at = paras.findIndex((p) => plainText(p) !== "");
+  if (at < 0) return { text: "", raw: "", rest: paras };
+
+  const raw = paras[at] ?? "";
+  return { text: plainText(raw), raw, rest: paras.filter((_, i) => i !== at) };
 }

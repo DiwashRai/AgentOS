@@ -140,7 +140,19 @@ describe("description text", () => {
   it("splits paragraphs on blank lines and takes the first as the plain lead", () => {
     const text = "First *line*\nstill first.\r\n\r\n  Second.  \n\n\n";
     expect(paragraphs(text)).toEqual(["First *line*\nstill first.", "Second."]);
-    expect(firstParagraph(text)).toBe("First line still first.");
-    expect(firstParagraph("   ")).toBe("");
+    expect(firstParagraph(text)).toEqual({
+      text: "First line still first.",
+      raw: "First *line*\nstill first.",
+      rest: ["Second."],
+    });
+    expect(firstParagraph("   ").text).toBe("");
+  });
+  it("skips a paragraph with no plain text for the lead and keeps it in the body", () => {
+    const text = "![](shot.png)\n\nThe lead.\n\nMore.";
+    expect(firstParagraph(text)).toEqual({
+      text: "The lead.",
+      raw: "The lead.",
+      rest: ["![](shot.png)", "More."],
+    });
   });
 });

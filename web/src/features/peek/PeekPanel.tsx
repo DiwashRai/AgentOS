@@ -9,9 +9,9 @@ import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
 import { firstName, repoShort } from "../../domain/format";
 import { outcomeWord, resolvedBy } from "../../domain/outcome";
-import { firstParagraph, paragraphs, planView } from "../../domain/plan";
+import { firstParagraph, planView } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
-import { runLine, sourceWord, stageCount, statusLine, statusMark } from "../../domain/ticketView";
+import { runLine, sourceLabel, stageCount, statusLine, statusMark } from "../../domain/ticketView";
 import { words } from "../../domain/words";
 import {
   Button,
@@ -81,8 +81,12 @@ function Run({ ticket: t }: { ticket: Summary }) {
 
 function Status({ ticket: t }: { ticket: Summary }) {
   const mark = statusMark(t);
-  // A closed ticket's note (Complete / Abandoned) says more than the status line.
-  const note = t.resolution?.note ?? statusLine(t).text;
+  const line = statusLine(t);
+
+  // A closed ticket's note (Complete / Abandoned) says more than the status line; otherwise the
+  // dispatch block, flagged, sits above the reason.
+  const note = t.resolution?.note ?? line.reason;
+  const block = line.flag && !t.resolution?.note ? line.text : null;
   return (
     <Stack as="section" gap={4} className={s.sec} aria-label="Status">
       <h3 className={cx(text.label, s.lab)}>Status</h3>
@@ -90,6 +94,7 @@ function Status({ ticket: t }: { ticket: Summary }) {
         <span>
           <StatusMark kind={mark.kind} name={mark.name} ask={mark.ask} />
         </span>
+        {block && <p className={cx(text.meta, s.flat, s.flag)}>{block}</p>}
         {note && <p className={cx(text.meta, s.flat, s.note)}>{note}</p>}
       </Stack>
     </Stack>
@@ -138,8 +143,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
     );
   }
 
-  const desc = detail ? firstParagraph(detail.description) : "";
-  const source = sourceWord(t);
+  const desc = detail ? firstParagraph(detail.description) : null;
   const repo = repoShort(t.repo_name);
   const running = t.attention === "running" || t.attention === "queued";
   const runner = t.attention === "running" ? t.latest_run?.launch_ref : null;
@@ -150,7 +154,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
     <>
       <header className={s.head}>
         <Inline gap={4} className={s.bar}>
-          <span className={s.mono}>{source ? `${source} · ${t.key}` : t.key}</span>
+          <span className={s.mono}>{sourceLabel(t)}</span>
           {repo && <span className={s.mono}>{`· ${repo}`}</span>}
           <Spacer />
           <StageGlyph model={stageModel(t)} />
@@ -165,9 +169,9 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
           <CloseButton onClose={onClose} />
         </Inline>
         <DialogTitle className={s.title}>{t.title}</DialogTitle>
-        {desc && (
-          <p className={s.desc} title={paragraphs(detail?.description ?? "")[0]}>
-            {desc}
+        {desc?.text && (
+          <p className={s.desc} title={desc.raw}>
+            {desc.text}
           </p>
         )}
         <Inline wrap gap={8} rowGap={3} className={cx(text.meta, s.facts)}>

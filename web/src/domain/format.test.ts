@@ -98,6 +98,7 @@ describe("runSeconds", () => {
     expect(runSeconds(started, Date.parse("2026-10-11T11:58:00Z"))).toBe(0);
   });
 });
+
 describe("repoShort", () => {
   it.each([
     ["constellation/web", "web"],

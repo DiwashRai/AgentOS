@@ -23,6 +23,7 @@ import {
   DataHead,
   DataRows,
   type DataColumn,
+  dialogOpen,
   EmptyState,
   GroupHead,
   Inline,
@@ -127,8 +128,8 @@ function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
   useDocumentKey(
     (e) => {
       if ((e.key !== "j" && e.key !== "k") || !isShortcut(e)) return;
-      // Never from inside a dialog (New ticket, a confirm).
-      if (document.activeElement?.closest("dialog, [role='dialog']")) return;
+      // Never while a dialog is open (New ticket, the peek) or from inside one (a confirm).
+      if (dialogOpen() || document.activeElement?.closest("dialog, [role='dialog']")) return;
 
       const lines = [
         ...(list.current?.querySelectorAll<HTMLButtonElement>("[data-row-line]") ?? []),

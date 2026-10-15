@@ -90,8 +90,7 @@
 /* pass / fail: a check's verdict pill; green = done, crimson = blocked (RunsTab `.verdict`) */
 .verdict {
   flex: none;
-  /* half of --sp-1: a 1px vertical pad keeps the pill one text line tall */
-  padding: calc(var(--sp-1) / 2) var(--sp-3);
+  padding: 1px var(--sp-3);
   border-radius: var(--r-pill);
   font-size: var(--fs-mono);
   font-weight: 600;
@@ -112,6 +111,14 @@
 }
 .bad {
   color: var(--blocked);
+}
+
+/* note: a quiet word beside a head, e.g. a client group's "Offline" (Queue `.ghNote`) */
+.note {
+  flex: none;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-3);
 }
 
 /* stat: a head's statistic led by a mark, e.g. "✓ 2 shipped this week" (mock `.head-stat`);

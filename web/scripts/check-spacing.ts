@@ -77,6 +77,11 @@ export const ALLOWED: readonly Allowed[] = [
     declaration: "padding: 1px var(--sp-2)",
     reason: "a 1px vertical pad keeps the tag one text line tall",
   },
+  {
+    file: "src/ui/Badge.module.css",
+    declaration: "padding: 1px var(--sp-3)",
+    reason: "a 1px vertical pad keeps the verdict pill one text line tall",
+  },
 ];
 
 const SPACING_PROPERTY =

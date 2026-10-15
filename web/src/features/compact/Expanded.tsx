@@ -128,6 +128,7 @@ function Plan({
         density="compact"
         title={run ? undefined : "Plan"}
         level={3}
+        progress="inline"
         label="Plan"
         empty={empty}
       />
