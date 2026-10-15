@@ -24,7 +24,7 @@ Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (
 | `backend/server/tests/` | Server tests |
 | `backend/worker/worker.py`, `worker_tests/` | The worker (stdlib only, Python 3.11) and its tests |
 | `backend/deploy/` | Container env example, the GitHub Actions worker workflow template, deploy README |
-| `web/src/` | `app/`, `features/`, `domain/`, `ui/`, `styles/`, `api/` (generated `openapi.json` + `schema.ts`, plus hand-written client code) |
+| `web/src/` | `app/`, `features/`, `domain/`, `ui/`, `editor/` (the editor kit), `styles/`, `api/` (generated `openapi.json` + `schema.ts`, plus hand-written client code) |
 | `.github/workflows/agentos-worker.yml` | Installed copy of `backend/deploy/github/agentos-worker.yml`; a test keeps them byte-identical |
 | `Containerfile`, `.dockerignore` | Server image (API + built SPA) |
 | `justfile`, `.githooks/` | Task runner and the pre-commit hook |
@@ -50,7 +50,7 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 
 ## Gates
 - `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
-- `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `vitest run`.
+- `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `check:spacing` (no raw px/em/rem spacing in CSS modules; `web/scripts/check-spacing.ts`), `vitest run`.
 - The pre-commit hook runs the fast gates (format + lint) for each half that has staged files. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web gates. Run the full scoped gate yourself before committing.
 - No CI runs the test suites: the hook runs format and lint only, so the scoped gate (or an AgentOS run's check stage) is the only place tests run before review.
 - **Never weaken a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
