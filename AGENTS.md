@@ -9,12 +9,18 @@ Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (
 - **Deterministic gates.** Behaviour is pinned by tests and static checks, not by review alone.
 - **Code wins.** Once code exists, it is the truth; planning docs only record decisions.
 - **Vertical slices.** Each step ends in something visible plus an automated check.
-- **Environment-specific behind config or a plugin.** This repo gets cloned into a workplace and diverges (Copilot CLI instead of Claude, Jira as the main ticket source, GitHub Actions runners). Launchers (`agentos.launchers`) and ticket sources (`agentos.sources`) are plugins; runtimes are argv templates in Settings.
+- **Environment-specific behind config or a plugin.** This repo gets cloned into a workplace and diverges (Copilot CLI instead of Claude, Jira as the main ticket source, GitHub Actions runners). Launchers (`agentos.launchers`) and stores (`agentos.stores`) are plugins; Jira is one HTTP adapter (`agentos.sources.jira`) that login, import and intake call directly; runtimes are argv templates in Settings.
+
+## Code rules
+- Docstrings and comments describe what the code does now, never which ticket or request added it.
+- Tests cover behaviour, requirements or tricky algorithms only, at the highest seam that shows it.
+- An error test checks the error code plus at most one crucial word, never a sentence.
+- Language specifics: `backend/AGENTS.md` (blank lines between steps, try/except at boundaries) and `web/AGENTS.md` (UI tests find elements by role and name).
 
 ## Layout
 | Path | What |
 |---|---|
-| `backend/server/agentos/` | Server: one subpackage per feature (`tickets`, `runs`, `files`, ...), pure core (`models.py`, `validate.py`, `pipeline/`), plugins (`launchers/`, `sources/`), SQL migrations (`migrations/000N_*.sql`) |
+| `backend/server/agentos/` | Server: one subpackage per feature (`tickets`, `runs`, `files`, ...), pure core (`models.py`, `validate.py`, `pipeline/`), plugins (`launchers/`, `stores/`), the Jira adapter (`sources/jira.py`), SQL migrations (`migrations/000N_*.sql`) |
 | `backend/server/tests/` | Server tests |
 | `backend/worker/worker.py`, `worker_tests/` | The worker (stdlib only, Python 3.11) and its tests |
 | `backend/deploy/` | Container env example, the GitHub Actions worker workflow template, deploy README |
@@ -58,7 +64,7 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 - Frontend work never edits the contract. It asks for the change (in `CONTRACT_REQUESTS.md` if present, otherwise to the user or backend owner) and carries on with a workaround.
 
 ## Config and settings
-`.env` holds only what the server needs to start: URLs, host/port, secrets, the launcher choice, auth mode (every key is `AGENTOS_*`). Everything an admin edits (Space, repos, intake queries, agent runtimes, runner target) lives in the database and is edited in the app's Settings. `agentos.toml` is optional and only seeds settings on a first start. Details, including how to add an env key, are in `backend/AGENTS.md`.
+`.env` holds only what the server needs to start: URLs, host/port, secrets, the launcher choice, auth mode (every key is `AGENTOS_*`). Everything an admin edits (Space, repos, intake queries, agent runtimes, runner target) lives in the database and is edited in the app's Settings. A fresh database starts with built-in defaults for every area. Details, including how to add an env key, are in `backend/AGENTS.md`.
 
 ## Working as an orchestrator with subagents
 A long session acts as an **orchestrator**: it breaks its work into tasks, delegates each to a **subagent** with a self-contained brief, reviews the result (reads the diff, runs the gates), integrates and commits. It writes code itself only for small glue or fixes. Why: the orchestrator keeps its context for goals, decisions and integration instead of file dumps; subagents start with no memory, so the brief is all they know; review and parallel work come for free.
@@ -96,4 +102,4 @@ A long session acts as an **orchestrator**: it breaks its work into tasks, deleg
 - `uvicorn --reload` on Windows restarts by sending Ctrl+C to its console. Processes the server spawns (workers) must use `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, or a backend edit kills in-flight runs.
 - The local launcher strips every `AGENTOS_*` variable from the worker's environment; pass agent credentials through `AGENTOS_WORKER_ENV_FILE`.
 - `claude` runs headless with the prompt on stdin plus `-p --output-format stream-json --verbose`. The built-in runtime argv is in `backend/server/agentos/pipeline/runtime.py`.
-- Never name a test fixture `agentos.toml`, `.env` or `*.db`: `.gitignore` drops them.
+- Never name a test fixture `.env` or `*.db`: `.gitignore` drops them.
