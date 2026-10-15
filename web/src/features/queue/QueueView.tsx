@@ -15,7 +15,16 @@ import { counts, doneThisWeek, shippedThisWeek } from "../../domain/counts";
 import { groups } from "../../domain/groups";
 import { bySearch } from "../../domain/search";
 import { statusWords, words } from "../../domain/words";
-import { Button, EmptyRow, linkClass, StatusLine, StatusMark, TickBadge, ZoneHead } from "../../ui";
+import {
+  Badge,
+  Button,
+  DataRows,
+  EmptyState,
+  linkClass,
+  StatusLine,
+  StatusMark,
+  ZoneHead,
+} from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { withParam } from "../peek/params";
 import { useNow } from "../../ui/useNow";
@@ -27,17 +36,21 @@ import { Rack, RunTiles } from "./Runs";
 export function NewTicketPrompt() {
   const [, setParams] = useSearchParams();
   return (
-    <div className={s.nothing}>
-      <p className={s.empty}>Nothing here yet. Create a ticket.</p>
-      <Button
-        size="sm"
-        onClick={() => {
-          setParams((p) => withParam(p, "new", "1"));
-        }}
-      >
-        {words.newTicket}
-      </Button>
-    </div>
+    <EmptyState
+      form="line"
+      action={
+        <Button
+          size="sm"
+          onClick={() => {
+            setParams((p) => withParam(p, "new", "1"));
+          }}
+        >
+          {words.newTicket}
+        </Button>
+      }
+    >
+      Nothing here yet. Create a ticket.
+    </EmptyState>
   );
 }
 
@@ -54,20 +67,24 @@ export function NoMatches({
   const { q, setQ } = useSearchQuery();
   const quoted = `“${q.trim()}”`;
   return (
-    <div className={s.nothing}>
-      <p className={s.empty}>
-        {where ? `Nothing ${where} matches ${quoted}` : `No tickets match ${quoted}`}
-      </p>
-      <Button
-        size="sm"
-        onClick={() => {
-          setQ("");
-        }}
-      >
-        Clear search
-      </Button>
-      {children}
-    </div>
+    <EmptyState
+      form="line"
+      action={
+        <>
+          <Button
+            size="sm"
+            onClick={() => {
+              setQ("");
+            }}
+          >
+            Clear search
+          </Button>
+          {children}
+        </>
+      }
+    >
+      {where ? `Nothing ${where} matches ${quoted}` : `No tickets match ${quoted}`}
+    </EmptyState>
   );
 }
 
@@ -107,9 +124,9 @@ export function QueueView() {
     body = (
       <>
         {g.needYou.length === 0 ? (
-          <EmptyRow lead="All clear" className={s.emptyZone}>
+          <EmptyState lead="All clear" className={s.emptyZone}>
             nothing needs you
-          </EmptyRow>
+          </EmptyState>
         ) : (
           <section aria-labelledby="q-need">
             <ZoneHead
@@ -119,7 +136,7 @@ export function QueueView() {
               note="Longest wait first"
               tone="you"
             />
-            <div className={s.list}>
+            <DataRows as="div" gap={3} className={s.list}>
               {g.needYou.map((t) =>
                 t.attention === "needs_you" ? (
                   <NeedRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
@@ -127,7 +144,7 @@ export function QueueView() {
                   <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
                 ),
               )}
-            </div>
+            </DataRows>
           </section>
         )}
 
@@ -144,9 +161,9 @@ export function QueueView() {
             <Rack groups={rack} onOpen={peek.open} />
           </section>
         ) : (
-          <EmptyRow lead="All quiet" className={s.emptyZone}>
+          <EmptyState lead="All quiet" className={s.emptyZone}>
             nothing running, nothing queued
-          </EmptyRow>
+          </EmptyState>
         )}
 
         {g.readyMine.length > 0 && (
@@ -157,11 +174,11 @@ export function QueueView() {
               count={g.readyMine.length}
               note="Oldest first"
             />
-            <div className={s.list}>
+            <DataRows as="div" gap={3} className={s.list}>
               {g.readyMine.map((t) => (
                 <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
               ))}
-            </div>
+            </DataRows>
           </section>
         )}
 
@@ -176,13 +193,10 @@ export function QueueView() {
               right={
                 <>
                   {shipped > 0 && (
-                    <span className={s.stat}>
-                      <TickBadge size={12} />
-                      <span>
-                        <b>{`${String(shipped)} shipped`}</b>
-                        <span className={s.statWeek}> this week</span>
-                      </span>
-                    </span>
+                    <Badge tone="stat">
+                      <b>{`${String(shipped)} shipped`}</b>
+                      <span className={s.statWeek}> this week</span>
+                    </Badge>
                   )}
                   <RouterLink className={linkClass} to={compactHref({ f: "done", q })}>
                     All done tickets
@@ -190,11 +204,11 @@ export function QueueView() {
                 </>
               }
             />
-            <div className={s.list}>
+            <DataRows as="div" gap={3} className={s.list}>
               {doneRecent.slice(0, CAP.done).map((t) => (
                 <QuietRow key={t.key} ticket={t} me={me} now={now} onOpen={peek.open} />
               ))}
-            </div>
+            </DataRows>
           </section>
         )}
       </>

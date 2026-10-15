@@ -20,11 +20,14 @@ import {
   Avatar,
   AvatarSlot,
   cx,
+  DataRow,
+  DataTitle,
+  Inline,
   KeyChip,
-  PriorityIcon,
+  Stack,
   StageGlyph,
   StatusMark,
-  TypeIcon,
+  text,
 } from "../../ui";
 import { peekItemProps } from "../peek/usePeek";
 import { subLine } from "./model";
@@ -53,16 +56,8 @@ function RowAge({ ticket: t, now }: { ticket: Ticket; now: number }) {
   );
 }
 
-const EDGE = {
-  you: s.edgeYou,
-  live: s.edgeLive,
-  blocked: s.edgeBlocked,
-  done: s.edgeDone,
-  quiet: s.edgeNeutral,
-} as const;
-
-/** The row shell: surface, status edge, wash, lift, and the left half every row shares (stage
- *  glyph, key chip, type/priority icons, title, optional sub-line). */
+/** The row shell: the kit row (surface, status edge, wash, lift) on the queue's grid, and the left
+ *  half every row shares (stage glyph, key chip, type/priority icons, title, optional sub-line). */
 function RowShell({
   ticket: t,
   sub,
@@ -76,36 +71,38 @@ function RowShell({
 }) {
   const look = rowLook(t);
   return (
-    <article
-      className={cx(
-        s.row,
-        look.flat ? s.flat : s.raised,
-        t.attention === "needs_you" && s.isYou,
-        EDGE[look.edge],
-      )}
+    <DataRow
+      as="article"
+      className={s.row}
+      surface={look.flat ? "flat" : "raised"}
+      you={t.attention === "needs_you"}
+      edge={look.edge}
+      hover="lift"
       {...peekItemProps(`${t.key} ${t.title}`, () => {
         onOpen(t.key);
       })}
     >
       <StageGlyph model={stageModel(t)} className={s.stage} />
-      <span className={s.key}>
+      <Inline as="span" className={s.key}>
         <KeyChip>{t.key}</KeyChip>
-      </span>
+      </Inline>
       <div className={s.ti}>
-        <div className={s.title}>
-          <TypeIcon type={t.type} />
-          <PriorityIcon priority={t.priority} />
-          <span title={t.title}>{t.title}</span>
-        </div>
+        <DataTitle
+          as="div"
+          text={t.title}
+          type={t.type}
+          priority={t.priority}
+          size={look.flat ? "md" : "lg"}
+        />
         {sub ? (
-          <div className={s.sub} title={sub}>
+          <div className={cx(s.sub, text.meta, text.ellipsis)} title={sub}>
             {sub}
           </div>
         ) : null}
       </div>
       <span className={cx(s.divider, look.flat && s.blank)} aria-hidden="true" />
       {children}
-    </article>
+    </DataRow>
   );
 }
 
@@ -115,21 +112,30 @@ function SecondLine({ ticket: t }: { ticket: Ticket }) {
   const line = statusLine(t);
   if (!line.text) return null;
   return (
-    <div className={cx(s.ask2, line.flag && s.flag)} title={line.text}>
+    <div className={cx(s.ask2, text.ellipsis, line.flag && s.flag)} title={line.text}>
       {line.text}
     </div>
+  );
+}
+
+/** The status cell: the mark (and a face) on line one, its text on line two. */
+function AskCell({ ticket: t, children }: { ticket: Ticket; children: ReactNode }) {
+  return (
+    <Stack className={s.ask}>
+      <Inline gap={3} className={s.ask1}>
+        {children}
+      </Inline>
+      <SecondLine ticket={t} />
+    </Stack>
   );
 }
 
 export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
   return (
     <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
-      <div className={s.ask}>
-        <div className={s.ask1}>
-          <StatusMark kind="you" ask={statusMark(t).ask} />
-        </div>
-        <SecondLine ticket={t} />
-      </div>
+      <AskCell ticket={t}>
+        <StatusMark kind="you" ask={statusMark(t).ask} />
+      </AskCell>
       <RowAge ticket={t} now={now} />
       <RowActions ticket={t} />
     </RowShell>
@@ -142,22 +148,16 @@ function StateCell({ ticket: t }: { ticket: Ticket }) {
   if (mark.kind === "wait") {
     const who = mark.person;
     return (
-      <div className={s.ask}>
-        <div className={s.ask1}>
-          {who ? <Avatar name={who.display_name} id={who.id} /> : null}
-          <StatusMark kind="wait" name={mark.name} ask={mark.ask} />
-        </div>
-        <SecondLine ticket={t} />
-      </div>
+      <AskCell ticket={t}>
+        {who ? <Avatar name={who.display_name} id={who.id} /> : null}
+        <StatusMark kind="wait" name={mark.name} ask={mark.ask} />
+      </AskCell>
     );
   }
   return (
-    <div className={s.ask}>
-      <div className={s.ask1}>
-        <StatusMark kind={mark.kind} name={mark.name} />
-      </div>
-      <SecondLine ticket={t} />
-    </div>
+    <AskCell ticket={t}>
+      <StatusMark kind={mark.kind} name={mark.name} />
+    </AskCell>
   );
 }
 
@@ -168,12 +168,14 @@ function DoneCells({ ticket: t, now }: { ticket: Ticket; now: number }) {
   const where = [src, t.repo_name].filter(Boolean).join(" · ");
   return (
     <>
-      <span className={s.who}>
+      <Inline as="span" gap={5} className={cx(s.who, text.meta)}>
         {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}
-        <span title={where}>{where}</span>
-      </span>
+        <span className={text.ellipsis} title={where}>
+          {where}
+        </span>
+      </Inline>
       <RowAge ticket={t} now={now} />
-      <span className={s.outcome} title={out?.note ?? undefined}>
+      <span className={cx(s.outcome, text.ellipsis)} title={out?.note ?? undefined}>
         {out ? (
           <>
             <span className={cx(out.abandoned && s.abandoned)}>{out.word}</span>

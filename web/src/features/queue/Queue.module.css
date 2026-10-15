@@ -1,6 +1,6 @@
-/* My queue (DESIGN §5 IA, visual refresh HANDOFF §4–§6). Row values from the refresh mock's
-   `.row`, `.queue-row*`, `.zone*`, `.empty-row`, `.age`, `.outcome`, `.head-stat`; tiles and the
-   rack keep the pack's structure in the refresh's type rules. */
+/* My queue (DESIGN §5 IA, visual refresh HANDOFF §4–§6). The row surfaces, edge, title, empty
+   lines and badges are the kit's (DataRow, DataTitle, EmptyState, Badge); this module keeps the
+   row and tile grids, the tile's surface and lift, and the rack's columns and lines. */
 
 /* ---------- layout ---------- */
 .surface {
@@ -10,9 +10,6 @@
   padding: var(--sp-7) var(--sp-9) var(--sp-9);
 }
 .list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
   margin-top: var(--sp-4);
 }
 /* an empty row after a zone sits 12px under it (mock `.queue .empty-row`) */
@@ -32,73 +29,8 @@
   align-items: start;
   margin-top: var(--sp-3);
 }
-.rack > div {
-  min-width: 0;
-}
-.rackGroup + .rackGroup {
-  margin-top: var(--sp-5);
-}
 
-/* ---------- shared bits ---------- */
-.age {
-  font-size: var(--fs-control);
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  text-align: right;
-}
-
-.of {
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  text-align: right;
-}
-.empty {
-  margin: var(--sp-2) 0 0;
-  padding: 0 var(--sp-1);
-  font-size: var(--fs-control);
-  color: var(--ink-2);
-}
-.nothing {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-7);
-  padding: var(--sp-7) var(--sp-1);
-}
-.nothing > .empty {
-  margin: 0;
-}
-/* "N shipped this week" in the Done recently head (mock `.head-stat`; the zone head greens the b) */
-.stat {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-
-/* hover = lift only, transform only: no shadow, no surface or border change (refresh §3.1).
-   Keyboard focus lifts too, plus the ink ring; focus inside (a row button) lifts the row. */
-.lift,
-.row {
-  cursor: pointer;
-  transition: transform var(--t-fast) var(--ease-out);
-}
-.lift:is(:hover, :focus-visible, :has(:focus-visible)),
-.row:is(:hover, :focus-visible, :has(:focus-visible)) {
-  transform: translateY(var(--lift));
-}
-.lift:focus,
-.row:focus {
-  outline: none;
-}
-.lift:focus-visible,
-.row:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-/* ---------- the row (every zone) ---------- */
+/* ---------- the row (every zone; DataRow draws the surface, edge, wash and lift) ---------- */
 .row {
   display: grid;
   /* the mock's 196px actions column, widened to 208 so Geist's "Request changes" + "Approve" fit
@@ -108,95 +40,18 @@
   column-gap: var(--sp-7);
   min-height: var(--h-item);
   padding: var(--sp-4) var(--sp-6) var(--sp-4) var(--sp-7);
-  border-radius: var(--r-row);
-  position: relative;
 }
-.raised {
-  background: var(--row-raised);
-  box-shadow:
-    0 0 0 1px var(--row-raised-edge),
-    var(--row-raised-shadow);
-}
-.flat {
+.row[data-surface="flat"] {
   min-height: var(--h-quiet);
   padding-top: var(--sp-3);
   padding-bottom: var(--sp-3);
-  background: var(--row-flat);
-  box-shadow: inset 0 0 0 1px var(--row-flat-edge);
 }
-/* the you-wash: Needs-you rows only, over the raised surface */
-.isYou {
-  background: linear-gradient(90deg, var(--you-wash), transparent 45%), var(--row-raised);
-}
-/* the 3px status edge */
-.row::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  border-radius: var(--r-row) 0 0 var(--r-row);
-  background: var(--edge, transparent);
-}
-.edgeYou {
-  --edge: var(--waiting);
-}
-.edgeLive {
-  --edge: var(--live);
-}
-.edgeBlocked {
-  --edge: var(--blocked);
-}
-.edgeDone {
-  --edge: var(--progress);
-}
-.edgeNeutral {
-  --edge: var(--rule-strong);
-}
-
-.stage {
-  min-width: 0;
-}
-.key {
-  display: flex;
-  min-width: 0;
-}
+.stage,
 .ti {
   min-width: 0;
 }
-.title {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
-  font-size: var(--fs-row-title);
-  font-weight: 500;
-  color: var(--ink-1);
-  white-space: nowrap;
-}
-.title > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.raised .title {
-  font-size: var(--fs-row-title-lg);
-  letter-spacing: -0.005em;
-}
-.isYou .title {
-  font-weight: 600;
-}
-.flat .title {
-  color: var(--ink-2);
-}
 .sub {
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
   margin-top: var(--sp-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .divider {
   width: 1px;
@@ -206,14 +61,7 @@
 .blank {
   visibility: hidden;
 }
-.ask {
-  min-width: 0;
-}
 .ask1 {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
   font-size: var(--fs-ui);
   white-space: nowrap;
   overflow: hidden;
@@ -225,56 +73,26 @@
   margin-top: var(--sp-1);
   font-size: var(--fs-control);
   color: var(--ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 /* the server's dispatch block ("Set a base branch first"): the owner's move, so the you hue */
 .ask2.flag {
   color: var(--you-text);
   font-weight: 500;
 }
-
-.who {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  min-width: 0;
-  font-size: var(--fs-meta);
+.age {
+  font-size: var(--fs-control);
   color: var(--ink-3);
-  white-space: nowrap;
-}
-.who > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-align: right;
 }
 .outcome {
-  min-width: 0;
   padding-right: var(--sp-2);
   font-size: var(--fs-control);
   color: var(--ink-2);
   text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .abandoned {
   color: var(--blocked);
   font-weight: 600;
-}
-.acts {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--sp-1);
-  min-width: 0;
-}
-.btns {
-  display: flex;
-  gap: var(--sp-4);
-  align-items: center;
-  justify-content: flex-end;
 }
 /* the Complete / Abandon confirm: its own line under the row, right-aligned under the buttons */
 .confirm {
@@ -284,36 +102,14 @@
 }
 .err {
   max-width: 100%;
-  font-size: var(--fs-meta);
-  color: var(--blocked);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-
-/* overflow strip under the capped list (kit .ao-overflow, chips cut) */
-.overflow {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  height: 32px;
-  margin-top: var(--sp-2);
-  padding: 0 var(--sp-2) 0 var(--sp-7);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-}
-.overflow > b {
-  flex: none;
-  white-space: nowrap;
-  color: var(--ink-1);
-  font-weight: 600;
+.num {
   font-variant-numeric: tabular-nums;
-}
-.overflow > :last-child {
-  margin-left: auto;
+  white-space: nowrap;
+  text-align: right;
 }
 
-/* ---------- run tile (your runs) ---------- */
+/* ---------- run tile (your runs): raised, lifts by --lift (transform only) ---------- */
 .tile {
   background: var(--row-raised);
   box-shadow:
@@ -321,17 +117,20 @@
     var(--row-raised-shadow);
   border-radius: 10px;
   padding: var(--sp-5) var(--sp-6) var(--sp-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  min-width: 0;
-  position: relative;
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--ease-out);
 }
-.tileHd {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
+.tile:is(:hover, :focus-visible, :has(:focus-visible)) {
+  transform: translateY(var(--lift));
+}
+.tile:focus,
+.rl:focus {
+  outline: none;
+}
+.tile:focus-visible,
+.rl:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .tileHd > span:first-child {
   flex: 1 1 auto;
@@ -342,9 +141,6 @@
   flex: none;
   margin-left: auto;
   padding-left: var(--sp-3);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
 }
 .tileTtl {
   font-size: var(--fs-row-title);
@@ -359,57 +155,27 @@
   min-height: 2.6em;
 }
 .tileMeta {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  min-width: 0;
   min-height: 20px;
 }
 .tileMeta > :last-child {
   margin-left: auto;
 }
 .tileNow {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-4);
   font-size: var(--fs-control);
   color: var(--ink-2);
-  min-width: 0;
 }
-.tileNow > span:first-child {
+.grow {
   flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ---------- the rack ---------- */
 /* static group head: sentence case (refresh: no caps), aligned with the rack lines that bleed 6px */
 .gh {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
   height: 32px;
   font-size: var(--fs-control);
   font-weight: 600;
   color: var(--ink-2);
   white-space: nowrap;
-  min-width: 0;
-}
-.gh > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-/* a client group's state ("Offline"), quiet beside the head */
-.ghNote {
-  flex: none;
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-3);
 }
 .ghRule {
   flex: 1;
@@ -432,29 +198,12 @@
 .rl:is(:hover, :focus-visible) {
   transform: translateY(-2px);
 }
-.rl:focus {
-  outline: none;
-}
-.rl:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.rlKey {
-  display: flex;
-  min-width: 0;
-}
 .rlT {
   font-size: var(--fs-control);
   color: var(--ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .isQueued .rlT {
   color: var(--ink-3);
-}
-.rlMark {
-  display: inline-flex;
 }
 
 /* ---------- narrower windows: the ask drops under the title, then everything stacks ---------- */
@@ -516,13 +265,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lift,
-  .row,
+  .tile,
   .rl {
     transition: none;
   }
-  .lift:is(:hover, :focus-visible, :has(:focus-visible)),
-  .row:is(:hover, :focus-visible, :has(:focus-visible)),
+  .tile:is(:hover, :focus-visible, :has(:focus-visible)),
   .rl:is(:hover, :focus-visible) {
     transform: none;
   }

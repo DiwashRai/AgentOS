@@ -3,7 +3,7 @@
 // Abandon open their confirm as a full-width line under the row (it spans the row's grid).
 import type { Schemas } from "../../api/client";
 import { type Action, ticketActions } from "../../domain/actions";
-import { Button, type ButtonVariant } from "../../ui";
+import { Button, type ButtonVariant, cx, Inline, Stack, text } from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import s from "./Queue.module.css";
@@ -30,8 +30,8 @@ export function RowActions({ ticket, primaryOnly = false }: RowActionsProps) {
   const message = action.error ? `Failed · ${action.error.message}` : null;
   return (
     <>
-      <div className={s.acts}>
-        <div className={s.btns}>
+      <Stack gap={1} align="end" className={s.acts}>
+        <Inline gap={4} justify="end">
           {buttons.map((a) => (
             <Button
               key={a.id}
@@ -47,13 +47,13 @@ export function RowActions({ ticket, primaryOnly = false }: RowActionsProps) {
               {a.label}
             </Button>
           ))}
-        </div>
+        </Inline>
         {message && (
-          <span className={s.err} role="alert" title={message}>
+          <span className={cx(s.err, text.error, text.ellipsis)} role="alert" title={message}>
             {message}
           </span>
         )}
-      </div>
+      </Stack>
       <ActionConfirm confirm={action.confirm} className={s.confirm} />
     </>
   );
