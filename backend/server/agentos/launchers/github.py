@@ -86,6 +86,16 @@ class ActionsRun:
     conclusion: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ActionsJob:
+    """A job of a workflow run: `name` is the job's `name:` (its key when unset); `status` is
+    queued | in_progress | completed | waiting | requested | pending. A job's `started_at` is set
+    even while it is queued, so only `in_progress`/`completed` say it has started."""
+
+    name: str
+    status: str
+
+
 class GitHubActionsLauncher:
     name = "github"
     max_concurrency: int | None = None  # GitHub queues jobs; the runner pool is the limit
@@ -162,6 +172,35 @@ class GitHubActionsLauncher:
         if not isinstance(status, str) or not (conclusion is None or isinstance(conclusion, str)):
             raise LaunchError("GitHub answered 200 without a workflow run")
         return ActionsRun(status=status, conclusion=conclusion)
+
+    def run_jobs(self, launch_ref: str) -> list[ActionsJob] | None:
+        """The jobs of the Actions run `launch_ref` names (None if it names none; the latest
+        attempt, up to 100). Raises LaunchError like `run_status`."""
+        url = self._run_url(launch_ref)
+        if url is None:
+            return None
+        resp = self._send("GET", f"{url}/jobs?per_page=100", None, (self._token,))
+        if resp.status_code != 200:
+            raise LaunchError(
+                _safe(
+                    f"GitHub answered {resp.status_code}: {_github_message(resp)}", (self._token,)
+                )
+            )
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        if not isinstance(jobs, list):
+            raise LaunchError("GitHub answered 200 without the run's jobs")
+        found: list[ActionsJob] = []
+        for job in jobs:
+            name = job.get("name") if isinstance(job, dict) else None
+            status = job.get("status") if isinstance(job, dict) else None
+            if not isinstance(name, str) or not isinstance(status, str):
+                raise LaunchError("GitHub answered 200 with a job without a name or status")
+            found.append(ActionsJob(name=name, status=status))
+        return found
 
     def cancel_run(self, launch_ref: str) -> None:
         """Ask GitHub to cancel the run `launch_ref` names (no-op if it names none). 202 and 409

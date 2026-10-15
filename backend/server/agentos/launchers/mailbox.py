@@ -17,12 +17,14 @@ import re
 from pathlib import Path
 from typing import Protocol
 
-from agentos.launchers.github import ActionsRun, GitHubActionsLauncher, LaunchError
+from agentos.launchers.github import ActionsJob, ActionsRun, GitHubActionsLauncher, LaunchError
 from agentos.stores.base import Store, StoreError, StoreTooLarge
 
 # A folder name in the store: "<run id>-<16 hex>". The workflow checks the same pattern.
 RUN_FOLDER_PATTERN = r"^[0-9]+-[0-9a-f]{16}$"
 MAX_OUTBOX_BYTES = 512 * 1024 * 1024
+# The job of agentos-mailbox.yml that runs the worker (its key; it has no `name:`).
+WORK_JOB = "work"
 
 _FOLDER = re.compile(RUN_FOLDER_PATTERN)
 log = logging.getLogger(__name__)
@@ -53,6 +55,11 @@ class Mailbox(Protocol):
     def status(self, launch_ref: str) -> ActionsRun | None:
         """The Actions run's status. None when `launch_ref` isn't a run of the current target repo
         (e.g. a runs page). Raises MailboxError when GitHub can't be asked."""
+        ...
+
+    def jobs(self, launch_ref: str) -> list[ActionsJob] | None:
+        """The Actions run's jobs (names and statuses). None when `launch_ref` isn't a run of the
+        current target repo. Raises MailboxError when GitHub can't be asked."""
         ...
 
     def cancel(self, launch_ref: str) -> None:
@@ -120,6 +127,12 @@ class MailboxLauncher:
     def status(self, launch_ref: str) -> ActionsRun | None:
         try:
             return self.github.run_status(launch_ref)
+        except LaunchError as exc:
+            raise MailboxError(str(exc)) from None
+
+    def jobs(self, launch_ref: str) -> list[ActionsJob] | None:
+        try:
+            return self.github.run_jobs(launch_ref)
         except LaunchError as exc:
             raise MailboxError(str(exc)) from None
 

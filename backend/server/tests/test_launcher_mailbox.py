@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agentos.launchers.github import ActionsRun, GitHubActionsLauncher, GitHubTarget
+from agentos.launchers.github import ActionsJob, ActionsRun, GitHubActionsLauncher, GitHubTarget
 from agentos.launchers.mailbox import (
     MAX_OUTBOX_BYTES,
     MailboxError,
@@ -210,6 +210,47 @@ def test_status_and_cancel_delegate_to_github(tmp_path: Path) -> None:
     assert len(seen) == 2
 
 
+def _job(name: str, status: str) -> dict[str, object]:
+    # GitHub sets started_at even on a queued job; it's not part of the answer.
+    return {
+        "name": name,
+        "status": status,
+        "started_at": "2026-10-15T10:00:00Z",
+        "conclusion": None,
+    }
+
+
+def test_jobs_reads_the_runs_jobs(tmp_path: Path) -> None:
+    jobs = [_job("fetch", "completed"), _job("work", "queued"), _job("publish", "pending")]
+    mailbox, _, seen = _mailbox(
+        tmp_path, lambda _r: httpx.Response(200, json={"total_count": 3, "jobs": jobs})
+    )
+    assert mailbox.jobs(RUN_HTML) == [
+        ActionsJob("fetch", "completed"),
+        ActionsJob("work", "queued"),
+        ActionsJob("publish", "pending"),
+    ]
+    [req] = seen
+    assert (req.method, req.url.path) == ("GET", "/repos/o/r/actions/runs/77/jobs")
+
+    assert mailbox.jobs(RUNS_PAGE) is None
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(404, json={"message": "Not Found"}),
+        httpx.Response(200, json={"x": 1}),
+        httpx.Response(200, json={"jobs": [{"status": "queued"}]}),
+    ],
+)
+def test_jobs_errors_are_mailbox_errors(tmp_path: Path, response: httpx.Response) -> None:
+    mailbox, _, _ = _mailbox(tmp_path, lambda _r: response)
+    with pytest.raises(MailboxError):
+        mailbox.jobs(RUN_HTML)
+
+
 def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"refused {GH_TOKEN}", request=request)
@@ -217,6 +258,7 @@ def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
     mailbox, _, _ = _mailbox(tmp_path, handler)
     calls: list[Callable[[], object]] = [
         lambda: mailbox.status(RUN_HTML),
+        lambda: mailbox.jobs(RUN_HTML),
         lambda: mailbox.cancel(RUN_HTML),
     ]
     for call in calls:

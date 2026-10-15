@@ -7,7 +7,9 @@ next run is checked):
 2. Ask GitHub for the Actions run's status (unknown: no run URL, or a MailboxError).
 3. The outbox is in the store → replay it (an unexpected error fails the run).
 4. GitHub says `completed` and there is no outbox → cancelled (if requested) or failed.
-5. GitHub says not started for longer than the claim timeout → cancel + failed.
+5. GitHub says not started for longer than the claim timeout, the work job hasn't started and no
+   job is running (the jobs are asked for only then, and no more once the work job started; the
+   run reports queued/waiting again while publish waits) → cancel + failed.
 6. Past `started_at + time_budget_s + BUDGET_GRACE + claim_timeout_s` → cancel + failed.
 7. The status is unknown and a cancel was requested over CANCEL_GRACE ago → cancelled.
 8. No launch_ref LAUNCH_GRACE after the claim (the server died mid-launch) → failed.
@@ -31,6 +33,7 @@ from agentos.context import AppContext
 from agentos.launchers.github import ActionsRun
 from agentos.launchers.mailbox import (
     RUN_FOLDER_PATTERN,
+    WORK_JOB,
     Mailbox,
     MailboxError,
     MailboxTooLarge,
@@ -46,6 +49,7 @@ CANCEL_GRACE = timedelta(minutes=15)  # only while GitHub can't tell us the run'
 LAUNCH_GRACE = timedelta(minutes=15)  # well above a bounded send() (D4)
 SWEEP_EVERY = timedelta(hours=1)
 NOT_STARTED = frozenset({"queued", "waiting", "pending", "requested"})
+JOB_STARTED = frozenset({"in_progress", "completed"})
 NOT_PICKED_UP = "no runner picked up the GitHub job"
 LAUNCH_INTERRUPTED = "launch interrupted"
 TOO_LARGE = "the run's results are over 512 MiB"
@@ -60,6 +64,7 @@ class MailboxReaper:
         self.ctx = ctx
         self.mailbox = mailbox
         self.cancelled: set[int] = set()  # runs whose Actions run this process asked to cancel
+        self.work_started: set[int] = set()  # runs whose work job this process saw started
         self.last_sweep: datetime | None = None
 
     def tick(self, now: datetime) -> dict[int, Outcome]:
@@ -75,6 +80,7 @@ class MailboxReaper:
             if outcome is not None:
                 outcomes[run.id] = outcome
                 self.cancelled.discard(run.id)
+                self.work_started.discard(run.id)
         if self.last_sweep is None or now - self.last_sweep >= SWEEP_EVERY:
             self.last_sweep = now
             self.sweep()
@@ -121,11 +127,14 @@ class MailboxReaper:
                     f"GitHub job ended ({status.conclusion or 'no conclusion'}) without sending "
                     "results; see the GitHub run",
                 )
-            # 5. never picked up
+            # 5. never picked up (the run reports queued/waiting again while publish waits, so the
+            # jobs decide). `ref` is set whenever `status` is; the check narrows it for mypy.
             if (
                 status.status in NOT_STARTED
                 and run.started_at is not None
                 and now - run.started_at > claim_timeout
+                and ref is not None
+                and self._work_never_picked_up(run.id, ref)
             ):
                 self._cancel(run.id, ref)
                 return self._end(run.id, folder, "failed", NOT_PICKED_UP)
@@ -174,6 +183,25 @@ class MailboxReaper:
         ended = service.end(self.ctx.db, self.ctx.broker, run_id, status, error)
         self._delete(run_id, folder)
         return "ended" if ended else "gone"
+
+    def _work_never_picked_up(self, run_id: int, ref: str) -> bool:
+        """True only when GitHub says the work job hasn't started and no job is running (fetch
+        held at its environment, or no runner for work). Unknown (an error, or a ref that names
+        no run) is False: the time budget rule ends the run instead. A started work job is
+        remembered, so the jobs aren't asked for again while publish waits."""
+        if run_id in self.work_started:
+            return False
+        try:
+            jobs = self.mailbox.jobs(ref)
+        except MailboxError as exc:
+            log.warning("mailbox reaper: run %s: cannot list the GitHub jobs: %s", run_id, exc)
+            return False
+        if jobs is None:
+            return False
+        if any(job.name == WORK_JOB and job.status in JOB_STARTED for job in jobs):
+            self.work_started.add(run_id)
+            return False
+        return not any(job.status == "in_progress" for job in jobs)
 
     def _cancel(self, run_id: int, ref: str | None) -> None:
         """Ask GitHub to cancel the run, once per run per process (best effort)."""

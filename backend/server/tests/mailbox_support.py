@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from agentos.launchers.github import ActionsRun
+from agentos.launchers.github import ActionsJob, ActionsRun
 from agentos.launchers.mailbox import MailboxError, MailboxTooLarge
 from tests.run_support import event, finished, log_event
 
@@ -16,11 +16,14 @@ OUTBOX = "outbox.jsonl"
 
 class FakeMailbox:
     """Implements `launchers.mailbox.Mailbox` in memory. `statuses` maps a launch_ref to what
-    `status()` answers (an exception is raised); `fail_*` make a call raise."""
+    `status()` answers (an exception is raised); `jobs` likewise for `jobs()` (no jobs when
+    unset); `fail_*` make a call raise."""
 
     def __init__(self) -> None:
         self.folders: dict[str, dict[str, bytes]] = {}
         self.statuses: dict[str, ActionsRun | Exception | None] = {}
+        self.job_lists: dict[str, list[ActionsJob] | Exception | None] = {}
+        self.job_checks: list[str] = []
         self.sent: list[tuple[int, str, bytes]] = []
         self.cancelled: list[str] = []
         self.deleted: list[str] = []
@@ -43,6 +46,13 @@ class FakeMailbox:
 
     def status(self, launch_ref: str) -> ActionsRun | None:
         answer = self.statuses.get(launch_ref)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def jobs(self, launch_ref: str) -> list[ActionsJob] | None:
+        self.job_checks.append(launch_ref)
+        answer = self.job_lists.get(launch_ref, [])
         if isinstance(answer, Exception):
             raise answer
         return answer
@@ -78,6 +88,14 @@ class FakeMailbox:
 
     def set_status(self, run_id: int, status: str, conclusion: str | None = None) -> None:
         self.statuses[self.ref_of(run_id)] = ActionsRun(status, conclusion)
+
+    def set_jobs(self, run_id: int, answer: dict[str, str] | Exception) -> None:
+        """What `jobs()` answers for the run: {job name: status}, or an exception to raise."""
+        ref = self.ref_of(run_id)
+        if isinstance(answer, Exception):
+            self.job_lists[ref] = answer
+        else:
+            self.job_lists[ref] = [ActionsJob(name, status) for name, status in answer.items()]
 
     def put_outbox(self, run_id: int, data: bytes) -> None:
         self.folders.setdefault(self.folder_of(run_id), {})[OUTBOX] = data

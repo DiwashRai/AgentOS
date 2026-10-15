@@ -411,6 +411,7 @@ def test_queued_too_long(
     deadline = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s)
     assert reaper.tick(deadline - timedelta(seconds=1)) == {}
     assert mailbox.cancelled == []
+    assert mailbox.job_checks == []  # the jobs are asked for only past the claim timeout
     assert reaper.tick(deadline + timedelta(seconds=1)) == {run_id: "ended"}
     assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NOT_PICKED_UP)
     assert mailbox.cancelled == [mailbox.ref_of(run_id)]
@@ -423,6 +424,81 @@ def test_a_started_job_is_not_failed_by_the_queue_rule(
     mailbox.set_status(run_id, "in_progress")
     later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
     assert reaper.tick(later) == {}
+
+
+@pytest.mark.parametrize("status", ["waiting", "queued"])
+def test_a_waiting_publish_is_not_failed_by_the_queue_rule(
+    ticket: TicketDetail,
+    runs: RunDriver,
+    mailbox: FakeMailbox,
+    reaper: MailboxReaper,
+    status: str,
+) -> None:
+    # The work job finished; publish waits for its environment or a runner, so GitHub reports
+    # the whole run as waiting/queued again long after the launch.
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_status(run_id, status)
+    mailbox.set_jobs(run_id, {"fetch": "completed", "work": "completed", "publish": "waiting"})
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 3600)
+    assert reaper.tick(later) == {}
+    assert reaper.tick(later + timedelta(seconds=20)) == {}
+    assert runs.get(run_id).status == "running"
+    assert mailbox.cancelled == []
+    assert len(mailbox.job_checks) == 1  # a started work job is remembered
+    # publish then uploads the outbox: the results are replayed
+    mailbox.put_outbox(run_id, full_outbox(run_id, ticket).data())
+    assert reaper.tick(later + timedelta(minutes=1)) == {run_id: "replayed"}
+
+
+def test_a_running_job_is_not_failed_by_the_queue_rule(
+    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
+) -> None:
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_status(run_id, "queued")
+    mailbox.set_jobs(run_id, {"fetch": "in_progress", "work": "pending"})
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
+    assert reaper.tick(later) == {}
+    assert mailbox.cancelled == []
+
+
+@pytest.mark.parametrize(
+    "jobs",
+    [
+        {},
+        {"fetch": "waiting", "work": "pending", "publish": "pending"},  # held at its environment
+        {"fetch": "completed", "work": "queued", "publish": "pending"},  # no runner for work
+    ],
+)
+def test_a_work_job_never_picked_up_fails_the_run(
+    ticket: TicketDetail,
+    runs: RunDriver,
+    mailbox: FakeMailbox,
+    reaper: MailboxReaper,
+    jobs: dict[str, str],
+) -> None:
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_status(run_id, "queued")
+    mailbox.set_jobs(run_id, jobs)
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
+    assert reaper.tick(later) == {run_id: "ended"}
+    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NOT_PICKED_UP)
+    assert mailbox.cancelled == [mailbox.ref_of(run_id)]
+
+
+def test_a_jobs_error_does_not_fail_a_queued_run(
+    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
+) -> None:
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_status(run_id, "waiting")
+    mailbox.set_jobs(run_id, MailboxError("GitHub answered 502: Bad Gateway"))
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
+    assert reaper.tick(later) == {}
+    assert runs.get(run_id).status == "running"
+    assert mailbox.cancelled == []
+    # once GitHub answers that nothing started, the queue rule applies again
+    mailbox.set_jobs(run_id, {"fetch": "waiting"})
+    assert reaper.tick(later + timedelta(seconds=20)) == {run_id: "ended"}
+    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NOT_PICKED_UP)
 
 
 def test_over_budget(
