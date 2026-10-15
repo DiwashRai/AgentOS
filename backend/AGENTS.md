@@ -88,6 +88,7 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Mutating requests send `CSRF = {"X-AgentOS": "1"}`. Tests drive `dispatcher.tick` / `Reaper.tick` themselves; no loops run.
 - Helpers: `run_support.py` (`FakeLauncher`, `RunDriver`, `Worker`, `event`, `log_event`, `finished`, `bearer`), `settings_support.py` (`set_space`, `set_repos`, `set_queries`). HTTP to Jira/GitHub is faked with `httpx.MockTransport`.
 - `test_e2e.py` is marked `e2e` (real launcher, worker and git; deselect with `-m 'not e2e'`).
+- What bounds the parallel run (~30 s) is real git and subprocess work in the worker run tests and `test_e2e.py` (3–10 s each), not fixture setup: speed it up there, not by re-tuning fixtures.
 - Worker tests: helpers and fixtures in `worker_tests/worker_support.py` (re-exported by its `conftest.py`); autouse `fast` shrinks the timing constants and `no_pr_lookup` sets `AGENTOS_PR_LOOKUP=0`. The fake `server` polls for shutdown every 10 ms. `origin` is a per-test `copytree` of a bare repo the session fixture `origin_template` builds once (tests push to it and add hooks, so it is never shared).
 - PR lookup: `worker.pr_lookup_result` (pure) turns the captured `gh` output into a URL or a reason; `test_worker_pr_lookup.py` tests it as a table. Whole runs are kept only for what a table can't show: a found PR on a failed run, a missing `gh`, the opt-out and no-repo mode.
 - Test runtimes TOML is `fixtures/runtimes_test.toml`. Never name a test file `agentos.toml` (gitignored).

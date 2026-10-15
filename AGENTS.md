@@ -46,6 +46,7 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 - `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
 - `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `vitest run`.
 - The pre-commit hook runs the fast gates (format + lint) for each half that has staged files. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web gates. Run the full scoped gate yourself before committing.
+- No CI runs the test suites: the hook runs format and lint only, so the scoped gate (or an AgentOS run's check stage) is the only place tests run before review.
 - **Never weaken a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
 - New code goes where the architecture puts it. import-linter contracts in `backend/pyproject.toml` enforce the pure core, the feature layers, the plugin boundaries and acyclic subpackages; read them there, and see `backend/AGENTS.md`.
 - `worker.py` imports only the standard library (a test enforces it) and must run on Python 3.11; ruff targets py311 for the whole backend for that reason.
