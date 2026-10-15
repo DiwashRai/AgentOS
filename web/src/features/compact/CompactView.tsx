@@ -4,15 +4,7 @@
 // move the keyboard between rows. Every list and number comes from model.ts over useBoard(); this
 // view only lays them out.
 // Cut from the prototype: P/O keys, the runner pool gauge, FLIP glides, team bands (repos instead).
-import {
-  Fragment,
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, type ReactNode, type RefObject, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { isShortcut } from "../../app/keys";
@@ -23,7 +15,17 @@ import { useSearchQuery } from "../../app/useSearchQuery";
 import { repoShort } from "../../domain/format";
 import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
-import { Age, ArrowIcon, EmptyRow, GroupHead, Kbd, KeyChip, StatusLine, TickBadge } from "../../ui";
+import {
+  Age,
+  ArrowIcon,
+  EmptyRow,
+  GroupHead,
+  Kbd,
+  KeyChip,
+  StatusLine,
+  TickBadge,
+  useDocumentKey,
+} from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { NewTicketPrompt, NoMatches } from "../queue/QueueView";
 import { useNow } from "../../ui/useNow";
@@ -97,16 +99,17 @@ function Right({ right }: { right: GroupRight }): ReactNode {
 
 /** J / K move the keyboard to the next / previous row line in the list (never while typing). */
 function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
-  useEffect(() => {
-    if (!enabled) return;
-    const onKey = (e: KeyboardEvent) => {
+  useDocumentKey(
+    (e) => {
       if ((e.key !== "j" && e.key !== "k") || !isShortcut(e)) return;
       // Never from inside a dialog (New ticket, a confirm).
       if (document.activeElement?.closest("dialog, [role='dialog']")) return;
+
       const lines = [
         ...(list.current?.querySelectorAll<HTMLButtonElement>("[data-row-line]") ?? []),
       ].filter((el) => el.offsetParent !== null);
       if (lines.length === 0) return;
+
       const active = document.activeElement;
       const at = lines.findIndex((el) => el === active || el.parentElement?.contains(active));
       const next =
@@ -118,12 +121,9 @@ function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
       e.preventDefault();
       lines[next]?.focus();
       lines[next]?.scrollIntoView({ block: "nearest" });
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [list, enabled]);
+    },
+    { enabled },
+  );
 }
 
 export function CompactView() {
@@ -151,16 +151,12 @@ export function CompactView() {
 
   // Esc collapses the open row; while a peek is open, Esc is the peek's.
   const peekOpen = peek.key !== null;
-  useEffect(() => {
-    if (open === null || peekOpen) return;
-    const onKey = (e: KeyboardEvent) => {
+  useDocumentKey(
+    (e) => {
       if (e.key === "Escape") setOpen(null);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, peekOpen]);
+    },
+    { enabled: open !== null && !peekOpen },
+  );
   useRowKeys(listRef, !peekOpen);
 
   const toggleGroup = (id: Attention) => {

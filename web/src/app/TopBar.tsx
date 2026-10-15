@@ -13,7 +13,7 @@ import { COUNTERS, type CountKey } from "../domain/counts";
 import { jumpTarget } from "../domain/search";
 import type { StatusKind } from "../domain/status";
 import { words } from "../domain/words";
-import { Button, cx, Kbd, type MarkKind, StatusMark } from "../ui";
+import { Badge, Button, Kbd, type MarkKind, StatusMark, useDocumentKey } from "../ui";
 import { PlusIcon, SearchIcon } from "./icons";
 import { isShortcut } from "./keys";
 import s from "./TopBar.module.css";
@@ -46,8 +46,8 @@ export interface TopBarProps {
   action?: ReactNode;
 }
 
-/** Counters (refresh mock §3 `.counter`): the number carries the weight (15/600) and a zero recedes
- *  (13/500 `--ink-3`); a non-zero "need you" is the one tinted pill. */
+/** Counters: `Badge`'s counter tone, where a zero recedes and a non-zero "need you" is the one
+ *  tinted pill; this module only hides them as the bar narrows. */
 function Counters({ slots }: { slots: readonly CounterSlot[] }) {
   const { counts } = useBoard();
   return (
@@ -57,18 +57,17 @@ function Counters({ slots }: { slots: readonly CounterSlot[] }) {
         const { mark, label } = COUNTERS[slot];
         const n = counts[slot];
         return (
-          <span
+          <Badge
             key={slot}
-            className={cx(s.counter, n === 0 && s.isZero, n > 0 && mark === "you" && s.isYou)}
+            tone="counter"
+            count={n}
+            you={mark === "you"}
+            mark={mark && <StatusMark kind={MARK_OF[mark]} glyphOnly size={7} />}
             title={`${String(n)} ${label}`}
+            className={s.counter}
           >
-            {mark && (
-              <span className={s.mark} aria-hidden="true">
-                <StatusMark kind={MARK_OF[mark]} glyphOnly size={7} />
-              </span>
-            )}
-            <b>{n}</b> <span className={s.label}>{label}</span>
-          </span>
+            {label}
+          </Badge>
         );
       })}
     </div>
@@ -85,17 +84,12 @@ function Search({ placeholder }: { placeholder: string }) {
   const { tickets } = useBoard();
   const navigate = useNavigate();
   // "/" focuses search from anywhere, but never while typing in a field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || !isShortcut(e)) return;
-      e.preventDefault();
-      inputRef.current?.focus();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
+  useDocumentKey((e) => {
+    if (e.key !== "/" || !isShortcut(e)) return;
+    e.preventDefault();
+    inputRef.current?.focus();
+  });
+
   return (
     <label className={s.search} data-active={q !== "" || undefined}>
       <SearchIcon />

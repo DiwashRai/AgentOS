@@ -57,50 +57,6 @@
   white-space: nowrap;
 }
 
-.counter {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-  padding: var(--sp-1) 0;
-  font-size: var(--fs-control);
-  color: var(--ink-2);
-}
-
-.counter > b {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ink-1);
-  font-variant-numeric: tabular-nums;
-}
-
-.counter.isZero,
-.counter.isZero > b {
-  color: var(--ink-3);
-  font-weight: 500;
-}
-
-.counter.isZero > b {
-  font-size: 13px;
-}
-
-/* a non-zero "need you": the one tinted counter */
-.counter.isYou {
-  padding: var(--sp-1) var(--sp-5) var(--sp-1) var(--sp-4);
-  border-radius: var(--r-pill);
-  background: var(--you-tint);
-  color: var(--you-text);
-  font-weight: 600;
-}
-
-.counter.isYou > b {
-  color: var(--you-text);
-}
-
-.mark {
-  display: inline-flex;
-  align-self: center;
-}
-
 .counters > .sep {
   width: 1px;
   height: 14px;
@@ -176,7 +132,7 @@
 /* ---------- narrow: the bar keeps one line at any width >= 360px ---------- */
 /* 1. zeros recede entirely */
 @container topbar (max-width: 1059px) {
-  .counter.isZero,
+  .counter[data-zero],
   .counters > .sep {
     display: none;
   }
@@ -258,7 +214,7 @@
 
 /* 3. only the "need you" pill stays */
 @container topbar (max-width: 699px) {
-  .counter:not(.isYou) {
+  .counter:not([data-you]) {
     display: none;
   }
 }
@@ -268,10 +224,10 @@
   .row {
     gap: var(--sp-4);
   }
-  .counter.isYou {
+  .counters > .counter[data-you] {
     padding: var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-4);
   }
-  .counter > .label {
+  .counter > span:last-child {
     position: absolute;
     width: 1px;
     height: 1px;
