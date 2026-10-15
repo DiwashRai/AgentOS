@@ -1,6 +1,8 @@
-// Summarise Claude CLI `--output-format stream-json` stdout lines for the run log. The worker
+// Summarise agent CLI stdout lines for the run log: Claude `--output-format stream-json` and
+// Copilot `--output-format json` (JSONL, `{"type": "<area>.<event>", "data": {...}}`). The worker
 // forwards each stdout line verbatim; dumping these JSON blobs would bury the agent's work, so
-// each known line type becomes a few readable entries. Pure: no React, no server calls.
+// each known line type becomes a few readable entries. The worker's console echo (`Echo` in
+// worker.py) picks the same events. Pure: no React, no server calls.
 
 export type SummaryKind = "agent" | "tool" | "toolError" | "session" | "result" | "resultError";
 
@@ -26,6 +28,22 @@ const DETAIL_KEYS = [
   "prompt",
 ] as const;
 
+/** Copilot's keys add its report_intent tool's `intent`, ahead of a description (as the worker's
+ *  echo has them); Claude's stay as they were. */
+const COPILOT_DETAIL_KEYS = [
+  "file_path",
+  "path",
+  "notebook_path",
+  "command",
+  "pattern",
+  "url",
+  "query",
+  "skill",
+  "intent",
+  "description",
+  "prompt",
+] as const;
+
 type Obj = Record<string, unknown>;
 
 function isObj(v: unknown): v is Obj {
@@ -42,9 +60,9 @@ export function oneLine(text: string, max = DETAIL_MAX): string {
   return first.length > max ? `${first.slice(0, max - 1)}…` : first;
 }
 
-function toolDetail(input: unknown): string {
+function toolDetail(input: unknown, keys: readonly string[] = DETAIL_KEYS): string {
   if (!isObj(input)) return "";
-  for (const k of DETAIL_KEYS) {
+  for (const k of keys) {
     const v = str(input[k]);
     if (v?.trim()) return oneLine(v);
   }
@@ -122,7 +140,100 @@ function system(line: Obj): Summary[] {
   return [];
 }
 
+// ------------------------------------------------------------------ Copilot JSONL
+
+function data(line: Obj): Obj {
+  return isObj(line.data) ? line.data : {};
+}
+
+/** A string field with something in it (trimmed); blank counts as missing. */
+function filled(v: unknown): string | undefined {
+  const text = str(v)?.trim();
+  return text === "" ? undefined : text;
+}
+
+/** A label, plus the first line of `text` when there is one ("Error: boom"). */
+function labelled(label: string, text: string | undefined): string {
+  return text ? `${label}: ${oneLine(text)}` : label;
+}
+
+/** An error given as a string or as `{ message }`. */
+function errorText(v: unknown): string | undefined {
+  return filled(v) ?? (isObj(v) ? filled(v.message) : undefined);
+}
+
+function copilotStart(line: Obj): Summary[] {
+  const model = str(data(line).selectedModel);
+  return [{ kind: "session", text: model ? `Session started · ${model}` : "Session started" }];
+}
+
+/** The agent's text. Its reasoning is left out, as Claude's thinking is; a message that only
+ *  requests tools is empty (each call has its own execution_start). */
+function copilotMessage(line: Obj): Summary[] {
+  const text = filled(data(line).content);
+  return text ? [{ kind: "agent", text }] : [];
+}
+
+function copilotToolStart(line: Obj): Summary[] {
+  const d = data(line);
+  const name = str(d.toolName) ?? "tool";
+  const detail = toolDetail(d.arguments, COPILOT_DETAIL_KEYS);
+  return [{ kind: "tool", text: detail ? `${name} · ${detail}` : name }];
+}
+
+/** As with Claude, only a failed tool call is worth a line. */
+function copilotToolDone(line: Obj): Summary[] {
+  const d = data(line);
+  if (d.success !== false) return [];
+  const error = errorText(d.error);
+  return [{ kind: "toolError", text: error ? `Tool error · ${oneLine(error)}` : "Tool error" }];
+}
+
+function copilotShutdown(line: Obj): Summary[] {
+  const n = data(line).totalPremiumRequests;
+  const requests =
+    typeof n === "number" ? ` · ${String(n)} premium request${n === 1 ? "" : "s"}` : "";
+  return [{ kind: "result", text: `Result: done${requests}` }];
+}
+
+/** A workflow run's statuses that aren't a failure; any other (`error`, or one we don't know)
+ *  is flagged, as a Claude result that isn't `success` is. */
+const WORKFLOW_OK = new Set(["completed", "halted", "paused", "cancelled"]);
+
+/** The workflow's closing record: the detail is the run's result, or why it stopped (for a
+ *  failure, why it failed first). */
+function workflowResult(line: Obj): Summary[] {
+  const d = data(line);
+  const run = isObj(d.run) ? d.run : {};
+  const status = filled(run.status);
+  const failed = status !== undefined && !WORKFLOW_OK.has(status);
+  const why = errorText(run.error) ?? errorText(run.failure) ?? filled(run.reason);
+  const result = filled(run.result);
+  const detail = failed ? (why ?? result) : (result ?? why);
+  const name = filled(d.name);
+  const head = [name, status ?? "done"].filter(Boolean).join(" ");
+  const body = detail ? `${head} · ${oneLine(detail)}` : head;
+  return [{ kind: failed ? "resultError" : "result", text: `Result: ${body}` }];
+}
+
+/** Copilot events with nothing worth a line (as the worker's echo has them): prompts, turn and
+ *  usage bookkeeping, streamed deltas and progress, reasoning, and the agent's intent label. */
+const COPILOT_QUIET = [
+  "user.message",
+  "assistant.turn_start",
+  "assistant.turn_end",
+  "assistant.usage",
+  "assistant.message_delta",
+  "assistant.reasoning_delta",
+  "assistant.reasoning",
+  "assistant.intent",
+  "tool.execution_partial_result",
+  "tool.execution_progress",
+  "session.usage_info",
+];
+
 const HANDLERS = new Map<string, (line: Obj) => Summary[]>([
+  // Claude stream-json
   ["assistant", assistant],
   ["user", user],
   ["result", result],
@@ -130,11 +241,28 @@ const HANDLERS = new Map<string, (line: Obj) => Summary[]>([
   // Noise for a human reading the log.
   ["rate_limit_event", () => []],
   ["stream_event", () => []],
+  // Copilot JSONL
+  ["session.start", copilotStart],
+  ["assistant.message", copilotMessage],
+  ["tool.execution_start", copilotToolStart],
+  ["tool.execution_complete", copilotToolDone],
+  [
+    "session.error",
+    (line) => [{ kind: "resultError", text: labelled("Error", filled(data(line).message)) }],
+  ],
+  [
+    "abort",
+    (line) => [{ kind: "resultError", text: labelled("Aborted", filled(data(line).reason)) }],
+  ],
+  ["session.shutdown", copilotShutdown],
+  ["workflow.result", workflowResult],
+  ...COPILOT_QUIET.map((type) => [type, () => []] as const),
 ]);
 
 /**
- * Summarise one stdout line. `null` = not a known stream-json line (show it raw);
- * `[]` = a known line with nothing worth showing.
+ * Summarise one stdout line. `null` = not a known Claude or Copilot line (show it raw);
+ * `[]` = a known line with nothing worth showing. A Copilot event marked `ephemeral` (streamed
+ * progress) is never shown.
  */
 export function summariseStreamJson(line: string): Summary[] | null {
   const trimmed = line.trim();
@@ -148,5 +276,6 @@ export function summariseStreamJson(line: string): Summary[] | null {
   if (!isObj(parsed)) return null;
   const type = str(parsed.type);
   const handler = type === undefined ? undefined : HANDLERS.get(type);
-  return handler ? handler(parsed) : null;
+  if (handler) return handler(parsed);
+  return type !== undefined && parsed.ephemeral === true ? [] : null;
 }
