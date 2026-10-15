@@ -65,9 +65,12 @@ async def poll(
     body: ClientPollRequest, token: ClientBearer, ctx: Ctx, request: Request
 ) -> ClientPollResponse:
     """A client's long poll: the oldest run its user dispatched to "My client", waiting up to
-    `wait_s` for one. 401/403 at once for a bad token. Async, and each db step runs in a thread
+    `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.
+    401/403 at once for a bad token. Async, and each db step runs in a thread
     only while it runs, so idle polls hold no threadpool thread while they wait."""
     await asyncio.to_thread(service.poll_client, ctx.db, token)
+    if not body.take:
+        return ClientPollResponse(run=None)
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + body.wait_s

@@ -5,8 +5,9 @@
 //   cancel · complete / abandon = open the inline confirm (ResolveConfirm); its confirm POSTs
 //   resolve · reopen = PATCH state=open · request_changes = the Context tab (edit TASKS.md, then
 //   Approve) · open = the peek (rows) — the header never offers it.
-// The target is the dispatch target rule's (features/actions/target.ts); only the Ticket page shows
-// the choice (one pick shared by its header and Pipeline tab, passed in), so rows send its default.
+// Only a surface that shows the target choice (the Ticket page header, through TargetPicker) passes
+// its target state; every other surface (My queue rows, Compact rows) always sends `server`, so a
+// run only goes to a client from a click beside the visible choice.
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -14,7 +15,8 @@ import type { ApiError } from "../../api/client";
 import { useCancelRun, useDispatch, usePatchTicket, useResolveTicket } from "../../api/queries";
 import type { Action, ActionId } from "../../domain/actions";
 import type { Outcome } from "../../domain/outcome";
-import { type DispatchTargetState, useDispatchTarget } from "./useDispatchTarget";
+import { sentTarget } from "./target";
+import type { DispatchTargetState } from "./useDispatchTarget";
 
 interface ActionTarget {
   key: string;
@@ -22,12 +24,10 @@ interface ActionTarget {
   latest_run: { id: number } | null;
 }
 
-/** `shared`: the page's target state, when the page shows the choice elsewhere too. */
-export function useTicketAction(t: ActionTarget, shared?: DispatchTargetState) {
+/** `shown`: the target state of the choice this surface shows; without it the target is `server`. */
+export function useTicketAction(t: ActionTarget, shown?: DispatchTargetState) {
   const navigate = useNavigate();
   const [, setParams] = useSearchParams();
-  const own = useDispatchTarget(t);
-  const target = shared ?? own;
   const dispatch = useDispatch(t.key);
   const cancel = useCancelRun(t.key);
   const patch = usePatchTicket(t.key);
@@ -47,7 +47,7 @@ export function useTicketAction(t: ActionTarget, shared?: DispatchTargetState) {
       case "approve":
       case "retry":
       case "dispatch":
-        dispatch.mutate({ target: target.value });
+        dispatch.mutate({ target: sentTarget(shown) });
         return;
       case "cancel":
         if (t.latest_run) cancel.mutate(t.latest_run.id);
@@ -82,8 +82,6 @@ export function useTicketAction(t: ActionTarget, shared?: DispatchTargetState) {
     /** Errors of the plain actions; a resolve error shows inside the confirm instead. */
     error,
     reset,
-    /** Where Dispatch run, Approve and Retry send the run (TargetPicker shows the choice). */
-    target,
     /** The open Complete / Abandon confirm (src/features/actions/ResolveConfirm.tsx). */
     confirm: confirming && {
       outcome: confirming,

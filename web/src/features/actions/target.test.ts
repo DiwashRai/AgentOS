@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { person } from "../../domain/fixtures";
-import { chosenTarget, targetChoice, targetOptions } from "./target";
+import { chosenTarget, sentTarget, targetChoice, targetOptions } from "./target";
 
 const me = { id: 1 };
 const mine = { owner: person(1) };
@@ -32,6 +32,13 @@ describe("the dispatch target rule", () => {
 
     const hidden = targetChoice(theirs, me, [online]);
     expect(chosenTarget(hidden, "client")).toBe("server");
+  });
+
+  it("sends server from a surface without the picker, even for an online client", () => {
+    expect(sentTarget(undefined)).toBe("server");
+    expect(sentTarget({ value: chosenTarget(targetChoice(mine, me, [online]), null) })).toBe(
+      "client",
+    );
   });
 
   it("offers My client first, then the server", () => {

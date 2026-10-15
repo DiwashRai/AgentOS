@@ -1427,9 +1427,12 @@ CLIENT_POLL_MAX_WAIT_S = 25
 
 
 class ClientPollRequest(ApiModel):
-    """POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run."""
+    """POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
+    false` is a busy client's heartbeat: it records last seen (the client stays online) and
+    answers `run: null` at once, never handing out a run."""
 
     wait_s: int = Field(default=CLIENT_POLL_MAX_WAIT_S, ge=0, le=CLIENT_POLL_MAX_WAIT_S)
+    take: bool = True
 
 
 class ClientRunAssignment(ApiModel):

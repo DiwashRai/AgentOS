@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
 from agentos.models import Me, RunSummary, TicketDetail, TicketSummary
-from tests.run_support import CSRF, RunDriver, event, log_event
+from tests.run_support import CSRF, RunDriver, bearer, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -222,10 +222,19 @@ def test_shell_stage_without_command_is_rejected(
 # ------------------------------------------------------------------ dispatch target
 
 
+def new_client(client: TestClient) -> str:
+    """A client token for the signed-in user."""
+    r = client.post("/api/me/clients", json={"name": "laptop"}, headers=CSRF)
+    assert r.status_code == 201, r.text
+    token: str = r.json()["token"]
+    return token
+
+
 def test_the_owner_can_dispatch_to_their_client(
     client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
     ann = login("ann")
+    new_client(client)
     t = create_ticket(owner_id=ann.id)
     run = runs.queue(t.key, target="client")
     assert (run.target, run.client_online, run.launch_url) == ("client", False, None)
@@ -243,11 +252,26 @@ def test_only_the_owner_can_dispatch_to_a_client(
     ctx: AppContext,
 ) -> None:
     ann = login("ann")
+    new_client(client)
     owned = create_ticket(owner_id=ann.id)
     unowned = create_ticket()
     assert error(runs.dispatch(unowned.key, target="client")) == (403, "forbidden")
     login("bob")
+    new_client(client)
     assert error(runs.dispatch(owned.key, target="client")) == (403, "forbidden")
+    assert run_count(ctx) == 0
+
+
+def test_dispatching_to_a_client_needs_a_client_token(
+    client: TestClient,
+    login: LoginFn,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
+) -> None:
+    ann = login("ann")
+    t = create_ticket(owner_id=ann.id)
+    assert error(runs.dispatch(t.key, target="client")) == (422, "validation_error")
     assert run_count(ctx) == 0
 
 
@@ -264,10 +288,43 @@ def test_a_waiting_client_run_blocks_another_dispatch(
     client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
     ann = login("ann")
+    new_client(client)
     t = create_ticket(owner_id=ann.id)
     runs.queue(t.key, target="client")
     assert error(runs.dispatch(t.key)) == (409, "run_active")
     assert error(runs.dispatch(t.key, target="client")) == (409, "run_active")
+
+
+def test_a_waiting_client_run_keeps_what_its_owner_dispatched(
+    client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
+) -> None:
+    bob = login("bob")
+    ann = login("ann")
+    token = new_client(client)
+    t = create_ticket(owner_id=ann.id)
+    run = runs.queue(t.key, target="client")
+    login("bob")  # another writer
+
+    def put(path: str = "notes.md") -> Any:
+        body = {"content": "theirs", "base_version": 0}
+        return client.put(f"/api/tickets/{t.key}/files/{path}", json=body, headers=CSRF)
+
+    def patch(body: dict[str, Any]) -> Any:
+        return client.patch(f"/api/tickets/{t.key}", json=body, headers=CSRF)
+
+    assert error(put()) == (409, "bundle_locked")
+    assert error(patch({"owner_id": bob.id})) == (409, "run_active")
+    assert error(patch({"description": "theirs"})) == (409, "run_active")
+    assert patch({"priority": "high"}).status_code == 200  # nothing a run renders
+
+    taken = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(token))
+    assert taken.json()["run"]["run_id"] == run.id  # dispatched, not claimed yet
+    assert error(put()) == (409, "bundle_locked")
+    assert error(patch({"owner_id": bob.id})) == (409, "run_active")
+
+    assert client.post(f"/api/runs/{run.id}/cancel", headers=CSRF).status_code == 200
+    assert put().status_code == 200
+    assert patch({"owner_id": bob.id}).status_code == 200
 
 
 # ------------------------------------------------------------------ reads

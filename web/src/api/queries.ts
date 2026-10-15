@@ -413,7 +413,7 @@ export function usePatchUser() {
 // Each user sees and revokes only their own; creating one needs writer.
 
 /** My client tokens with last seen and `online` (polled within the last minute). Read by Settings
- *  › My client and by every dispatch (the target rule), so it polls while anything shows it. */
+ *  › My client and by the Ticket page's target choice, so it polls while either shows it. */
 export function useClients() {
   return useQuery({
     queryKey: keys.clients(),

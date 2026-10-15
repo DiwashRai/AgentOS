@@ -35,7 +35,8 @@ answers, so there is no cancel and no run-gone; a failed outbox write counts as 
 Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
 machine): long-polls POST /api/worker/poll for the runs its user dispatched to their client and
 starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once (see
-run_client). It backs off while the server is unreachable and stops on 401/403.
+run_client). It backs off while the server is unreachable and stops on any 4xx but a transient
+one (401/403 included).
 """
 
 from __future__ import annotations
@@ -88,7 +89,11 @@ CLIENT_POLL_WAIT_S = 25  # the server holds a poll this long at most while no ru
 CLIENT_POLL_TIMEOUT_S = 40.0  # one poll's HTTP timeout: above the server's hold
 CLIENT_BACKOFF_CAP_S = 60.0  # failed polls back off up to this, and are retried forever
 CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this often
+CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take poll this often keeps it online
 WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
+CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
+# Poll answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
+CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
 MAX_EVENTS_PER_POST = 500
 MAX_EVENTS_PER_RUN = 100_000
@@ -2554,13 +2559,15 @@ def git_repo_containing(path: Path) -> Path | None:
 
 
 def clean_workdir_root(root: Path, now: float) -> list[Path]:
-    """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under `root`
-    last modified more than WORKSPACE_MAX_AGE_S before `now` (a POSIX timestamp). Anything else
-    is left alone. Returns what was deleted."""
+    """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under the
+    client's own `root/CLIENT_RUNS_DIR`, last modified more than WORKSPACE_MAX_AGE_S before `now`
+    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it is left
+    alone. Returns what was deleted."""
+    runs = root / CLIENT_RUNS_DIR
     try:
-        children = sorted(root.iterdir())
+        children = sorted(runs.iterdir())
     except OSError as exc:
-        say(f"cannot list {root} for old workspaces: {exc}")
+        say(f"cannot list {runs} for old workspaces: {exc}")
         return []
 
     cutoff = now - WORKSPACE_MAX_AGE_S
@@ -2608,13 +2615,16 @@ def run_client(
     spawn: Spawn,
 ) -> int:
     """Client mode: poll for this user's runs and start a detached worker for each, at most
-    `max_runs` at once. Polls only while a slot is free. Network errors, 5xx and other unexpected
-    answers back off (up to CLIENT_BACKOFF_CAP_S) and poll again, forever. A 401 or 403 (token
-    revoked, user disabled, viewer) stops the client with exit code 1; started workers keep
-    running, since they hold their own per-run tokens.
+    `max_runs` at once. Takes runs only while a slot is free; while every slot is busy it sends a
+    no-take poll every CLIENT_HEARTBEAT_S, so the server still sees the client online. Network
+    errors, 5xx, transient 4xx (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to
+    CLIENT_BACKOFF_CAP_S) and poll again, forever. Any other 4xx (401/403: token revoked, user
+    disabled, viewer; or a protocol the client doesn't speak) stops the client with exit code 1;
+    started workers keep running, since they hold their own per-run tokens.
 
-    Each worker runs `worker.py --server <server> --workdir <root>/<run_id>` in `root`, logs to
-    `<root>/<run_id>.log` and gets the dispatch token as AGENTOS_TOKEN (see child_env)."""
+    Everything the client writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs
+    `worker.py --server <server> --workdir <root>/runs/<run_id>` there, logs to
+    `<root>/runs/<run_id>.log` and gets the dispatch token as AGENTOS_TOKEN (see child_env)."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -2625,10 +2635,11 @@ def run_client(
     except (OSError, EnvFileError) as exc:
         say(f"cannot read the env file {env_file}: {exc}")
         return 2
+    runs = root / CLIENT_RUNS_DIR
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        runs.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        say(f"cannot create --workdir-root {root}: {exc}")
+        say(f"cannot create {runs}: {exc}")
         return 1
 
     removed = clean_workdir_root(root, time.time())
@@ -2639,24 +2650,29 @@ def run_client(
     me = str(Path(__file__).resolve())
     children: list[Child] = []
     delay = BACKOFF_START_S
-    say(f"client: polling {server} for runs, at most {max_runs} at once, in {root}")
+    answered = time.monotonic()  # when the server last answered a poll
+    say(f"client: polling {server} for runs, at most {max_runs} at once, in {runs}")
     try:
         while True:
             children = [child for child in children if child.poll() is None]
-            if len(children) >= max_runs:
+            busy = len(children) >= max_runs
+            if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
                 time.sleep(CLIENT_REAP_S)
                 continue
 
+            take = {"wait_s": CLIENT_POLL_WAIT_S}
+            heartbeat = {"wait_s": 0, "take": False}  # last seen only; never hands out a run
             try:
                 resp = client.post(
                     "/api/worker/poll",
-                    {"wait_s": CLIENT_POLL_WAIT_S},
+                    heartbeat if busy else take,
                     timeout_s=CLIENT_POLL_TIMEOUT_S,
                     retry_budget_s=0,
                 )
+                answered = time.monotonic()
                 assignment = _assignment(resp)
             except HttpError as exc:
-                if exc.status in (401, 403):
+                if exc.status not in CLIENT_TRANSIENT_4XX:
                     say(f"the server refused this client ({exc}); stopping")
                     return 1
                 problem = str(exc)
@@ -2673,11 +2689,11 @@ def run_client(
                     "--server",
                     server,
                     "--workdir",
-                    str(root / str(run_id)),
+                    str(runs / str(run_id)),
                 ]
-                log = root / f"{run_id}.log"
+                log = runs / f"{run_id}.log"
                 try:
-                    child = spawn(argv, root, child_env(dispatch_token, env_values), log)
+                    child = spawn(argv, runs, child_env(dispatch_token, env_values), log)
                 except OSError as exc:
                     say(f"run {run_id}: cannot start its worker: {exc}")
                     continue

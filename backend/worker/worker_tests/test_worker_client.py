@@ -108,15 +108,15 @@ def test_one_worker_per_run_with_the_token_in_its_env_only(
 
     assert run_client(server, root, "--env-file", str(env_file)) == 1
 
-    root = root.resolve()
+    runs = root.resolve() / "runs"
     me = str(Path(worker.__file__).resolve())
     assert [(c.argv, c.cwd, c.log) for c in spawn.calls] == [
         (
-            [sys.executable, me, "--server", server.url, "--workdir", str(root / str(run_id))],
-            root,
+            [sys.executable, me, "--server", server.url, "--workdir", str(runs / str(run_id))],
+            runs,
             log,
         )
-        for run_id, log in ((7, root / "7.log"), (8, root / "8.log"))
+        for run_id, log in ((7, runs / "7.log"), (8, runs / "8.log"))
     ]
     for call, token in zip(spawn.calls, ("d1" * 20, "d2" * 20), strict=True):
         assert call.env["AGENTOS_TOKEN"] == token
@@ -173,12 +173,12 @@ def test_polling_goes_on_through_an_unreachable_spell(
 
     assert run_client(server, tmp_path / "ws") == 1
 
-    assert [c.argv[-1] for c in spawn.calls] == [str((tmp_path / "ws" / "9").resolve())]
+    assert [c.argv[-1] for c in spawn.calls] == [str((tmp_path / "ws" / "runs" / "9").resolve())]
     assert polls(server) == len(spell) + 2
 
 
-@pytest.mark.parametrize("status", [401, 403])
-def test_client_stops_on_401_and_403(
+@pytest.mark.parametrize("status", [401, 403, 404, 422])
+def test_client_stops_on_an_unexpected_4xx(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path, status: int
 ) -> None:
     spawn.finish = False
@@ -188,6 +188,30 @@ def test_client_stops_on_401_and_403(
 
     assert polls(server) == 2
     assert spawn.calls[0].child.poll() is None  # started workers are left running
+
+
+def test_client_retries_a_transient_4xx(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path
+) -> None:
+    answer_polls(server, [error(429, "rate_limited"), error(408, "x"), assigned(6, "d" * 43)])
+
+    assert run_client(server, tmp_path / "ws") == 1
+
+    assert (spawn.count(), polls(server)) == (1, 4)
+
+
+def test_a_busy_client_sends_heartbeats_that_take_nothing(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker, "CLIENT_HEARTBEAT_S", 0.05)
+    spawn.finish = False
+    answer_polls(server, [assigned(5, "d" * 43), *[(200, {"run": None})] * 3])
+
+    assert run_client(server, tmp_path / "ws") == 1  # the 401 after the answers
+
+    heartbeat = {"wait_s": 0, "take": False}
+    assert server.bodies(POLL) == [{"wait_s": 25}, *[heartbeat] * 4]
+    assert spawn.count() == 1
 
 
 def test_refuses_a_workdir_root_inside_a_git_repo(

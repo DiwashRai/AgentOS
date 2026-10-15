@@ -15,6 +15,7 @@ from httpx import Response
 
 from agentos.context import AppContext
 from agentos.models import ClientPollResponse, ClientToken, Manifest, Me, Role, TicketDetail
+from agentos.worker_api import service
 from tests.run_support import CSRF, RunDriver, Worker, bearer
 
 CreateTicket = Callable[..., TicketDetail]
@@ -28,8 +29,9 @@ def new_token(client: TestClient, name: str = "laptop") -> str:
     return token
 
 
-def poll_raw(client: TestClient, token: str, wait_s: int = 0) -> Response:
-    r: Response = client.post("/api/worker/poll", json={"wait_s": wait_s}, headers=bearer(token))
+def poll_raw(client: TestClient, token: str, wait_s: int = 0, *, take: bool = True) -> Response:
+    body = {"wait_s": wait_s, "take": take}
+    r: Response = client.post("/api/worker/poll", json=body, headers=bearer(token))
     return r
 
 
@@ -161,6 +163,34 @@ def test_polling_marks_the_client_online(client: TestClient, login: LoginFn) -> 
     after = ClientToken.model_validate(client.get("/api/me/clients").json()[0])
     assert after.online
     assert after.last_seen_at is not None
+
+
+def test_a_busy_clients_heartbeat_keeps_it_online_and_takes_nothing(
+    client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
+) -> None:
+    ann = login("ann")
+    token = new_token(client)
+    run_id = client_run(create_ticket, runs, ann)
+
+    began = time.monotonic()
+    r = poll_raw(client, token, wait_s=25, take=False)
+    assert r.status_code == 200, r.text
+    assert ClientPollResponse.model_validate(r.json()).run is None
+    assert time.monotonic() - began < 5  # answered at once
+
+    assert runs.db_run(run_id)["status"] == "queued"
+    assert ClientToken.model_validate(client.get("/api/me/clients").json()[0]).online
+
+
+def test_a_poll_with_nothing_queued_takes_no_write_lock(
+    client: TestClient, login: LoginFn, ctx: AppContext
+) -> None:
+    login("ann")
+    token = new_token(client)
+    with ctx.db.tx():  # another writer holds the lock (a take would wait for its busy timeout)
+        began = time.monotonic()
+        assert service.take_client_run(ctx.db, ctx.broker, token, "http://x") is None
+        assert time.monotonic() - began < 1
 
 
 def test_a_queued_client_run_says_whether_its_client_is_online(

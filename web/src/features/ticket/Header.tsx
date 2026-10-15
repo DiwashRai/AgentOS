@@ -74,7 +74,7 @@ function ActionGroup({
     <div className={s.actsCol}>
       <div className={s.acts}>
         {dispatching && !readOnly ? (
-          <TargetPicker target={action.target} disabled={action.pending} />
+          <TargetPicker target={target} disabled={action.pending} />
         ) : null}
         {set.secondary.map(button)}
         {set.primary ? button(set.primary) : null}

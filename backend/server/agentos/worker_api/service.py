@@ -414,8 +414,12 @@ def take_client_run(
 ) -> ClientRunAssignment | None:
     """One take of a poll: the oldest client run queued by the token's user, with a new dispatch
     token for its worker (in plaintext only in the answer; never logged). The token is checked
-    again on every take, so a revoke or a disabled user also stops a poll that is waiting."""
+    again on every take, so a revoke or a disabled user also stops a poll that is waiting. Only
+    reads run until a run is queued; the write transaction opens only to take it."""
     client = clients.authenticate(db, client_token)
+    if not runs.client_run_queued(db, client.user.id):
+        return None
+
     dispatch_token = secrets.token_urlsafe(32)
     run_id = runs.take_client_run(
         db, broker, client.user.id, token_hash(dispatch_token), client.name

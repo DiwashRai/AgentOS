@@ -311,10 +311,11 @@ python3 worker.py --client --server https://agentos.example.com
 Options (client mode only):
 - `--max-runs N`: runs at once (default 1). It counts the workers this client process started;
   after a restart, workers still running from before aren't counted.
-- `--workdir-root DIR`: where run workspaces (`<run id>/`) and their logs (`<run id>.log`) go,
-  default `~/.agentos/workspaces`. It must be outside any git repo (a parent `AGENTS.md` or
-  `CLAUDE.md` would leak into agents). At startup the client deletes the run workspaces and logs
-  there that are older than 7 days and leaves anything else alone. A run that completes (gated or
+- `--workdir-root DIR`: default `~/.agentos/workspaces`. The client creates its own `runs/`
+  folder there and puts run workspaces (`runs/<run id>/`) and their logs (`runs/<run id>.log`) in
+  it. It must be outside any git repo (a parent `AGENTS.md` or `CLAUDE.md` would leak into
+  agents). At startup the client deletes the run workspaces and logs in `runs/` that are older
+  than 7 days; it never looks anywhere else in the root. A run that completes (gated or
   succeeded) or is cancelled deletes its workspace itself; a failed one keeps it until that
   cleanup.
 - `--env-file PATH`: `KEY=value` lines added to every run worker's environment.
@@ -331,20 +332,25 @@ restart the client after editing it.
 
 **What it does.** It long-polls the server (each poll waits up to 25 s) and, for each run,
 starts a detached worker in its own process group (on Windows, without a console), then polls
-again while it has a free slot. The run's progress shows live in the app, as for any worker, and
-the worker also logs to `<workdir-root>/<run id>.log`. While the server is unreachable or
-answers 5xx, the client backs off (up to 60 s) and keeps trying.
+again while it has a free slot. With every slot busy it sends a heartbeat every 30 s that takes
+no run, so it still shows online. The run's progress shows live in the app, as for any worker,
+and the worker also logs to `<workdir-root>/runs/<run id>.log`. While the server is unreachable
+or answers 5xx (or 408/425/429), the client backs off (up to 60 s) and keeps trying.
 
 **In the app:** when you own a ticket and have a token, the Ticket page header and the Pipeline
 tab's Run from… offer **My client** or the server, defaulting to My client while one of your
-clients is online. Only tickets you own can go to your client. A run waiting for an offline client
+clients is online. Only tickets you own can go to your client, and only once you have a token;
+My queue and Compact rows always send runs to the server. While a run waits for your client,
+the ticket's context files, owner, title, description and type can't change (cancel the run
+first), so your machine runs what you dispatched. A run waiting for an offline client
 stays queued ("waiting for <name>'s client") and never times out; cancel it, or start the
 client. Once the client takes it, the usual claim timeout, heartbeat, budget and cancel rules
 apply.
 
 **Exit codes:**
-- 1: the server refused the token (401: unknown or revoked, or the user is disabled or not
-  approved; 403: the user is below writer), or `--workdir-root` can't be created.
+- 1: the server refused the client (401: unknown or revoked token, or the user is disabled or
+  not approved; 403: the user is below writer; any other 4xx, e.g. a server whose protocol this
+  `worker.py` doesn't speak: update it), or `--workdir-root` can't be created.
 - 2: bad arguments (including no `AGENTOS_CLIENT_TOKEN`), a bad env file, or a `--workdir-root`
   inside a git repo.
 - 130: stopped with Ctrl+C.

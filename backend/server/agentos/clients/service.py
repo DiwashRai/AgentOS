@@ -115,6 +115,23 @@ def touch(db: Database, client_id: int, now: datetime) -> None:
         )
 
 
+def has_client(conn: Conn, user_id: int) -> bool:
+    """Whether the user has at least one client token."""
+    row = conn.execute("SELECT 1 FROM client_tokens WHERE user_id = ? LIMIT 1", (user_id,))
+    return row.fetchone() is not None
+
+
+def waiting_client_run_id(conn: Conn, ticket_id: int) -> int | None:
+    """The ticket's client run that is queued or dispatched (its manifest isn't built yet), if
+    any. While one waits, what it will run (the context, the owner) must stay the dispatcher's."""
+    row = conn.execute(
+        "SELECT id FROM runs WHERE ticket_id = ? AND launcher = ? "
+        "AND status IN ('queued', 'dispatched')",
+        (ticket_id, CLIENT_LAUNCHER),
+    ).fetchone()
+    return None if row is None else int(row["id"])
+
+
 def online_user_ids(conn: Conn, user_ids: Iterable[int], now: datetime) -> set[int]:
     """Which of these users have a client token seen within ONLINE_WINDOW (one query)."""
     rows = conn.execute(

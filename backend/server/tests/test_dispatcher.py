@@ -129,6 +129,7 @@ def test_client_runs_are_neither_launched_nor_counted(
     launcher: FakeLauncher,
 ) -> None:
     me = login("dev")
+    client.post("/api/me/clients", json={"name": "laptop"}, headers=CSRF)
     launcher.max_concurrency = 1
     busy, waiting = (
         runs.queue(create_ticket(title, repo=None, owner_id=me.id).key, target="client").id

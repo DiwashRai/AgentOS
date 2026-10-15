@@ -163,14 +163,19 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
 @dataclass
 class User(E2E):
     """A signed-in user (their own cookie session). Their client's run workers log to
-    `<client_root>/<run_id>.log`."""
+    `<client_root>/runs/<run_id>.log`."""
 
     client_root: Path = field(kw_only=True)
+
+    @property
+    def client_runs(self) -> Path:
+        """Where the client keeps its run workspaces and logs."""
+        return self.client_root / "runs"
 
     def diag(self, run_id: int | None) -> str:
         if run_id is None:
             return ""
-        log = self.client_root / f"{run_id}.log"
+        log = self.client_runs / f"{run_id}.log"
         text = log.read_text("utf-8", "replace") if log.exists() else "(no client worker log)"
         return f"{super().diag(run_id)}\n--- client worker {run_id}.log ---\n{text}"
 
@@ -355,7 +360,7 @@ def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
         ("plan", "succeeded", 0)
     ], ann.diag(run1.id)
     assert (detail.target, detail.launch_ref, detail.launch_url) == ("client", "ann-laptop", None)
-    assert (ann.client_root / f"{run1.id}.log").is_file()
+    assert (ann.client_runs / f"{run1.id}.log").is_file()
     t = ann.ticket(key)
     assert t.attention == "needs_you"
     assert t.next_stage == "implement"
@@ -388,7 +393,7 @@ def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
     assert_clean_branch(ann.remote, key)
 
     # Bob's client never got Ann's runs; no client took the server run.
-    assert list(bob.client_root.iterdir()) == []  # no run workspace or log
+    assert list(bob.client_runs.iterdir()) == []  # no run workspace or log
     assert anns.proc.poll() is None
     assert bobs.proc.poll() is None
     server_detail = ann.run(server_run.id)
@@ -435,7 +440,7 @@ def test_a_client_run_waits_while_the_client_is_offline(world: World, server: Se
     detail = cleo.wait_run(run.id, "gated")
     assert [(s.stage_id, s.status) for s in detail.stage_runs] == [("plan", "succeeded")]
     assert (detail.launch_ref, detail.client_online) == ("cleo-desktop", True)
-    assert (cleo.client_root / f"{run.id}.log").is_file()
+    assert (cleo.client_runs / f"{run.id}.log").is_file()
 
 
 def test_revoking_the_token_stops_the_client(world: World) -> None:

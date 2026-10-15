@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from pydantic import TypeAdapter
 
 from agentos.broker import Broker
-from agentos.clients.service import CLIENT_LAUNCHER, online_user_ids
+from agentos.clients.service import CLIENT_LAUNCHER, has_client, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError
@@ -78,6 +78,11 @@ _SQL_TICKET_RUNS = _SELECT_RUN + "WHERE r.ticket_id = ? ORDER BY r.id DESC"
 _SQL_STAGE_RUNS = (
     "SELECT idx, stage_id, round, status, verdict, exit_code, reason, started_at, finished_at "
     "FROM stage_runs WHERE run_id = ? ORDER BY idx"
+)
+# A user's oldest queued client run (params: CLIENT_LAUNCHER, user id).
+_SQL_QUEUED_CLIENT_RUN = (
+    "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
+    "ORDER BY id LIMIT 1"
 )
 
 
@@ -217,13 +222,18 @@ def dispatch(
 
     `target` "server" queues the run for the configured launcher (`launcher_name`); "client"
     queues it for `user`'s own client (`launcher = 'client'`, taken by `take_client_run`), which
-    only the ticket's owner may do (403 `forbidden`).
+    only the ticket's owner may do (403 `forbidden`), and only with a client token (422
+    `validation_error`).
     """
     now = to_db(utcnow())
     with db.tx() as conn:
         ticket = get_ticket_row(conn, key)
         if target == "client" and ticket["owner_id"] != user.id:
             raise ApiError(403, "forbidden", f"Only {key}'s owner can run it on their client")
+        if target == "client" and not has_client(conn, user.id):
+            raise ApiError(
+                422, "validation_error", "target: create a client in Settings > My client first"
+            )
         if ticket["state"] != "open":
             raise ApiError(409, "invalid_stage", f"{key} is {ticket['state']}; reopen it first")
         ref = run_ticket_ref(ticket, space)
@@ -444,6 +454,14 @@ def mark_next_dispatched(
     return run_id
 
 
+def client_run_queued(db: Database, user_id: int) -> bool:
+    """Whether the user has a `queued` client run: a read, so a waiting poll looks for one
+    without taking the write lock."""
+    with db.read() as conn:
+        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
+    return row is not None
+
+
 def take_client_run(
     db: Database, broker: Broker, user_id: int, dispatch_token_hash: str, launch_ref: str
 ) -> int | None:
@@ -451,11 +469,7 @@ def take_client_run(
     the token hash and `launch_ref` (the client's name). From here the claim timeout applies, as
     for a launched worker. Returns the run id, or None if none is queued."""
     with db.tx() as conn:
-        row = conn.execute(
-            "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
-            "ORDER BY id LIMIT 1",
-            (CLIENT_LAUNCHER, user_id),
-        ).fetchone()
+        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
         if row is None:
             return None
         run_id: int = row["id"]

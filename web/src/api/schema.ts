@@ -762,7 +762,8 @@ export interface paths {
         /**
          * Poll
          * @description A client's long poll: the oldest run its user dispatched to "My client", waiting up to
-         *     `wait_s` for one. 401/403 at once for a bad token. Async, and each db step runs in a thread
+         *     `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.
+         *     401/403 at once for a bad token. Async, and each db step runs in a thread
          *     only while it runs, so idle polls hold no threadpool thread while they wait.
          */
         post: operations["poll_api_worker_poll_post"];
@@ -947,9 +948,16 @@ export interface components {
         };
         /**
          * ClientPollRequest
-         * @description POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run.
+         * @description POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
+         *     false` is a busy client's heartbeat: it records last seen (the client stays online) and
+         *     answers `run: null` at once, never handing out a run.
          */
         ClientPollRequest: {
+            /**
+             * Take
+             * @default true
+             */
+            take: boolean;
             /**
              * Wait S
              * @default 25

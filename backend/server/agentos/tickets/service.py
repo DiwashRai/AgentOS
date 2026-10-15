@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from agentos.broker import Broker
-from agentos.clients.service import CLIENT_LAUNCHER, online_user_ids
+from agentos.clients.service import CLIENT_LAUNCHER, online_user_ids, waiting_client_run_id
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -853,6 +853,9 @@ _PATCHABLE = (
     "base_branch",
     "owner_id",
 )
+# What a waiting client run (queued or dispatched; its manifest is built at claim) will run on
+# its owner's machine besides the context files: the owner, and the fields its prompts render.
+_CLIENT_RUN_INTENT = frozenset({"owner_id", "title", "description", "type"})
 
 
 def _base_branch_provenance(
@@ -892,8 +895,10 @@ def patch_ticket(
     db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
     """Apply the set fields. `state`, `repo` and `base_branch` changes → 409 `run_active` while a
-    run is active. The slug never changes (it names the skill directory). A `state` change clears
-    the resolution (`resolve_ticket` sets it).
+    run is active; `owner_id`, `title`, `description` and `type` changes → 409 `run_active` while
+    a client run waits (queued or dispatched), so it runs what its owner dispatched. The slug
+    never changes (it names the skill directory). A `state` change clears the resolution
+    (`resolve_ticket` sets it).
 
     `repo` must be a catalog name (422 otherwise); null switches to no-repo mode, which clears
     `base_branch` and disables the pipeline's `requires_repo` stages (as creation does). Another
@@ -957,6 +962,14 @@ def patch_ticket(
         if guarded and active_run_id(conn, row["id"]) is not None:
             raise ApiError(
                 409, "run_active", f"Can't change {', '.join(sorted(guarded))} during a run"
+            )
+
+        intent = changed & _CLIENT_RUN_INTENT
+        if intent and waiting_client_run_id(conn, row["id"]) is not None:
+            raise ApiError(
+                409,
+                "run_active",
+                f"Can't change {', '.join(sorted(intent))} while a run waits for a client",
             )
         now = to_db(utcnow())
         conn.execute(

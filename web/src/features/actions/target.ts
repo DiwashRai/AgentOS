@@ -39,6 +39,12 @@ export function chosenTarget(choice: TargetChoice, picked: DispatchTarget | null
   return choice.offer && picked !== null ? picked : choice.target;
 }
 
+/** What an action sends: the shown choice's target, or `server` on a surface without the picker
+ *  (rows), so a run goes to a client only from a click beside the visible choice. */
+export function sentTarget(shown: { value: DispatchTarget } | undefined): DispatchTarget {
+  return shown?.value ?? "server";
+}
+
 /** The picker's options, My client first; it says when none of my clients is online. */
 export function targetOptions(choice: TargetChoice): { value: DispatchTarget; label: string }[] {
   const client = choice.online
