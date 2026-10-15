@@ -12,7 +12,19 @@ import { planView } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { runLine, stageCount } from "../../domain/ticketView";
 import { words } from "../../domain/words";
-import { Avatar, Button, cx, StatusMark, Stepper, TickBadge } from "../../ui";
+import {
+  Avatar,
+  Button,
+  Checklist,
+  cx,
+  EmptyState,
+  Inline,
+  Stack,
+  StatusLine,
+  StatusMark,
+  Stepper,
+  text,
+} from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
 import { usePeek } from "../peek/usePeek";
@@ -40,7 +52,7 @@ function Actions({ ticket: t }: { ticket: Ticket }) {
   const message = action.error ? `Failed · ${action.error.message}` : null;
   return (
     <>
-      <div className={s.acts}>
+      <Inline wrap gap={3}>
         {buttons.map((a) => (
           <Button
             key={a.id}
@@ -72,9 +84,9 @@ function Actions({ ticket: t }: { ticket: Ticket }) {
         >
           Open ticket
         </Button>
-      </div>
+      </Inline>
       {message && (
-        <p className={s.err} role="alert" title={message}>
+        <p className={cx(text.error, text.ellipsis, s.err)} role="alert" title={message}>
           {message}
         </p>
       )}
@@ -94,41 +106,33 @@ function Plan({
 }) {
   const now = useNow(1000);
   const live = t.attention === "running";
+  const run = live || t.attention === "queued";
   const plan = planView(detail?.plan, PLAN_MAX);
+
+  let empty;
+  if (detail) empty = <EmptyState form="note">No plan yet.</EmptyState>;
+  else if (error) empty = <StatusLine error>{`Can't load the plan · ${error.message}`}</StatusLine>;
+  else empty = <StatusLine>Loading</StatusLine>;
+
+  // A live or queued ticket heads the column with its run line; the plan then goes unheaded.
   return (
-    <div className={s.col}>
-      {live || t.attention === "queued" ? (
-        <div className={cx(s.lab, live && s.isLive)}>
+    <Stack>
+      {run ? (
+        <Inline gap={3} className={cx(text.label, s.lab, live && s.isLive)}>
           <StatusMark kind={live ? "run" : "queued"} glyphOnly />
-          <span>{runLine(t, now).line}</span>
-        </div>
-      ) : (
-        <div className={s.lab}>
-          <span>Plan</span>
-          {plan && <span>{`· ${String(plan.done)} of ${String(plan.total)} done`}</span>}
-        </div>
-      )}
-      {plan ? (
-        <ul className={s.steps}>
-          {plan.items.map((item, i) => (
-            <li key={i} className={cx(item.done && s.isDone)}>
-              {item.done ? (
-                <TickBadge size={14} label="Done" />
-              ) : (
-                <span className={s.todo} role="img" aria-label="Open" />
-              )}
-              <span title={item.raw}>{item.text}</span>
-            </li>
-          ))}
-          {plan.more > 0 && <li className={s.moreItems}>{`+${String(plan.more)} more`}</li>}
-        </ul>
-      ) : (
-        <p className={s.sub}>
-          {detail ? "No plan yet." : error ? `Can't load the plan · ${error.message}` : "Loading"}
-        </p>
-      )}
+          <span className={text.ellipsis}>{runLine(t, now).line}</span>
+        </Inline>
+      ) : null}
+      <Checklist
+        plan={plan}
+        density="compact"
+        title={run ? undefined : "Plan"}
+        level={3}
+        label="Plan"
+        empty={empty}
+      />
       <Stepper model={stageModel(t)} compact className={s.stepper} />
-    </div>
+    </Stack>
   );
 }
 
@@ -142,28 +146,29 @@ function LastMessage({ ticket: t }: { ticket: Ticket }) {
       <div className={s.msg}>
         <Avatar name={last.author.display_name} id={last.author.id} size={26} />
         <div>
-          <div className={s.who}>
+          <Inline gap={4} align="baseline" className={s.who}>
             {last.author.display_name}
             <time dateTime={last.created_at} title={fullTime(at)}>
               {clockTime(at)}
             </time>
-          </div>
+          </Inline>
           <p className={s.bub}>{last.body}</p>
         </div>
       </div>
     );
   } else if (chat.isError) {
-    body = <p className={s.sub}>{`Can't load Talk · ${chat.error.message}`}</p>;
+    body = <StatusLine error>{`Can't load Talk · ${chat.error.message}`}</StatusLine>;
   } else if (chat.isPending && t.chat_count > 0) {
-    body = <p className={s.sub}>Loading</p>;
+    body = <StatusLine>Loading</StatusLine>;
   } else {
-    body = <p className={s.sub}>Nobody has said anything yet.</p>;
+    body = <EmptyState form="note">Nobody has said anything yet.</EmptyState>;
   }
+
   return (
-    <div className={s.col}>
-      <div className={s.lab}>{talkLabel(t.chat_count)}</div>
+    <Stack>
+      <div className={cx(text.label, text.ellipsis, s.lab)}>{talkLabel(t.chat_count)}</div>
       {body}
-    </div>
+    </Stack>
   );
 }
 
@@ -174,12 +179,12 @@ export function Expanded({ id, ticket: t }: { id: string; ticket: Ticket }) {
   return (
     <div id={id} className={s.more}>
       <div className={s.grid}>
-        <div className={s.col}>
-          <div className={s.lab}>{move.label}</div>
+        <Stack>
+          <div className={cx(text.label, text.ellipsis, s.lab)}>{move.label}</div>
           <p className={s.lead}>{move.lead}</p>
           <p className={s.sub}>{ownerLine(t, stageCount(t).text)}</p>
           <Actions ticket={t} />
-        </div>
+        </Stack>
         <Plan ticket={t} detail={query.data} error={query.error} />
         <LastMessage ticket={t} />
       </div>

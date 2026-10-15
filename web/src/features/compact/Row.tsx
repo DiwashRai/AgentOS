@@ -16,28 +16,22 @@ import {
   AvatarSlot,
   Button,
   cx,
+  DataLine,
+  DataRow,
+  DataTitle,
   KeyChip,
-  PriorityIcon,
   RunMeter,
   StageGlyph,
   StatusMark,
-  TypeIcon,
+  text,
 } from "../../ui";
-import { rowLook, type RowEdge, waitAge } from "../../domain/ticketView";
+import { rowLook, waitAge } from "../../domain/ticketView";
 import { ticketPath } from "../ticket/model";
 import s from "./Compact.module.css";
 import { Expanded } from "./Expanded";
 import { nowCell, sourceColumn } from "./model";
 
 type Ticket = Schemas["TicketSummary"];
-
-const EDGE_CLASS: Record<RowEdge, string | undefined> = {
-  you: s.edgeYou,
-  live: s.edgeLive,
-  blocked: s.edgeBlocked,
-  done: s.edgeDone,
-  quiet: s.edgeQuiet,
-};
 
 function NowCell({ ticket, now }: { ticket: Ticket; now: number }) {
   const cell = nowCell(ticket, now);
@@ -112,12 +106,12 @@ export function CompactRow({
   onToggle: (key: string) => void;
 }) {
   const moreId = useId();
-  const ref = useRef<HTMLLIElement>(null);
+  const ref = useRef<HTMLElement>(null);
   const navigate = useNavigate();
   const inbox = t.attention === "inbox";
   const look = rowLook(t);
 
-  // An opened row scrolls fully into view (12px top / 20px bottom margins via scroll-margin).
+  // An opened row scrolls fully into view (top and bottom margins via scroll-margin).
   useEffect(() => {
     if (open)
       ref.current?.scrollIntoView({
@@ -127,20 +121,17 @@ export function CompactRow({
   }, [open]);
 
   return (
-    <li
+    <DataRow
       ref={ref}
-      className={cx(
-        s.crow,
-        EDGE_CLASS[look.edge],
-        look.flat ? s.isFlat : s.isRaised,
-        t.attention === "needs_you" && s.isYou,
-        inbox && s.isInbox,
-        open && s.isOpen,
-      )}
+      surface={look.flat ? "flat" : "raised"}
+      you={t.attention === "needs_you"}
+      open={open}
+      edge={look.edge}
+      edgeOn="line"
+      hover="lit"
+      className={cx(s.crow, inbox && s.isInbox)}
     >
-      <button
-        type="button"
-        className={s.line}
+      <DataLine
         data-row-line=""
         aria-expanded={open}
         aria-controls={open ? moreId : undefined}
@@ -152,20 +143,16 @@ export function CompactRow({
           <KeyChip>{t.key}</KeyChip>
         </span>
         <StageGlyph model={stageModel(t)} className={cx(s.stage, s.cStage)} />
-        <span className={s.ti}>
-          <TypeIcon type={t.type} />
-          <PriorityIcon priority={t.priority} />
-          <span title={t.title}>{t.title}</span>
-        </span>
+        <DataTitle type={t.type} priority={t.priority} text={t.title} />
         <NowCell ticket={t} now={now} />
-        <span className={cx(s.src, s.cSrc)}>{sourceColumn(t)}</span>
+        <span className={cx(text.meta, text.ellipsis, s.cSrc)}>{sourceColumn(t)}</span>
         <span className={cx(s.people, s.cPeople)}>
           {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}
         </span>
         <span className={s.upd} title={new Date(t.attention_since).toLocaleString()}>
           <Age text={waitAge(t, now)} />
         </span>
-      </button>
+      </DataLine>
       {inbox && (
         // Lies over the line on the same grid, so the button lands in the Now column.
         <span className={s.overlay}>
@@ -183,6 +170,6 @@ export function CompactRow({
         </span>
       )}
       {open && <Expanded id={moreId} ticket={t} />}
-    </li>
+    </DataRow>
   );
 }

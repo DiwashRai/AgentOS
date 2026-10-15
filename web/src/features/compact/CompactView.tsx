@@ -18,12 +18,20 @@ import type { Attention } from "../../domain/status";
 import {
   Age,
   ArrowIcon,
-  EmptyRow,
+  Badge,
+  DataFoot,
+  DataHead,
+  DataRows,
+  type DataColumn,
+  EmptyState,
   GroupHead,
-  Kbd,
+  Inline,
+  type KeyHint,
   KeyChip,
+  SegmentedControl,
+  type SegmentOption,
   StatusLine,
-  TickBadge,
+  StatusMark,
   useDocumentKey,
 } from "../../ui";
 import { usePeek } from "../peek/usePeek";
@@ -37,31 +45,51 @@ import {
   compactSections,
   emptyText,
   FILTER_PARAM,
+  type Filter,
   footSummary,
   type GroupRight,
   inRepo,
   parseFilter,
+  type Pill,
   pills,
   plural,
   REPO_PARAM,
   withFilter,
 } from "./model";
-import { Pills } from "./Pills";
 import { CompactRow } from "./Row";
 
 /** Ages tick by the minute; nothing on a compact line shows seconds. */
 const AGE_TICK_MS = 30_000;
 
 /** Column heads, with the class that hides a column on a narrow surface. */
-const COLUMNS: readonly [string, string | undefined][] = [
-  ["Ref", undefined],
-  ["Stage", s.cStage],
-  ["Ticket", undefined],
-  ["Now", s.cNow],
-  ["Source", s.cSrc],
-  ["People", s.cPeople],
-  ["Upd", undefined],
+const COLUMNS: readonly DataColumn[] = [
+  { label: "Ref" },
+  { label: "Stage", className: s.cStage },
+  { label: "Ticket" },
+  { label: "Now", className: s.cNow },
+  { label: "Source", className: s.cSrc },
+  { label: "People", className: s.cPeople },
+  { label: "Upd", end: true },
 ];
+
+const HINTS: readonly KeyHint[] = [
+  { keys: ["↵"], label: "Expand" },
+  { keys: ["Esc"], label: "Collapse" },
+  { keys: ["J", "K"], label: "Move" },
+  { keys: ["/"], label: "Search" },
+];
+
+/** The filter pills (refresh mock §4.13): Everything, then each group with its 7px glyph and its
+ *  shared count; zero counts stay, drawn quiet. */
+function filterOptions(items: readonly Pill[]): SegmentOption<Filter>[] {
+  return items.map((p) => ({
+    value: p.filter,
+    label: p.label,
+    mark: p.mark ? <StatusMark kind={p.mark} glyphOnly size={7} /> : undefined,
+    count: p.count,
+    you: p.filter === "needs_you",
+  }));
+}
 
 function Right({ right }: { right: GroupRight }): ReactNode {
   if (right === null) return undefined;
@@ -80,19 +108,16 @@ function Right({ right }: { right: GroupRight }): ReactNode {
       );
     case "note":
       return (
-        <span className={s.headNote}>
+        <Inline as="span" gap={3} className={s.headNote}>
           <ArrowIcon />
           {right.text}
-        </span>
+        </Inline>
       );
     case "shipped":
       return (
-        <>
-          <TickBadge size={12} />
-          <span>
-            <b>{`${String(right.n)} shipped`}</b> this week
-          </span>
-        </>
+        <Badge tone="stat">
+          <b>{`${String(right.n)} shipped`}</b> this week
+        </Badge>
       );
   }
 }
@@ -141,7 +166,10 @@ export function CompactView() {
   const scoped = useMemo(() => inRepo(board.tickets, repo), [board.tickets, repo]);
   const listed = useMemo(() => bySearch(byFilter(scoped, filter), query), [scoped, filter, query]);
   const groups = useMemo(() => compactGroups(listed, board.me, now), [listed, board.me, now]);
-  const pillItems = useMemo(() => pills(scoped, board.me, filter), [scoped, board.me, filter]);
+  const options = useMemo(
+    () => filterOptions(pills(scoped, board.me, filter)),
+    [scoped, board.me, filter],
+  );
   const foot = useMemo(() => footSummary(listed), [listed]);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -177,15 +205,15 @@ export function CompactView() {
       query.length > 0 ? (
         <NoMatches where={filter !== "all" || repo ? "here" : undefined} />
       ) : (
-        <p className={s.empty}>{emptyText(filter, repo)}</p>
+        <EmptyState form="inset">{emptyText(filter, repo)}</EmptyState>
       );
   else
     body = compactSections(groups, filter === "all" && query.length === 0).map((sec) => {
       if (sec.kind === "empty")
         return (
-          <EmptyRow key={`empty-${sec.id}`} lead={sec.lead} className={s.emptyRow}>
+          <EmptyState key={`empty-${sec.id}`} lead={sec.lead} className={s.emptyRow}>
             {sec.note}
-          </EmptyRow>
+          </EmptyState>
         );
       const g = sec.group;
       const collapsed = collapsedByDefault(g.id, filter) !== flipped.has(g.id);
@@ -203,7 +231,7 @@ export function CompactView() {
             }}
             controls={bodyId}
           />
-          <ul id={bodyId} className={s.rows} hidden={collapsed}>
+          <DataRows id={bodyId} hidden={collapsed}>
             {g.items.map((t) => (
               <CompactRow
                 key={t.key}
@@ -215,7 +243,7 @@ export function CompactView() {
                 }}
               />
             ))}
-          </ul>
+          </DataRows>
         </section>
       );
     });
@@ -226,45 +254,23 @@ export function CompactView() {
         title="Compact"
         context={repo ? `Every ticket · ${repoShort(repo) || repo}` : "Every ticket"}
         middle={
-          <Pills
-            items={pillItems}
-            active={filter}
-            onPick={(f) => {
+          <SegmentedControl
+            label="Filter"
+            options={options}
+            value={filter}
+            onChange={(f) => {
               setParams((p) => withFilter(p, f));
             }}
           />
         }
       />
       <Surface className={s.surface}>
-        <div className={s.colhead} aria-hidden="true">
-          {COLUMNS.map(([label, cls]) => (
-            <span key={label} className={cls}>
-              {label}
-            </span>
-          ))}
-        </div>
+        <DataHead columns={COLUMNS} className={s.colhead} />
         <div ref={listRef} className={s.list}>
           {body}
         </div>
-        <footer className={s.foot}>
-          <span className={s.keys}>
-            <Kbd>↵</Kbd>Expand
-          </span>
-          <span className={s.keys}>
-            <Kbd>Esc</Kbd>Collapse
-          </span>
-          <span className={s.keys}>
-            <span className={s.caps}>
-              <Kbd>J</Kbd>
-              <Kbd>K</Kbd>
-            </span>
-            Move
-          </span>
-          <span className={s.keys}>
-            <Kbd>/</Kbd>Search
-          </span>
-          <span className={s.grow} />
-          <span className={s.sum}>
+        <DataFoot hints={HINTS} hintClassName={s.keys} className={s.foot}>
+          <Inline as="span" gap={3} className={s.sum}>
             <span>
               <b>{foot.tickets}</b> {plural(foot.tickets, "ticket")}
             </span>
@@ -282,8 +288,8 @@ export function CompactView() {
             <span>
               <b>{foot.repos}</b> {plural(foot.repos, "repo")}
             </span>
-          </span>
-        </footer>
+          </Inline>
+        </DataFoot>
       </Surface>
     </>
   );
