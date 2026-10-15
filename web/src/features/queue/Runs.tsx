@@ -9,7 +9,6 @@ import { runLine } from "../../domain/ticketView";
 import { onlineWords } from "../../domain/words";
 import {
   Avatar,
-  Badge,
   cx,
   GroupHead,
   Inline,
@@ -136,7 +135,7 @@ export function Rack({
               <GroupHead
                 name={g.name}
                 size="sm"
-                note={g.online ? <Badge tone="note">{onlineWords[g.online]}</Badge> : null}
+                note={g.online ? <span className={s.online}>{onlineWords[g.online]}</span> : null}
                 count={g.items.length}
               />
               {g.items.map((t) => (

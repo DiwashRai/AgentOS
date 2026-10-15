@@ -190,38 +190,6 @@
   color: var(--ink-2);
 }
 
-/* ---------- overflow: "+42 more · 73 match in Jira, newest 50 listed · Show all 50" ---------- */
-.overflow {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  height: var(--h-empty);
-  margin-top: var(--sp-2);
-  padding: 0 var(--sp-7);
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-}
-.overflow > b {
-  flex: none;
-  white-space: nowrap;
-  font-size: var(--fs-control);
-  font-weight: 600;
-  color: var(--ink-1);
-  font-variant-numeric: tabular-nums;
-}
-.overflowEnd {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-7);
-  min-width: 0;
-  margin-left: auto;
-  white-space: nowrap;
-}
-.note {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ---------- foot bar ---------- */
 .foot {
   flex: none;

@@ -19,6 +19,7 @@ import {
   Age,
   ArrowIcon,
   Badge,
+  cx,
   DataFoot,
   DataHead,
   DataRows,
@@ -29,8 +30,6 @@ import {
   Inline,
   type KeyHint,
   KeyChip,
-  SegmentedControl,
-  type SegmentOption,
   StatusLine,
   StatusMark,
   useDocumentKey,
@@ -80,16 +79,49 @@ const HINTS: readonly KeyHint[] = [
   { keys: ["/"], label: "Search" },
 ];
 
-/** The filter pills (refresh mock §4.13): Everything, then each group with its 7px glyph and its
- *  shared count; zero counts stay, drawn quiet. */
-function filterOptions(items: readonly Pill[]): SegmentOption<Filter>[] {
-  return items.map((p) => ({
-    value: p.filter,
-    label: p.label,
-    mark: p.mark ? <StatusMark kind={p.mark} glyphOnly size={7} /> : undefined,
-    count: p.count,
-    you: p.filter === "needs_you",
-  }));
+/** The filter pills (refresh mock §4.13 `.filter-chips`): Everything, then each group with its 7px
+ *  glyph and its shared count; zero counts stay, drawn quiet. The pressed pill is `?f=`. */
+function Pills({
+  items,
+  active,
+  onPick,
+}: {
+  items: readonly Pill[];
+  active: Filter;
+  onPick: (filter: Filter) => void;
+}) {
+  return (
+    <div className={s.pills} role="group" aria-label="Filter">
+      {items.map((p) => {
+        const you = p.filter === "needs_you";
+        return (
+          <button
+            key={p.filter}
+            type="button"
+            className={cx(s.pill, you && s.pillYou)}
+            aria-pressed={p.filter === active}
+            onClick={() => {
+              onPick(p.filter);
+            }}
+          >
+            {p.mark ? (
+              <span className={s.pillMark} aria-hidden="true">
+                <StatusMark kind={p.mark} glyphOnly size={7} />
+              </span>
+            ) : null}
+            {p.label}
+            <span
+              className={s.count}
+              data-zero={p.count === 0 ? "" : undefined}
+              data-you={you ? "" : undefined}
+            >
+              {p.count}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function Right({ right }: { right: GroupRight }): ReactNode {
@@ -167,10 +199,7 @@ export function CompactView() {
   const scoped = useMemo(() => inRepo(board.tickets, repo), [board.tickets, repo]);
   const listed = useMemo(() => bySearch(byFilter(scoped, filter), query), [scoped, filter, query]);
   const groups = useMemo(() => compactGroups(listed, board.me, now), [listed, board.me, now]);
-  const options = useMemo(
-    () => filterOptions(pills(scoped, board.me, filter)),
-    [scoped, board.me, filter],
-  );
+  const pillItems = useMemo(() => pills(scoped, board.me, filter), [scoped, board.me, filter]);
   const foot = useMemo(() => footSummary(listed), [listed]);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -255,11 +284,10 @@ export function CompactView() {
         title="Compact"
         context={repo ? `Every ticket · ${repoShort(repo) || repo}` : "Every ticket"}
         middle={
-          <SegmentedControl
-            label="Filter"
-            options={options}
-            value={filter}
-            onChange={(f) => {
+          <Pills
+            items={pillItems}
+            active={filter}
+            onPick={(f) => {
               setParams((p) => withFilter(p, f));
             }}
           />

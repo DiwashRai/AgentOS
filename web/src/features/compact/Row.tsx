@@ -106,7 +106,7 @@ export function CompactRow({
   onToggle: (key: string) => void;
 }) {
   const moreId = useId();
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLLIElement>(null);
   const navigate = useNavigate();
   const inbox = t.attention === "inbox";
   const look = rowLook(t);

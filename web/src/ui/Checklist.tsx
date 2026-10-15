@@ -21,22 +21,18 @@ export interface ChecklistProps {
   density?: "roomy" | "compact" | undefined;
   /** The head's text ("Plan"). Without one there is no head, and `label` names the list. */
   title?: ReactNode;
-  /** The head's element: h2 (default), h3 or h4. */
-  level?: 2 | 3 | 4 | undefined;
+  /** The head's element: h2 (default) or h3. */
+  level?: 2 | 3 | undefined;
   /** The head's id; the list (or each unheaded list) is labelled by it. Without one, a list under a
    *  string title is named by the title. */
   id?: string | undefined;
   /** The list's accessible name when there is no head. */
   label?: string | undefined;
-  /** bar: "k of n done" and the bar (roomy default). count: "k of n done" at the head's end
-   *  (compact default). inline: "· k of n done" right after the title (compact). none: the title
-   *  alone. */
-  progress?: "bar" | "count" | "inline" | "none" | undefined;
-  /** Draw the section heads when the plan has 2+ sections (default: roomy only). */
-  sections?: boolean | undefined;
+  /** compact: "k of n done" at the head's end (count, default) or right after the title (inline,
+   *  "· k of n done"). roomy always draws it with the bar. */
+  progress?: "count" | "inline" | undefined;
   /** Drawn under the head when there is no plan (an EmptyState note). */
   empty?: ReactNode;
-  className?: string | undefined;
 }
 
 function Item({ item }: { item: PlanItemView }) {
@@ -63,12 +59,10 @@ export function Checklist({
   level = 2,
   id,
   label,
-  progress = density === "roomy" ? "bar" : "count",
-  sections = density === "roomy",
+  progress = "count",
   empty,
-  className,
 }: ChecklistProps) {
-  const H = `h${String(level)}` as "h2" | "h3" | "h4";
+  const H = level === 2 ? "h2" : "h3";
   const roomy = density === "roomy";
   let listName: { "aria-labelledby"?: string; "aria-label"?: string | undefined };
   if (title !== undefined && id) listName = { "aria-labelledby": id };
@@ -79,19 +73,19 @@ export function Checklist({
     title !== undefined ? (
       <H id={id} className={roomy ? cx(text.heading, s.head) : s.lab}>
         {roomy ? title : <span>{title}</span>}
-        {plan && progress !== "none" && roomy ? (
-          <span className={s.count}>
-            <b>{plan.done}</b> of <b>{plan.total}</b> done
-          </span>
+        {plan && roomy ? (
+          <>
+            <span className={s.count}>
+              <b>{plan.done}</b> of <b>{plan.total}</b> done
+            </span>
+            <span className={s.bar} aria-hidden="true">
+              <i style={{ width: `${String(plan.pct)}%` }} />
+            </span>
+          </>
         ) : null}
-        {plan && progress !== "none" && !roomy ? (
+        {plan && !roomy ? (
           <span className={progress === "inline" ? s.labInline : s.labCount}>
-            {`${progress === "inline" ? "· " : ""}${String(plan.done)} of ${String(plan.total)} done`}
-          </span>
-        ) : null}
-        {plan && progress === "bar" ? (
-          <span className={s.bar} aria-hidden="true">
-            <i style={{ width: `${String(plan.pct)}%` }} />
+            {`${progress === "inline" ? "· " : ""}${sectionCount(plan)} done`}
           </span>
         ) : null}
       </H>
@@ -100,7 +94,7 @@ export function Checklist({
   let body: ReactNode;
   if (!plan) {
     body = empty;
-  } else if (sections && plan.headed) {
+  } else if (roomy && plan.headed) {
     body = plan.sections.map((sec, j) => {
       const secId = id ? `${id}-${String(j)}` : undefined;
       const headed = sec.section !== null;
@@ -134,7 +128,7 @@ export function Checklist({
   }
 
   return (
-    <div className={cx(s.root, roomy ? s.roomy : s.compact, className)}>
+    <div className={cx(s.root, roomy ? s.roomy : s.compact)}>
       {head}
       {body}
     </div>

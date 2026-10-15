@@ -1,4 +1,4 @@
-/* Disclosure and Fold: a chevron and a sentence-case label; the chevron points right while closed
+/* Fold: a chevron and a sentence-case label; the chevron points right while closed
    (RunsTab `.foldHead`, `.chev`). */
 .head {
   display: inline-flex;
@@ -37,7 +37,6 @@
   transform: rotate(-90deg);
   transition: transform var(--t-fast) ease;
 }
-.head[aria-expanded="true"] > .chev,
 .fold[open] > summary > .chev {
   transform: none;
 }

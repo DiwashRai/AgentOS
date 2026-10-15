@@ -1,6 +1,5 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useId,
@@ -29,44 +28,14 @@ const FOCUSABLE = [
   .map((sel) => `${sel}:not([tabindex="-1"])`)
   .join(", ");
 
-/** How long after opening content that loads late may still bring the autofocus field. */
-const LATE_AUTOFOCUS_MS = 2000;
-
 type Panel = RefObject<HTMLDivElement | null>;
 
-/** An open dialog: its panel and the fixed layer whose z-index sets where it is painted. */
-interface Entry {
-  panel: Panel;
-  layer: RefObject<HTMLDivElement | null>;
-}
-
-/** The open dialogs, in mount order. */
-const stack: Entry[] = [];
-
-function zIndexOf(entry: Entry): number {
-  const layer = entry.layer.current;
-  if (!layer) return 0;
-  const z = Number.parseInt(getComputedStyle(layer).zIndex, 10);
-  return Number.isNaN(z) ? 0 : z;
-}
-
-/** The dialog painted on top: the highest layer z-index, a later mount winning a tie. */
-function topEntry(): Entry | undefined {
-  let top: Entry | undefined;
-  let topZ = -Infinity;
-  for (const entry of stack) {
-    const z = zIndexOf(entry);
-    if (z >= topZ) {
-      top = entry;
-      topZ = z;
-    }
-  }
-  return top;
-}
+/** The open dialogs' panels in opening order: the last one is on top. */
+const stack: Panel[] = [];
 
 /** The only dialog that acts on Escape and Tab. */
 function isTop(panel: Panel): boolean {
-  return topEntry()?.panel === panel;
+  return stack.at(-1) === panel;
 }
 
 /** Whether any dialog is open; document shortcuts (`/`, J/K) stay off while one is. */
@@ -78,44 +47,26 @@ function reducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** The panel's tab stops that are drawn (a hidden or collapsed control has no boxes). */
-function focusables(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (el) => el.getClientRects().length > 0,
-  );
-}
-
 /**
- * Where Tab (or Shift+Tab with `back`) goes so focus stays in the panel: the other end when it
- * would leave, the first (last) stop when focus is outside or on the panel itself, the panel when
- * it has no stops. Focus inside on something that is not a stop moves to the next (previous) stop
- * in document order, wrapping at the ends. Null when the browser's own move stays inside.
+ * Where Tab (or Shift+Tab with `back`) goes so focus stays in the panel: the first (last) drawn
+ * stop when focus is outside or on the panel itself, the other end when focus is at (or past) the
+ * end it moves towards, the panel when it has no stops. Null when the browser's own move stays
+ * inside.
  */
 function tabTarget(root: HTMLElement, back: boolean): HTMLElement | null {
-  const list = focusables(root);
+  // A hidden or collapsed control has no boxes.
+  const list = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => el.getClientRects().length > 0,
+  );
   const first = list[0];
   const last = list.at(-1);
   if (!first || !last) return root;
 
   const active = document.activeElement;
-  const inside = active !== root && active !== null && root.contains(active);
-  if (!inside) return back ? last : first;
-
-  if (!list.some((el) => el === active)) {
-    if (back) {
-      const before = list.filter(
-        (el) => active.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING,
-      );
-      return before.at(-1) ?? last;
-    }
-    const after = list.find(
-      (el) => active.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-    return after ?? first;
-  }
-
-  if (back && active === first) return last;
-  if (!back && active === last) return first;
+  if (active === root || !active || !root.contains(active)) return back ? last : first;
+  const end = back ? first : last;
+  const past = back ? Node.DOCUMENT_POSITION_PRECEDING : Node.DOCUMENT_POSITION_FOLLOWING;
+  if (active === end || end.compareDocumentPosition(active) & past) return back ? last : first;
   return null;
 }
 
@@ -166,16 +117,15 @@ export interface DialogProps {
 }
 
 /**
- * A modal dialog: scrim, panel (`role="dialog"`, `aria-modal`), focus moved in on open (the
- * first `[data-autofocus]` element, else the panel itself without a ring) and back to the opener
- * on close if it is still on the page, Tab wrapping at both ends, Escape and the scrim closing it.
+ * A modal dialog: scrim, panel (`role="dialog"`, `aria-modal`), focus moved in on open (the panel
+ * itself, without a ring, unless content already took it) and back to the opener on close if it is
+ * still on the page, Tab wrapping at both ends, Escape and the scrim closing it.
  *
  * Keys: the panel handles Escape and Tab in React's bubble phase, after its own controls, so a
  * control that stops Escape (an inline edit, a confirm) keeps the dialog open. A key from outside
  * the panel (focus fell to `body`) is taken on the document in the capture phase. Either way a
  * handled key stops there, so document listeners (a view's Escape) never see it. Dialogs stack:
- * only the one painted on top acts (highest layer z-index, then the most recently opened), and
- * closing it hands keys and focus to the next one down.
+ * only the last opened acts, and closing it hands keys and focus to the one below.
  */
 export function Dialog({
   onClose,
@@ -187,81 +137,43 @@ export function Dialog({
   children,
 }: DialogProps) {
   const panel = useRef<HTMLDivElement>(null);
-  const layer = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const [shown, setShown] = useState(false);
   const closing = useRef(false);
   const timer = useRef<number | undefined>(undefined);
+  // Read at the first render, before a child's autofocus moves focus into the panel.
+  const [opener] = useState(() => document.activeElement);
 
-  const latestClose = useRef(onClose);
-  useLayoutEffect(() => {
-    latestClose.current = onClose;
-  });
-
-  const close = useCallback(() => {
+  const close = () => {
     if (closing.current) return;
     closing.current = true;
     setShown(false);
 
     const ms = exitMs > 0 && !reducedMotion() ? exitMs : 0;
-    if (ms === 0) {
-      latestClose.current();
-      return;
-    }
-    timer.current = window.setTimeout(() => {
-      latestClose.current();
-    }, ms);
-  }, [exitMs]);
+    if (ms === 0) onClose();
+    else timer.current = window.setTimeout(onClose, ms);
+  };
 
-  // Join the stack, remember the opener and, when this dialog is painted on top, move focus in. On
-  // unmount the top dialog gives focus back to the opener, or to the new top when the opener is gone.
+  // Join the stack on top and move focus in. On unmount the top dialog gives focus back to the
+  // opener, or to the new top when the opener is gone.
   useLayoutEffect(() => {
     const root = panel.current;
     if (!root) return;
-    const opener = document.activeElement;
-    const entry: Entry = { panel, layer };
-    stack.push(entry);
-    const onTop = isTop(panel);
-
-    const target = root.querySelector<HTMLElement>("[data-autofocus]");
-    if (onTop) (target ?? root).focus({ preventScroll: true });
-
-    // Content that loads soon after opening may bring the autofocus field: focus it, unless focus
-    // has already moved off the panel. The watch ends on the first match or after a short window.
-    const late =
-      target || !onTop
-        ? null
-        : new MutationObserver((_, observer) => {
-            if (document.activeElement !== root) {
-              observer.disconnect();
-              return;
-            }
-            const found = root.querySelector<HTMLElement>("[data-autofocus]");
-            if (!found) return;
-            observer.disconnect();
-            found.focus({ preventScroll: true });
-          });
-    late?.observe(root, { childList: true, subtree: true });
-    const lateEnd = late
-      ? window.setTimeout(() => {
-          late.disconnect();
-        }, LATE_AUTOFOCUS_MS)
-      : undefined;
+    stack.push(panel);
+    if (!root.contains(document.activeElement)) root.focus({ preventScroll: true });
 
     return () => {
-      late?.disconnect();
-      window.clearTimeout(lateEnd);
       const wasTop = isTop(panel);
-      stack.splice(stack.indexOf(entry), 1);
+      stack.splice(stack.indexOf(panel), 1);
       if (!wasTop) return;
 
       if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) {
         opener.focus({ preventScroll: true });
       } else {
-        topEntry()?.panel.current?.focus({ preventScroll: true });
+        stack.at(-1)?.current?.focus({ preventScroll: true });
       }
     };
-  }, []);
+  }, [opener]);
 
   // Enter on the next frame, so the open transition runs.
   useEffect(() => {
@@ -293,7 +205,7 @@ export function Dialog({
 
   const open = shown ? "" : undefined;
   return (
-    <div ref={layer} className={cx(s.layer, layerClassName)}>
+    <div className={cx(s.layer, layerClassName)}>
       <button
         type="button"
         tabIndex={-1}

@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useManifest } from "../../api/queries";
-import { cx, EmptyState, Fold, FramedList, Inline, Stack, StatusLine, Tag, text } from "../../ui";
+import { cx, EmptyState, Fold, Inline, Stack, StatusLine, Tag, text } from "../../ui";
 import {
   filePaths,
   laterLabel,
@@ -121,11 +121,11 @@ export function ManifestBody({ manifest }: { manifest: Manifest }) {
           {w}
         </p>
       ))}
-      <FramedList framed={false} rules="under" topRule as="ol" aria-label="Stage calls">
+      <ol className={s.ruled} aria-label="Stage calls">
         {manifest.stages.map((st) => (
           <CallItem key={st.id} call={stageCall(st)} />
         ))}
-      </FramedList>
+      </ol>
       {paths.length > 0 ? (
         <Fold summary={`Files given to the agent (${String(paths.length)})`}>
           <ul className={cx(s.pre, s.paths)}>

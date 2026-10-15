@@ -8,24 +8,16 @@
 //                 is the click target (spread the peek's item props on it), or it holds a DataLine.
 //   DataLine      the row's one-line button on `--cols` (Compact): Enter / Space are the button's
 //   DataTitle     the title cell: type and priority icons, then the ellipsized title
-//   DataOverflow  "+N more" under a capped list, with a note and a one-way "Show all"
 //   DataFoot      the foot bar: key hints, a grow, then the view's summary
 // DataRow exposes its state as `data-surface` ("raised" | "flat"), `data-you`, `data-open` and
 // `data-edge`, so a view's own cells can follow it (`.row[data-surface="flat"] .upd`).
-import {
-  type ComponentPropsWithRef,
-  type HTMLAttributes,
-  type ReactNode,
-  type Ref,
-  useCallback,
-} from "react";
+import type { ComponentPropsWithRef, HTMLAttributes, ReactNode, Ref } from "react";
 import type { RowEdge } from "../domain/ticketView";
 import { litRowClass } from "./Button";
 import { cx } from "./cx";
 import s from "./DataList.module.css";
 import { Kbd } from "./Kbd";
 import { Spacer, Stack, type StackProps } from "./Layout";
-import { LinkButton } from "./Link";
 import { PriorityIcon, type Priority } from "./PriorityIcon";
 import { TypeIcon, type TicketType } from "./TypeIcon";
 
@@ -74,8 +66,8 @@ export function DataRows({ gap = 2, as = "ul", className, children, ...rest }: D
 
 export interface DataRowProps extends HTMLAttributes<HTMLElement> {
   /** The element (default li). */
-  as?: "li" | "article" | "div" | undefined;
-  ref?: Ref<HTMLElement> | undefined;
+  as?: "li" | "article" | undefined;
+  ref?: Ref<HTMLLIElement> | undefined;
   /** raised (default): in flight or needing action. flat: settled, on the recess. */
   surface?: "raised" | "flat" | undefined;
   /** The Needs-you wash over the surface (raised rows only), and a 600 title. */
@@ -111,15 +103,6 @@ export function DataRow({
   children,
   ...rest
 }: DataRowProps) {
-  // The element varies with `as`, so the row hands each one a callback over the HTMLElement ref.
-  const attach = useCallback(
-    (el: HTMLElement | null) => {
-      if (typeof ref === "function") ref(el);
-      else if (ref) ref.current = el;
-    },
-    [ref],
-  );
-
   const classes = cx(
     s.row,
     edge && (edgeOn === "row" ? s.edgeRow : s.edgeLine),
@@ -130,7 +113,7 @@ export function DataRow({
   );
   return (
     <Tag
-      ref={ref ? attach : undefined}
+      ref={ref}
       className={classes}
       data-surface={surface}
       data-you={you ? "" : undefined}
@@ -186,44 +169,6 @@ export function DataTitle({
       {priority === undefined ? null : <PriorityIcon priority={priority} />}
       <span title={text}>{text}</span>
     </Tag>
-  );
-}
-
-// ------------------------------------------------------------------ overflow
-
-export interface DataOverflowProps {
-  /** How many rows the cap hides: "+N more". */
-  more: number;
-  /** The button's text ("Show all 50"). */
-  label: string;
-  /** Shows every row. The view then drops this line and moves focus to the first row it revealed,
-   *  since the button leaves with it. */
-  onShow: () => void;
-  /** A quiet note before the button, ellipsized ("73 match in Jira, newest 50 listed"). */
-  note?: ReactNode;
-  /** The note's class (to hide it on a narrow surface). */
-  noteClassName?: string | undefined;
-  className?: string | undefined;
-}
-
-/** The line under a capped list: "+N more", then the note and a one-way "Show all" at the right.
- *  It is a reveal, not a toggle: the view renders it only while rows are hidden. */
-export function DataOverflow({
-  more,
-  label,
-  onShow,
-  note,
-  noteClassName,
-  className,
-}: DataOverflowProps) {
-  return (
-    <div className={cx(s.overflow, className)}>
-      <b>{`+${String(more)} more`}</b>
-      <span className={s.overflowEnd}>
-        {note ? <span className={cx(s.note, noteClassName)}>{note}</span> : null}
-        <LinkButton onClick={onShow}>{label}</LinkButton>
-      </span>
-    </div>
   );
 }
 

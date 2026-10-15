@@ -23,7 +23,6 @@ import {
   type DataColumn,
   DataFoot,
   DataHead,
-  DataOverflow,
   DataRow,
   DataRows,
   DataTitle,
@@ -175,9 +174,10 @@ function IntakeRow({
         <>
           <span className={s.st}>
             {/* Jira gives only the status name (no category), so one neutral ring for all. */}
-            <Badge tone="status" title={`Jira status: ${item.status}`}>
-              {item.status}
-            </Badge>
+            <span className={s.status} title={`Jira status: ${item.status}`}>
+              <i aria-hidden="true" />
+              <span>{item.status}</span>
+            </span>
           </span>
           <Assignee person={item.assignee} />
           <span
@@ -302,17 +302,21 @@ function IntakeGroup({
           ))}
         </DataRows>
         {rest > 0 && (
-          <DataOverflow
-            more={rest}
-            label={`Show all ${String(items.length)}`}
-            onShow={() => {
-              revealing.current = true;
-              onExpand();
-            }}
-            note={cap}
-            noteClassName={s.cap}
-            className={s.more}
-          />
+          // A reveal, not a toggle: it leaves with the hidden rows, and focus moves to the first one.
+          <div className={s.more}>
+            <b>{`+${String(rest)} more`}</b>
+            <span className={s.moreEnd}>
+              {cap ? <span className={s.cap}>{cap}</span> : null}
+              <LinkButton
+                onClick={() => {
+                  revealing.current = true;
+                  onExpand();
+                }}
+              >
+                {`Show all ${String(items.length)}`}
+              </LinkButton>
+            </span>
+          </div>
         )}
       </>
     );

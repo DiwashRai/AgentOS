@@ -170,6 +170,13 @@
 
 /* ---------- the rack ---------- */
 /* the group heads are the kit's static GroupHead; the lines bleed 6px so their text meets its edge */
+/* a client group's "Offline", beside its head */
+.online {
+  flex: none;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-3);
+}
 .rl {
   display: grid;
   grid-template-columns: 12px 84px minmax(0, 1fr) 36px 30px 20px;

@@ -68,7 +68,7 @@ src/styles/    tokens.css, base.css, fonts.css
   - `domain/format.ts`: `duration`, `ago`, `runSeconds` (every elapsed time and age).
   A view places these parts; it never rebuilds one in its own module.
 - Display helpers (`domain/format.ts`, a feature's `model.ts`) may combine server fields into text. They never derive state.
-- Words come from `domain/words.ts` (one vocabulary for every view; sentence case, exactly as shown). `attentionWords` is the one definition of the status words; `statusWords`, `displayWords` and `MARK_WORD` derive from it. `sourceNames` names a ticket's source. Stage glyph and stepper models come from `domain/stage.ts`, which also maps server rail states to drawn states (for example `stale` draws as upcoming).
+- Words come from `domain/words.ts` (one vocabulary for every view; sentence case, exactly as shown). `attentionWords` is the one definition of the status words; `statusWords` and `displayWords` derive from it. `sourceNames` names a ticket's source. Stage glyph and stepper models come from `domain/stage.ts`, which also maps server rail states to drawn states (for example `stale` draws as upcoming).
 - If a view needs a state the server doesn't provide, ask for it through the contract process.
 
 ## Actions
@@ -138,18 +138,16 @@ What every editable page shares. `editor/index.ts` lists it; check there before 
 - `src/ui/index.ts` is the list of primitives. Import from `../ui` (or the right relative path), and check there before writing a new one.
 - Text utilities: `text` (`ui/text.module.css`) has `heading`, `label`, `meta`, `error` and `ellipsis` on the type tokens. Compose them with `cx` (`cx(text.meta, text.ellipsis)`) instead of a module's own heading, label, note or error class.
 - `StatusLine` is the one loading, permission and error line: a sentence in `--ink-3` (`error`: `--blocked`, announced as an alert), `inset` when it stands alone in a view. No spinners, no toasts.
-- `Dialog` / `DialogTitle`: every modal (the peek, New ticket). Scrim, `role="dialog"` panel, focus in on open and back to the opener on close, Tab wrapping, Escape and the scrim closing it; dialogs stack and only the top one acts. A feature never writes its own scrim, focus trap or focus return.
-- DataList (`DataHead`, `DataRows`, `DataRow`, `DataLine`, `DataTitle`, `DataOverflow`, `DataFoot`): the parts of the row lists in My queue, Compact and Intake. The view sets its grid as `--cols`; `DataRow` draws the surface, you-wash, status edge and hover.
-- `SegmentedControl`: a named group of `aria-pressed` buttons with optional mark and count (the Compact filter pills).
-- `EmptyState`: every "nothing here" (`row` is the dashed `EmptyRow`; `line`, `inset`, `note`). Loading, permission and error lines stay `StatusLine`.
-- `Badge`: `Tag` plus the small inline labels (`count`, `status`, `counter`, `pass`/`fail`, `ok`/`bad`, `stat`).
+- `Dialog` / `DialogTitle`: every modal (the peek, New ticket). Scrim, `role="dialog"` panel, focus in on open and back to the opener on close, Tab wrapping, Escape and the scrim closing it; dialogs stack and only the last opened acts. A feature never writes its own scrim, focus trap or focus return.
+- DataList (`DataHead`, `DataRows`, `DataRow`, `DataLine`, `DataTitle`, `DataFoot`): the parts of the row lists in My queue, Compact and Intake. The view sets its grid as `--cols`; `DataRow` draws the surface, you-wash, status edge and hover.
+- `EmptyState`: every "nothing here" (the dashed `row`, `line`, `inset`, `note`). Loading, permission and error lines stay `StatusLine`.
+- `Badge`: a head's small figures (`counter` in the top bar, `stat` beside a group head).
 - `Checklist`: a plan from `planView`, `roomy` on the Ticket page, `compact` in the peek and Compact.
 - `Stack` / `Inline` / `Spacer` (`Layout.tsx`): the flex column and row, with the gap as a `--sp-*` step.
-- `Sheet` / `FramedList`: the raised, framed surface, and a list whose rows are split by rules.
-- `Disclosure` / `Fold`: a chevron toggle whose open state the caller holds, and the same head on a native `details`.
+- `Fold`: a chevron head on a native `details`.
 - `useNow(intervalMs)` is the clock for ages, elapsed times and saved-by lines.
 - `useDocumentKey(handler, { enabled, capture })` is the one way to listen for keys on the document (the handler is read through a ref).
-- Feature CSS keeps only layout grids and the visuals that can't be shared (status glyphs, the stepper, the run meter, the run log, chat bubbles). A missing variant is added once, in `ui/`, never improvised inside a feature.
+- Feature CSS keeps only layout grids and the visuals that can't be shared (status glyphs, the stepper, the run meter, the run log, chat bubbles). A look two or more features share is added once, in `ui/`; a look only one feature uses stays in that feature's module.
 
 ## Motion and keys
 - Animate only `transform` and `opacity`. Honour `prefers-reduced-motion` (`base.css` has a global rule; modules with their own motion add one), and `html.ao-paused` (`app/motion.ts`, `base.css`) stops animation while the tab is hidden.

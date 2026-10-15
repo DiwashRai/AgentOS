@@ -19,7 +19,6 @@ import {
   EmptyState,
   Faces,
   Inline,
-  Sheet,
   Spacer,
   Stack,
   StatusLine,
@@ -252,7 +251,7 @@ function TalkPane({ ticketKey, limit = 8, variant }: TalkProps) {
 
   return (
     <section className={cx(s.talk, s[variant])} aria-label="Talk">
-      <Sheet elevation="float" className={s.sheet}>
+      <div className={s.sheet}>
         <Inline gap={5} className={s.head}>
           <b className={text.heading}>Talk</b>
           {people.length > 0 && (
@@ -282,7 +281,7 @@ function TalkPane({ ticketKey, limit = 8, variant }: TalkProps) {
           )}
         </div>
         <Composer ticketKey={ticketKey} people={people} />
-      </Sheet>
+      </div>
     </section>
   );
 }

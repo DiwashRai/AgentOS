@@ -37,6 +37,14 @@ import {
 import { importErrorText, offersJiraImport, toImportBody } from "./importForm";
 import s from "./NewTicket.module.css";
 
+/** Focuses the dialog's first field when the forms mount (they may load after the dialog opened),
+ *  unless focus has already moved on inside the dialog. */
+function focusOnMount(el: HTMLInputElement | null) {
+  const panel = el?.closest('[role="dialog"]');
+  if (el && (document.activeElement === panel || !panel?.contains(document.activeElement)))
+    el.focus({ preventScroll: true });
+}
+
 /** "Import from Jira": a key or link → the ticket (new or imported before). Its own form, so
  *  Enter in the field imports instead of creating. */
 function ImportRow({
@@ -79,7 +87,7 @@ function ImportRow({
           autoComplete="off"
           aria-describedby={imp.error ? "import-err" : undefined}
           aria-invalid={imp.error ? true : undefined}
-          {...(focusFirst ? { "data-autofocus": "" } : {})}
+          ref={focusFirst ? focusOnMount : undefined}
           onChange={(e) => {
             setRef(e.target.value);
             if (imp.error) imp.reset();
@@ -155,7 +163,7 @@ function TicketForm({
             aria-required="true"
             placeholder="What should change?"
             data-title=""
-            {...(focusFirst ? { "data-autofocus": "" } : {})}
+            ref={focusFirst ? focusOnMount : undefined}
             onChange={(e) => {
               set("title", e.target.value);
             }}
@@ -326,8 +334,8 @@ function NewTicketForms() {
   );
 }
 
-/** The dialog, labelled by its "New ticket" heading. `Dialog` focuses the first field once the
- *  forms load (`data-autofocus`), traps Tab, closes on Esc or the scrim, and returns focus. */
+/** The dialog, labelled by its "New ticket" heading. `Dialog` traps Tab, closes on Esc or the
+ *  scrim, and returns focus; the first field focuses itself. */
 export function NewTicketHost() {
   const [params, setParams] = useSearchParams();
   if (params.get("new") !== "1") return null;

@@ -1,7 +1,7 @@
 /* Talk (DESIGN §11). Ported from kit.css `.ao-talk`, `.ao-thread`, `.ao-msg`, `.ao-bub`,
-   `.ao-compose`. The sheet, head row, text lines and empty states are the kit's; this module keeps
-   the recess, the thread, the bubbles and the composer. No reactions, typing dots or composer icons
-   (cut). */
+   `.ao-compose`. The head row, text lines and empty states are the kit's; this module keeps the
+   recess, the sheet, the thread, the bubbles and the composer. No reactions, typing dots or
+   composer icons (cut). */
 
 /* The recess. The parent sizes it; Talk fills it. */
 .talk {
@@ -22,11 +22,16 @@
   min-height: 240px;
 }
 
+/* The sheet in the recess: no frame, the surface shadow, the row radius. */
 .sheet {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--r-row);
+  box-shadow: var(--surface-shadow);
 }
 
 .head {

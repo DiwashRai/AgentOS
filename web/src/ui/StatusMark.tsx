@@ -5,9 +5,6 @@ import { TickBadge } from "./TickBadge";
 
 export type MarkKind = "run" | "wait" | "you" | "blk" | "done" | "abandoned" | "queued" | "idle";
 
-/** Fallback accessible names for a glyph-only mark: the domain's status words. */
-export const MARK_WORD: Record<MarkKind, string> = displayWords;
-
 export interface StatusMarkProps {
   kind: MarkKind;
   /** Sentence-case label in the mark's colour ("Builder · run #42", "Sam", "Blocked"). Ignored for
@@ -48,7 +45,7 @@ export function StatusMark({
 }: StatusMarkProps) {
   const cls = cx(s.mark, s[kind], size === 7 && s.s7, className);
   if (glyphOnly) {
-    const label = title ?? name ?? MARK_WORD[kind];
+    const label = title ?? name ?? displayWords[kind];
     return (
       <span className={cls} title={title}>
         <Glyph kind={kind} label={label} />

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The Dialog's keys and focus: Tab wraps inside the panel, Escape closes the top dialog only (the
-// one painted on top) and stops there, an inner control that stops Escape keeps it open, focus goes
+// last opened) and stops there, an inner control that stops Escape keeps it open, focus goes
 // back to the opener or the dialog below, and closing waits out `exitMs`.
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -99,9 +99,10 @@ describe("Dialog focus trap", () => {
     expect(document.activeElement).toBe(button("Form last"));
   });
 
-  it("Tab from an inner element that is not a stop goes to the next stop, wrapping", () => {
+  it("Tab from an inner element that is not a stop wraps only past an end", () => {
     render(
       <Dialog label="Notes" onClose={vi.fn()}>
+        <div role="note" aria-label="Start" tabIndex={-1} />
         <button type="button">Notes first</button>
         <div role="note" aria-label="Middle" tabIndex={-1} />
         <button type="button">Notes last</button>
@@ -113,18 +114,28 @@ describe("Dialog focus trap", () => {
       if (!found) throw new Error(`no note ${name}`);
       return found;
     };
+    const tab = (from: string, shiftKey = false) => {
+      note(from).focus();
+      const e = new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        note(from).dispatchEvent(e);
+      });
+      return e.defaultPrevented;
+    };
 
-    note("Middle").focus();
-    press(note("Middle"), "Tab");
+    // Between the stops the browser's own move stays inside: the dialog leaves it alone.
+    expect(tab("Middle")).toBe(false);
+    expect(tab("Middle", true)).toBe(false);
+
+    expect(tab("End")).toBe(true);
+    expect(document.activeElement).toBe(button("Notes first"));
+    expect(tab("Start", true)).toBe(true);
     expect(document.activeElement).toBe(button("Notes last"));
-
-    note("Middle").focus();
-    press(note("Middle"), "Tab", true);
-    expect(document.activeElement).toBe(button("Notes first"));
-
-    note("End").focus();
-    press(note("End"), "Tab");
-    expect(document.activeElement).toBe(button("Notes first"));
   });
 
   it("Tab with focus outside the panel lands inside it", () => {
@@ -228,43 +239,22 @@ describe("Dialog focus return", () => {
     expect(document.activeElement).toBe(dialog("Below"));
   });
 
-  it("starts on the [data-autofocus] element", () => {
+  it("keeps focus a child took on mount, and still returns it to the opener", () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Open";
+    document.body.append(opener);
+    opener.focus();
+
     render(
       <Dialog label="Search" onClose={vi.fn()}>
         <button type="button">Search first</button>
-        <input aria-label="Query" data-autofocus />
+        <input aria-label="Query" ref={(el) => el?.focus()} />
       </Dialog>,
     );
     expect(document.activeElement).toBe(dialog("Search").querySelector("input"));
-  });
-});
 
-describe("Dialog stacking", () => {
-  it("the dialog painted on top acts, even when it opened first", () => {
-    const style = document.createElement("style");
-    style.textContent = ".raised { z-index: 50 } .lowered { z-index: 40 }";
-    document.head.append(style);
-    const raised = vi.fn();
-    const lowered = vi.fn();
-
-    const both = (
-      <>
-        <Dialog label="Raised" layerClassName="raised" onClose={raised}>
-          <button type="button">Raised first</button>
-        </Dialog>
-        <Dialog label="Lowered" layerClassName="lowered" onClose={lowered}>
-          <button type="button">Lowered first</button>
-        </Dialog>
-      </>
-    );
-    render(both);
-    expect(dialog("Raised").contains(document.activeElement)).toBe(true);
-    blur();
-    press(document.body, "Escape");
-    style.remove();
-
-    expect(raised).toHaveBeenCalledOnce();
-    expect(lowered).not.toHaveBeenCalled();
+    render(null);
+    expect(document.activeElement).toBe(opener);
   });
 });
 

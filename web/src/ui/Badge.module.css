@@ -1,52 +1,4 @@
-/* Badge: the small inline labels that sit outside Tag's kicker look. Each tone keeps the look it
-   had in its view (named beside it). */
-
-/* count: a count inside a control, e.g. a filter pill's number (Compact `.pills em`) */
-.count {
-  font-style: normal;
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  color: var(--ink-1);
-  font-variant-numeric: tabular-nums;
-}
-.count[data-zero] {
-  color: var(--ink-3);
-  font-weight: 500;
-}
-.count[data-you] {
-  color: var(--you-text);
-}
-
-/* status: a neutral lozenge with a ring, e.g. a Jira status (mock `.lozenge`, Intake `.loz`) */
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  box-sizing: border-box;
-  max-width: 100%;
-  height: 22px;
-  padding: 0 var(--sp-4);
-  border-radius: 5px;
-  background: var(--field);
-  box-shadow: inset 0 0 0 1px var(--rule-soft);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-.status > i {
-  flex: none;
-  box-sizing: border-box;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid var(--ink-3);
-}
-.status > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* Badge: a head's small figures. */
 
 /* counter: a top-bar count (mock `.counter`); the number carries the weight, a zero recedes */
 .counter {
@@ -87,41 +39,7 @@
   align-self: center;
 }
 
-/* pass / fail: a check's verdict pill; green = done, crimson = blocked (RunsTab `.verdict`) */
-.verdict {
-  flex: none;
-  padding: 1px var(--sp-3);
-  border-radius: var(--r-pill);
-  font-size: var(--fs-mono);
-  font-weight: 600;
-  line-height: 1.45;
-}
-.pass {
-  color: var(--done);
-  background: var(--done-tint);
-}
-.fail {
-  color: var(--blocked);
-  background: color-mix(in srgb, var(--blocked) 12%, transparent);
-}
-
-/* ok / bad: a passed or failed word, in the done or blocked hue (RunsTab `.ok`, `.bad`) */
-.ok {
-  color: var(--done);
-}
-.bad {
-  color: var(--blocked);
-}
-
-/* note: a quiet word beside a head, e.g. a client group's "Offline" (Queue `.ghNote`) */
-.note {
-  flex: none;
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-3);
-}
-
-/* stat: a head's statistic led by a mark, e.g. "✓ 2 shipped this week" (mock `.head-stat`);
+/* stat: a head's statistic led by the tick, e.g. "✓ 2 shipped this week" (mock `.head-stat`);
    the head it sits in colours its `<b>` */
 .stat {
   display: inline-flex;

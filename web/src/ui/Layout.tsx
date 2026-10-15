@@ -1,57 +1,38 @@
 // Stack and Inline: the flex column and row every view lays its parts out on, with the gap as a
-// step of the --sp-* scale (1 = 2px … 12 = 36px). Spacer takes the free space in a row.
+// step of the --sp-* scale (1 = 2px … 10 = 28px). Spacer takes the free space in a row.
 import type { HTMLAttributes, ReactNode } from "react";
 import { cx } from "./cx";
 import s from "./Layout.module.css";
 
 /** A step of the --sp-* scale: `4` is `var(--sp-4)` (8px). */
-export type Space = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+type Space = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
-/** The elements a layout box may render as. */
-export type LayoutElement =
-  "div" | "span" | "section" | "header" | "footer" | "nav" | "ul" | "ol" | "li" | "p";
-
-export type LayoutAlign = "start" | "center" | "end" | "baseline" | "stretch";
-export type LayoutJustify = "start" | "center" | "end" | "between";
+const ALIGN = { start: s.aStart, end: s.aEnd, baseline: s.aBaseline };
+const JUSTIFY = { end: s.jEnd, between: s.jBetween };
 
 interface LayoutProps extends HTMLAttributes<HTMLElement> {
   /** Gap between children, as a --sp-* step. None by default. */
   gap?: Space | undefined;
   /** Cross-axis alignment. Stack: stretch; Inline: center. */
-  align?: LayoutAlign | undefined;
+  align?: keyof typeof ALIGN | undefined;
   /** Main-axis distribution (default start). */
-  justify?: LayoutJustify | undefined;
+  justify?: keyof typeof JUSTIFY | undefined;
   /** The element (default div). */
-  as?: LayoutElement | undefined;
+  as?: "div" | "span" | "section" | "ul" | "ol" | "li" | undefined;
   children?: ReactNode;
 }
 
 export type StackProps = LayoutProps;
 
-export interface InlineProps extends LayoutProps {
+interface InlineProps extends LayoutProps {
   /** Let the row wrap onto more lines. */
   wrap?: boolean | undefined;
   /** The gap between wrapped lines, when it differs from `gap`. */
-  rowGap?: Space | undefined;
+  rowGap?: 3 | undefined;
 }
 
-const ALIGN: Record<LayoutAlign, string | undefined> = {
-  start: s.aStart,
-  center: s.aCenter,
-  end: s.aEnd,
-  baseline: s.aBaseline,
-  stretch: s.aStretch,
-};
-
-const JUSTIFY: Record<LayoutJustify, string | undefined> = {
-  start: s.jStart,
-  center: s.jCenter,
-  end: s.jEnd,
-  between: s.jBetween,
-};
-
-function gapClass(prefix: "g" | "r", step: Space | undefined): string | undefined {
-  return step === undefined ? undefined : s[`${prefix}${String(step)}`];
+function layoutClasses({ gap, align, justify }: LayoutProps) {
+  return [gap && s[`g${String(gap)}`], align && ALIGN[align], justify && JUSTIFY[justify]];
 }
 
 /** A flex column (min-width 0, so its children can ellipsize). */
@@ -64,15 +45,8 @@ export function Stack({
   children,
   ...rest
 }: StackProps) {
-  const classes = cx(
-    s.stack,
-    gapClass("g", gap),
-    align && ALIGN[align],
-    justify && JUSTIFY[justify],
-    className,
-  );
   return (
-    <Tag className={classes} {...rest}>
+    <Tag className={cx(s.stack, ...layoutClasses({ gap, align, justify }), className)} {...rest}>
       {children}
     </Tag>
   );
@@ -93,10 +67,8 @@ export function Inline({
   const classes = cx(
     s.inline,
     wrap && s.wrap,
-    gapClass("g", gap),
-    gapClass("r", rowGap),
-    align && ALIGN[align],
-    justify && JUSTIFY[justify],
+    ...layoutClasses({ gap, align, justify }),
+    rowGap && s[`r${String(rowGap)}`],
     className,
   );
   return (

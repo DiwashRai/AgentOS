@@ -44,57 +44,15 @@
 .g10 {
   gap: var(--sp-10);
 }
-.g11 {
-  gap: var(--sp-11);
-}
-.g12 {
-  gap: var(--sp-12);
-}
 
 /* a wrapping row's line gap, after the gap so it wins */
-.r1 {
-  row-gap: var(--sp-1);
-}
-.r2 {
-  row-gap: var(--sp-2);
-}
 .r3 {
   row-gap: var(--sp-3);
-}
-.r4 {
-  row-gap: var(--sp-4);
-}
-.r5 {
-  row-gap: var(--sp-5);
-}
-.r6 {
-  row-gap: var(--sp-6);
-}
-.r7 {
-  row-gap: var(--sp-7);
-}
-.r8 {
-  row-gap: var(--sp-8);
-}
-.r9 {
-  row-gap: var(--sp-9);
-}
-.r10 {
-  row-gap: var(--sp-10);
-}
-.r11 {
-  row-gap: var(--sp-11);
-}
-.r12 {
-  row-gap: var(--sp-12);
 }
 
 /* cross-axis alignment */
 .aStart {
   align-items: flex-start;
-}
-.aCenter {
-  align-items: center;
 }
 .aEnd {
   align-items: flex-end;
@@ -102,17 +60,8 @@
 .aBaseline {
   align-items: baseline;
 }
-.aStretch {
-  align-items: stretch;
-}
 
 /* main-axis distribution */
-.jStart {
-  justify-content: flex-start;
-}
-.jCenter {
-  justify-content: center;
-}
 .jEnd {
   justify-content: flex-end;
 }

@@ -2,6 +2,76 @@
    surfaces, the status edge, the column head and the foot are the kit's DataList; this module keeps
    the surface's frame, the row grid and its cells, the expansion grid and the narrow layouts. */
 
+/* ---------- the filter pills (mock §4.13 `.filter-chips`) ---------- */
+/* A recessed track, the pressed pill a raised sheet. The track barely shrinks (flex 0 0.02 auto),
+   so the search field beside it gives way first, and then it scrolls sideways. Padding 4px
+   (mock: 3) so the scroll box never clips a pill's 2px ink ring at its 2px offset. */
+.pills {
+  display: flex;
+  flex: 0 0.02 auto;
+  min-width: 0;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-radius: 10px;
+  background: var(--recess);
+  box-shadow: var(--recess-shadow);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-5);
+  border: 0;
+  border-radius: var(--r-btn-sm);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-control);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pill:hover {
+  color: var(--ink-1);
+}
+.pill[aria-pressed="true"] {
+  background: var(--row-raised);
+  box-shadow:
+    0 0 0 1px var(--row-raised-edge),
+    var(--row-raised-shadow);
+  color: var(--ink-1);
+  font-weight: 600;
+}
+.pill:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.pill.pillYou {
+  color: var(--you-text);
+}
+.pillMark {
+  display: inline-flex;
+}
+/* the pill's count: zero recedes, Needs you's in you-blue */
+.count {
+  font-style: normal;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.count[data-zero] {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.count[data-you] {
+  color: var(--you-text);
+}
+
 /* ---------- the surface: column head / scrolling list / footer; only the list scrolls ---------- */
 .surface {
   /* fills the viewport under the 58px top bar (the shell's main column keeps 24px below) */

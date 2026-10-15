@@ -8,12 +8,10 @@ import { ApiError, type Schemas } from "../../api/client";
 import { useCancelRun, useRun, useRunEvents, useRuns } from "../../api/queries";
 import { ago, duration } from "../../domain/format";
 import {
-  Badge,
   Button,
   cx,
   EmptyState,
   Fold,
-  FramedList,
   Inline,
   Stack,
   StatusLine,
@@ -190,12 +188,14 @@ function StageRow({
         <span className={cx(s.stageName, text.ellipsis)}>{st.name}</span>
         <Inline as="span" gap={4}>
           {verdict ? (
-            <Badge tone={verdict === "pass" ? "pass" : "fail"}>{verdictWord(verdict)}</Badge>
+            <span className={cx(s.verdict, verdict === "pass" ? s.pass : s.fail)}>
+              {verdictWord(verdict)}
+            </span>
           ) : null}
           {verdict && !note ? null : word ? (
-            <Badge tone={word} title={note} className={text.ellipsis}>
+            <span className={cx(s[word], text.ellipsis)} title={note}>
               {note || mark.word}
-            </Badge>
+            </span>
           ) : (
             <span className={cx(s.stageNote, text.ellipsis)} title={note}>
               {note || mark.word}
@@ -219,7 +219,7 @@ function StageList({ detail, now, active }: { detail: RunDetail; now: number; ac
     <StageRow key={st.idx} st={st} check={checks.get(roundKey(st.stage_id, st.round))} now={now} />
   );
   return (
-    <FramedList framed={false} rules="under" topRule as="ol" aria-label="Stages">
+    <ol className={s.ruled} aria-label="Stages">
       {items.map((it) => {
         if (it.type === "stage") return row(it.run);
         const meta = roundMeta(roundCounts(it.runs));
@@ -229,18 +229,13 @@ function StageList({ detail, now, active }: { detail: RunDetail; now: number; ac
               <span>Round {it.round}</span>
               {meta ? <span className={s.roundMeta}>{meta}</span> : null}
             </Inline>
-            <FramedList
-              framed={false}
-              as="ol"
-              className={s.roundRows}
-              aria-label={`Round ${String(it.round)}`}
-            >
+            <ol className={s.roundRows} aria-label={`Round ${String(it.round)}`}>
               {it.runs.map(row)}
-            </FramedList>
+            </ol>
           </li>
         );
       })}
-    </FramedList>
+    </ol>
   );
 }
 
@@ -322,7 +317,7 @@ function RunsBody({ ticketKey }: { ticketKey: string }) {
 
   return (
     <>
-      <FramedList framed={false} rules="under" aria-label="Runs">
+      <ul className={s.rows} aria-label="Runs">
         {runs.map((r) => (
           <RunRow
             key={r.id}
@@ -335,7 +330,7 @@ function RunsBody({ ticketKey }: { ticketKey: string }) {
             }}
           />
         ))}
-      </FramedList>
+      </ul>
       {selected ? <RunPanel key={selected.id} summary={selected} now={now} /> : null}
     </>
   );

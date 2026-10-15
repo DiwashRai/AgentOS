@@ -1,6 +1,6 @@
 /* Runs tab. Not designed beyond the run-history rows (ticket.css `.tv-runs`: 44px rows,
-   `200px 1fr 64px`); the stage list and log are built in the same quiet language. Lists, folds,
-   badges and status lines are the kit's; this module keeps the grids, the command line and the log. */
+   `200px 1fr 64px`); the stage list and log are built in the same quiet language. Folds and status
+   lines are the kit's; this module keeps the lists, the grids, the command line and the log. */
 
 .tab {
   padding-top: var(--sp-6);
@@ -20,6 +20,22 @@
   border-radius: 6px;
   background: var(--field);
   color: var(--ink-1);
+}
+
+/* the run, stage and call lists: a soft rule under every row, the last included */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.rows > li {
+  border-bottom: 1px solid var(--rule-soft);
+}
+/* the stage and call lists: a firmer rule above the first row */
+.ruled {
+  composes: rows;
+  border-top: 1px solid var(--rule);
 }
 
 /* ---------------------------------------------------------------- run history */
@@ -129,6 +145,32 @@
   color: var(--ink-3);
 }
 
+/* a check's verdict pill: green = done, crimson = blocked */
+.verdict {
+  flex: none;
+  padding: 1px var(--sp-3);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.pass {
+  color: var(--done);
+  background: var(--done-tint);
+}
+.fail {
+  color: var(--blocked);
+  background: color-mix(in srgb, var(--blocked) 12%, transparent);
+}
+
+/* without a verdict: a passed or failed stage's note, in the done or blocked hue */
+.ok {
+  color: var(--done);
+}
+.bad {
+  color: var(--blocked);
+}
+
 /* the fold under a check's row, indented to the stage name */
 .checkFold {
   margin: calc(-1 * var(--sp-2)) 0 var(--sp-4) var(--sp-10);
@@ -165,9 +207,14 @@
 }
 
 .roundRows {
+  list-style: none;
+  min-width: 0;
   margin: var(--sp-2) 0 0 var(--sp-2);
   padding: 0 0 0 var(--sp-5);
   border-left: 2px solid var(--rule);
+}
+.roundRows > li + li {
+  border-top: 1px solid var(--rule-soft);
 }
 
 /* ---------------------------------------------------------------- how each stage was called */

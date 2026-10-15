@@ -1,6 +1,6 @@
 /* Intake (visual refresh: mock.html §5.3 `.intake-head`/`.intake-row`; HANDOFF §5). The rows,
-   column head, overflow, foot, lozenge and counters are the kit's (DataList, Badge); this module
-   keeps the page frame, the column grid, the cells and the narrow layout. */
+   column head, foot and counters are the kit's (DataList, Badge); this module keeps the page
+   frame, the column grid, the cells, the overflow line and the narrow layout. */
 
 /* ---------- the page: top bar + a recess that fills the rest; only the list scrolls ---------- */
 .page {
@@ -111,6 +111,36 @@
 .st {
   min-width: 0;
 }
+/* a Jira status: a neutral lozenge with a ring (mock `.lozenge`), ellipsized */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 var(--sp-4);
+  border-radius: 5px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--rule-soft);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.status > i {
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+}
+.status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .as {
   display: flex;
   align-items: center;
@@ -182,6 +212,38 @@
 }
 .errRetry {
   margin-left: auto;
+}
+
+/* under a capped list: "+42 more · 73 match in Jira, newest 50 listed · Show all 50" */
+.more {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  height: var(--h-empty);
+  margin-top: var(--sp-2);
+  padding: 0 var(--sp-7);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.more > b {
+  flex: none;
+  white-space: nowrap;
+  font-size: var(--fs-control);
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.moreEnd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  min-width: 0;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.cap {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .foot {
