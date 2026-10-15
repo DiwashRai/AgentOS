@@ -425,6 +425,47 @@ def test_a_started_job_is_not_failed_by_the_queue_rule(
     assert reaper.tick(later) == {}
 
 
+def test_a_waiting_publish_is_not_failed_by_the_queue_rule(
+    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
+) -> None:
+    # The work job finished and publish waits, so GitHub reports the run as waiting again.
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_status(run_id, "waiting")
+    mailbox.set_jobs(run_id, {"fetch": "completed", "work": "completed", "publish": "waiting"})
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 3600)
+    assert reaper.tick(later) == {}
+    assert reaper.tick(later + timedelta(seconds=20)) == {}
+    assert mailbox.cancelled == []
+    assert len(mailbox.job_checks) == 1  # a started work job is remembered
+
+
+@pytest.mark.parametrize(
+    "jobs", [{"fetch": "in_progress", "work": "pending"}, MailboxError("GitHub answered 502")]
+)
+def test_a_running_job_or_a_jobs_error_does_not_fail_a_queued_run(
+    ticket: TicketDetail,
+    runs: RunDriver,
+    mailbox: FakeMailbox,
+    reaper: MailboxReaper,
+    jobs: dict[str, str] | MailboxError,
+) -> None:
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_jobs(run_id, jobs)
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
+    assert reaper.tick(later) == {}
+    assert mailbox.cancelled == []
+
+
+def test_a_work_job_never_picked_up_fails_the_run(
+    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
+) -> None:
+    run_id = launch(runs, mailbox, ticket.key)
+    mailbox.set_jobs(run_id, {"fetch": "completed", "work": "queued", "publish": "pending"})
+    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
+    assert reaper.tick(later) == {run_id: "ended"}
+    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NOT_PICKED_UP)
+
+
 def test_over_budget(
     ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
 ) -> None:

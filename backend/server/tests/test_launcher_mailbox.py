@@ -210,6 +210,15 @@ def test_status_and_cancel_delegate_to_github(tmp_path: Path) -> None:
     assert len(seen) == 2
 
 
+def test_jobs_reads_the_runs_jobs(tmp_path: Path) -> None:
+    answers = [{"jobs": [{"name": "work", "status": "queued"}]}, {"jobs": [{"status": "queued"}]}]
+    mailbox, _, seen = _mailbox(tmp_path, lambda _r: httpx.Response(200, json=answers.pop(0)))
+    assert mailbox.jobs(RUN_HTML) == {"work": "queued"}
+    assert (seen[0].method, seen[0].url.path) == ("GET", "/repos/o/r/actions/runs/77/jobs")
+    with pytest.raises(MailboxError):  # a malformed answer is a MailboxError, not a crash
+        mailbox.jobs(RUN_HTML)
+
+
 def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"refused {GH_TOKEN}", request=request)
@@ -217,6 +226,7 @@ def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
     mailbox, _, _ = _mailbox(tmp_path, handler)
     calls: list[Callable[[], object]] = [
         lambda: mailbox.status(RUN_HTML),
+        lambda: mailbox.jobs(RUN_HTML),
         lambda: mailbox.cancel(RUN_HTML),
     ]
     for call in calls:
