@@ -62,8 +62,12 @@ def _strip_agentos_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tests see only the settings they pass: drop AGENTOS_* from the developer's shell."""
+    """Tests see only the settings they pass: drop AGENTOS_* from the developer's shell. The
+    workers the e2e tests spawn inherit the env, so GITHUB_ACTIONS and GH_TOKEN go too: inside
+    an Actions job they would switch those workers to GitHub API publication."""
     _strip_agentos_env(monkeypatch)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
 
 
 def _test_settings(root: Path) -> Settings:

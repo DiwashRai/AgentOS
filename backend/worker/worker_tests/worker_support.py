@@ -124,7 +124,8 @@ def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:
 
 @pytest.fixture(autouse=True)
 def fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Shrink every worker timing constant so the suite runs in seconds."""
+    """Shrink every worker timing constant so the suite runs in seconds, and keep the worker
+    off GitHub API publication even when the suite runs inside an Actions job."""
     for name, value in {
         "HTTP_TIMEOUT_S": 5.0,
         "RETRY_BUDGET_S": 1.0,
@@ -143,6 +144,14 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENTOS_SHELL", raising=False)
     monkeypatch.delenv("AGENTOS_TOKEN", raising=False)
     monkeypatch.delenv("AGENTOS_CLIENT_TOKEN", raising=False)
+    for name in (
+        "GITHUB_ACTIONS",
+        "GH_TOKEN",
+        "GITHUB_REPOSITORY",
+        "GITHUB_API_URL",
+        "GITHUB_SERVER_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
