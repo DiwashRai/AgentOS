@@ -148,6 +148,40 @@
 .flush {
   margin: 0;
 }
+/* the DataList demos: the view's grid template and its cells */
+.listDemo {
+  --cols: 84px minmax(0, 1fr) 84px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.cell {
+  display: flex;
+  min-width: 0;
+}
+.end {
+  justify-self: end;
+}
+.expansion {
+  margin: 0 var(--sp-7);
+  padding: var(--sp-5) 0 var(--sp-6);
+  border-top: 1px solid var(--rule-soft);
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}
+.queueRow {
+  display: grid;
+  grid-template-columns: var(--cols);
+  column-gap: var(--sp-7);
+  align-items: center;
+  min-height: var(--h-item);
+  padding: var(--sp-4) var(--sp-6) var(--sp-4) var(--sp-7);
+}
+.queueRow[data-surface="flat"] {
+  min-height: var(--h-quiet);
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-3);
+}
 /* a stand-in row on the list demos */
 .listRow {
   display: flex;

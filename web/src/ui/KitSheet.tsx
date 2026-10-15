@@ -10,8 +10,19 @@ import { Badge } from "./Badge";
 import { Button, IconButton, litRowClass } from "./Button";
 import { Checklist } from "./Checklist";
 import { Chip } from "./Chip";
+import type { RowEdge } from "../domain/ticketView";
 import { CountPill } from "./CountPill";
 import { cx } from "./cx";
+import {
+  DataFoot,
+  DataHead,
+  DataLine,
+  DataOverflow,
+  DataRow,
+  DataRows,
+  DataTitle,
+  type DataColumn,
+} from "./DataList";
 import { Dialog, DialogTitle } from "./Dialog";
 import { Disclosure, Fold } from "./Disclosure";
 import { EmptyRow } from "./EmptyRow";
@@ -28,6 +39,7 @@ import { Link, LinkButton } from "./Link";
 import { RunMeter } from "./RunMeter";
 import type { MeterState } from "./meter";
 import { PriorityIcon } from "./PriorityIcon";
+import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 import { FramedList, Sheet } from "./Sheet";
 import { StageGlyph } from "./StageGlyph";
 import { StatusLine } from "./StatusLine";
@@ -574,6 +586,8 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
 
       <LayoutKit id={id} />
 
+      <ListKit id={id} />
+
       <section className={s.section} aria-labelledby={id("heads")}>
         <ZoneHead id={id("heads")} title="Zone head, group head, tabs" />
         <div className={s.recess}>
@@ -894,6 +908,201 @@ function LayoutKit({ id }: { id: (x: string) => string }) {
             )}
           </Dialog>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+type KitFilter = "all" | "needs_you" | "blocked" | "running" | "inbox";
+
+const FILTERS: SegmentOption<KitFilter>[] = [
+  { value: "all", label: "Everything", count: 14 },
+  {
+    value: "needs_you",
+    label: "Needs you",
+    count: 2,
+    you: true,
+    mark: <StatusMark kind="you" glyphOnly size={7} />,
+  },
+  {
+    value: "blocked",
+    label: "Blocked",
+    count: 0,
+    mark: <StatusMark kind="blk" glyphOnly size={7} />,
+  },
+  {
+    value: "running",
+    label: "Running",
+    count: 3,
+    mark: <StatusMark kind="run" glyphOnly size={7} />,
+  },
+  { value: "inbox", label: "Inbox", count: 1, mark: <StatusMark kind="idle" glyphOnly size={7} /> },
+];
+
+const COLUMNS: DataColumn[] = [{ label: "Ref" }, { label: "Ticket" }, { label: "Upd", end: true }];
+
+/** The compact-style rows: a line button in each, the edge inset on the line. */
+const LINE_ROWS: {
+  key: string;
+  title: string;
+  edge: RowEdge;
+  flat?: boolean;
+  you?: boolean;
+  age: string;
+}[] = [
+  {
+    key: "AOS-14",
+    title: "Sign off the plan for row surfaces",
+    edge: "you",
+    you: true,
+    age: "38m",
+  },
+  { key: "AOS-21", title: "Build the DataList primitive", edge: "live", age: "3m" },
+  { key: "AOS-9", title: "Tests failed on main after the merge", edge: "blocked", age: "1h" },
+  { key: "AOS-30", title: "Untriaged ticket in the inbox", edge: "quiet", age: "2d" },
+  { key: "AOS-3", title: "Merged: one ticket view-model", edge: "done", flat: true, age: "5h" },
+];
+
+/** SegmentedControl and the DataList parts. */
+function ListKit({ id }: { id: (x: string) => string }) {
+  const [filter, setFilter] = useState<KitFilter>("all");
+  const [open, setOpen] = useState<string | null>("AOS-14");
+  const [all, setAll] = useState(false);
+  const [picked, setPicked] = useState(0);
+  const pick = () => {
+    setPicked((n) => n + 1);
+  };
+  return (
+    <section className={s.section} aria-labelledby={id("lists")}>
+      <ZoneHead id={id("lists")} title="Segmented control, data list" />
+
+      <div className={s.card}>
+        <SegmentedControl
+          label="Kit filter"
+          options={FILTERS}
+          value={filter}
+          onChange={setFilter}
+        />
+      </div>
+
+      <div className={cx(s.recess, s.listDemo)}>
+        <span className={s.cap}>Head · line rows (edge on the line, lit) · open · flat · foot</span>
+        <DataHead columns={COLUMNS} />
+        <DataRows>
+          {LINE_ROWS.map((r) => (
+            <DataRow
+              key={r.key}
+              surface={r.flat ? "flat" : "raised"}
+              you={r.you}
+              open={open === r.key}
+              edge={r.edge}
+              edgeOn="line"
+              hover="lit"
+            >
+              <DataLine
+                aria-expanded={open === r.key}
+                onClick={() => {
+                  setOpen((cur) => (cur === r.key ? null : r.key));
+                }}
+              >
+                <span className={s.cell}>
+                  <KeyChip>{r.key}</KeyChip>
+                </span>
+                <DataTitle type="feature" priority={r.you ? "high" : "normal"} text={r.title} />
+                <span className={s.end}>
+                  <Age text={r.age} />
+                </span>
+              </DataLine>
+              {open === r.key ? (
+                <p className={s.expansion}>The expansion sits under the line.</p>
+              ) : null}
+            </DataRow>
+          ))}
+        </DataRows>
+        <DataFoot
+          hints={[
+            { keys: ["↵"], label: "Expand" },
+            { keys: ["J", "K"], label: "Move" },
+            { keys: ["/"], label: "Search" },
+          ]}
+        >
+          <span>
+            <b>{LINE_ROWS.length}</b> tickets · <b>{picked}</b> picked
+          </span>
+        </DataFoot>
+      </div>
+
+      <div className={cx(s.recess, s.listDemo)}>
+        <span className={s.cap}>The row is the button (lift, edge on the row) · raised · flat</span>
+        <DataRows as="div" gap={3}>
+          {(["you", "live", "done"] as const).map((edge) => (
+            <DataRow
+              key={edge}
+              as="article"
+              surface={edge === "done" ? "flat" : "raised"}
+              you={edge === "you"}
+              edge={edge}
+              hover="lift"
+              className={s.queueRow}
+              role="button"
+              tabIndex={0}
+              aria-label={`AOS-${edge} A queue row`}
+              onClick={pick}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  pick();
+                }
+              }}
+            >
+              <KeyChip>{`AOS-${edge}`}</KeyChip>
+              <DataTitle
+                type="bug"
+                priority="low"
+                size={edge === "done" ? "md" : "lg"}
+                text="A My queue row: the whole row opens the peek"
+              />
+              <Age text="12m" />
+            </DataRow>
+          ))}
+        </DataRows>
+      </div>
+
+      <div className={cx(s.recess, s.listDemo)}>
+        <span className={s.cap}>Cells on the row grid (lit, Take in fills) · overflow</span>
+        <DataRows id={id("intake")}>
+          {(all ? ["SCRUM-23", "SCRUM-24", "SCRUM-25"] : ["SCRUM-23"]).map((k, i) => (
+            <DataRow
+              key={k}
+              grid
+              hover={i === 2 ? "none" : "lit"}
+              surface={i === 2 ? "flat" : "raised"}
+            >
+              <span className={s.cell}>
+                <KeyChip>{k}</KeyChip>
+              </span>
+              <DataTitle priority="high" text="Export a ticket's runs as CSV" />
+              <span className={s.end}>
+                <Button size="sm" variant="outline" litOnRow>
+                  Take in
+                </Button>
+              </span>
+            </DataRow>
+          ))}
+        </DataRows>
+        <DataOverflow
+          more={all ? 0 : 2}
+          toggle={all ? "Show fewer" : "Show all 3"}
+          expanded={all}
+          controls={id("intake")}
+          note="73 match in Jira, newest 50 listed"
+          onToggle={() => {
+            setAll((v) => !v);
+          }}
+        />
+        <DataFoot rule={false} hints={[{ keys: ["Esc"], label: "close" }]}>
+          <Link href="#kit">Open ticket →</Link>
+        </DataFoot>
       </div>
     </section>
   );

@@ -22,6 +22,24 @@ export { Checklist, type ChecklistProps } from "./Checklist";
 export { Chip, type ChipProps } from "./Chip";
 export { CountPill, type CountPillProps } from "./CountPill";
 export { cx } from "./cx";
+export {
+  DataFoot,
+  DataHead,
+  DataLine,
+  DataOverflow,
+  DataRow,
+  DataRows,
+  DataTitle,
+  type DataColumn,
+  type DataFootProps,
+  type DataHeadProps,
+  type DataLineProps,
+  type DataOverflowProps,
+  type DataRowProps,
+  type DataRowsProps,
+  type DataTitleProps,
+  type KeyHint,
+} from "./DataList";
 export { Dialog, DialogTitle, type DialogProps, type DialogTitleProps } from "./Dialog";
 export { Disclosure, Fold, type DisclosureProps, type FoldProps } from "./Disclosure";
 export { EmptyRow, type EmptyRowProps } from "./EmptyRow";
@@ -49,6 +67,11 @@ export { Link, LinkButton, linkClass } from "./Link";
 export type { MeterState } from "./meter";
 export { PriorityIcon, type Priority, type PriorityIconProps } from "./PriorityIcon";
 export { RunMeter, type RunMeterProps } from "./RunMeter";
+export {
+  SegmentedControl,
+  type SegmentedControlProps,
+  type SegmentOption,
+} from "./SegmentedControl";
 export { FramedList, Sheet, type FramedListProps, type SheetProps } from "./Sheet";
 export { StageGlyph, type StageGlyphProps } from "./StageGlyph";
 export { MARK_WORD, StatusMark, YouPill, type MarkKind, type StatusMarkProps } from "./StatusMark";
