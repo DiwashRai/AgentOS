@@ -1,13 +1,25 @@
 """GitHub API publication: the pure parts as tables (mechanism choice, repo URLs, commit and
-diff-tree parsing, tree entries, classifying GitHub's answers, token scrubbing)."""
+diff-tree parsing, tree entries, classifying GitHub's answers, token scrubbing), plus whole runs
+for what never reaches GitHub (the setup's env check)."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
 import worker
+from worker_tests.worker_support import (
+    KEY,
+    FakeServer,
+    Origin,
+    agent_stage,
+    make_manifest,
+    run_worker,
+)
 
 SERVER = "https://github.com"
+BRANCH = f"agent/{KEY}"
 A = "a" * 40
 B = "b" * 40
 Z = "0" * 40
@@ -267,3 +279,20 @@ def test_scrub_redacts_before_clipping(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert worker.scrub(f"bad\n  token {token} here", (token, "")) == "bad token *** here"
     assert token[:8] not in worker.scrub("y" * 10 + token, (token,))
+
+
+def test_api_mode_without_the_api_url_fails_setup(
+    server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GH_TOKEN", "ghs_secret")
+    monkeypatch.setenv("GITHUB_SERVER_URL", SERVER)
+    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    done = server.complete()
+    assert done is not None
+    assert done["status"] == "failed"
+    assert "GITHUB_API_URL" in done["error"]
+    assert not origin.has_branch(BRANCH)

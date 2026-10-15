@@ -2001,6 +2001,101 @@ def scrub(text: str, secrets_: tuple[str, ...]) -> str:
     return _clip(" ".join(text.split()), MAX_GITHUB_MESSAGE_CHARS)
 
 
+class GitHubError(Exception):
+    """A GitHub call failed for good. `action` is classify()'s answer; the message is GitHub's,
+    scrubbed and clipped. Never a RunGone or Unreachable: it only ever fails the stage."""
+
+    def __init__(self, status: int | None, message: str, action: str) -> None:
+        super().__init__(f"HTTP {status}: {message}" if status is not None else message)
+        self.status = status
+        self.message = message
+        self.action = action
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib would forward Authorization to any host it is redirected to: follow nothing."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
+class GitHub:
+    """The Git Data API of one repo with the job's token. Separate from Client/WorkerApi on
+    purpose: a GitHub failure is a stage failure, never a lost run or an unreachable server."""
+
+    def __init__(self, api_url: str, token: str, repo: str) -> None:
+        self.repo = repo
+        self._base = f"{api_url.rstrip('/')}/repos/{repo}"
+        self._token = token
+        self._opener = urllib.request.build_opener(_NoRedirect())
+
+    def call(self, method: str, path: str, body: Any = None, *, ref_write: bool = False) -> Any:
+        """Send one request under /repos/<owner>/<repo> and return the decoded answer. What
+        classify() calls "retry" is retried within GITHUB_RETRY_BUDGET_S; anything else raises
+        GitHubError."""
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        deadline = time.monotonic() + GITHUB_RETRY_BUDGET_S
+        delay = BACKOFF_START_S
+        while True:
+            request = urllib.request.Request(  # noqa: S310 -- GITHUB_API_URL is checked to be https
+                self._base + path,
+                data=data,
+                method=method,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "agentos-worker",
+                    "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                },
+            )
+            status: int | None = None
+            wait: float | None = None
+            try:
+                with self._opener.open(request, timeout=HTTP_TIMEOUT_S) as resp:
+                    raw = resp.read()
+                return json.loads(raw) if raw.strip() else None
+            except urllib.error.HTTPError as exc:
+                status, message = exc.code, self._message(exc)
+                headers = {k.lower(): v for k, v in exc.headers.items()}
+                wait = retry_wait(headers, time.time())
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                message = f"{type(exc).__name__}: {exc}"
+            message = scrub(message, (self._token,))
+
+            action = classify(status, message, wait, ref_write)
+            remaining = deadline - time.monotonic()
+            pause = delay if wait is None else wait
+            if action != "retry" or pause > remaining:
+                raise GitHubError(status, message, action)
+            say(f"GitHub {method} {path} failed ({message}); retrying in {pause:.1f}s")
+            time.sleep(pause)
+            delay = min(delay * 2, BACKOFF_CAP_S)
+
+    @staticmethod
+    def _message(exc: urllib.error.HTTPError) -> str:
+        if 300 <= exc.code < 400:
+            return "GitHub redirected the request: fix the ticket's repo URL"
+        message = str(exc.reason)
+        try:
+            body = json.loads(exc.read() or b"null")
+            if isinstance(body, dict) and isinstance(body.get("message"), str):
+                message = body["message"]
+        except (OSError, ValueError):
+            pass
+        finally:
+            exc.close()
+        return message
+
+
 # ---------------------------------------------------------------- the run
 
 
@@ -2044,6 +2139,9 @@ class Run:
         ]
         self._protected_lower = [p.lower() for p in self.protected]
         self.echo = os.environ.get("AGENTOS_ECHO", "").strip() != "0"  # see Echo
+        self.api_mode = self.repo and api_publish(os.environ)  # publish through the GitHub API
+        self.github: GitHub | None = None  # set up by _setup_github in API mode
+        self.branch_exists = False  # the branch was on the remote at clone or has been published
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
@@ -2192,11 +2290,16 @@ class Run:
         repo_url, base_branch, branch = self.m.repo_url, self.m.base_branch, self.m.branch
         if repo_url is None or base_branch is None or branch is None:  # parse_manifest ensures
             return "repo mode needs repo_url, base_branch and branch"
+        if self.api_mode:
+            problem = self._setup_github(repo_url)
+            if problem:
+                return problem
         say(f"cloning into {self.workdir}")
         r = self._git("clone", "--filter=blob:none", "--no-tags", "--", repo_url, ".", show=True)
         if r.code:
             return f"git clone failed: {r.tail()}"
         exists = self._git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}").code == 0
+        self.branch_exists = exists
         start = f"origin/{branch}" if exists else f"origin/{base_branch}"
         r = self._git("checkout", "-q", "-B", branch, start, show=True)
         if r.code:
@@ -2211,6 +2314,36 @@ class Run:
             r = self._git("config", setting, value)
             if r.code:
                 return f"git config {setting} failed: {r.tail()}"
+        return None
+
+    def _setup_github(self, repo_url: str) -> str | None:
+        """API mode: check the env, then that the token can write to the ticket's repo by
+        posting an empty blob there (harmless: blobs are content-addressed)."""
+        api_url = os.environ.get("GITHUB_API_URL", "").strip()
+        server_url = os.environ.get("GITHUB_SERVER_URL", "").strip()
+        for name, value in (("GITHUB_API_URL", api_url), ("GITHUB_SERVER_URL", server_url)):
+            if not value:
+                return f"GitHub API publication needs {name}"
+        if urllib.parse.urlsplit(api_url).scheme != "https":
+            return "GITHUB_API_URL must be https"
+        repo, why = github_repo(repo_url, server_url)
+        if repo is None:
+            return f"cannot publish through the GitHub API: {why}"
+
+        github = GitHub(api_url, os.environ.get("GH_TOKEN", "").strip(), repo)
+        try:
+            github.call("POST", "/git/blobs", {"content": "", "encoding": "utf-8"})
+        except GitHubError as exc:
+            if exc.status in (401, 403, 404):
+                runs_in = os.environ.get("GITHUB_REPOSITORY") or "unknown"
+                return (
+                    f"cannot write to {repo} through the GitHub API ({exc}): the job's token "
+                    f"only writes to the repo the workflow runs in ({runs_in})"
+                )
+            return f"cannot write to {repo} through the GitHub API: {exc}"
+
+        say(f"publishing through the GitHub API to {repo}")
+        self.github = github
         return None
 
     def _write_files(self) -> None:
