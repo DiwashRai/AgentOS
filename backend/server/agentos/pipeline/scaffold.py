@@ -94,16 +94,6 @@ SKILL_MD = (
     "## Objective\n{{ticket.description}}\n"
 )
 
-# The SKILL.md seeded before the description dropped the title. A stored template whose SKILL.md
-# still equals this exactly is upgraded to `SKILL_MD` at startup (templates.service.seed_default).
-LEGACY_SKILL_MD_V1 = (
-    "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
-    "ticket.key ~ ' (' ~ ticket.title ~ '). Use when working on ' ~ ticket.key ~ '.') "
-    "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n"
-    "{% if ticket.source_url %}Source: {{ticket.source_url}}\n\n{% endif %}"
-    "## Objective\n{{ticket.description}}\n"
-)
-
 DEFAULT_SCAFFOLD = [
     FileEntry(path=SKILL_MD_PATH, content=SKILL_MD),
     FileEntry(path="{{paths.tasks_md}}", content="# Tasks\n"),
