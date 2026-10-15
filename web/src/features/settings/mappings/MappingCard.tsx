@@ -73,8 +73,8 @@ export function MappingCard(props: MappingCardProps) {
         {spec.title}
       </h3>
       <p className={s.lead}>{spec.explainer}</p>
-      {messagesAt(issues, mappingPath(row.key)).map((msg) => (
-        <p key={msg} className={text.error} role="alert">
+      {messagesAt(issues, mappingPath(row.key)).map((msg, i) => (
+        <p key={`${String(i)}:${msg}`} className={text.error} role="alert">
           {msg}
         </p>
       ))}

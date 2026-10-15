@@ -146,8 +146,8 @@ function RuleLine({
           {valueError}
         </span>
       )}
-      {ruleErrors.map((msg) => (
-        <span key={msg} className={cx(text.error, s.ruleError)} role="alert">
+      {ruleErrors.map((msg, i) => (
+        <span key={`${String(i)}:${msg}`} className={cx(text.error, s.ruleError)} role="alert">
           {msg}
         </span>
       ))}

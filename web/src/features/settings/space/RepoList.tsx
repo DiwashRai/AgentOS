@@ -82,8 +82,8 @@ export function RepoList(props: RepoListProps) {
               {!row.fresh && row.name === savedDefault ? <Tag>Default</Tag> : null}
             </div>
 
-            {rowIssues.map((msg) => (
-              <p key={msg} className={text.error} role="alert">
+            {rowIssues.map((msg, i) => (
+              <p key={`${String(i)}:${msg}`} className={text.error} role="alert">
                 {msg}
               </p>
             ))}
