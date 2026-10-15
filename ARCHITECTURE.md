@@ -114,7 +114,7 @@ flowchart LR
   - `.git/info/exclude` for untracked context paths and tool caches (`JUNK_PATTERNS`).
   - Unstage-and-assert after `git add -A`.
   - A pre-push guard that rejects commits touching context paths or containing the `agentos:begin KEY` marker.
-  - Never a force push.
+  - Never a force push. On GitHub Actions (`GITHUB_ACTIONS=true` with `GH_TOKEN`) `_push()` publishes through the Git Data API instead of `git push`, as one commit per publish, with `force: false` on the ref write; an agent's rewrite of published commits or a merge is refused.
 
   The cost: an agent's edits to a tracked `AGENTS.md` outside the block aren't committed. Where: `worker.py` `_commit()`, `_guard()`, `_push()`.
 - **The worker commits and pushes after every stage.** Progress survives crashes, and the open-pr stage needs the branch on the remote. Its branch is `agent/<KEY>`.

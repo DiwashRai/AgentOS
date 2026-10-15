@@ -60,6 +60,8 @@ pythonpath = ["worker"]
 # package. Worker tests live in worker/worker_tests so both suites can have a conftest.py without
 # mypy seeing two packages named `tests`. Keep test file basenames unique across suites.
 addopts = "-q"
+# live/ holds checks against real services, run by hand (backend/AGENTS.md › Testing): never collected.
+norecursedirs = [".*", "*.egg", "build", "dist", "node_modules", "venv", "live"]
 
 # ---------------------------------------------------------------- import-linter
 [tool.importlinter]
