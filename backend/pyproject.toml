@@ -84,7 +84,7 @@ containers = [
 layers = [
     "(routes)",
     "(deps)",
-    "(dispatcher) | (reaper) | (comment_sync)",
+    "(dispatcher) | (reaper)",
     "(service)",
     "(board)",
 ]
@@ -109,7 +109,7 @@ name = "Only the HTTP layer imports FastAPI/Starlette"
 type = "forbidden"
 source_modules = [
     "agentos.*.service", "agentos.*.board", "agentos.*.dispatcher", "agentos.*.reaper",
-    "agentos.*.comment_sync", "agentos.db", "agentos.config", "agentos.broker", "agentos.errors",
+    "agentos.db", "agentos.config", "agentos.broker", "agentos.errors",
     "agentos.launchers", "agentos.sources", "agentos.stores",
 ]
 forbidden_modules = ["fastapi", "starlette", "uvicorn"]
@@ -135,9 +135,7 @@ dev = [
     "import-linter>=2.15",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
-    "pytest-cov>=7.1.0",
     "pytest-randomly>=5.0.0",
     "pytest-xdist>=3.8.0",
-    "respx>=0.23.1",
     "ruff>=0.17.0",
 ]
