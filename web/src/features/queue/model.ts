@@ -8,6 +8,7 @@ import { firstName } from "../../domain/format";
 import type { Groups } from "../../domain/groups";
 import { isMine, type MeRef, statusKind } from "../../domain/status";
 import { runLine, sourceRef } from "../../domain/ticketView";
+import { words } from "../../domain/words";
 
 type Ticket = Schemas["TicketSummary"];
 
@@ -70,7 +71,6 @@ export interface RackGroup<T> {
 
 type RackTicket = Pick<Ticket, "key" | "attention" | "owner" | "repo_name" | "now" | "latest_run">;
 
-export const NO_REPO = "No repo";
 export const MINE_QUEUED = "Yours, waiting for a runner";
 
 const runningFirst = (a: RackTicket, b: RackTicket) =>
@@ -129,7 +129,7 @@ export function rackGroups<T extends RackTicket>(
   );
   for (const repo of repos) {
     const items = [...(byRepo.get(repo) ?? [])].sort(runningFirst);
-    out.push({ id: `repo:${repo}`, name: repo || NO_REPO, items });
+    out.push({ id: `repo:${repo}`, name: repo || words.noRepo, items });
   }
   return out;
 }

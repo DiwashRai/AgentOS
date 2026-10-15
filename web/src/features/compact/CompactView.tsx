@@ -12,7 +12,7 @@ import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
 import { useSearchQuery } from "../../app/useSearchQuery";
-import { repoShort } from "../../domain/format";
+import { plural, repoShort } from "../../domain/format";
 import { bySearch } from "../../domain/search";
 import type { Attention } from "../../domain/status";
 import {
@@ -52,7 +52,6 @@ import {
   parseFilter,
   type Pill,
   pills,
-  plural,
   REPO_PARAM,
   withFilter,
 } from "./model";
@@ -160,8 +159,8 @@ function useRowKeys(list: RefObject<HTMLDivElement | null>, enabled: boolean) {
   useDocumentKey(
     (e) => {
       if ((e.key !== "j" && e.key !== "k") || !isShortcut(e)) return;
-      // Never while a dialog is open (New ticket, the peek) or from inside one (a confirm).
-      if (dialogOpen() || document.activeElement?.closest("dialog, [role='dialog']")) return;
+      // Never while a dialog is open (New ticket, the peek, a confirm).
+      if (dialogOpen()) return;
 
       const lines = [
         ...(list.current?.querySelectorAll<HTMLButtonElement>("[data-row-line]") ?? []),

@@ -179,14 +179,12 @@ const ORDER: Record<Attention, (a: GroupTicket, b: GroupTicket) => number> = {
   done: newestFirst,
 };
 
-export const NO_REPO = "No repo";
-
 /** "web 7 · api 3": where the work is, by repo (most first). Only for groups of 4 or more. */
 function repoSummary(items: readonly GroupTicket[]): Summary {
   if (items.length < 4) return [];
   const n = new Map<string, number>();
   for (const t of items) {
-    const name = repoShort(t.repo_name) || NO_REPO;
+    const name = repoShort(t.repo_name) || words.noRepo;
     n.set(name, (n.get(name) ?? 0) + 1);
   }
   const out: Summary = [];
@@ -302,11 +300,6 @@ export function footSummary(tickets: readonly Pick<Ticket, "key" | "repo_name">[
   };
 }
 
-/** "1 ticket", "3 repos": the word after a footer count. */
-export function plural(n: number, one: string): string {
-  return n === 1 ? one : `${one}s`;
-}
-
 const EMPTY: Record<Filter, string> = {
   all: "No tickets",
   needs_you: "Nothing needs you",
@@ -352,8 +345,8 @@ export type NowCell =
    *  shows here on hover / focus / open. */
   | { kind: "empty" };
 
-/** The Now column (DESIGN §6 "Now/next"; there is no "next" in our model). `now` is the clock. */
-export function nowCell(t: NowTicket, now: number): NowCell {
+/** The Now column (DESIGN §6 "Now/next"; there is no "next" in our model). */
+export function nowCell(t: NowTicket): NowCell {
   const out = outcomeLine(t);
   if (out)
     return { kind: "outcome", outcome: out.outcome, word: out.word, text: out.note ?? t.now.text };
@@ -361,7 +354,7 @@ export function nowCell(t: NowTicket, now: number): NowCell {
   if (t.attention === "inbox") {
     return t.dispatch_block ? { kind: "block", text: t.dispatch_block.text } : { kind: "empty" };
   }
-  if (t.attention === "running") return { kind: "run", run: runLine(t, now) };
+  if (t.attention === "running") return { kind: "run", run: runLine(t, null) };
 
   const line = statusLine(t);
   return { kind: "mark", mark: statusMark(t), text: line.text, flag: line.flag };

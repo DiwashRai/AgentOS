@@ -8,10 +8,17 @@ import { ApiError, type Schemas } from "../../api/client";
 import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
 import { firstName, repoShort } from "../../domain/format";
-import { outcomeWord, resolvedBy } from "../../domain/outcome";
+import { resolvedBy } from "../../domain/outcome";
 import { firstParagraph, planView } from "../../domain/plan";
-import { stageModel } from "../../domain/stage";
-import { runLine, sourceLabel, stageCount, statusLine, statusMark } from "../../domain/ticketView";
+import { type GlyphModel, stageModel } from "../../domain/stage";
+import {
+  outcomeLine,
+  runLine,
+  sourceRef,
+  stageCount,
+  statusLine,
+  statusMark,
+} from "../../domain/ticketView";
 import { words } from "../../domain/words";
 import {
   Button,
@@ -45,7 +52,7 @@ const PLAN_MAX = 8;
 
 const ESC_HINT = [{ keys: ["Esc"], label: "close" }] as const;
 
-function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefined }) {
+function Plan({ model, detail }: { model: GlyphModel; detail: Detail | undefined }) {
   const id = useId();
   return (
     <Stack as="section" gap={4} className={s.sec} aria-label="Plan">
@@ -57,7 +64,7 @@ function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefin
         id={id}
         empty={detail ? <EmptyState form="note">No plan yet.</EmptyState> : undefined}
       />
-      <Stepper model={stageModel(t)} compact />
+      <Stepper model={model} compact />
     </Stack>
   );
 }
@@ -147,17 +154,18 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
   const repo = repoShort(t.repo_name);
   const running = t.attention === "running" || t.attention === "queued";
   const runner = t.attention === "running" ? t.latest_run?.launch_ref : null;
-  const outcome = outcomeWord(t);
+  const outcome = outcomeLine(t)?.word;
+  const model = stageModel(t);
   const path = ticketPath(t.key, "overview");
 
   return (
     <>
       <header className={s.head}>
         <Inline gap={4} className={s.bar}>
-          <span className={s.mono}>{sourceLabel(t)}</span>
+          <span className={s.mono}>{sourceRef(t) ?? t.key}</span>
           {repo && <span className={s.mono}>{`· ${repo}`}</span>}
           <Spacer />
-          <StageGlyph model={stageModel(t)} />
+          <StageGlyph model={model} />
           <Button
             size="sm"
             onClick={() => {
@@ -179,7 +187,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
             Owner <b>{t.owner ? firstName(t.owner) : "Nobody"}</b>
           </span>
           <span>
-            Pipeline <b>{stageCount(t).text}</b>
+            Pipeline <b>{stageCount(model)}</b>
           </span>
           {runner && (
             <span>
@@ -190,7 +198,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
           {t.pr_url && <PrLink url={t.pr_url} />}
         </Inline>
       </header>
-      <Plan ticket={t} detail={detail} />
+      <Plan model={model} detail={detail} />
       {running ? <Run ticket={t} /> : t.attention !== "inbox" && <Status ticket={t} />}
       <div className={s.talk}>
         <Talk ticketKey={t.key} variant="peek" limit={8} />

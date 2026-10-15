@@ -1,7 +1,7 @@
 // My queue rows (refresh HANDOFF §5 "My queue row"): one grid for every zone, so titles share one
 // x and stage labels sit at 90px. Needs you (incl. blocked) and Ready to start are raised; Done
-// (incl. abandoned) is flat. Click / Enter / Space anywhere on the row opens the peek; the row's buttons keep their
-// action.
+// (incl. abandoned) is flat. Click / Enter / Space on the row opens the peek; its buttons keep
+// their action.
 import type { ReactNode } from "react";
 
 import type { Schemas } from "../../api/client";
@@ -178,7 +178,7 @@ function DoneCells({ ticket: t, now }: { ticket: Ticket; now: number }) {
       <span className={cx(s.outcome, text.ellipsis)} title={out?.note ?? undefined}>
         {out ? (
           <>
-            <span className={cx(out.abandoned && s.abandoned)}>{out.word}</span>
+            <span className={cx(out.outcome === "abandoned" && s.abandoned)}>{out.word}</span>
             {out.note ? ` · ${out.note}` : null}
           </>
         ) : null}

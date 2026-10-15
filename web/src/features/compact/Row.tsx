@@ -33,8 +33,8 @@ import { nowCell, sourceColumn } from "./model";
 
 type Ticket = Schemas["TicketSummary"];
 
-function NowCell({ ticket, now }: { ticket: Ticket; now: number }) {
-  const cell = nowCell(ticket, now);
+function NowCell({ ticket }: { ticket: Ticket }) {
+  const cell = nowCell(ticket);
   switch (cell.kind) {
     case "run": {
       const { meter } = cell.run;
@@ -144,7 +144,7 @@ export function CompactRow({
         </span>
         <StageGlyph model={stageModel(t)} className={cx(s.stage, s.cStage)} />
         <DataTitle type={t.type} priority={t.priority} text={t.title} />
-        <NowCell ticket={t} now={now} />
+        <NowCell ticket={t} />
         <span className={cx(text.meta, text.ellipsis, s.cSrc)}>{sourceColumn(t)}</span>
         <span className={cx(s.people, s.cPeople)}>
           {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}

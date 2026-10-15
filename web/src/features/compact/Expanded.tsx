@@ -9,7 +9,7 @@ import type { Schemas } from "../../api/client";
 import { useChat, useTicket } from "../../api/queries";
 import { type Action, ticketActions } from "../../domain/actions";
 import { planView } from "../../domain/plan";
-import { stageModel } from "../../domain/stage";
+import { type GlyphModel, stageModel } from "../../domain/stage";
 import { runLine, stageCount } from "../../domain/ticketView";
 import { words } from "../../domain/words";
 import {
@@ -97,10 +97,12 @@ function Actions({ ticket: t }: { ticket: Ticket }) {
 
 function Plan({
   ticket: t,
+  model,
   detail,
   error,
 }: {
   ticket: Ticket;
+  model: GlyphModel;
   detail: Detail | undefined;
   error: Error | null;
 }) {
@@ -132,7 +134,7 @@ function Plan({
         label="Plan"
         empty={empty}
       />
-      <Stepper model={stageModel(t)} compact className={s.stepper} />
+      <Stepper model={model} compact className={s.stepper} />
     </Stack>
   );
 }
@@ -177,16 +179,17 @@ export function Expanded({ id, ticket: t }: { id: string; ticket: Ticket }) {
   // The board's summary drives the row; the detail only adds the plan.
   const query = useTicket(t.key);
   const move = moveText(t);
+  const model = stageModel(t);
   return (
     <div id={id} className={s.more}>
       <div className={s.grid}>
         <Stack>
           <div className={cx(text.label, text.ellipsis, s.lab)}>{move.label}</div>
           <p className={s.lead}>{move.lead}</p>
-          <p className={s.sub}>{ownerLine(t, stageCount(t).text)}</p>
+          <p className={s.sub}>{ownerLine(t, stageCount(model))}</p>
           <Actions ticket={t} />
         </Stack>
-        <Plan ticket={t} detail={query.data} error={query.error} />
+        <Plan ticket={t} model={model} detail={query.data} error={query.error} />
         <LastMessage ticket={t} />
       </div>
     </div>

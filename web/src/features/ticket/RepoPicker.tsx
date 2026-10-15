@@ -7,17 +7,10 @@ import { useMemo } from "react";
 
 import type { Schemas } from "../../api/client";
 import { useConfig, usePatchTicket } from "../../api/queries";
+import { words } from "../../domain/words";
 import { Button, ChevronIcon, Inline, Stack, cx, text } from "../../ui";
 import ie from "./InlineEdit.module.css";
-import {
-  NO_REPO_LABEL,
-  repoErrorText,
-  repoLock,
-  repoOptions,
-  repoPatch,
-  repoValue,
-  repoWarning,
-} from "./repo";
+import { repoErrorText, repoLock, repoOptions, repoPatch, repoValue, repoWarning } from "./repo";
 import s from "./RepoPicker.module.css";
 import { useInlineEdit } from "./useInlineEdit";
 
@@ -42,7 +35,7 @@ export function RepoPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
 
   if (readOnly || locked) {
     return (
-      <span title={locked ? (lock ?? undefined) : undefined}>{t.repo_name ?? NO_REPO_LABEL}</span>
+      <span title={locked ? (lock ?? undefined) : undefined}>{t.repo_name ?? words.noRepo}</span>
     );
   }
 

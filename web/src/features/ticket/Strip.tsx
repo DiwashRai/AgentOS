@@ -7,7 +7,8 @@ import { useState, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router";
 
 import type { Schemas } from "../../api/client";
-import { planView } from "../../domain/plan";
+import { duration, runSeconds } from "../../domain/format";
+import { planText, planView } from "../../domain/plan";
 import { OUTCOME_KIND, resolvedBy } from "../../domain/outcome";
 import {
   gate,
@@ -63,24 +64,19 @@ function Band({
   );
 }
 
-/** The right end of a band's line: Then <stage>, Edit TASKS.md, the PR, the log. */
-function End({ children }: { children: ReactNode }) {
-  return (
-    <Inline as="span" gap={7} className={s.end}>
-      {children}
-    </Inline>
-  );
-}
-
 /** A number or word beside the line (k/n, the elapsed time, a waiting client's Online). */
-function Num({ children }: { children: ReactNode }) {
-  return <span className={cx(text.meta, s.num)}>{children}</span>;
+const num = cx(text.meta, s.num);
+
+/** The elapsed time on its own 1 s clock, so the band re-renders only with the ticket. */
+function Elapsed({ run }: { run: Detail["latest_run"] }) {
+  const now = useNow(1000);
+  const seconds = runSeconds(run, now);
+  return seconds === null ? null : <span className={num}>{duration(seconds)}</span>;
 }
 
 function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
   const { search } = useLocation();
-  const now = useNow(1000);
-  const line = runLine(t, now);
+  const line = runLine(t, null);
   const meter = queued ? null : line.meter;
   const plan = planView(t.plan);
   // Past STRIP_LABEL_MAX steps the meter drops its labels anyway (bare segments).
@@ -100,14 +96,14 @@ function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
           <span className={cx(text.ellipsis, s.text)} title={words}>
             {words}
           </span>
-          {wait ? <Num>{onlineWords[wait.online]}</Num> : null}
-          {meter ? <Num>{meter.text}</Num> : null}
-          {queued || line.elapsed === null ? null : <Num>{line.elapsed}</Num>}
-          <End>
+          {wait ? <span className={num}>{onlineWords[wait.online]}</span> : null}
+          {meter ? <span className={num}>{meter.text}</span> : null}
+          {queued ? null : <Elapsed run={t.latest_run} />}
+          <Inline as="span" gap={7} className={s.end}>
             <RouterLink className={linkClass} to={ticketPath(t.key, "runs", search)}>
               Log →
             </RouterLink>
-          </End>
+          </Inline>
         </>
       }
     >
@@ -129,7 +125,7 @@ function GateBand({ t, parked, tasksPath }: { t: Detail; parked: GateView; tasks
   const mine = parked.state === "you";
   const params = new URLSearchParams({ file: tasksPath });
   const then = thenStage(t);
-  const step = runLine(t, null).step;
+  const step = planText(t.now.text);
   return (
     <>
       <Band
@@ -147,7 +143,7 @@ function GateBand({ t, parked, tasksPath }: { t: Detail; parked: GateView; tasks
                 {step}
               </span>
             ) : null}
-            <End>
+            <Inline as="span" gap={7} className={s.end}>
               {then ? <span className={text.meta}>{`Then ${then}`}</span> : null}
               <RouterLink
                 className={linkClass}
@@ -156,7 +152,7 @@ function GateBand({ t, parked, tasksPath }: { t: Detail; parked: GateView; tasks
                 Edit TASKS.md →
               </RouterLink>
               {t.pr_url ? <PrLink url={t.pr_url} /> : null}
-            </End>
+            </Inline>
           </>
         }
       />
@@ -192,9 +188,9 @@ function OutcomeBand({ t, outcome }: { t: Detail; outcome: OutcomeLine }) {
             ) : null}
           </span>
           {t.pr_url ? (
-            <End>
+            <Inline as="span" gap={7} className={s.end}>
               <PrLink url={t.pr_url} />
-            </End>
+            </Inline>
           ) : null}
         </>
       }
@@ -222,9 +218,9 @@ function StatusBand({ t }: { t: Detail }) {
           ) : null}
           {/* "review the result and mark done": the thing to review */}
           {t.pr_url ? (
-            <End>
+            <Inline as="span" gap={7} className={s.end}>
               <PrLink url={t.pr_url} />
-            </End>
+            </Inline>
           ) : null}
         </>
       }

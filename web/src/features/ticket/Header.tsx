@@ -210,7 +210,7 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
         </div>
         <div>
           <dt>Pipeline</dt>
-          <dd>{stageCount(t).text}</dd>
+          <dd>{stageCount(model)}</dd>
         </div>
         {t.pr_url ? (
           <div>

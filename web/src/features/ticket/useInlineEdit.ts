@@ -7,40 +7,16 @@
 import { useState, type FocusEvent, type KeyboardEvent } from "react";
 
 /** The parts of a TanStack mutation the edit uses. */
-export interface PatchMutation<B> {
+interface PatchMutation<B> {
   mutate: (body: B, options?: { onSuccess?: () => void; onSettled?: () => void }) => void;
   reset: () => void;
   isPending: boolean;
 }
 
-export interface InlineEditOptions {
-  /** A lock holds (a run is active): an open edit closes. */
-  locked?: boolean | undefined;
-  /** Close after a failed save too, so the error shows at rest (default: stay open). */
-  closeOnError?: boolean | undefined;
-}
-
-export interface InlineEdit<T, B> {
-  /** The value being edited; null at rest. */
-  draft: T | null;
-  /** Open the edit on a value. */
-  start: (value: T) => void;
-  /** Replace the draft as the user types. */
-  change: (value: T) => void;
-  /** Back to rest, dropping the draft and the last save's error. */
-  cancel: () => void;
-  /** Send the patch; the edit closes when it succeeds. */
-  save: (body: B) => void;
-  /** Escape cancels and stops there; put it on the edit's controls. */
-  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
-  /** Cancels when focus moves outside the element it sits on (the edit's root). */
-  onBlur: (e: FocusEvent<HTMLElement>) => void;
-}
-
 export function useInlineEdit<T, B>(
   mutation: PatchMutation<B>,
-  { locked = false, closeOnError = false }: InlineEditOptions = {},
-): InlineEdit<T, B> {
+  { locked = false, closeOnError = false }: { locked?: boolean; closeOnError?: boolean } = {},
+) {
   const [draft, setDraft] = useState<T | null>(null);
 
   // A lock that appears mid-edit closes it; a save already sent settles first.

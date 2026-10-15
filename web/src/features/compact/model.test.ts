@@ -16,7 +16,6 @@ import {
   ownerLine,
   parseFilter,
   pills,
-  plural,
   sourceColumn,
   talkLabel,
   withFilter,
@@ -216,8 +215,6 @@ describe("texts", () => {
       ]),
     ).toEqual({ tickets: 3, projects: ["AOS", "SCRUM"], repos: 1 });
     expect(footSummary([])).toEqual({ tickets: 0, projects: [], repos: 0 });
-    expect(plural(1, "ticket")).toBe("ticket");
-    expect(plural(0, "repo")).toBe("repos");
   });
   it("says what is empty, in the repo when scoped", () => {
     expect(emptyText("needs_you", null)).toBe("Nothing needs you");
@@ -245,7 +242,7 @@ describe("the now column", () => {
       attention: "running",
       now: now({ actor: "Build", text: "Running tests", progress: { done: 2, total: 5 } }),
     });
-    const cell = nowCell(t, NOON);
+    const cell = nowCell(t);
     expect(cell.kind === "run" && [cell.run.stage, cell.run.meter?.text]).toEqual(["Build", "3/5"]);
   });
   it("shows the YOU form with the parked gate, and the wait on a person", () => {
@@ -254,7 +251,7 @@ describe("the now column", () => {
       rail: [step("Plan", "done", { gate: gate("you", { label: "Plan sign-off" }) })],
       now: now({ text: "3 tasks" }),
     });
-    expect(nowCell(you, NOON)).toEqual({
+    expect(nowCell(you)).toEqual({
       kind: "mark",
       mark: { kind: "you", ask: "Plan sign-off" },
       text: "3 tasks",
@@ -266,7 +263,7 @@ describe("the now column", () => {
         step("Review", "done", { gate: gate("waiting", { label: "PR review", person: sam }) }),
       ],
     });
-    expect(nowCell(wait, NOON)).toMatchObject({
+    expect(nowCell(wait)).toMatchObject({
       mark: { kind: "wait", name: "Sam", ask: "PR review" },
     });
   });
@@ -276,14 +273,14 @@ describe("the now column", () => {
       now: now({ text: "Build failed" }),
       latest_run: run("failed", { error: "exit 1" }),
     });
-    expect(nowCell(blk, NOON)).toMatchObject({
+    expect(nowCell(blk)).toMatchObject({
       mark: { kind: "blk" },
       text: "Build failed · exit 1",
     });
   });
   it("leaves the inbox Now cell empty at rest (Add context reveals there)", () => {
-    expect(nowCell(ticket({ attention: "inbox" }), NOON)).toEqual({ kind: "empty" });
-    expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) }), NOON)).toEqual({
+    expect(nowCell(ticket({ attention: "inbox" }))).toEqual({ kind: "empty" });
+    expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) }))).toEqual({
       kind: "empty",
     });
   });
@@ -292,7 +289,7 @@ describe("the now column", () => {
       code: "base_branch_missing" as const,
       text: "Set a base branch first",
     };
-    expect(nowCell(ticket({ attention: "inbox", dispatch_block }), NOON)).toEqual({
+    expect(nowCell(ticket({ attention: "inbox", dispatch_block }))).toEqual({
       kind: "block",
       text: "Set a base branch first",
     });
@@ -301,7 +298,7 @@ describe("the now column", () => {
       dispatch_block,
       latest_run: run("failed", { error: "cannot start from origin/x" }),
     });
-    expect(nowCell(blk, NOON)).toEqual({
+    expect(nowCell(blk)).toEqual({
       kind: "mark",
       mark: { kind: "blk", name: "Blocked" },
       text: "Set a base branch first",
@@ -314,13 +311,13 @@ describe("the now column", () => {
       state: "closed",
       resolution: { outcome: "abandoned", note: "Superseded", by: sam, at: at("10") },
     });
-    expect(nowCell(abandoned, NOON)).toEqual({
+    expect(nowCell(abandoned)).toEqual({
       kind: "outcome",
       outcome: "abandoned",
       word: "Abandoned",
       text: "Superseded",
     });
-    expect(nowCell(ticket({ attention: "done", state: "done" }), NOON)).toMatchObject({
+    expect(nowCell(ticket({ attention: "done", state: "done" }))).toMatchObject({
       kind: "outcome",
       outcome: "completed",
       word: "Complete",

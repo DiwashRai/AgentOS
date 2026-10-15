@@ -82,4 +82,5 @@ export const words = {
   agentReads: "The agent reads",
   addContext: "+ Add context",
   newTicket: "New ticket",
+  noRepo: "No repo",
 } as const;

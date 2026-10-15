@@ -85,6 +85,11 @@ export function prLabel(url: string): string {
   return n ? `PR #${n}` : "PR";
 }
 
+/** The word after a count: "ticket" for 1, else "tickets". */
+export function plural(n: number, one: string): string {
+  return n === 1 ? one : `${one}s`;
+}
+
 /** A person's short name for captions and titles: `Sam Lee` → `Sam`. */
 export function firstName(p: Pick<Schemas["Person"], "display_name">): string {
   return p.display_name.trim().split(/\s+/)[0] ?? p.display_name;

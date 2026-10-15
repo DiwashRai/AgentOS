@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 import type { Schemas } from "../../api/client";
 import { stageModel } from "../../domain/stage";
 import { statusKind } from "../../domain/status";
-import { runLine } from "../../domain/ticketView";
+import { meterOf, runLine } from "../../domain/ticketView";
 import { onlineWords } from "../../domain/words";
 import {
   Avatar,
@@ -91,7 +91,7 @@ export function RunTiles({
 
 function RackLine({ ticket: t, onOpen }: { ticket: Ticket; onOpen: (key: string) => void }) {
   const kind = statusKind(t) === "queued" ? "queued" : "run";
-  const { meter } = runLine(t, null);
+  const meter = meterOf(t);
   return (
     <div
       className={cx(s.rl, kind === "queued" && s.isQueued)}

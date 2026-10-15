@@ -55,31 +55,26 @@ export function sectionCount(s: Pick<PlanSection<PlanLike>, "done" | "total">): 
 
 // ------------------------------------------------------------------ the checklist view
 
-/** A plan item as every checklist draws it. */
+/** A plan item as every checklist draws it: `text` plain, `raw` with its markdown (for a title). */
 export interface PlanItemView extends PlanLike {
-  /** Plain text, without the agent's number or markdown. */
-  text: string;
-  /** The item without the agent's number, markdown kept (for a title). */
   raw: string;
 }
 
 export interface PlanView {
-  /** The items shown, in plan order. */
+  /** The items shown, in plan order, and under their headings. */
   items: PlanItemView[];
-  /** The shown items under their headings; `headed` says whether to draw the heads. */
   sections: PlanSection<PlanItemView>[];
   headed: boolean;
   /** Items not shown ("+N more"). */
   more: number;
-  /** Done and total over the whole plan (the count matches its items). */
+  /** Over the whole plan. */
   done: number;
   total: number;
-  /** The bar's fill, 0–100 (whole percent). */
   pct: number;
 }
 
-/** The plan as a checklist: the first `max` items (all without one), counted over the whole plan.
- *  Null for no plan, an empty one included, so no list says "0 of 0 done". */
+/** The first `max` items (all without one), counted over the whole plan. Null for an empty plan,
+ *  so no list says "0 of 0 done". */
 export function planView(
   plan: readonly PlanLike[] | null | undefined,
   max?: number,
@@ -132,18 +127,10 @@ export function paragraphs(text: string): string[] {
     .filter(Boolean);
 }
 
-export interface Lead {
-  /** The first paragraph with any plain text, as plain text ("" when there is none). */
-  text: string;
-  /** That paragraph as written (for a title). */
-  raw: string;
-  /** Every other paragraph, in order: the body under the lead. */
-  rest: string[];
-}
-
-/** The description's lead: its first paragraph that says something once markdown is stripped,
- *  so a paragraph holding only an image is skipped. */
-export function firstParagraph(text: string): Lead {
+/** The description's lead: its first paragraph that says something once markdown is stripped
+ *  (so one holding only an image is skipped), as plain `text` and as written (`raw`), and the
+ *  `rest` in order. */
+export function firstParagraph(text: string): { text: string; raw: string; rest: string[] } {
   const paras = paragraphs(text);
   const at = paras.findIndex((p) => plainText(p) !== "");
   if (at < 0) return { text: "", raw: "", rest: paras };

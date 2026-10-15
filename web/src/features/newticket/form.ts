@@ -1,6 +1,7 @@
 // The New ticket form's pure model: fields, validation and the POST /api/tickets body (SPEC §10,
 // `TicketCreate`). Display defaults come from GET /api/config and the signed-in user.
 import type { Schemas } from "../../api/client";
+import { words } from "../../domain/words";
 
 type Create = Schemas["TicketCreate"];
 
@@ -28,7 +29,7 @@ export function repoOptions(
 ): readonly { value: string; label: string }[] {
   return [
     ...repos.map((r) => ({ value: r.name, label: r.name })),
-    { value: NO_REPO, label: "No repo" },
+    { value: NO_REPO, label: words.noRepo },
   ];
 }
 

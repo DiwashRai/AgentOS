@@ -2,6 +2,7 @@
 // Grouping follows SPEC §13 "Chat pane": consecutive messages by one author share a block when
 // each follows the previous one within 5 minutes (the pack groups by author only).
 import type { Schemas } from "../../api/client";
+import { firstName } from "../../domain/format";
 
 type ChatMessage = Schemas["ChatMessage"];
 type Person = Schemas["Person"];
@@ -112,10 +113,6 @@ export function speakers(messages: readonly ChatMessage[], myId: number | null):
     if (m.author.id !== myId && !seen.has(m.author.id)) seen.set(m.author.id, m.author);
   }
   return [...seen.values()];
-}
-
-function firstName(p: Person): string {
-  return p.display_name.trim().split(/\s+/)[0] ?? "";
 }
 
 /** `Say something to Maya, Tom and Priya` (first three people), else `… to the team`. */

@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { Schemas } from "../api/client";
 import { gate as gateInfo, person, run, step, ticket } from "./fixtures";
+import { stageModel } from "./stage";
 import {
   gate,
   outcomeLine,
   rowLook,
   runLine,
-  sourceLabel,
   sourceRef,
   sourceWord,
   stageCount,
@@ -261,7 +261,7 @@ describe("one ticket, every field", () => {
       line.meter?.text ?? null,
       line.wait?.online ?? null,
       g && `${g.state}·${g.person}·${g.stage}`,
-      stageCount(t).text,
+      stageCount(stageModel(t)),
       sourceWord(t),
       look.flat ? `${look.edge} flat` : look.edge,
       `${mark.kind}·${mark.name ?? ""}·${mark.ask ?? ""}`,
@@ -325,8 +325,8 @@ it("counts every stage, gate and skip from the stepper's model", () => {
       step("Review", "skipped", { gate: gateInfo("pending") }),
     ],
   });
-  expect(stageCount(t)).toMatchObject({ stages: 5, gates: 2, skipped: 2 });
-  expect(stageCount(ticket({ rail: [step("Build", "pending")] })).text).toBe("3 stages");
+  expect(stageCount(stageModel(t))).toBe("5 stages · 2 gates · 2 skipped");
+  expect(stageCount(stageModel(ticket({ rail: [step("Build", "pending")] })))).toBe("3 stages");
 });
 
 it("puts the external id beside the source name only when it isn't the key", () => {
@@ -339,12 +339,6 @@ it("keeps the external id on My queue rows even when it is the key", () => {
   const jira = { source: "jira" as const, external_id: "SCRUM-8", url: "" };
   expect(sourceRef(ticket({ key: "SCRUM-8", source: jira }))).toBe("Jira SCRUM-8");
   expect(sourceRef(ticket({ key: "AOS-5", source: null }))).toBeNull();
-});
-
-it("labels an imported ticket by its external id and our own by its key", () => {
-  const jira = { source: "jira" as const, external_id: "PLAT-1", url: "" };
-  expect(sourceLabel(ticket({ key: "AOS-5", source: jira }))).toBe("Jira PLAT-1");
-  expect(sourceLabel(ticket({ key: "AOS-5", source: null }))).toBe("AOS-5");
 });
 
 it("keeps the reason under the dispatch block", () => {

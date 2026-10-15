@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { run } from "./fixtures";
-import { age, ageParts, ago, duration, isOld, prLabel, repoShort, runSeconds } from "./format";
+import {
+  age,
+  ageParts,
+  ago,
+  duration,
+  isOld,
+  plural,
+  prLabel,
+  repoShort,
+  runSeconds,
+} from "./format";
 
 const now = Date.parse("2026-10-11T12:00:00Z");
 const minAgo = (min: number) => new Date(now - min * 60_000).toISOString();
@@ -119,4 +129,9 @@ describe("prLabel", () => {
   ])("%s → %s", (url, expected) => {
     expect(prLabel(url)).toBe(expected);
   });
+});
+
+it("pluralises the word after a count", () => {
+  expect(plural(1, "ticket")).toBe("ticket");
+  expect(plural(0, "repo")).toBe("repos");
 });

@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { counts } from "../../domain/counts";
 import { person, run, ticket } from "../../domain/fixtures";
 import { groups } from "../../domain/groups";
+import { words } from "../../domain/words";
 import {
   atWorkNote,
   compactHref,
   listsAnything,
   MINE_QUEUED,
   myRunning,
-  NO_REPO,
   rackColumns,
   rackGroups,
   subLine,
@@ -70,7 +70,7 @@ describe("the rack", () => {
       [MINE_QUEUED, ["A-2"]],
       ["api", ["B-3"]],
       ["web", ["B-2", "B-1"]],
-      [NO_REPO, ["B-4"]],
+      [words.noRepo, ["B-4"]],
     ]);
   });
   it("splits my queued runs: the server's runner first, then one group per client wait", () => {
