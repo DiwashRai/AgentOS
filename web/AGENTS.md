@@ -19,8 +19,8 @@ The React app: React 19, Vite, TypeScript (strict), TanStack Query 5, react-rout
 src/api/       client (api, unwrap, ApiError, Schemas) + queries.ts (every hook and the keys factory)
 src/app/       providers, router, shell (Shell, Rail, TopBar, Surface, ThemeMenu), useBoard, keys, motion, theme
 src/app/views/ thin route wrappers (Settings, placeholders)
-src/domain/    pure selection and vocabulary over server fields (counts, groups, words, actions, stage, format…)
-src/ui/        kit primitives: presentational, props in, markup out (plus text utilities, StatusLine, useNow)
+src/domain/    pure selection and vocabulary over server fields (ticketView, plan, counts, groups, words, actions, stage, format…)
+src/ui/        kit primitives: presentational, props in, markup out (plus text utilities, StatusLine, and the hooks useNow and useDocumentKey)
 src/editor/    the editor kit: fields, drafts, the versioned-document hook, DocumentPage, ListEditor, issues, save bar
 src/features/  one folder per feature (queue, compact, ticket, peek, runs, context, pipeline, settings…)
 src/styles/    tokens.css, base.css, fonts.css
@@ -62,8 +62,13 @@ src/styles/    tokens.css, base.css, fonts.css
 - Render what the server returns: `attention`, `phase`, `phase_track`, `rail`, `now`, `next_stage`, `active_run_id`, `attention_since`, `latest_run.cancel_requested_at`. Never compute these on the client, because the backend owns the derivation and two copies drift.
 - `src/domain/` only selects: it counts, filters, groups and sorts over server fields, and never invents a state. It is pure and unit-tested (`domain/fixtures.ts` builds typed tickets).
 - Views read the board through `useBoard()` (`src/app/useBoard.ts`), which returns tickets, `me`, and the shared `counts` and `groups`. Views never count or group for themselves.
+- One view-model, read by every view (My queue, Compact, the peek, the Ticket page), so the same ticket shows the same strings everywhere:
+  - `domain/ticketView.ts`: `runLine` (stage, run number, elapsed, meter, step, a client run's wait), `gate`, `stageCount`, `sourceWord`, `rowLook` (surface and status edge), `statusMark`, `statusLine`, `outcomeLine`, `waitAge`. `ticketView.test.ts` runs one table of tickets through every field.
+  - `domain/plan.ts`: `planView` (the plan as `Checklist` draws it), `firstParagraph`, `plainText`.
+  - `domain/format.ts`: `duration`, `ago`, `runSeconds` (every elapsed time and age).
+  A view places these parts; it never rebuilds one in its own module.
 - Display helpers (`domain/format.ts`, a feature's `model.ts`) may combine server fields into text. They never derive state.
-- Words come from `domain/words.ts` (one vocabulary for every view; sentence case, exactly as shown). Stage glyph and stepper models come from `domain/stage.ts`, which also maps server rail states to drawn states (for example `stale` draws as upcoming).
+- Words come from `domain/words.ts` (one vocabulary for every view; sentence case, exactly as shown). `attentionWords` is the one definition of the status words; `statusWords`, `displayWords` and `MARK_WORD` derive from it. `sourceNames` names a ticket's source. Stage glyph and stepper models come from `domain/stage.ts`, which also maps server rail states to drawn states (for example `stale` draws as upcoming).
 - If a view needs a state the server doesn't provide, ask for it through the contract process.
 
 ## Actions
@@ -74,7 +79,7 @@ src/styles/    tokens.css, base.css, fonts.css
 
 ## My client
 - Settings › My client (`features/settings/clients/`, route `/settings/client`): every approved user lists and revokes their own client tokens; creating one is offered to writers (`canCreate`). A new token is shown once, with the lines to paste for pwsh and sh (`setupLines`: set `AGENTOS_CLIENT_TOKEN`, then `python worker.py --client --server <server_url>`; the token is never on the command line). It lives only in the page's state: leaving or pressing Done drops it for good.
-- A client run not started yet (queued, or taken and not claimed) shows the server's `now.text` ("waiting for <name>'s client") plus online or offline from `latest_run.client_online`, through `clientWait` in `domain/clients.ts`; the Ticket strip and the Runs view's queued groups (`features/queue/model.ts`) use it instead of the runner wording. The Runs tab shows a client run's `launch_ref` as the client's name (`launchRef` in `features/runs/runFormat.ts`).
+- A client run not started yet (queued, or taken and not claimed) shows the server's `now.text` ("waiting for <name>'s client") plus online or offline from `latest_run.client_online`, through `clientWait` in `domain/clients.ts`; the Ticket strip (through `runLine`'s `wait`) and My queue's rack groups of your client runs (`features/queue/model.ts`) use it instead of the runner wording. The Runs tab shows a client run's `launch_ref` as the client's name (`launchRef` in `features/runs/runFormat.ts`).
 
 ## Routes and URL state
 - Routes are defined in `src/app/router.tsx`. `/login` and `/kit` sit outside the shell and auth guard. Unknown paths redirect to `/`.
@@ -113,6 +118,7 @@ What every editable page shares. `editor/index.ts` lists it; check there before 
 - `useDraft(saved, version, same)` is `useDraftState` plus its own `useUnsavedWarning`. A draft remembers its base `version` for optimistic concurrency (409 `stale_version`), and a draft equal to the saved copy starts over from the current version.
 - One leave warning per page, because react-router allows one blocker at a time (it consults the last one registered). Under `DocumentPage`, a second draft is a `useDraftState` passed in as `dirty`. A page without it that has two drafts passes `{ warn: false }` to each `useDraft` and calls `useUnsavedWarning(a.dirty || b.dirty)` once, after both.
 - The warning covers closing the tab and path changes; a query-string change (a peek opening) never asks.
+- The Ticket page's inline edits (the Overview description, `BaseBranchField`, `RepoPicker`) share `useInlineEdit` (`features/ticket/useInlineEdit.ts`, styles in `InlineEdit.module.css`): a draft while editing, null at rest, the page's patch mutation passed in. Escape cancels and stops there, blur outside the edit cancels, a save closes it on success, and a lock (a run started) closes it unless a save is in flight. It holds no leave warning.
 
 ## Styling and tokens
 - Use CSS modules (`X.module.css` beside `X.tsx`) and `var(--token)`. Raw colour values are allowed only in `src/styles/tokens.css`. Compose class names with `cx` from `ui/`.
@@ -131,15 +137,27 @@ What every editable page shares. `editor/index.ts` lists it; check there before 
 ## Kit primitives
 - `src/ui/index.ts` is the list of primitives. Import from `../ui` (or the right relative path), and check there before writing a new one.
 - `/kit` (`ui/KitSheet.tsx`) renders every primitive in both themes. Update it when you add or change a primitive.
-- Text utilities: `text` (`ui/text.module.css`) has `label`, `meta`, `error` and `ellipsis` on the type tokens. Compose them with `cx` (`cx(text.meta, text.ellipsis)`) instead of a module's own label, note or error class.
+- Text utilities: `text` (`ui/text.module.css`) has `heading`, `label`, `meta`, `error` and `ellipsis` on the type tokens. Compose them with `cx` (`cx(text.meta, text.ellipsis)`) instead of a module's own heading, label, note or error class.
 - `StatusLine` is the one loading, permission and error line: a sentence in `--ink-3` (`error`: `--blocked`, announced as an alert), `inset` when it stands alone in a view. No spinners, no toasts.
-- `useNow(intervalMs)` is the clock for ages and saved-by lines.
+- `Dialog` / `DialogTitle`: every modal (the peek, New ticket). Scrim, `role="dialog"` panel, focus in on open and back to the opener on close, Tab wrapping, Escape and the scrim closing it; dialogs stack and only the top one acts. A feature never writes its own scrim, focus trap or focus return.
+- DataList (`DataHead`, `DataRows`, `DataRow`, `DataLine`, `DataTitle`, `DataOverflow`, `DataFoot`): the parts of the row lists in My queue, Compact and Intake. The view sets its grid as `--cols`; `DataRow` draws the surface, you-wash, status edge and hover.
+- `SegmentedControl`: a named group of `aria-pressed` buttons with optional mark and count (the Compact filter pills).
+- `EmptyState`: every "nothing here" (`row` is the dashed `EmptyRow`; `line`, `inset`, `note`). Loading, permission and error lines stay `StatusLine`.
+- `Badge`: `Tag` plus the small inline labels (`count`, `status`, `counter`, `pass`/`fail`, `ok`/`bad`, `stat`).
+- `Checklist`: a plan from `planView`, `roomy` on the Ticket page, `compact` in the peek and Compact.
+- `Stack` / `Inline` / `Spacer` (`Layout.tsx`): the flex column and row, with the gap as a `--sp-*` step.
+- `Sheet` / `FramedList`: the raised, framed surface, and a list whose rows are split by rules.
+- `Disclosure` / `Fold`: a chevron toggle whose open state the caller holds, and the same head on a native `details`.
+- `useNow(intervalMs)` is the clock for ages, elapsed times and saved-by lines.
+- `useDocumentKey(handler, { enabled, capture })` is the one way to listen for keys on the document (the handler is read through a ref).
+- Feature CSS keeps only layout grids and the visuals that can't be shared (status glyphs, the stepper, the run meter, the run log, chat bubbles). A missing variant is added once, in `ui/`, never improvised inside a feature.
 
 ## Motion and keys
 - Animate only `transform` and `opacity`. Honour `prefers-reduced-motion` (`base.css` has a global rule; modules with their own motion add one), and `html.ao-paused` (`app/motion.ts`, `base.css`) stops animation while the tab is hidden.
 - Hover never opens anything. Click, Enter or Space opens.
 - Hover on Compact and Intake rows lights them up (`--row-hover*`) and never moves them. My queue items lift by `--lift` (transform only). Focus looks like hover plus a 2px `--focus` (ink) outline at a 2px offset.
-- Single-key shortcuts check `isShortcut(e)` (`app/keys.ts`), so they never fire while typing or with a modifier held. Current keys: `/` focuses search, Esc closes, `j`/`k` move between rows in Compact.
+- Document shortcuts listen through `useDocumentKey` (`ui/`), never their own `addEventListener`. Single-key shortcuts also check `isShortcut(e)` (`app/keys.ts`), so they never fire while typing or with a modifier held. Current keys: `/` focuses search, Esc closes, `j`/`k` move between rows in Compact.
+- `Dialog` owns Escape, Tab and focus return for modals. A key it handles stops there, so document listeners never see it while a dialog is open; a control inside that stops Escape itself (an inline edit, a confirm) keeps the dialog open.
 
 ## Testing
 - Vitest runs in the `node` environment by default, because jsdom is slow to boot. A test that needs a DOM opts in with `// @vitest-environment jsdom` at the top.
