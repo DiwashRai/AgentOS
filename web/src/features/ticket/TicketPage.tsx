@@ -6,7 +6,16 @@ import { Link as RouterLink, useLocation, useNavigate, useParams } from "react-r
 import { ApiError } from "../../api/client";
 import { useFiles, useRuns, useTicket } from "../../api/queries";
 import { TopBar } from "../../app/TopBar";
-import { CloseIcon, IconButton, StatusLine, Tabs, linkClass, type TabItem } from "../../ui";
+import {
+  CloseIcon,
+  IconButton,
+  Stack,
+  StatusLine,
+  Tabs,
+  cx,
+  linkClass,
+  type TabItem,
+} from "../../ui";
 import { useDispatchTarget } from "../actions/useDispatchTarget";
 import { ContextTab } from "../context/ContextTab";
 import { PipelineTab } from "../pipeline";
@@ -32,12 +41,12 @@ function TicketBody({ ticketKey, tab }: { ticketKey: string; tab: TicketTab }) {
     const e = ticket.error;
     if (e instanceof ApiError && (e.code === "ticket_not_found" || e.status === 404)) {
       return (
-        <div className={s.missing}>
+        <Stack gap={2} align="start">
           <StatusLine inset>{`Ticket not found · ${ticketKey}`}</StatusLine>
-          <RouterLink className={linkClass} to="/">
+          <RouterLink className={cx(linkClass, s.back)} to="/">
             Back to My queue
           </RouterLink>
-        </div>
+        </Stack>
       );
     }
     return <StatusLine inset error>{`Can't load ${ticketKey} · ${e.message}`}</StatusLine>;
@@ -83,9 +92,9 @@ function TicketBody({ ticketKey, tab }: { ticketKey: string; tab: TicketTab }) {
           </div>
         </div>
       </div>
-      <div className={s.talk}>
+      <Stack className={s.talk}>
         <Talk ticketKey={t.key} variant="ticket" />
-      </div>
+      </Stack>
     </div>
   );
 }

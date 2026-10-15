@@ -1,5 +1,5 @@
-/* The now band (refresh mock §5.4 .ticket__now): --sp-5 --sp-6 padding, r8. On you the --you-tint band; every
-   other state the same band, quiet (no blue). */
+/* The now band (refresh mock §5.4 .ticket__now): --sp-5 --sp-6 padding, r8. On you the --you-tint
+   band; every other state the same band, quiet (no blue). */
 .slot {
   flex: none;
   margin-top: var(--sp-5);
@@ -17,9 +17,6 @@
 }
 
 .band {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-5);
   padding: var(--sp-5) var(--sp-6);
   border-radius: var(--r-row);
   font-size: 13px;
@@ -33,28 +30,18 @@
   box-shadow: inset 0 0 0 1px var(--rule-soft);
 }
 
-.line {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-3) var(--sp-4);
-  min-width: 0;
-}
 .line > :first-child {
   flex: none;
   max-width: 100%;
 }
 
-/* What's happening now (`now.text`, the status line): 12.5 --ink-2 beside a quiet mark. */
+/* What's happening now (`now.text`, the status line): 12.5 --ink-2 beside a quiet mark, one line
+   unless it wraps. */
 .text {
   flex: 0 1 auto;
-  min-width: 0;
   margin-left: var(--sp-3);
   font-size: var(--fs-control);
   color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .wrap {
   white-space: normal;
@@ -71,32 +58,15 @@
 
 .num {
   flex: none;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-/* A word beside the status line (a waiting client's Online / Offline). */
-.meta {
-  flex: none;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-
-/* The right end: Then <stage>, Edit TASKS.md, the PR, the log. */
 .end {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-7);
   margin-left: auto;
   padding-left: var(--sp-4);
   font-size: var(--fs-meta);
   white-space: nowrap;
-}
-.then {
-  color: var(--ink-3);
 }
 
 .meter {

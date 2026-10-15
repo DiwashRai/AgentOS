@@ -1,5 +1,5 @@
-/* The byline's base branch: a value that reads like the owner select (Header.module.css .pick) and
-   an inline kit .ao-input (pipeline fields.module.css) when editing. */
+/* The byline's base branch: the value (InlineEdit.module.css) and, editing, editor's input sized to
+   the byline line. */
 .mono {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -17,45 +17,7 @@
 /* "Locked by run #12" after a locked value */
 .lock {
   margin-left: var(--sp-1);
-  font-size: var(--fs-meta);
   font-weight: 400;
-  color: var(--ink-3);
-}
-
-.rest,
-.value {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--sp-2);
-}
-
-/* At rest, editable: transparent until hovered, like the owner select. */
-.value {
-  height: 22px;
-  align-items: center;
-  margin: calc(-1 * var(--sp-1)) 0 calc(-1 * var(--sp-1)) calc(-1 * var(--sp-3));
-  padding: 0 var(--sp-2);
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-.value:hover {
-  border-color: var(--rule);
-  background: var(--surface);
-}
-.value:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.value:disabled {
-  cursor: default;
-}
-.value:disabled:hover {
-  border-color: transparent;
-  background: transparent;
 }
 
 /* Editing: the input row, then the message and the hint under it. */
@@ -66,49 +28,13 @@
   margin: 0;
   font-weight: 400;
 }
-.row {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-}
 .input {
   width: 26ch;
-  min-width: 0;
   height: 24px;
   margin: -1px 0;
   padding: 0 var(--sp-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-control);
-  background: var(--field);
-  color: var(--ink-1);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  outline: none;
-}
-.input:focus-visible {
-  border-color: var(--rule-strong);
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.input[aria-invalid="true"] {
-  border-color: var(--blocked);
-}
-.input:read-only {
-  background: var(--surface);
-  color: var(--ink-2);
 }
 .useDefault:disabled {
   cursor: default;
   color: var(--ink-3);
-}
-
-.err,
-.note {
-  max-width: 52ch;
-  font-size: var(--fs-meta);
-  line-height: 1.4;
-  color: var(--ink-3);
-}
-.err {
-  color: var(--blocked);
 }

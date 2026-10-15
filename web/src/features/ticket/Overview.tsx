@@ -1,24 +1,35 @@
 // Ticket page · Overview tab (DESIGN §7.3): the description (plain paragraphs; markdown later) with
 // an edit affordance, the TASKS.md plan (it stands in for the design's acceptance criteria) and
 // "The agent reads" context chips.
-import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket } from "../../api/queries";
-import { paragraphs } from "../../domain/plan";
+import { paragraphs, planView } from "../../domain/plan";
 import { words } from "../../domain/words";
-import { Button, Chip, LinkButton } from "../../ui";
+import { fieldStyles as f } from "../../editor";
+import {
+  Button,
+  Checklist,
+  Chip,
+  EmptyState,
+  Inline,
+  LinkButton,
+  Spacer,
+  cx,
+  text,
+} from "../../ui";
 import { sortFiles } from "../context/files";
 import { actionErrorText, chipName, stripKind, ticketPath } from "./model";
 import s from "./Overview.module.css";
-import { PlanList } from "./PlanList";
+import { useInlineEdit } from "./useInlineEdit";
 
 type Detail = Schemas["TicketDetail"];
 
 function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   const patch = usePatchTicket(t.key);
-  const [draft, setDraft] = useState<string | null>(null);
+  const edit = useInlineEdit<string, Schemas["TicketPatch"]>(patch);
+  const draft = edit.draft;
   // The header's lead is the first paragraph; the body continues from the second.
   const paras = paragraphs(t.description);
   const rest = paras.slice(1);
@@ -29,48 +40,29 @@ function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
         className={s.edit}
         onSubmit={(e) => {
           e.preventDefault();
-          patch.mutate(
-            { description: draft },
-            {
-              onSuccess: () => {
-                setDraft(null);
-              },
-            },
-          );
+          edit.save({ description: draft });
         }}
       >
         <textarea
-          className={s.textarea}
+          className={cx(f.textarea, s.text)}
           aria-label="Description"
           value={draft}
           rows={Math.min(24, Math.max(6, draft.split("\n").length + 1))}
           // eslint-disable-next-line jsx-a11y/no-autofocus -- opened by an explicit Edit click
           autoFocus
           onChange={(e) => {
-            setDraft(e.target.value);
+            edit.change(e.target.value);
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              setDraft(null);
-              patch.reset();
-            }
-          }}
+          onKeyDown={edit.onKeyDown}
         />
-        <div className={s.editBar}>
+        <Inline gap={4}>
           {patch.error ? (
-            <span className={s.err} role="alert">
+            <span className={text.error} role="alert">
               {actionErrorText(patch.error)}
             </span>
           ) : null}
-          <Button
-            size="sm"
-            variant="quiet"
-            onClick={() => {
-              setDraft(null);
-              patch.reset();
-            }}
-          >
+          <Spacer />
+          <Button size="sm" variant="quiet" onClick={edit.cancel}>
             Cancel
           </Button>
           <Button
@@ -81,7 +73,7 @@ function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
           >
             {patch.isPending ? "Saving…" : "Save"}
           </Button>
-        </div>
+        </Inline>
       </form>
     );
   }
@@ -95,13 +87,13 @@ function Description({ t, readOnly }: { t: Detail; readOnly: boolean }) {
           ))}
         </div>
       ) : paras.length === 0 ? (
-        <p className={s.empty}>No description yet.</p>
+        <EmptyState form="note">No description yet.</EmptyState>
       ) : null}
       {readOnly ? null : (
         <LinkButton
           className={s.editLink}
           onClick={() => {
-            setDraft(t.description);
+            edit.start(t.description);
           }}
         >
           {paras.length > 0 ? "Edit description" : "Add a description"}
@@ -121,19 +113,19 @@ function AgentReads({ t, files }: { t: Detail; files: readonly Schemas["FileInfo
   };
   return (
     <section className={s.sec} aria-labelledby="ticket-reads">
-      <h2 id="ticket-reads" className={s.heading}>
+      <h2 id="ticket-reads" className={cx(text.heading, s.heading)}>
         {words.agentReads}
       </h2>
-      <div className={s.ctx}>
-        {sortFiles(files).map((f) => (
+      <Inline wrap gap={4}>
+        {sortFiles(files).map((file) => (
           <Chip
-            key={f.path}
-            title={f.path}
+            key={file.path}
+            title={file.path}
             onClick={() => {
-              toFile(f.path);
+              toFile(file.path);
             }}
           >
-            {chipName(f.path)}
+            {chipName(file.path)}
           </Chip>
         ))}
         <Chip
@@ -144,7 +136,7 @@ function AgentReads({ t, files }: { t: Detail; files: readonly Schemas["FileInfo
         >
           {words.addContext}
         </Chip>
-      </div>
+      </Inline>
     </section>
   );
 }
@@ -157,7 +149,14 @@ export function Overview({ t, files }: { t: Detail; files: readonly Schemas["Fil
       <Description key={t.key} t={t} readOnly={readOnly} />
       {/* Parked at a gate, the plan already sits under the now band (what's being signed off). */}
       {stripKind(t) === "gate" ? null : (
-        <PlanList plan={t.plan} id="ticket-plan" empty="No plan yet." className={s.sec} />
+        <section className={s.sec} aria-labelledby="ticket-plan">
+          <Checklist
+            plan={planView(t.plan)}
+            title="Plan"
+            id="ticket-plan"
+            empty={<EmptyState form="note">No plan yet.</EmptyState>}
+          />
+        </section>
       )}
       <AgentReads t={t} files={files} />
     </div>

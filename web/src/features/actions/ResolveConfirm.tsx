@@ -5,7 +5,8 @@ import { useState, type KeyboardEvent } from "react";
 
 import type { Outcome } from "../../domain/outcome";
 import { words } from "../../domain/words";
-import { Button, cx, Kbd, StatusMark } from "../../ui";
+import { fieldStyles as f } from "../../editor";
+import { Button, cx, Inline, Kbd, StatusLine, StatusMark, text } from "../../ui";
 import s from "./ResolveConfirm.module.css";
 
 /** The API's limit on a resolution note. */
@@ -68,7 +69,7 @@ export function ResolveConfirm({
     >
       <StatusMark kind={abandon ? "abandoned" : "done"} name={copy.head} />
       <textarea
-        className={s.note}
+        className={cx(f.textarea, s.note)}
         aria-label="Note (optional)"
         placeholder={words.resolveNote}
         rows={2}
@@ -81,13 +82,9 @@ export function ResolveConfirm({
           setNote(e.target.value);
         }}
       />
-      {error ? (
-        <p className={s.err} role="alert" title={error}>
-          {error}
-        </p>
-      ) : null}
-      <div className={s.bar}>
-        <span className={s.keys}>
+      {error ? <StatusLine error>{error}</StatusLine> : null}
+      <Inline gap={3} justify="end">
+        <span className={cx(text.meta, s.keys)}>
           <Kbd>Enter</Kbd> {copy.verb.toLowerCase()} · <Kbd>Esc</Kbd> cancel
         </span>
         <Button size="sm" variant="quiet" onClick={onCancel} onKeyDown={onKeyDown}>
@@ -102,7 +99,7 @@ export function ResolveConfirm({
         >
           {pending ? copy.busy : copy.verb}
         </Button>
-      </div>
+      </Inline>
     </form>
   );
 }

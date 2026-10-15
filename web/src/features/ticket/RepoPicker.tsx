@@ -3,12 +3,12 @@
 // stages that need a repo) opens a one-line confirm under it first; otherwise it saves at once. An
 // active run disables it; the server's lock turns it into plain text (the "Locked by run #N" note
 // shows once, on the base branch beside it). Viewers see plain text. The logic is in `repo.ts`.
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useMemo } from "react";
 
 import type { Schemas } from "../../api/client";
 import { useConfig, usePatchTicket } from "../../api/queries";
-import { Button, ChevronIcon } from "../../ui";
-import hs from "./Header.module.css";
+import { Button, ChevronIcon, Inline, Stack, cx, text } from "../../ui";
+import ie from "./InlineEdit.module.css";
 import {
   NO_REPO_LABEL,
   repoErrorText,
@@ -19,6 +19,7 @@ import {
   repoWarning,
 } from "./repo";
 import s from "./RepoPicker.module.css";
+import { useInlineEdit } from "./useInlineEdit";
 
 type Detail = Schemas["TicketDetail"];
 
@@ -26,15 +27,18 @@ export function RepoPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   const config = useConfig();
   const repos = config.data?.repos;
   const patch = usePatchTicket(t.key);
-  // The value picked but not saved yet (awaiting the confirm, or the save itself); null = at rest.
-  const [chosen, setChosen] = useState<string | null>(null);
+  const lock = repoLock(t);
+  // The draft is the value picked but not saved yet (awaiting the confirm, or the save itself). A
+  // run that starts mid-confirm closes it; a save closes it however it ends (the error shows at rest).
+  const edit = useInlineEdit<string, Schemas["TicketPatch"]>(patch, {
+    locked: lock !== null,
+    closeOnError: true,
+  });
   const options = useMemo(() => repoOptions(t.repo_name, repos), [t.repo_name, repos]);
 
   const current = repoValue(t.repo_name);
-  const lock = repoLock(t);
   const locked = t.base_branch_info?.locked === true;
-  // A run that starts mid-confirm closes it.
-  if (lock !== null && chosen !== null && !patch.isPending) setChosen(null);
+  const chosen = edit.draft;
 
   if (readOnly || locked) {
     return (
@@ -43,28 +47,15 @@ export function RepoPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   }
 
   const save = (value: string) => {
-    patch.mutate(repoPatch(value), {
-      onSettled: () => {
-        setChosen(null);
-      },
-    });
-  };
-  const cancel = () => {
-    setChosen(null);
+    edit.save(repoPatch(value));
   };
   const warning = chosen === null || patch.isPending ? null : repoWarning(t, chosen, repos);
-  /** Esc cancels from the confirm's buttons (and doesn't also leave the page). */
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.stopPropagation();
-      cancel();
-    }
-  };
 
   return (
-    <span className={s.repo}>
-      <span className={hs.pick}>
+    <Stack as="span" gap={2} align="start">
+      <span className={ie.pick}>
         <select
+          className={ie.value}
           aria-label="Repo"
           value={chosen ?? current}
           disabled={lock !== null || patch.isPending}
@@ -72,12 +63,11 @@ export function RepoPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
           aria-invalid={patch.error ? true : undefined}
           onChange={(e) => {
             const v = e.target.value;
-            patch.reset();
             if (v === current) {
-              setChosen(null);
+              edit.cancel();
               return;
             }
-            setChosen(v);
+            edit.start(v);
             if (repoWarning(t, v, repos) === null) save(v);
           }}
         >
@@ -90,30 +80,39 @@ export function RepoPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
         {lock !== null ? null : <ChevronIcon />}
       </span>
       {warning !== null && chosen !== null ? (
-        <span className={s.confirm} role="group" aria-label="Change repo">
+        <Inline
+          as="span"
+          wrap
+          gap={4}
+          rowGap={3}
+          className={cx(text.meta, ie.msg, s.confirm)}
+          role="group"
+          aria-label="Change repo"
+        >
           <span>{warning}</span>
-          <span className={s.buttons}>
+          {/* The buttons stay together; the text wraps first. Esc on either cancels. */}
+          <Inline as="span" gap={4} className={s.buttons}>
             <Button
               size="xs"
               variant="ink"
-              onKeyDown={onKeyDown}
+              onKeyDown={edit.onKeyDown}
               onClick={() => {
                 save(chosen);
               }}
             >
               Change repo
             </Button>
-            <Button size="xs" variant="quiet" onKeyDown={onKeyDown} onClick={cancel}>
+            <Button size="xs" variant="quiet" onKeyDown={edit.onKeyDown} onClick={edit.cancel}>
               Cancel
             </Button>
-          </span>
-        </span>
+          </Inline>
+        </Inline>
       ) : null}
       {patch.error ? (
-        <span className={s.err} role="alert">
+        <span className={cx(text.error, ie.msg)} role="alert">
           {repoErrorText(patch.error)}
         </span>
       ) : null}
-    </span>
+    </Stack>
   );
 }

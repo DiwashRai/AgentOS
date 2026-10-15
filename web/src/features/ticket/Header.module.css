@@ -1,24 +1,12 @@
 /* Ticket header (refresh mock §5.4 .ticket, .ticket__kicker, h2, .ticket__meta; §4.5 stepper
-   layout). It sits on the page: no frame. */
+   layout). It sits on the page: no frame. The byline's editable values are InlineEdit.module.css. */
 .head {
   padding: var(--sp-4) 0 0;
 }
 
-.top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--sp-8);
-  min-height: 34px;
-}
-
+.top,
 .kicker {
-  display: flex;
-  gap: var(--sp-3);
-  align-items: center;
-  flex-wrap: wrap;
   min-height: 34px;
-  min-width: 0;
 }
 
 /* The source tag as a link to the issue (Jira browse link): the tag itself, no underline. */
@@ -35,29 +23,13 @@
   outline-offset: 2px;
 }
 
-.actsCol {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--sp-3);
-}
-.acts {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
 .confirm {
   width: min(360px, 100%);
 }
 .actErr {
   margin: 0;
   max-width: 420px;
-  font-size: var(--fs-meta);
-  line-height: 1.4;
   text-align: right;
-  color: var(--blocked);
 }
 
 /* Ticket h1: 34 / 600, -0.03em (HANDOFF §6). */
@@ -82,9 +54,8 @@
   white-space: pre-line;
 }
 
-/* Byline: labels 12 --ink-3, values 600 --ink-1. */
-/* Items top-aligned, so one that grows lines under its value (the repo's confirm, the base branch
-   editor) doesn't push its neighbours down. */
+/* Byline: labels 12 --ink-3, values 600 --ink-1. Items top-aligned, so one that grows lines under
+   its value (the repo's confirm, the base branch editor) doesn't push its neighbours down. */
 .byline {
   display: flex;
   flex-wrap: wrap;
@@ -109,61 +80,9 @@
   font-weight: 600;
   color: var(--ink-1);
 }
-/* The repo (a confirm, an error) and the base branch (a message and a hint while editing) grow
-   lines under their value: keep the label on the value's line. */
+/* The repo and the base branch grow lines under their value: keep the label on the value's line. */
 .byline > .grows {
   align-items: baseline;
-}
-
-/* The owner: the avatar + a native select that reads as a byline value. */
-.owner {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-.pick {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.pick > select {
-  appearance: none;
-  field-sizing: content;
-  height: 22px;
-  margin: calc(-1 * var(--sp-1)) 0 calc(-1 * var(--sp-1)) calc(-1 * var(--sp-3));
-  padding: 0 var(--sp-9) 0 var(--sp-2);
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  font-size: var(--fs-control);
-  font-weight: 600;
-  color: var(--ink-1);
-  cursor: pointer;
-}
-.pick > select:hover {
-  border-color: var(--rule);
-  background: var(--surface);
-}
-.pick > select:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.pick > select:disabled {
-  cursor: default;
-  padding-right: var(--sp-2);
-}
-.pick > select:disabled:hover {
-  border-color: transparent;
-  background: transparent;
-}
-.pick > select[aria-invalid="true"] {
-  border-color: var(--blocked);
-}
-.pick > svg {
-  position: absolute;
-  right: 6px;
-  pointer-events: none;
-  color: var(--ink-3);
 }
 
 /* The stepper: full width of the column, a hairline under it (mock .stepper margins). */
@@ -173,14 +92,15 @@
   border-bottom: 1px solid var(--rule);
 }
 
+/* Narrow: the actions go under the kicker, left-aligned (scoped under .head to win over Inline). */
 @media (max-width: 640px) {
-  .top {
+  .head .top {
     flex-direction: column;
   }
-  .actsCol {
+  .head .actsCol {
     align-items: flex-start;
   }
-  .acts {
+  .head .acts {
     justify-content: flex-start;
   }
   .actErr {
