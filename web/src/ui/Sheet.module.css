@@ -1,0 +1,62 @@
+/* Sheet (kit `.ao-sheet`): the raised surface. FramedList: a list whose rows are split by rules. */
+
+/* edge: a hairline frame with the row edge, the sheet radius */
+.sheet {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+
+/* float: no frame, the surface shadow, the row radius (Talk's sheet in its recess) */
+.float {
+  border: 0;
+  border-radius: var(--r-row);
+  box-shadow: var(--surface-shadow);
+}
+
+.padSm {
+  padding: var(--sp-6) var(--sp-7);
+}
+.padMd {
+  padding: var(--sp-7) var(--sp-8);
+}
+
+/* the list reset */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* framed: on a sheet, the rows clipped to its corners */
+.framed {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+  overflow: hidden;
+}
+
+/* rules between rows (soft by default) */
+.between > li + li {
+  border-top: 1px solid var(--rule-soft);
+}
+.between.firm > li + li {
+  border-top-color: var(--rule);
+}
+
+/* a rule under every row, the last one included */
+.under > li {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.under.firm > li {
+  border-bottom-color: var(--rule);
+}
+
+/* a firmer rule above the first row, setting the list apart from what precedes it */
+.topRule {
+  border-top: 1px solid var(--rule);
+}

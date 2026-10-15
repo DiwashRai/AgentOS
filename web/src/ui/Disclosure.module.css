@@ -1,0 +1,62 @@
+/* Disclosure and Fold: a chevron and a sentence-case label; the chevron points right while closed
+   (RunsTab `.foldHead`, `.chev`). */
+.head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.head:hover {
+  color: var(--ink-1);
+}
+.head:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* section: a heading-sized label over what it folds */
+.section {
+  font-size: var(--fs-ui);
+  color: var(--ink-1);
+}
+
+.chev {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  color: var(--ink-3);
+  transform: rotate(-90deg);
+  transition: transform var(--t-fast) ease;
+}
+.head[aria-expanded="true"] > .chev,
+.fold[open] > summary > .chev {
+  transform: none;
+}
+
+.meta {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+/* the details element: no native marker */
+.fold > summary {
+  list-style: none;
+}
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chev {
+    transition: none;
+  }
+}

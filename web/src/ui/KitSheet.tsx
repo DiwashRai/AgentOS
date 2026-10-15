@@ -2,14 +2,19 @@
 // The token selectors are plain attribute selectors, so each `data-theme` subtree themes itself.
 // Data here is hand-written fixtures, not server data.
 import { useState } from "react";
+import { planView } from "../domain/plan";
 import type { GlyphGate, GateState, StepState } from "../domain/stage";
 import { Avatar, AvatarSlot } from "./Avatar";
 import { Age } from "./Age";
+import { Badge } from "./Badge";
 import { Button, IconButton, litRowClass } from "./Button";
+import { Checklist } from "./Checklist";
 import { Chip } from "./Chip";
 import { CountPill } from "./CountPill";
 import { cx } from "./cx";
+import { Disclosure, Fold } from "./Disclosure";
 import { EmptyRow } from "./EmptyRow";
+import { EmptyState } from "./EmptyState";
 import { Faces } from "./Faces";
 import type { StepperModel } from "./glyph";
 import { GroupHead } from "./GroupHead";
@@ -17,10 +22,12 @@ import { ChevronIcon, CloseIcon } from "./icons";
 import { Kbd } from "./Kbd";
 import { KeyChip } from "./KeyChip";
 import s from "./KitSheet.module.css";
+import { Inline, Spacer, Stack } from "./Layout";
 import { Link, LinkButton } from "./Link";
 import { RunMeter } from "./RunMeter";
 import type { MeterState } from "./meter";
 import { PriorityIcon } from "./PriorityIcon";
+import { FramedList, Sheet } from "./Sheet";
 import { StageGlyph } from "./StageGlyph";
 import { StatusLine } from "./StatusLine";
 import { StatusMark } from "./StatusMark";
@@ -549,6 +556,7 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
       <section className={s.section} aria-labelledby={id("text")}>
         <ZoneHead id={id("text")} title="Text and status lines" />
         <div className={s.card}>
+          <h3 className={cx(text.heading, s.flush)}>Section heading</h3>
           <div className={s.row}>
             <span className={text.label}>Label</span>
             <span className={text.meta}>Meta · saved 3 min ago by Maya</span>
@@ -562,6 +570,8 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
           <StatusLine inset>Loading</StatusLine>
         </div>
       </section>
+
+      <LayoutKit id={id} />
 
       <section className={s.section} aria-labelledby={id("heads")}>
         <ZoneHead id={id("heads")} title="Zone head, group head, tabs" />
@@ -685,6 +695,174 @@ function MeterRow({ state, k }: { state: MeterState; k: number }) {
       <RunMeter k={k} n={STEPS.length} state={state} size="row" />
       <RunMeter k={k} n={STEPS.length} state={state} size="row" width={36} />
     </>
+  );
+}
+
+const PLAN = [
+  { text: "1. Baseline the CSS line counts", done: true, section: "Measure" },
+  { text: "2. One vocabulary and one `duration` formatter", done: true, section: "Domain" },
+  { text: "3. The ticket view-model", done: true, section: "Domain" },
+  { text: "4. Layout and surface primitives", done: false, section: "Kit" },
+  { text: "5. **SegmentedControl** and DataList", done: false, section: "Kit" },
+  { text: "6. Dialog and useDocumentKey", done: false, section: "Kit" },
+  { text: "7. Peek and New ticket on Dialog", done: false, section: "Kit" },
+  { text: "8. Document keys on the hook", done: false, section: "Kit" },
+];
+const FLAT_PLAN = PLAN.map(({ text: t, done }) => ({ text: t, done }));
+
+/** Stack / Inline, Sheet / FramedList, Badge, EmptyState, Disclosure / Fold and Checklist. */
+function LayoutKit({ id }: { id: (x: string) => string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className={s.section} aria-labelledby={id("layout")}>
+      <ZoneHead id={id("layout")} title="Layout, surfaces, badges, empty states, folds" />
+
+      <div className={s.card}>
+        <span className={s.cap}>Stack gap 4 · Inline gap 7, rowGap 3, wrap · Spacer</span>
+        <Stack gap={4}>
+          <Inline gap={7} rowGap={3} wrap>
+            <Tag>One</Tag>
+            <Tag>Two</Tag>
+            <Tag>Three</Tag>
+          </Inline>
+          <Inline gap={4}>
+            <Kbd>J</Kbd>
+            <Kbd>K</Kbd>
+            <span className={text.meta}>move</span>
+            <Spacer />
+            <span className={text.meta}>right-hand summary</span>
+          </Inline>
+        </Stack>
+      </div>
+
+      <div className={s.recess}>
+        <Stack gap={5}>
+          <Sheet pad="md">
+            <span className={s.cap}>Sheet · edge, md</span>
+          </Sheet>
+          <Sheet pad="sm" elevation="float">
+            <span className={s.cap}>Sheet · float, sm</span>
+          </Sheet>
+          <FramedList aria-label="Framed list">
+            {["web-portal", "agentos", "infra"].map((r) => (
+              <li key={r} className={s.listRow}>
+                {r}
+              </li>
+            ))}
+          </FramedList>
+          <FramedList framed={false} rules="under" topRule aria-label="Ruled list">
+            {["Build · run #42", "Plan · run #41"].map((r) => (
+              <li key={r} className={s.listRow}>
+                {r}
+              </li>
+            ))}
+          </FramedList>
+        </Stack>
+      </div>
+
+      <div className={s.card}>
+        <div className={s.row}>
+          <span className={s.cap}>Count</span>
+          <Badge tone="count" count={3} />
+          <Badge tone="count" count={0} />
+          <Badge tone="count" count={1} you />
+          <span className={s.cap}>Status</span>
+          <Badge tone="status" title="Jira status: In Progress">
+            In Progress
+          </Badge>
+          <Badge tone="status">To Do</Badge>
+        </div>
+        <div className={s.row}>
+          <span className={s.cap}>Counter</span>
+          <Badge tone="counter" count={2} you mark={<StatusMark kind="you" glyphOnly size={7} />}>
+            need you
+          </Badge>
+          <Badge tone="counter" count={5} mark={<StatusMark kind="run" glyphOnly size={7} />}>
+            running
+          </Badge>
+          <Badge tone="counter" count={0} you mark={<StatusMark kind="you" glyphOnly size={7} />}>
+            need you
+          </Badge>
+          <Badge tone="counter" count={0}>
+            to take in
+          </Badge>
+        </div>
+        <div className={s.row}>
+          <span className={s.cap}>Verdict, words, stat, tag</span>
+          <Badge tone="pass">Pass</Badge>
+          <Badge tone="fail">Fail</Badge>
+          <Badge tone="ok">Passed</Badge>
+          <Badge tone="bad">Failed</Badge>
+          <Badge tone="stat">
+            <b>2 shipped</b> this week
+          </Badge>
+          <Badge>Jira PLAT-2231</Badge>
+          <Badge quiet>web-portal</Badge>
+          <Badge prio>High</Badge>
+        </div>
+      </div>
+
+      <div className={s.card}>
+        <EmptyState lead="All clear">nothing needs you</EmptyState>
+        <EmptyState lead="All quiet" action={<LinkButton>Show done</LinkButton>}>
+          nothing running, nothing queued
+        </EmptyState>
+        <EmptyState form="line" action={<Button size="sm">New ticket</Button>}>
+          Nothing here yet. Create a ticket.
+        </EmptyState>
+        <EmptyState form="inset">
+          No intake queries yet. An admin adds them in <Link href="#kit">Settings › Intake</Link>.
+        </EmptyState>
+        <EmptyState form="note">No plan yet.</EmptyState>
+      </div>
+
+      <div className={s.card}>
+        <div className={s.row}>
+          <Disclosure
+            expanded={open}
+            onToggle={() => {
+              setOpen((v) => !v);
+            }}
+            controls={id("disclosed")}
+            meta="3 files"
+          >
+            Context files
+          </Disclosure>
+        </div>
+        {open ? (
+          <p id={id("disclosed")} className={text.meta}>
+            TASKS.md · SKILL.md · learnings.log
+          </p>
+        ) : null}
+        <Fold summary="Check notes" meta="2 repairs">
+          <p className={text.meta}>The notes and repairs fold under the check.</p>
+        </Fold>
+        <Fold summary="How each stage was called" size="section">
+          <p className={text.meta}>The run&apos;s manifest.</p>
+        </Fold>
+      </div>
+
+      <div className={s.card}>
+        <Checklist plan={planView(PLAN)} title="Plan" id={id("plan")} />
+        <Checklist
+          plan={null}
+          title="Plan"
+          id={id("plan-none")}
+          empty={<EmptyState form="note">No plan yet.</EmptyState>}
+        />
+      </div>
+      <div className={cx(s.card, s.peekWidth)}>
+        <Checklist
+          plan={planView(FLAT_PLAN, 6)}
+          density="compact"
+          title="Plan"
+          level={3}
+          id={id("plan-compact")}
+        />
+        <span className={s.cap}>Compact, headless (the label is the view&apos;s)</span>
+        <Checklist plan={planView(FLAT_PLAN.slice(0, 3))} density="compact" label="Plan" />
+      </div>
+    </section>
   );
 }
 

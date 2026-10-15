@@ -1,0 +1,164 @@
+/* Checklist: a plan as ticked items (refresh mock §4.15 .plan, .plan__head, .plan__count,
+   .plan__bar, .plan-item; kit .ao-steps for the compact form). */
+.root {
+  min-width: 0;
+}
+.compact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* ---------- heads ---------- */
+
+/* roomy: a section heading (text.heading) with the count and the bar */
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  margin: 0 0 var(--sp-3);
+}
+.count {
+  font-family: var(--font-sans);
+  font-size: var(--fs-control);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.count > b {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.bar {
+  display: block;
+  flex: none;
+  width: 140px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--progress);
+}
+
+/* compact: a label (12/500 --ink-3) with the count at the far end */
+.lab {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0;
+  min-width: 0;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.labCount {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- sections (2+ TASKS.md headings): a small heading with the section's own k of n ---------- */
+.sec + .sec {
+  margin-top: var(--sp-7);
+}
+.secHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  padding: var(--sp-1) 0 var(--sp-2);
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.secHead > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secHead > span:last-child {
+  flex: none;
+  font-weight: 500;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- items ---------- */
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* the mark's 14px column, then the text */
+.item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+}
+
+/* roomy: 38px items under soft rules; a long item wraps with the mark on its first line */
+.roomy .item {
+  gap: 0 var(--sp-6);
+  align-items: start;
+  align-content: center;
+  min-height: 38px;
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--ink-1);
+  overflow-wrap: anywhere;
+}
+.roomy .item > :first-child {
+  margin-top: var(--sp-1);
+}
+.roomy .item:last-child {
+  border-bottom: 0;
+}
+
+/* compact: 19px one-line items, cut with an ellipsis */
+.compact .items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.compact .item {
+  align-items: center;
+  gap: var(--sp-4);
+  min-height: 19px;
+  font-size: var(--fs-control);
+  color: var(--ink-1);
+}
+.compact .item > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item.isDone {
+  color: var(--ink-2);
+}
+.todo {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
+}
+
+/* "+N more", under the item texts */
+.more {
+  padding-left: var(--sp-10);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.roomy .more {
+  padding-top: var(--sp-2);
+}

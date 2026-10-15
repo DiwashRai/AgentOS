@@ -29,3 +29,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* the optional action, at the far end */
+.action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}

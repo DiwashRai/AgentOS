@@ -142,3 +142,15 @@
 .narrow {
   max-width: 160px;
 }
+.flush {
+  margin: 0;
+}
+/* a stand-in row on the list demos */
+.listRow {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--sp-7);
+  color: var(--ink-1);
+  font-size: var(--fs-control);
+}

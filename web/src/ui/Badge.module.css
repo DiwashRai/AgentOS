@@ -1,0 +1,123 @@
+/* Badge: the small inline labels that sit outside Tag's kicker look. Each tone keeps the look it
+   had in its view (named beside it). */
+
+/* count: a count inside a control, e.g. a filter pill's number (Compact `.pills em`) */
+.count {
+  font-style: normal;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.count[data-zero] {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.count[data-you] {
+  color: var(--you-text);
+}
+
+/* status: a neutral lozenge with a ring, e.g. a Jira status (mock `.lozenge`, Intake `.loz`) */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 var(--sp-4);
+  border-radius: 5px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--rule-soft);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.status > i {
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+}
+.status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* counter: a top-bar count (mock `.counter`); the number carries the weight, a zero recedes */
+.counter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 0;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}
+.counter > b {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.counter[data-zero],
+.counter[data-zero] > b {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.counter[data-zero] > b {
+  font-size: 13px;
+}
+/* a non-zero "need you": the one tinted counter */
+.counter[data-you] {
+  padding: var(--sp-1) var(--sp-5) var(--sp-1) var(--sp-4);
+  border-radius: var(--r-pill);
+  background: var(--you-tint);
+  color: var(--you-text);
+  font-weight: 600;
+}
+.counter[data-you] > b {
+  color: var(--you-text);
+}
+.mark {
+  display: inline-flex;
+  align-self: center;
+}
+
+/* pass / fail: a check's verdict pill; green = done, crimson = blocked (RunsTab `.verdict`) */
+.verdict {
+  flex: none;
+  /* half of --sp-1: a 1px vertical pad keeps the pill one text line tall */
+  padding: calc(var(--sp-1) / 2) var(--sp-3);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.pass {
+  color: var(--done);
+  background: var(--done-tint);
+}
+.fail {
+  color: var(--blocked);
+  background: color-mix(in srgb, var(--blocked) 12%, transparent);
+}
+
+/* ok / bad: a passed or failed word, in the done or blocked hue (RunsTab `.ok`, `.bad`) */
+.ok {
+  color: var(--done);
+}
+.bad {
+  color: var(--blocked);
+}
+
+/* stat: a head's statistic led by a mark, e.g. "✓ 2 shipped this week" (mock `.head-stat`);
+   the head it sits in colours its `<b>` */
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
