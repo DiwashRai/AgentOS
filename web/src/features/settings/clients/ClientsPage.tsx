@@ -135,7 +135,8 @@ function CreateForm({ onCreated }: { onCreated: (c: ClientTokenCreated) => void 
               setName("");
               setTouched(false);
               onCreated(c);
-              // The token lives only in the page's state, never in the mutation cache.
+              // The token lives on only in the page's state: reset + gcTime 0 (useCreateClient)
+              // drop it from the mutation cache.
               create.reset();
             },
           },

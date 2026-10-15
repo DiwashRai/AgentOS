@@ -431,6 +431,9 @@ export function useCreateClient() {
     mutationFn: (body: Schemas["ClientTokenCreate"]) =>
       unwrap(api.POST("/api/me/clients", { body })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.clients() }),
+    // The answer holds the plaintext token: drop the mutation from the cache as soon as no
+    // observer holds it (after reset() or an unmount), not after the default 5 minutes.
+    gcTime: 0,
   });
 }
 
