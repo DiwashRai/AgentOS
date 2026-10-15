@@ -24,7 +24,6 @@ from agentos.sources.jira import JiraClient, JiraSearch, JiraSource
 from agentos.space_store import (
     Area,
     SpaceStore,
-    add_builtin_effort_args,
     mappings_value,
     missing_areas,
     runner_value,
@@ -119,8 +118,6 @@ def build_context(settings: Settings, launcher: Launcher | None = None) -> AppCo
     db = Database(settings.db_path)
     db.migrate()
     seed_settings(db)
-    for name in add_builtin_effort_args(db):
-        log.info("Settings: runtime %r gained the built-in effort_args (request 23A)", name)
     store = SpaceStore(db)
     if launcher is None:
         launcher = _launcher(settings, store)

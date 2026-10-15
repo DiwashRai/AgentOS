@@ -194,35 +194,6 @@ def seed(db: Database, values: Mapping[Area, dict[str, Any]]) -> list[Area]:
     return seeded
 
 
-def add_builtin_effort_args(db: Database) -> list[str]:
-    """Startup, once (request 23A): a stored runtime saved before `effort_args` existed (the key
-    is missing) whose name and argv are a built-in's gets the built-in's `effort_args`, as one
-    save (version + 1, by nobody). A runtime an admin changed is left alone; an upgraded one has
-    the key, so this upgrades each runtime at most once. Returns the runtimes it upgraded."""
-    builtins = {b.name: b for b in BUILTIN_RUNTIMES}
-    with db.tx() as conn:
-        row = read_area(conn, "runtimes")
-        if row is None:
-            return []
-        stored: list[dict[str, Any]] = list(row.value.get("runtimes", []))
-        upgraded: list[str] = []
-        for entry in stored:
-            builtin = builtins.get(entry.get("name", ""))
-            if "effort_args" in entry or builtin is None or entry.get("argv") != builtin.argv:
-                continue
-            entry["effort_args"] = list(builtin.effort_args)
-            upgraded.append(builtin.name)
-        if upgraded:
-            write_area(
-                conn,
-                "runtimes",
-                {**row.value, "runtimes": stored},
-                version=row.version + 1,
-                actor_id=None,
-            )
-    return upgraded
-
-
 # ------------------------------------------------------------------ the cached read side
 
 
