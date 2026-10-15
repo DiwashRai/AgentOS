@@ -26,7 +26,7 @@ def tick(ctx: AppContext) -> list[int]:
     while True:
         token = secrets.token_urlsafe(32)
         run_id = service.mark_next_dispatched(
-            ctx.db, ctx.broker, launcher.name, launcher.max_concurrency, service.token_hash(token)
+            ctx.db, launcher.name, launcher.max_concurrency, service.token_hash(token)
         )
         if run_id is None:
             return launched
@@ -36,7 +36,7 @@ def tick(ctx: AppContext) -> list[int]:
             ref = launcher.launch(run_id, ctx.settings.effective_worker_url, token)
         except Exception as exc:
             log.warning("run %s: launch failed: %s", run_id, exc)
-            service.fail_launch(ctx.db, ctx.broker, run_id, f"launch failed: {exc}")
+            service.fail_launch(ctx.db, run_id, f"launch failed: {exc}")
             continue
-        service.set_launch_ref(ctx.db, ctx.broker, run_id, ref)
+        service.set_launch_ref(ctx.db, run_id, ref)
         log.info("run %s: launched (%s %s)", run_id, launcher.name, ref)

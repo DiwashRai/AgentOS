@@ -154,7 +154,7 @@ class MailboxReaper:
 
     def _replay(self, run_id: int, folder: str, outbox: Path) -> Outcome:
         try:
-            result = service.replay(self.ctx.db, self.ctx.broker, run_id, outbox)
+            result = service.replay(self.ctx.db, run_id, outbox)
         except Exception as exc:
             log.exception("mailbox reaper: run %s: replay failed", run_id)
             return self._end(
@@ -171,7 +171,7 @@ class MailboxReaper:
         status: Literal["failed", "cancelled"],
         error: str | None,
     ) -> Outcome:
-        ended = service.end(self.ctx.db, self.ctx.broker, run_id, status, error)
+        ended = service.end(self.ctx.db, run_id, status, error)
         self._delete(run_id, folder)
         return "ended" if ended else "gone"
 

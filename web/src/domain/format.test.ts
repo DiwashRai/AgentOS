@@ -1,17 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ticket } from "./fixtures";
-import {
-  age,
-  ageParts,
-  avatarTone,
-  elapsed,
-  initials,
-  isOld,
-  prLabel,
-  repoShort,
-  srcLabel,
-} from "./format";
+import { age, ageParts, elapsed, isOld, prLabel, repoShort, srcLabel } from "./format";
 
 const now = Date.parse("2026-10-11T12:00:00Z");
 const ago = (min: number) => new Date(now - min * 60_000).toISOString();
@@ -108,22 +98,5 @@ describe("prLabel", () => {
     ["https://gitlab.example/acme/api/-/merge_requests/7", "PR"],
   ])("%s → %s", (url, expected) => {
     expect(prLabel(url)).toBe(expected);
-  });
-});
-
-describe("initials", () => {
-  it.each([
-    ["Diwash Rai", "DR"],
-    ["Maya van der Berg", "MB"],
-    ["dev", "DE"],
-    ["  ", "?"],
-  ])("%s → %s", (name, expected) => {
-    expect(initials(name)).toBe(expected);
-  });
-});
-
-describe("avatarTone", () => {
-  it("cycles through the four fills", () => {
-    expect([0, 1, 2, 3, 4].map(avatarTone)).toEqual([1, 2, 3, 4, 1]);
   });
 });

@@ -30,7 +30,6 @@ class TicketRef:
     """The ticket fields rendering and manifest building need, as plain values."""
 
     key: str
-    slug: str
     title: str
     description: str
     type: TicketType
@@ -70,7 +69,7 @@ def render_context(
 ) -> dict[str, Any]:
     """SPEC §7 context. `stage` and `run` are absent (not null) when not given, so a scaffold
     entry that references them fails with a render error instead of rendering 'None'."""
-    n = names(ticket.key, ticket.slug, ticket.workspace_mode)
+    n = names(ticket.key, ticket.workspace_mode)
     ctx: dict[str, Any] = {
         "ticket": {
             "key": ticket.key,
@@ -153,7 +152,6 @@ def render_scaffold(entries: Sequence[FileEntry], ticket: TicketRef) -> list[Fil
 DUMMY_TICKETS = (
     TicketRef(
         key="AOS-1",
-        slug="",
         title='Example: "quoted" #title',
         description="Example description.",
         type="task",
@@ -164,7 +162,6 @@ DUMMY_TICKETS = (
     ),
     TicketRef(
         key="AOS-1",
-        slug="",
         title="Example",
         description="",
         type="task",
@@ -175,7 +172,6 @@ DUMMY_TICKETS = (
     ),
     TicketRef(
         key="AOS-1",
-        slug="",
         title="Example",
         description="",
         type="task",

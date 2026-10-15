@@ -81,7 +81,7 @@ def get_mappings(_: Admin, ctx: Ctx) -> FieldMappings:
 def put_mappings(body: FieldMappingsUpdate, user: Admin, ctx: Ctx) -> FieldMappings:
     """Replace the Jira field mappings, then re-apply a `base_branch` mapping to the unlocked
     tickets it set (from the Jira value stored at import; no Jira call)."""
-    return service.put_mappings(ctx.db, ctx.space_store, ctx.broker, user, body)
+    return service.put_mappings(ctx.db, ctx.space_store, user, body)
 
 
 @router.get("/mappings/jira-fields")

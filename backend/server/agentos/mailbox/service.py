@@ -1,7 +1,7 @@
 """Mailbox runs in the db: the reaper's queries, `end()` and `replay()` (`design/mailbox.md` §3).
 
 Replay feeds a run's recorded worker calls (the outbox) through the unchanged `worker_api.service`
-functions, so validation, the run state machine, the board and the broker work as over HTTP.
+functions, so validation, the run state machine and the board work as over HTTP.
 It authenticates like a worker: a fresh worker token is minted and bound to the run (guarded on
 `running` + `launcher = 'mailbox'`) and lives only in memory for that replay.
 
@@ -21,12 +21,11 @@ from typing import BinaryIO, Literal
 
 from pydantic import ValidationError
 
-from agentos.broker import Broker
 from agentos.clock import from_db_opt, utcnow
 from agentos.db import Database
 from agentos.errors import ApiError
 from agentos.models import CompleteRequest, EventsRequest, SyncRequest
-from agentos.runs.service import finish, run_ticket_key, token_hash
+from agentos.runs.service import finish, token_hash
 from agentos.worker_api import service as worker_api
 
 log = logging.getLogger(__name__)
@@ -100,18 +99,15 @@ def is_running(db: Database, run_id: int) -> bool:
 
 def end(
     db: Database,
-    broker: Broker,
     run_id: int,
     status: Literal["failed", "cancelled"],
     error: str | None,
 ) -> bool:
     """running → failed|cancelled through `finish()` (guarded). Returns whether it ended the run
-    (False: it was terminal already). Publishes after the commit."""
+    (False: it was terminal already)."""
     with db.tx() as conn:
         ended = finish(conn, run_id, status, ("running",), now=utcnow(), error=error)
-        key = run_ticket_key(conn, run_id) if ended else None
-    if key is not None:
-        broker.run(key, run_id)
+    if ended:
         log.warning("mailbox: run %s %s%s", run_id, status, f": {error}" if error else "")
     return ended
 
@@ -119,7 +115,7 @@ def end(
 # ------------------------------------------------------------------ replay
 
 
-def replay(db: Database, broker: Broker, run_id: int, outbox: Path) -> ReplayResult:
+def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
     """Replay the outbox at `outbox` into run `run_id` (design §3.4).
 
     - `gone`: the run was terminal already (before or during the replay); nothing more to do.
@@ -137,20 +133,20 @@ def replay(db: Database, broker: Broker, run_id: int, outbox: Path) -> ReplayRes
         lines = _lines(f, run_id)
         header = _json(next(lines, None))
         if not isinstance(header, dict) or header.get("outbox") != 1:
-            end(db, broker, run_id, "failed", "the run's results are not an AgentOS outbox")
+            end(db, run_id, "failed", "the run's results are not an AgentOS outbox")
             return "ended"
         if header.get("run_id") != run_id:
             owner = header.get("run_id")
-            end(db, broker, run_id, "failed", f"the results belong to run {owner!r}")
+            end(db, run_id, "failed", f"the results belong to run {owner!r}")
             return "ended"
         for number, line in enumerate(lines, start=2):
-            outcome = _apply(db, broker, token, run_id, number, _json(line))
+            outcome = _apply(db, token, run_id, number, _json(line))
             if outcome is not None:
                 return outcome
     if _cancel_requested(db, run_id):
-        ended = end(db, broker, run_id, "cancelled", None)
+        ended = end(db, run_id, "cancelled", None)
     else:
-        ended = end(db, broker, run_id, "failed", NO_COMPLETE)
+        ended = end(db, run_id, "failed", NO_COMPLETE)
     return "ended" if ended else "gone"
 
 
@@ -175,7 +171,7 @@ def _cancel_requested(db: Database, run_id: int) -> bool:
 
 
 def _apply(
-    db: Database, broker: Broker, token: str, run_id: int, number: int, entry: object
+    db: Database, token: str, run_id: int, number: int, entry: object
 ) -> ReplayResult | None:
     """One recorded call, as its route would make it. Mirrors the worker: a rejected events
     batch or sync is logged and skipped; 401/410 means the run went terminal (→ `gone`); a
@@ -187,12 +183,12 @@ def _apply(
     try:
         if path == _EVENTS:
             events = EventsRequest.model_validate(body)
-            worker_api.post_events(db, broker, token, events.events)
+            worker_api.post_events(db, token, events.events)
         elif path == _SYNC:
             req = SyncRequest.model_validate(body)
-            worker_api.sync(db, broker, token, req.stage_id, req.files)
+            worker_api.sync(db, token, req.stage_id, req.files)
         elif path == _COMPLETE:
-            worker_api.complete(db, broker, token, CompleteRequest.model_validate(body))
+            worker_api.complete(db, token, CompleteRequest.model_validate(body))
             return "completed"
         else:
             log.warning("mailbox: run %s: outbox line %s: unknown path; skipped", run_id, number)

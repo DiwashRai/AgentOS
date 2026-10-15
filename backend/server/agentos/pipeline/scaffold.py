@@ -94,16 +94,6 @@ SKILL_MD = (
     "## Objective\n{{ticket.description}}\n"
 )
 
-# The SKILL.md seeded before the description dropped the title. A stored template whose SKILL.md
-# still equals this exactly is upgraded to `SKILL_MD` at startup (templates.service.seed_default).
-LEGACY_SKILL_MD_V1 = (
-    "---\nname: {{skill.name}}\ndescription: {{ ('Objective and working context for ' ~ "
-    "ticket.key ~ ' (' ~ ticket.title ~ '). Use when working on ' ~ ticket.key ~ '.') "
-    "| tojson }}\n---\n# {{ticket.key}}: {{ticket.title}}\n\n"
-    "{% if ticket.source_url %}Source: {{ticket.source_url}}\n\n{% endif %}"
-    "## Objective\n{{ticket.description}}\n"
-)
-
 DEFAULT_SCAFFOLD = [
     FileEntry(path=SKILL_MD_PATH, content=SKILL_MD),
     FileEntry(path="{{paths.tasks_md}}", content="# Tasks\n"),
@@ -123,16 +113,13 @@ DEFAULT_SCAFFOLD = [
 ]
 
 
-def skill_name(key: str, slug: str) -> str:
-    """`context-{key}` (≤ 64: keys are ≤ MAX_KEY_CHARS). New tickets store an empty slug; tickets
-    created while the name carried a title slug keep `context-{key}-{slug}`, because their bundle
-    files are stored under that directory."""
-    name = f"{SKILL_PREFIX}{key.lower()}"
-    return f"{name}-{slug}" if slug else name
+def skill_name(key: str) -> str:
+    """`context-{key}` (≤ 64: keys are ≤ MAX_KEY_CHARS)."""
+    return f"{SKILL_PREFIX}{key.lower()}"
 
 
-def skill_dir(key: str, slug: str) -> str:
-    return f".claude/skills/{skill_name(key, slug)}"
+def skill_dir(key: str) -> str:
+    return f".claude/skills/{skill_name(key)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,10 +136,10 @@ class TicketNames:
     branch: str | None
 
 
-def names(key: str, slug: str, workspace_mode: WorkspaceMode) -> TicketNames:
-    d = skill_dir(key, slug)
+def names(key: str, workspace_mode: WorkspaceMode) -> TicketNames:
+    d = skill_dir(key)
     return TicketNames(
-        skill_name=skill_name(key, slug),
+        skill_name=skill_name(key),
         skill_dir=d,
         skill_md=f"{d}/SKILL.md",
         tasks_md=f"{d}/TASKS.md",

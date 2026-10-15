@@ -49,7 +49,7 @@ def list_tickets(
 
 @router.post("", status_code=201)
 def create_ticket(body: TicketCreate, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.create_ticket(ctx.db, ctx.broker, ctx.space, user, body)
+    return service.create_ticket(ctx.db, ctx.space, user, body)
 
 
 @router.post("/import", responses={201: {"model": ImportResult, "description": "Imported"}})
@@ -57,9 +57,7 @@ def import_ticket(body: ImportRequest, user: Writer, ctx: Ctx, response: Respons
     """Import a Jira issue by key or browse link: 201 with `created: true`, or 200 with
     `created: false` and the ticket it was imported as before. A `base_branch` field mapping
     (Settings > Field mappings) sets a repo ticket's base branch from its Jira field."""
-    result = service.import_ticket(
-        ctx.db, ctx.broker, ctx.space, ctx.jira_source, user, body, ctx.mappings
-    )
+    result = service.import_ticket(ctx.db, ctx.space, ctx.jira_source, user, body, ctx.mappings)
     response.status_code = 201 if result.created else 200
     return result
 
@@ -71,19 +69,19 @@ def get_ticket(key: str, user: CurrentUser, ctx: Ctx) -> TicketDetail:
 
 @router.patch("/{key}")
 def patch_ticket(key: str, body: TicketPatch, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.patch_ticket(ctx.db, ctx.broker, ctx.space, key, user, body)
+    return service.patch_ticket(ctx.db, ctx.space, key, user, body)
 
 
 @router.post("/{key}/resolve")
 def resolve_ticket(key: str, body: ResolveRequest, user: Writer, ctx: Ctx) -> TicketDetail:
     """Close the ticket: `completed` → state done, `abandoned` → state closed (both stay on the
     board as `done`). 409 `run_active` during a run. Reopen with PATCH `state: open`."""
-    return service.resolve_ticket(ctx.db, ctx.broker, ctx.space, key, user, body)
+    return service.resolve_ticket(ctx.db, ctx.space, key, user, body)
 
 
 @router.put("/{key}/pipeline")
 def put_pipeline(key: str, body: PipelineUpdate, user: Writer, ctx: Ctx) -> TicketDetail:
-    return service.put_pipeline(ctx.db, ctx.broker, ctx.runtimes, ctx.space, key, user, body)
+    return service.put_pipeline(ctx.db, ctx.runtimes, ctx.space, key, user, body)
 
 
 @router.post("/{key}/workflow")
@@ -92,4 +90,4 @@ def switch_workflow(key: str, body: WorkflowSwitch, user: Writer, ctx: Ctx) -> T
     `run_active` during one, `stale_version` on a stale `base_version`; 404 `not_found` for an
     unknown workflow). The rail keeps the run history of stages the new pipeline shares by id;
     new stages start pending."""
-    return service.switch_workflow(ctx.db, ctx.broker, ctx.runtimes, ctx.space, key, user, body)
+    return service.switch_workflow(ctx.db, ctx.runtimes, ctx.space, key, user, body)

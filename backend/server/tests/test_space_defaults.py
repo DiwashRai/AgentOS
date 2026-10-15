@@ -3,31 +3,26 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.context import AppContext
 from agentos.models import (
     AppConfig,
-    FileEntry,
     Manifest,
     Template,
     TemplateDefaults,
     TicketDetail,
 )
-from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, LEGACY_SKILL_MD_V1, SKILL_MD_PATH
-from agentos.templates.service import seed_default
 from tests.run_support import CSRF, RunDriver
 from tests.test_runs import put_pipeline, stage_of
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Any]
 
-FAKE_ARGV = ["python", "fake_agent.py"]  # runtimes_test.toml: default_runtime = "fake"
+FAKE_ARGV = ["python", "fake_agent.py"]  # settings_support.TEST_RUNTIMES: `fake` is the default
 CLAUDE_ARGV = ["claude", "-p", "--output-format", "stream-json", "--verbose"]
 
 
@@ -119,20 +114,6 @@ def test_put_defaults_is_admin_only(client: TestClient, login: LoginFn) -> None:
     r = put_template(client, defaults={"model": "m"})
     assert r.status_code == 403
     assert get_template(client).defaults == TemplateDefaults()
-
-
-def test_seed_upgrade_carries_defaults(authed: TestClient, ctx: AppContext) -> None:
-
-    legacy = [FileEntry(path=SKILL_MD_PATH, content=LEGACY_SKILL_MD_V1), *DEFAULT_SCAFFOLD[1:]]
-    with ctx.db.tx() as conn:
-        conn.execute(
-            "UPDATE templates SET scaffold = ?, defaults = ? WHERE version = 1",
-            (json.dumps([e.model_dump() for e in legacy]), '{"model": "m1"}'),
-        )
-    seed_default(ctx.db)
-    template = get_template(authed)
-    assert template.version == 2
-    assert template.defaults == TemplateDefaults(model="m1")
 
 
 # ------------------------------------------------------------------ resolution in the manifest

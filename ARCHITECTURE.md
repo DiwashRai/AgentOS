@@ -5,7 +5,6 @@ How the system fits together and why. Each decision is written as **rule**, then
 ```mermaid
 flowchart LR
   UI["Web app (React)<br/>web/"] -- "/api (cookie + X-AgentOS)" --> S
-  UI -. "GET /api/stream (SSE, no client yet)" .- S
   subgraph S["Server: one FastAPI process"]
     R["routes → service"] --> DB[("SQLite<br/>DATA_DIR/agentos.db")]
     D["dispatcher loop"] --> DB
@@ -16,7 +15,7 @@ flowchart LR
   W -- "claim / events / sync / complete" --> S
   W -- "argv from manifest" --> A["agent CLI (claude) / shell"]
   W -- "clone, commit, push" --> G[("git remote")]
-  S -- "import / intake" --> J["Ticket source plugin<br/>(Jira)"]
+  S -- "login / import / intake" --> J["Jira adapter<br/>sources/jira.py"]
 ```
 
 ## Process & persistence
@@ -25,7 +24,7 @@ flowchart LR
 - **SQLite runs in WAL mode with `foreign_keys`, `busy_timeout=5000` and `synchronous=NORMAL`.** Writes use `db.tx()` (BEGIN IMMEDIATE, commit or roll back) and reads use `db.read()` (one query-only snapshot). BEGIN IMMEDIATE serialises writers, so guarded updates never race. Where: `db.py` `_PRAGMAS`, `Database.tx()`, `Database.read()`.
 - **Only `db.py` imports `sqlite3`.** A move to Postgres then touches one module. Enforced by import-linter.
 - **Migrations are numbered `NNNN_name.sql` files, tracked with `PRAGMA user_version`, and never edited once applied.** Gaps are rejected, a database newer than the code is refused, and an existing database is backed up to `{DATA_DIR}/backups/` (the 5 newest are kept) before migrating. This makes upgrades forward-only with a rollback path. Where: `db.py` `migrations()`, `migrate()`, `backup()`; `migrations/`.
-- **Admin-editable settings (Space, repos, intake queries, runtimes, runner) live in the `settings` table, one JSON document per area, with a `version` for 409 `stale_version`.** Env vars keep only URLs, secrets, startup/dev config and who may sign in. `agentos.toml` and the moved env vars only seed a fresh database. Changing a setting needs no redeploy, and a cached snapshot is dropped on every save. Where: `migrations/0006_settings.sql`, `space_store.py`, `settings/`.
+- **Admin-editable settings (Space, repos, intake queries, runtimes, runner) live in the `settings` table, one JSON document per area, with a `version` for 409 `stale_version`.** Env vars keep only URLs, secrets, startup/dev config and who may sign in. A fresh database gets every area's built-in defaults at version 1 (`context.seed_settings`). Changing a setting needs no redeploy, and a cached snapshot is dropped on every save. Where: `migrations/0001_schema.sql`, `space_store.py`, `settings/`.
 - **What stays in env, and why.** Each of these is a deliberate exception to "settings live in the db"; don't move one into Settings without revisiting its reason:
   - `AGENTOS_JIRA_URL`: everyone's Jira token is typed into the login form and sent there. If it were editable in the app, one admin (or one stolen admin session) could point it at their own server and collect every token. It's also needed before anyone can sign in.
   - Secrets (`AGENTOS_JIRA_SERVICE_EMAIL`/`_TOKEN`, `AGENTOS_GITHUB_TOKEN`): in the db they'd be plaintext in the db file and in every automatic backup. Env is how container platforms and secret managers deliver secrets.
@@ -33,25 +32,25 @@ flowchart LR
   - `AGENTOS_PUBLIC_URL`: decides whether the session cookie is Secure and which origin passes the login checks. Set wrong in the app, it locks everyone out or quietly weakens those checks.
   - `AGENTOS_WORKER_URL`, `AGENTOS_LAUNCHER`, `AGENTOS_TRUST_PROXY`: facts about the deployment. A wrong `TRUST_PROXY` lets anyone fake their IP past the login rate limit.
 
-  Where: `config.py` `Settings`; the vars that moved into the app are `config.MOVED_ENV`.
+  Where: `config.py` `Settings`.
 - **The native key prefix is never one of the Space's Jira projects** (checked both ways on every save). Otherwise native tickets would take keys like `SCRUM-6` that importing the real Jira issue later needs (409 `key_taken`). Where: `pipeline/space.py`, `settings/service.py`.
 - **Config is validated at startup, and startup fails fast.** `Settings` uses `extra="forbid"`, so a typo in an `AGENTOS_*` var stops the server. Where: `config.py` `startup_checks()`.
 
 ## Data model principles
-- **Normalised by default.** Users, identities, sessions, tickets, file versions, runs, stage runs, events and chat each have their own table (`migrations/0001_init.sql`).
+- **Normalised by default.** Users, identities, sessions, tickets, file versions, runs, stage runs, events and chat each have their own table (`migrations/0001_schema.sql`).
 - **Deliberate denormalisations, each with a reason:**
   - `tickets.pipeline` is a JSON copy of the template's pipeline, guarded by `pipeline_version`. Each ticket can enable or disable stages and gates without forking a template. Where: `tickets/service.py` `ticket_pipeline()`.
   - `tickets.tasks_done/tasks_total` are cached from `TASKS.md` on every version write, so lists never parse files. `write_version()` is the one write path, which keeps the cache in step. Where: `files/service.py` `write_version()`, `pipeline/plan.py` `parse_plan()`.
   - `runs.manifest` stores exactly what was sent at claim, so a run can be inspected and a claim retry is idempotent.
   - `tickets.pr_url` holds the last PR a worker reported.
 - **Some tables are append-only.**
-  - `templates`: the current template is `max(version)` per name, and `tickets.template_id` pins the version a ticket was copied from. This keeps provenance for "update open tickets from template". Where: `templates/service.py`.
+  - `templates`: the current template is `max(version)` per name. A ticket's scaffold is rendered from the current version at creation and never linked afterwards, so a template edit only affects new tickets. Where: `templates/service.py`.
   - `file_versions`: `content = NULL` means deleted, and a write that changes nothing appends nothing. Where: `files/service.py` `write_version()`.
   - `run_events` is keyed by `(run_id, seq)` and inserted `ON CONFLICT DO NOTHING`, so worker retries are safe.
 - **Enum columns have no CHECK constraints.** The `Literal`s in `models.py` are the only definition. SQLite can't ALTER a CHECK, so adding a status, source or type would otherwise mean rebuilding a table.
 - **Identity is `users` plus `user_identities(provider, subject)`.** A user can have several login providers (dev, Jira, later OIDC or GitHub) without rebuilding `users`.
 - **`stage_runs` is keyed by `(run_id, idx)`, not by stage id.** A stage can repeat within a run, which leaves room for future review→fix loops.
-- **Adding a feature without breaking the schema:** add a new migration (a new table or a nullable / defaulted column), extend the `Literal` in `models.py`, and never rewrite an applied migration. A board position is derived from run history, never stored.
+- **Adding a feature without breaking the schema:** add the next numbered migration (`0002_….sql` and on) with a new table or a nullable / defaulted column, extend the `Literal` in `models.py`, and never rewrite an applied migration. A board position is derived from run history, never stored.
 
 ## Pipeline & segments
 - **A pipeline is an ordered list of stages.** A stage is `agent` (a prompt run through a runtime) or `shell` (a command). Each has `enabled`, `gate_after`, a `phase` (plan/build/verify/review) and `requires_repo`. The default template is plan (gated) → implement → lint (off) → review → open-pr. Where: `models.py` `Stage`, `pipeline/scaffold.py` `default_pipeline()`.
@@ -63,8 +62,8 @@ flowchart LR
 
 ## Run lifecycle & loops
 - **States: `queued → dispatched → running → succeeded | gated | failed | cancelled`.** Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means another actor already moved the run. Where: `runs/service.py`.
-- **`finish()` is the only way into a terminal state.** It runs in the caller's transaction, cancels unfinished stage runs, sets `finished_at` and bumps the ticket's `updated_at`. Callers publish to the broker after commit. Where: `runs/service.py` `finish()`.
-- **Each ticket has at most one active run.** A partial unique index `runs_one_active` covers queued/dispatched/running, and `dispatch()` maps the IntegrityError to 409 `run_active`. One ticket has one branch and one locked bundle, so parallel runs are excluded by design. Where: `migrations/0001_init.sql`, `runs/service.py` `dispatch()`.
+- **`finish()` is the only way into a terminal state.** It runs in the caller's transaction, cancels unfinished stage runs, sets `finished_at` and bumps the ticket's `updated_at`. Where: `runs/service.py` `finish()`.
+- **Each ticket has at most one active run.** A partial unique index `runs_one_active` covers queued/dispatched/running, and `dispatch()` maps the IntegrityError to 409 `run_active`. One ticket has one branch and one locked bundle, so parallel runs are excluded by design. Where: `migrations/0001_schema.sql`, `runs/service.py` `dispatch()`.
 - **The dispatcher ticks every 2 s.** It moves the launcher's oldest queued run to dispatched while the active (dispatched or running) runs are under `launcher.max_concurrency` (None = unlimited). It then calls `launch()` outside any transaction, and a launch exception fails the run. Where: `runs/dispatcher.py` `tick()`, `runs/service.py` `mark_next_dispatched()`.
 - **The reaper ticks every 15 s, and its rules run in order:**
   1. If the previous tick was more than 60 s ago (startup or laptop sleep), every running run counts as just seen.
@@ -142,7 +141,7 @@ flowchart LR
     - **Cleanup:** the run folder is deleted after replay, and an hourly sweep removes folders of runs that are no longer active.
     - **Where:** `launchers/mailbox.py`, `stores/`, `mailbox/`; the design is in `design/mailbox.md` (local).
     - **Long term** this is meant to become the only worker protocol, and the HTTP worker path will be deleted.
-- **A ticket source implements `parse_ref`, `fetch` and `post_comment`.** Jira is the only source and is used by import and intake. Where: `sources/base.py`, `sources/jira.py`.
+- **Jira is one HTTP adapter that login, import and intake call directly.** There is no ticket-source protocol; like a plugin, the adapter has no db, service or FastAPI access, and it raises its own `JiraError`s, which the services map to `ApiError`. Where: `sources/jira.py`.
   - Jira Cloud has removed `/rest/api/2/search`, so search uses `POST /rest/api/3/search/jql`, which has no total (`/search/approximate-count` estimates it). Cloud answers an unknown field, project or value with an empty result rather than a 400, so an empty answer is explained via `/rest/api/3/jql/parse`. Data Center still uses `/rest/api/2/search`.
 - **Runtimes are argv templates resolved on the server.** Placeholders (`{model}`, `{agent}`, `{prompt}`) replace whole argv elements, with no shell involved. The worker knows nothing about runtimes, so switching CLIs (e.g. Copilot) is a settings change. Where: `pipeline/runtime.py`, `pipeline/manifest.py`; edited in Settings › Runners.
 
@@ -151,13 +150,13 @@ flowchart LR
 - **Components reach the server only through hooks in `web/src/api/queries.ts`,** which own one hierarchical query-key factory. ESLint forbids importing `api`/`unwrap` elsewhere. Where: `web/eslint.config.js`.
 - **API types are generated** (`openapi.json` → `schema.ts` via `just gen-api`). The frontend never edits them.
 - **Layers:** `app/` (router, providers, shell), `features/` (one folder per view), `ui/` (kit primitives), `domain/` (pure selection over server fields: counts, groups, words; it never invents a state), `styles/` (tokens).
-- **Live updates come from polling** (3 s for lists, 1 s for an active run) until an EventSource client exists. The server side of SSE is built: `broker.py` publishes after each commit and `stream.py` serves `GET /api/stream` with a 15 s ping.
+- **Live updates come from polling** (3 s for lists, 1 s for an active run). TanStack pauses it in background tabs. Where: `web/src/api/queries.ts`.
 
 ## Enforcement
 - **import-linter** (`backend/pyproject.toml`, 7 contracts):
   1. The pure core (`models`, `validate`, `pipeline`, `*.board`) imports no web, db, HTTP client or config.
   2. Inside a feature, the layers run `routes → deps → loops → service → board`.
-  3. Routes, deps, `meta` and `stream` reach the database only through services.
+  3. Routes, deps and `meta` reach the database only through services.
   4. Only `agentos.db` imports `sqlite3`.
   5. Only the HTTP layer imports FastAPI/Starlette/uvicorn; services raise the pure `ApiError`, which `http_errors.py` translates.
   6. Plugins (`launchers`, `sources`, `stores`) import no db, services, routes or FastAPI.
@@ -168,17 +167,15 @@ flowchart LR
 - **Closed error codes:** `models.ErrorCode` is the full set, and the UI branches on them (e.g. 409 `stale_version` / `run_active` / `bundle_locked`).
 
 ## Planned, not built
-- An SSE client in the web app (the server side exists).
 - Jira comments and comment sync: write-back will be official comments only (a resolve note is a candidate), with no status transitions. **Talk is never synced to Jira.**
 - Intake auto take-in: a per-query `auto_take_in`, **off by default**. Tickets it imports have no owner, and Intake still never dispatches.
 - Teams, edited in Settings › Teams, with Jira's team field mapped to `ticket.team_id`. Everyone in the Space sees every ticket, and My queue stays personal. All teams groups by team, or by repo when no teams are set up.
-- Library sets (shared read-only context); pipelines reject them as "not supported yet".
 - Fetch and publish workspace hooks supplied by the runner environment.
 - `CodeHost.find_pr`; today the worker runs `gh pr view`.
 - GitHub Issues and Todoist sources; validation of the Copilot runtime; workspace snapshots for no-repo tickets.
 - Human stages, approvers, review→fix loops, `Stage.when` conditions.
 - OIDC/SSO login; GitHub OIDC for claim.
-- Postgres behind `db.py`; LISTEN/NOTIFY behind `broker.py`.
+- Postgres behind `db.py`.
 
 ## Never
 - Presence indicators.

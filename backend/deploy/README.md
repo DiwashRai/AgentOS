@@ -64,17 +64,9 @@ The env keeps what the server needs to start, who may sign in, and secrets. The 
 `AGENTOS_ADMINS`, `AGENTOS_JIRA_SERVICE_EMAIL`, `AGENTOS_JIRA_SERVICE_TOKEN`, `AGENTOS_LAUNCHER`
 and `AGENTOS_GITHUB_TOKEN` (plus the three `AGENTOS_ARTIFACTORY_*` keys in mailbox mode).
 
-**Upgrading from an older version:** each settings area with nothing in the database yet is
-seeded once, on the first start that knows it, from what configured it before: an
-`agentos.toml` if one is found (`AGENTOS_CONFIG`, default `./agentos.toml`: `[space]` name and
-default_repo, `[[repos]]`, `[[intake.queries]]`, `[runtimes.*]` with `default_runtime` first)
-and the env vars that moved into the app (`AGENTOS_KEY_PREFIX`, `AGENTOS_JIRA_PROJECTS`,
-`AGENTOS_CLAIM_TIMEOUT_S`; `AGENTOS_GITHUB_REPO`, `_WORKFLOW`, `_REF`), else from built-in
-defaults. After that they are ignored: the server logs a warning at startup for each one still
-set (naming the Settings tab that replaced it) and for an `agentos.toml` still present. Delete
-them once the warnings appear. The image no longer reads `/config/agentos.toml`; an instance
-whose runtimes were customised there gets the built-in `claude` + `copilot` instead, so check
-Settings › Runners after the upgrade.
+A fresh database starts with the defaults: the Space "AgentOS" (key prefix `AOS`), no repos,
+intake queries or Jira projects, the built-in `claude` + `copilot` runtimes and no runner repo.
+An admin sets them in Settings after the first sign-in.
 
 ## Upgrade
 

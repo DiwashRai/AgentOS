@@ -33,14 +33,14 @@ def get_file(
 
 @router.put("/files/{path:path}")
 def put_file(key: str, path: str, body: FileWrite, user: Writer, ctx: Ctx) -> FileInfo:
-    return service.put_file(ctx.db, ctx.broker, key, path, body, user)
+    return service.put_file(ctx.db, key, path, body, user)
 
 
 @router.delete("/files/{path:path}", status_code=204)
 def delete_file(
     key: str, path: str, base_version: Annotated[int, Query(ge=1)], user: Writer, ctx: Ctx
 ) -> None:
-    service.delete_file(ctx.db, ctx.broker, key, path, base_version, user)
+    service.delete_file(ctx.db, key, path, base_version, user)
 
 
 @router.get("/versions/{path:path}")

@@ -16,7 +16,7 @@ cp backend/.env.example backend/.env        # dev defaults: dev auth, 127.0.0.1:
 - `backend/.env` holds startup config, URLs and secrets. Every variable is `AGENTOS_`-prefixed; each is described in `backend/.env.example`.
 - Secrets for the agents themselves (e.g. `ANTHROPIC_API_KEY`, `GH_TOKEN`) go in a separate dotenv file named by `AGENTOS_WORKER_ENV_FILE`. The local launcher removes `AGENTOS_*` from the worker's environment and adds that file.
 - `AGENTOS_WORKSPACES_DIR` (default `~/.agentos/workspaces`) must be outside the data dir and outside any git repo. The server refuses to start otherwise.
-- `backend/agentos.toml` is optional. It only seeds a fresh database (copy `backend/agentos.toml.example`). After the first start, the Space, repos, intake queries, agent runtimes and runner are edited in the app under **Settings**.
+- The Space, repos, intake queries, agent runtimes and runner are edited in the app under **Settings**. A fresh database starts with the defaults: the Space "AgentOS" (key prefix `AOS`), no repos, and the `claude` and `copilot` runtimes.
 - Jira sign-in (with `AGENTOS_DEV_AUTH` off): set `AGENTOS_JIRA_URL` and `AGENTOS_ADMINS`. A first login waits for an admin to approve it. Jira import also needs the `AGENTOS_JIRA_SERVICE_*` service account.
 
 ## Run locally
@@ -41,7 +41,7 @@ The server ships as one container (API + built UI, data on a `/data` volume), an
 ```
 backend/
   server/agentos/   FastAPI + SQLite server: one package per feature, a pure core, plugins
-    migrations/     numbered SQL migrations
+    migrations/     numbered SQL migrations (0001_schema.sql is the schema)
   worker/worker.py  the worker: one stdlib-only file, served by the server
   deploy/           deploy guide, container env example, GitHub Actions worker workflow
 web/src/

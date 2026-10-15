@@ -30,16 +30,13 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
     while True:
         dispatch_token = secrets.token_urlsafe(32)
         dispatch_hash = runs.token_hash(dispatch_token)
-        run_id = runs.mark_next_dispatched(
-            ctx.db, ctx.broker, service.LAUNCHER, None, dispatch_hash
-        )
+        run_id = runs.mark_next_dispatched(ctx.db, service.LAUNCHER, None, dispatch_hash)
         if run_id is None:
             return launched
         launched.append(run_id)
         try:
             manifest = worker_api.claim(
                 ctx.db,
-                ctx.broker,
                 ctx.runtimes,
                 ctx.space,
                 dispatch_token,
@@ -54,10 +51,10 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
             ref = mailbox.send(run_id, folder, manifest.model_dump_json().encode("utf-8"))
         except Exception as exc:
             log.warning("run %s: launch failed: %s", run_id, exc)
-            service.end(ctx.db, ctx.broker, run_id, "failed", f"launch failed: {exc}")
+            service.end(ctx.db, run_id, "failed", f"launch failed: {exc}")
             _delete(mailbox, run_id, folder)
             continue
-        runs.set_launch_ref(ctx.db, ctx.broker, run_id, ref)
+        runs.set_launch_ref(ctx.db, run_id, ref)
         log.info("run %s: launched (mailbox %s, %s)", run_id, folder, ref)
         if not service.is_running(ctx.db, run_id):  # cancelled or reaped meanwhile
             try:

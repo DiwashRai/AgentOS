@@ -1,4 +1,4 @@
-"""Tickets (SPEC §4, §10, §13): create (key, slug, template copy, scaffold = bundle v1), import
+"""Tickets (SPEC §4, §10, §13): create (key, workflow copy, scaffold = bundle v1), import
 from a ticket source (§12), the board list and detail, patch and pipeline edits.
 
 The board is batch-loaded: a fixed number of queries for any number of tickets (tickets + owners,
@@ -11,13 +11,11 @@ tickets (of the ticket, for the detail), chat counts). Ticket id lists are bound
 from __future__ import annotations
 
 import json
-import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from agentos.broker import Broker
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -57,18 +55,11 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.scaffold import names
 from agentos.pipeline.segment import validate_pipeline
 from agentos.pipeline.space import ResolvedRepo, SpaceConfig
-from agentos.sources.base import (
-    SourceNotFound,
-    SourceUnauthorized,
-    SourceUnavailable,
-    TicketSource,
-)
+from agentos.sources.jira import JiraNotFound, JiraSource, JiraUnauthorized, JiraUnavailable
 from agentos.templates import service as templates
 from agentos.tickets.board import ACTIVE, RunFact, StageRunFact, TicketFacts, derive, for_viewer
 from agentos.validate import validate_base_branch, validate_key
 from agentos.workflows import service as workflows
-
-log = logging.getLogger(__name__)
 
 MAX_LABELS = 20
 MAX_LABEL_CHARS = 50
@@ -142,8 +133,7 @@ def get_ticket_row(conn: Conn, key: str) -> Row:
 
 
 def workspace_mode(row: Row) -> WorkspaceMode:
-    """Derived from `repo` alone (SPEC §17): the stored `workspace_mode` column only mirrors it.
-    A legacy ticket whose URL matched no catalog entry has no `repo`, so it acts as no-repo."""
+    """Derived from `repo` alone (SPEC §17): a ticket with no `repo` is a no-repo ticket."""
     return "repo" if row["repo"] is not None else "none"
 
 
@@ -159,7 +149,6 @@ def ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
     repo = resolve_workspace(row, space)
     return TicketRef(
         key=row["key"],
-        slug=row["slug"],
         title=row["title"],
         description=row["description"],
         type=row["type"],
@@ -271,7 +260,7 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
     # TASKS.md content is only read by the "now" line of a running ticket (its next task), and by
     # the detail.
     wanted = [
-        [r["id"], names(r["key"], r["slug"], workspace_mode(r)).tasks_md]
+        [r["id"], names(r["key"], workspace_mode(r)).tasks_md]
         for r in rows
         if with_plan or (r["id"] in facts.latest and facts.latest[r["id"]]["status"] == "running")
     ]
@@ -427,11 +416,10 @@ def _detail(conn: Conn, space: SpaceConfig, key: str, viewer_id: int) -> TicketD
     fields, next_stage, active = _summary_fields(row, facts, space, viewer_id)
     plan = facts.plans.get(row["id"])
     repo = resolve_workspace(row, space)
-    n = names(row["key"], row["slug"], repo.mode)
+    n = names(row["key"], repo.mode)
     return TicketDetail(
         **fields,
         description=row["description"],
-        slug=row["slug"],
         skill_name=n.skill_name,
         workspace_mode=repo.mode,
         repo_url=repo.url,
@@ -487,11 +475,9 @@ def _base_branch_info(row: Row, repo: ResolvedRepo) -> BaseBranchInfo | None:
 # ------------------------------------------------------------------ create
 
 
-def create_ticket(
-    db: Database, broker: Broker, space: SpaceConfig, user: Me, body: TicketCreate
-) -> TicketDetail:
-    """Allocate the key, copy the current template's pipeline, render its scaffold and write it as
-    bundle v1, all in one transaction (a render error leaves no ticket and no used key).
+def create_ticket(db: Database, space: SpaceConfig, user: Me, body: TicketCreate) -> TicketDetail:
+    """Allocate the key, copy the workflow's pipeline, render the current template's scaffold and
+    write it as bundle v1, all in one transaction (a render error leaves no ticket and no used key).
 
     `repo` omitted → the Space's `default_repo`; null → no-repo mode; not in the catalog → 422.
     `base_branch` given → the ticket's own (`manual`, set by the creator); null → `default`: the
@@ -528,9 +514,7 @@ def create_ticket(
                 workflow_id=body.workflow_id,
             ),
         )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -560,7 +544,6 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     render error leaves nothing behind). A no-repo ticket gets `requires_repo` stages disabled."""
     resolved = space.resolve(new.repo, new.base_branch, source=new.base_branch_source)
     now = utcnow()
-    slug = ""  # the skill dir is named by the key alone; older tickets keep their title slug
     workflow = workflows.for_ticket(conn, new.workflow_id)
     template = templates.current(conn)
     pipeline = workflow.pipeline
@@ -569,7 +552,6 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
     source = new.source
     ref = TicketRef(
         key=new.key,
-        slug=slug,
         title=new.title,
         description=new.description,
         type=new.type,
@@ -578,31 +560,28 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
         base_branch=resolved.base_branch,
         workspace_mode=resolved.mode,
     )
-    scaffold = render_scaffold(template.template.scaffold, ref)
+    scaffold = render_scaffold(template.scaffold, ref)
     cursor = conn.execute(
-        "INSERT INTO tickets(key, slug, title, description, type, priority, labels, state, "
-        "workspace_mode, repo, base_branch, base_branch_source, base_branch_set_by, "
-        "base_branch_source_value, base_branch_reason, template_id, "
+        "INSERT INTO tickets(key, title, description, type, priority, labels, state, "
+        "repo, base_branch, base_branch_source, base_branch_set_by, "
+        "base_branch_source_value, base_branch_reason, "
         "pipeline, pipeline_version, workflow_id, workflow_name, workflow_version, "
         "owner_id, source, external_id, source_url, created_by, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, "
+        "VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?, ?)",
         (
             new.key,
-            slug,
             new.title,
             new.description,
             new.type,
             new.priority,
             json.dumps(new.labels),
-            resolved.mode,
             new.repo,
             new.base_branch,
             new.base_branch_source,
             new.base_branch_set_by,
             new.base_branch_source_value,
             new.base_branch_reason,
-            template.id,
             pipeline.model_dump_json(),
             workflow.id,
             workflow.name,
@@ -631,19 +610,18 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
 
 def import_ticket(
     db: Database,
-    broker: Broker,
     space: SpaceConfig,
-    source: TicketSource | None,
+    source: JiraSource | None,
     user: Me,
     body: ImportRequest,
     mappings: Sequence[FieldMapping] = (),
 ) -> ImportResult:
-    """Take in a source ticket by key or link (manual take-in: the importer owns it).
+    """Take in a Jira issue by key or link (manual take-in: the importer owns it).
 
     Not configured → 501; an unparseable ref, a project outside the Space's Jira projects or a key
-    AgentOS can't use → 422; imported before → that ticket, `created: false`, without a source
-    call. The source can't see it → 404 `ticket_not_found`; the source rejects the service
-    account or is down → 502 `upstream_error`. Another ticket already has the key → 409
+    AgentOS can't use → 422; imported before → that ticket, `created: false`, without a Jira
+    call. Jira can't see it → 404 `ticket_not_found`; Jira rejects the service account or is
+    down → 502 `upstream_error`. Another ticket already has the key → 409
     `key_taken`. The fetch happens outside the write transaction; inside it the import is
     re-checked, so two concurrent imports of one issue end with one ticket.
 
@@ -663,33 +641,28 @@ def import_ticket(
         )
     external_id = source.parse_ref(body.ref)
     if external_id is None:
-        raise ApiError(
-            422, "validation_error", f"ref: not a {source.name} issue key or link to one"
-        )
-    if source.name == "jira":  # the external id is the issue key: check it before any Jira call
-        _check_import_key(space.jira_projects, external_id)
+        raise ApiError(422, "validation_error", "ref: not a jira issue key or link to one")
+    _check_import_key(space.jira_projects, external_id)  # the issue key, before any Jira call
     with db.read() as conn:
-        if (key := _imported_key(conn, source.name, external_id)) is not None:
+        if (key := _imported_key(conn, "jira", external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
         workflows.for_ticket(conn, body.workflow_id)  # 422 before the Jira call (rechecked below)
     repo = space.default_repo
     mapping = mapping_for(mappings, "base_branch")
-    if mapping is not None and (repo is None or mapping.source != source.name):
+    if repo is None:
         mapping = None  # a no-repo ticket has no base branch
     try:
         fetched = source.fetch(external_id, (mapping.field,) if mapping is not None else ())
-    except SourceNotFound:
-        raise ApiError(404, "ticket_not_found", f"{source.name} can't see {external_id}") from None
-    except SourceUnauthorized:
+    except JiraNotFound:
+        raise ApiError(404, "ticket_not_found", f"jira can't see {external_id}") from None
+    except JiraUnauthorized:
         raise ApiError(
             502,
             "upstream_error",
-            f"{source.name} rejected the service account (AGENTOS_JIRA_SERVICE_EMAIL / _TOKEN)",
+            "jira rejected the service account (AGENTOS_JIRA_SERVICE_EMAIL / _TOKEN)",
         ) from None
-    except SourceUnavailable:
-        raise ApiError(
-            502, "upstream_error", f"{source.name} didn't answer; try again shortly"
-        ) from None
+    except JiraUnavailable:
+        raise ApiError(502, "upstream_error", "jira didn't answer; try again shortly") from None
     _check_import_key(space.jira_projects, fetched.key)  # a moved issue answers with its new key
     new = _NewTicket(
         key=fetched.key,
@@ -703,7 +676,7 @@ def import_ticket(
         base_branch_source="default",
         base_branch_set_by=None,
         owner_id=user.id,
-        source=SourceLink(source=source.name, external_id=fetched.external_id, url=fetched.url),
+        source=SourceLink(source="jira", external_id=fetched.external_id, url=fetched.url),
         workflow_id=body.workflow_id,
     )
     if mapping is not None:
@@ -717,14 +690,12 @@ def import_ticket(
             base_branch_reason=mapped.reason,
         )
     with db.tx() as conn:
-        if (key := _imported_key(conn, source.name, fetched.external_id)) is not None:
+        if (key := _imported_key(conn, "jira", fetched.external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
         if conn.execute("SELECT 1 FROM tickets WHERE key = ?", (new.key,)).fetchone():
             raise ApiError(409, "key_taken", f"Another ticket already has the key {new.key}")
         _insert_ticket(conn, space, user, new)
-        result = ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
-    broker.ticket(new.key)
-    return result
+        return ImportResult(ticket=_detail(conn, space, new.key, user.id), created=True)
 
 
 def _check_import_key(projects: Sequence[str], key: str) -> None:
@@ -862,11 +833,10 @@ def _base_branch_provenance(
 
 
 def patch_ticket(
-    db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: TicketPatch
+    db: Database, space: SpaceConfig, key: str, user: Me, body: TicketPatch
 ) -> TicketDetail:
     """Apply the set fields. `state`, `repo` and `base_branch` changes → 409 `run_active` while a
-    run is active. The slug never changes (it names the skill directory). A `state` change clears
-    the resolution (`resolve_ticket` sets it).
+    run is active. A `state` change clears the resolution (`resolve_ticket` sets it).
 
     `repo` must be a catalog name (422 otherwise); null switches to no-repo mode, which clears
     `base_branch` and disables the pipeline's `requires_repo` stages (as creation does). Another
@@ -935,14 +905,13 @@ def patch_ticket(
         conn.execute(
             "UPDATE tickets SET title = :title, description = :description, type = :type, "
             "priority = :priority, labels = :labels, state = :state, repo = :repo, "
-            "workspace_mode = :workspace_mode, base_branch = :base_branch, "
+            "base_branch = :base_branch, "
             "base_branch_source = :base_branch_source, base_branch_set_by = :base_branch_set_by, "
             "base_branch_reason = :base_branch_reason, owner_id = :owner_id, "
             "updated_at = :updated_at WHERE id = :id",
             {
                 **values,
                 **base,
-                "workspace_mode": "repo" if values["repo"] is not None else "none",
                 "updated_at": now,
                 "id": row["id"],
             },
@@ -958,16 +927,14 @@ def patch_ticket(
                     "WHERE id = ?",
                     (stripped.model_dump_json(), row["id"]),
                 )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 _RESOLVED_STATE: dict[ResolveOutcome, str] = {"completed": "done", "abandoned": "closed"}
 
 
 def resolve_ticket(
-    db: Database, broker: Broker, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
+    db: Database, space: SpaceConfig, key: str, user: Me, body: ResolveRequest
 ) -> TicketDetail:
     """Close the ticket as `completed` (state done) or `abandoned` (state closed), with an optional
     note (stripped; blank → null). 409 `run_active` while a run is active. Resolving a resolved
@@ -983,14 +950,11 @@ def resolve_ticket(
             "resolved_by = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
             (_RESOLVED_STATE[body.outcome], body.outcome, note, user.id, now, now, row["id"]),
         )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 def put_pipeline(
     db: Database,
-    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     key: str,
@@ -1013,14 +977,11 @@ def put_pipeline(
                         f"stage {stage.id}: requires a repo; this ticket has none",
                     )
         _store_pipeline(conn, row, space, runtimes, pipeline)
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 def switch_workflow(
     db: Database,
-    broker: Broker,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
     key: str,
@@ -1047,9 +1008,7 @@ def switch_workflow(
             "WHERE id = ?",
             (workflow.id, workflow.name, workflow.version, row["id"]),
         )
-        detail = _detail(conn, space, key, user.id)
-    broker.ticket(key)
-    return detail
+        return _detail(conn, space, key, user.id)
 
 
 def _pipeline_row(conn: Conn, key: str, base_version: int) -> Row:
@@ -1076,40 +1035,3 @@ def _store_pipeline(
         "updated_at = ? WHERE id = ?",
         (pipeline.model_dump_json(), to_db(utcnow()), row["id"]),
     )
-
-
-# ------------------------------------------------------------------ repo backfill (startup)
-
-
-def backfill_repos(db: Database, space: SpaceConfig) -> list[str]:
-    """Give tickets created before the repo catalog (migration 0003) their catalog `repo`.
-
-    Idempotent; run once at startup. A repo-mode ticket without `repo` gets the catalog entry
-    whose URL matches its old `repo_url` (`space.repo_for_url`); a stored base branch equal to that
-    repo's default_branch is cleared, so a catalog change reaches it. Unmatched tickets stay
-    without a repo (they act as no-repo tickets) and are retried on the next startup. Returns their
-    keys, which are also logged as one warning.
-    """
-    unmatched: list[str] = []
-    with db.tx() as conn:
-        rows = conn.execute(
-            "SELECT id, key, repo_url, base_branch FROM tickets "
-            "WHERE repo IS NULL AND workspace_mode = 'repo' ORDER BY id"
-        ).fetchall()
-        for row in rows:
-            spec = space.repo_for_url(row["repo_url"]) if row["repo_url"] else None
-            if spec is None:
-                unmatched.append(row["key"])
-                continue
-            own = row["base_branch"] if row["base_branch"] != spec.default_branch else None
-            conn.execute(
-                "UPDATE tickets SET repo = ?, base_branch = ?, base_branch_source = ? WHERE id = ?",
-                (spec.name, own, "manual" if own is not None else "default", row["id"]),
-            )
-    if unmatched:
-        log.warning(
-            "Tickets whose repo_url matches no repo in the Space's catalog (they act as "
-            "no-repo tickets until it does, or until their repo is set): %s",
-            ", ".join(unmatched),
-        )
-    return unmatched

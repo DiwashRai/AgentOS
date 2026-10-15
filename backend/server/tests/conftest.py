@@ -1,11 +1,11 @@
 """Shared fixtures: isolated settings (tmp data + workspaces, dev auth), the app and clients.
 
 One app and client serve the whole session; each test gets its own `ctx` on a copy of the
-template db the session app's startup migrated and seeded."""
+template db: the test Space's settings (`settings_support.seed_test_settings`) plus what the
+session app's startup migrated and seeded."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import shutil
@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -27,9 +26,8 @@ from agentos.context import AppContext, build_context
 from agentos.main import create_app
 from agentos.models import Me, Role, RunStatus, StageRunStatus, TicketDetail
 from tests.run_support import FakeLauncher, RunDriver
+from tests.settings_support import seed_test_settings
 
-FIXTURES = Path(__file__).parent / "fixtures"
-RUNTIMES_TOML = FIXTURES / "runtimes_test.toml"
 CSRF = {"X-AgentOS": "1"}
 # Dev auth only accepts a loopback Host header (TestClient's default is `testserver`).
 BASE_URL = "http://127.0.0.1:8000"
@@ -73,7 +71,6 @@ def _test_settings(root: Path) -> Settings:
         data_dir=root / "data",
         workspaces_dir=root / "workspaces",
         dev_auth=True,
-        config=RUNTIMES_TOML,
     )
 
 
@@ -93,14 +90,14 @@ class SessionServer:
 
     app: FastAPI
     client: TestClient
-    portal: BlockingPortal
     template_db: Path
 
 
 @pytest.fixture(scope="session")
 def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SessionServer]:
-    """Start one app (the real lifespan: checks, migrations, seeding) and keep a copy of its
-    migrated, seeded db as the template every test's `ctx` starts from.
+    """Write the test Space's settings (`seed_test_settings`), start one app on that db (the real
+    lifespan: checks, migrations, the template and workflow seeds) and keep a copy of the db as
+    the template every test's `ctx` starts from.
 
     Session fixtures run before the autouse `_clean_env`, so this strips AGENTOS_* itself while
     the settings are read and the app starts."""
@@ -109,6 +106,8 @@ def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session
         with pytest.MonkeyPatch.context() as monkeypatch:
             _strip_agentos_env(monkeypatch)
             settings = _test_settings(root)
+            seed_test_settings(settings)
+
             # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
             app = create_app(settings, launcher=FakeLauncher(), run_loops=False)
             client = stack.enter_context(TestClient(app, base_url=BASE_URL))
@@ -118,9 +117,7 @@ def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session
         template_db = root / "template.db"
         shutil.copyfile(settings.db_path, template_db)
 
-        portal = client.portal
-        assert portal is not None
-        yield SessionServer(app, client, portal, template_db)
+        yield SessionServer(app, client, template_db)
 
 
 @pytest.fixture
@@ -135,18 +132,15 @@ def ctx(
     session_server: SessionServer, settings: Settings, launcher: FakeLauncher
 ) -> Iterator[AppContext]:
     """This test's context on the session app: a fresh copy of the template db, built from this
-    test's `settings` and `launcher`, its broker on the app's loop."""
+    test's `settings` and `launcher`."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(session_server.template_db, settings.db_path)
     context = build_context(settings, launcher=launcher)
-    loop = session_server.portal.call(asyncio.get_running_loop)
-    context.broker.bind(loop)
 
     app = session_server.app
     app.state.ctx = context
     yield context
 
-    session_server.portal.call(context.broker.close)
     del app.state.ctx  # a request that outlives its test fails loudly
     assert not app.dependency_overrides, "tests must not modify the shared app"
 

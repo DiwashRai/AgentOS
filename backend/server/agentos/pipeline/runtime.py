@@ -109,7 +109,7 @@ class RuntimesConfig(BaseModel):
         ]
 
 
-# What a Space starts with when no agentos.toml seeds it (agentos.toml.example's runtimes).
+# The runtimes a fresh db starts with (Settings > Runners).
 BUILTIN_RUNTIMES: tuple[NamedRuntime, ...] = (
     NamedRuntime(
         name="claude",

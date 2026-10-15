@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -22,13 +22,6 @@ from urllib.parse import parse_qs, quote, urlsplit
 import httpx
 
 from agentos.models import JiraField, JiraFieldKind, Priority, TicketType
-from agentos.sources.base import (
-    SourceError,
-    SourceNotFound,
-    SourceTicket,
-    SourceUnauthorized,
-    SourceUnavailable,
-)
 
 Deployment = Literal["cloud", "datacenter"]
 TIMEOUT_S = 10.0
@@ -39,19 +32,19 @@ SEARCH_FIELDS = ("summary", "issuetype", "priority", "status", "assignee", "upda
 MAX_ERROR_CHARS = 300
 
 
-class JiraError(SourceError):
+class JiraError(Exception):
     """Base class. Messages name the path and status only, never credentials."""
 
 
-class JiraUnauthorized(JiraError, SourceUnauthorized):
+class JiraUnauthorized(JiraError):
     """Jira rejected the credentials (401/403)."""
 
 
-class JiraNotFound(JiraError, SourceNotFound):
+class JiraNotFound(JiraError):
     """The issue doesn't exist or the credentials can't see it (Jira answers 404 or 403)."""
 
 
-class JiraUnavailable(JiraError, SourceUnavailable):
+class JiraUnavailable(JiraError):
     """Network error, timeout, 5xx or an unexpected response."""
 
 
@@ -345,11 +338,29 @@ _PRIORITIES: dict[str, Priority] = {
 }
 
 
-class JiraSource:
-    """`TicketSource` for Jira: `parse_ref` takes a key or a `{JIRA_URL}/browse/KEY` link (or
-    `?selectedIssue=KEY` on the same site); `fetch` reads the issue with the service account."""
+@dataclass(frozen=True, slots=True)
+class SourceTicket:
+    """A fetched issue, mapped to AgentOS values. `external_id` = what `SourceLink.external_id`
+    stores (the issue key, which also becomes the ticket key); `project` = the Jira project key.
+    Every text in it is untrusted: stored as data, never rendered as anything but text."""
 
-    name: Literal["jira"] = "jira"
+    external_id: str
+    key: str
+    project: str
+    title: str
+    description: str
+    type: TicketType
+    priority: Priority
+    labels: list[str]
+    url: str
+    # The values of the extra fields `fetch` was asked for, by field id, as plain strings (none =
+    # an empty list).
+    field_values: Mapping[str, list[str]] = field(default_factory=dict)
+
+
+class JiraSource:
+    """Imports Jira issues: `parse_ref` takes a key or a `{JIRA_URL}/browse/KEY` link (or
+    `?selectedIssue=KEY` on the same site); `fetch` reads the issue with the service account."""
 
     def __init__(self, client: JiraClient, creds: JiraCredentials) -> None:
         self.client = client
@@ -436,9 +447,6 @@ class JiraSource:
                 out.append(JiraField(id=fid, name=name, kind=_field_kind(raw.get("schema"))))
         out.sort(key=lambda f: (f.name.casefold(), f.id))
         return out
-
-    def post_comment(self, external_id: str, body: str) -> str:
-        raise NotImplementedError("Jira comment sync is not built yet (SPEC §11 M1)")
 
     def search(self, jql: str, limit: int) -> JiraSearch:
         """The first `limit` issues matching `jql`, mapped like an import (request 14).

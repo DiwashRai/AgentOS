@@ -120,8 +120,6 @@ export function pipelineSummary(stages: readonly Pick<GlyphStage, "state" | "gat
 
 const SOURCE_WORD: Record<Schemas["SourceLink"]["source"], string> = {
   jira: "Jira",
-  github: "GitHub",
-  todoist: "Todoist",
 };
 
 /** The kicker's source tag: "Jira", plus the external id only when it differs from our key

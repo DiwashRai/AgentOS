@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
@@ -11,13 +10,7 @@ from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
 from agentos.models import FileEntry, Template, TicketDetail
-from agentos.pipeline.scaffold import (
-    DEFAULT_SCAFFOLD,
-    LEGACY_SKILL_MD_V1,
-    SKILL_MD,
-    SKILL_MD_PATH,
-    default_pipeline,
-)
+from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, default_pipeline
 from agentos.templates.service import seed_default
 
 CSRF = {"X-AgentOS": "1"}
@@ -56,46 +49,6 @@ def test_seed_is_idempotent(authed: TestClient, ctx: AppContext) -> None:
     seed_default(ctx.db)
     with ctx.db.read() as conn:
         assert conn.execute("SELECT count(*) FROM templates").fetchone()[0] == 1
-
-
-def _set_v1(ctx: AppContext, scaffold: list[FileEntry], pipeline: str | None = None) -> None:
-    """Rewrite the seeded version 1, as a database from before the key-only SKILL.md has it."""
-    with ctx.db.tx() as conn:
-        conn.execute(
-            "UPDATE templates SET scaffold = ?, pipeline = coalesce(?, pipeline) WHERE version = 1",
-            (json.dumps([e.model_dump() for e in scaffold]), pipeline),
-        )
-
-
-def _versions(ctx: AppContext) -> list[tuple[int, str, str]]:
-    with ctx.db.read() as conn:
-        rows = conn.execute("SELECT version, pipeline, scaffold FROM templates ORDER BY version")
-        return [(r["version"], r["pipeline"], r["scaffold"]) for r in rows.fetchall()]
-
-
-def test_seed_upgrades_a_legacy_default_skill_md_once(authed: TestClient, ctx: AppContext) -> None:
-    seed = default_pipeline()
-    pipeline = seed.model_copy(update={"stages": seed.stages[:2]})
-    notes = FileEntry(path="NOTES.md", content="Notes for {{ticket.key}}")
-    legacy = FileEntry(path=SKILL_MD_PATH, content=LEGACY_SKILL_MD_V1)
-    _set_v1(ctx, [legacy, *DEFAULT_SCAFFOLD[1:], notes], pipeline.model_dump_json())
-    seed_default(ctx.db)
-    seed_default(ctx.db)  # idempotent: the current version no longer matches
-    (v1, v1_pipeline, _), (v2, v2_pipeline, _) = _versions(ctx)
-    assert (v1, v2) == (1, 2)
-    assert v2_pipeline == v1_pipeline  # only SKILL.md changes
-    template = get_template(authed)
-    assert template.version == 2
-    assert template.scaffold == [*DEFAULT_SCAFFOLD, notes]
-    assert template.scaffold[0].content == SKILL_MD
-
-
-def test_seed_leaves_a_customised_skill_md_alone(authed: TestClient, ctx: AppContext) -> None:
-    custom = FileEntry(path=SKILL_MD_PATH, content=LEGACY_SKILL_MD_V1 + "Custom.\n")
-    _set_v1(ctx, [custom, *DEFAULT_SCAFFOLD[1:]])
-    seed_default(ctx.db)
-    assert [v for v, _, _ in _versions(ctx)] == [1]
-    assert get_template(authed).scaffold[0] == custom
 
 
 def test_put_appends_a_version(authed: TestClient, ctx: AppContext) -> None:
@@ -146,7 +99,7 @@ def test_put_checks_the_scaffold_renders(authed: TestClient) -> None:
 
 
 def test_new_tickets_render_the_current_scaffold(
-    authed: TestClient, ctx: AppContext, create_ticket: CreateTicket
+    authed: TestClient, create_ticket: CreateTicket
 ) -> None:
     before = create_ticket("Before")
     current = get_template(authed)
@@ -161,8 +114,3 @@ def test_new_tickets_render_the_current_scaffold(
     assert [f["path"] for f in files] == ["NOTES.md"]
     content = authed.get(f"/api/tickets/{after.key}/files/NOTES.md").json()["content"]
     assert content == f"Notes for {after.key}"
-    with ctx.db.read() as conn:
-        rows = conn.execute(
-            "SELECT t.key, tpl.version FROM tickets t JOIN templates tpl ON tpl.id = t.template_id"
-        ).fetchall()
-    assert {r["key"]: r["version"] for r in rows} == {before.key: 1, after.key: 2}

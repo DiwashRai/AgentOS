@@ -381,23 +381,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Stream */
-        get: operations["stream_api_stream_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/template": {
         parameters: {
             query?: never;
@@ -823,7 +806,7 @@ export interface components {
             /** Server Default Runtime */
             server_default_runtime: string;
             /** Sources */
-            sources: ("jira" | "github")[];
+            sources: "jira"[];
             /** Space Name */
             space_name: string;
         };
@@ -1467,8 +1450,6 @@ export interface components {
         ManifestTicket: {
             /** Key */
             key: string;
-            /** Slug */
-            slug: string;
             /** Title */
             title: string;
         };
@@ -1593,8 +1574,6 @@ export interface components {
         };
         /** Pipeline */
         Pipeline: {
-            /** Library Sets */
-            library_sets?: number[];
             /** Loops */
             loops?: components["schemas"]["Loop"][];
             /** Stages */
@@ -1952,9 +1931,9 @@ export interface components {
             external_id: string;
             /**
              * Source
-             * @enum {string}
+             * @constant
              */
-            source: "jira" | "github" | "todoist";
+            source: "jira";
             /** Url */
             url: string;
         };
@@ -2170,24 +2149,6 @@ export interface components {
              */
             type: "stage_started";
         };
-        /**
-         * StreamEvent
-         * @description Payload of each `data:` line on GET /api/stream. Notifications only: refetch on receipt.
-         */
-        StreamEvent: {
-            /**
-             * Id
-             * @default null
-             */
-            id: number | null;
-            /** Key */
-            key: string;
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "ticket" | "chat" | "run";
-        };
         /** SyncFile */
         SyncFile: {
             /** Content */
@@ -2359,8 +2320,6 @@ export interface components {
             resolution: components["schemas"]["Resolution"] | null;
             /** Skill Name */
             skill_name: string;
-            /** Slug */
-            slug: string;
             source: components["schemas"]["SourceLink"] | null;
             /**
              * State
@@ -3737,24 +3696,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
-            };
-        };
-    };
-    stream_api_stream_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

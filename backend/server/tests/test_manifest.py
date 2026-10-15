@@ -37,7 +37,6 @@ RUNTIMES = RuntimesConfig(
 )
 TICKET = TicketRef(
     key="AOS-42",
-    slug="fix-login-bug",
     title="Fix login bug: session expires early",
     description="Sessions expire after 5 minutes instead of 14 days.",
     type="bug",
@@ -46,7 +45,7 @@ TICKET = TicketRef(
     base_branch="main",
     workspace_mode="repo",
 )
-D = ".claude/skills/context-aos-42-fix-login-bug"
+D = ".claude/skills/context-aos-42"
 NONE = TemplateDefaults()  # no Space defaults: the config's default_runtime, no model
 
 
@@ -209,7 +208,6 @@ def test_build_manifest_default_ticket() -> None:
     assert m.run_id == 42
     assert m.ticket.model_dump() == {
         "key": "AOS-42",
-        "slug": "fix-login-bug",
         "title": TICKET.title,
     }
     assert m.workspace.model_dump() == {
@@ -235,30 +233,6 @@ def test_build_manifest_default_ticket() -> None:
         "max_file_bytes": MAX_FILE_BYTES,
         "max_line_bytes": MAX_AGENT_LINE_BYTES,
     }
-
-
-def test_build_manifest_library_files_are_not_synced_and_bundle_wins() -> None:
-    library = [
-        FileEntry(path=".claude/skills/review-checklist/SKILL.md", content="lib"),
-        FileEntry(path="agents.md", content="library copy", mode="block"),
-    ]
-    m = build_manifest(
-        1,
-        TICKET,
-        plan_run(default_pipeline(), "plan"),
-        _bundle(),
-        RUNTIMES,
-        defaults=NONE,
-        library=library,
-    )
-    assert m.files[0].model_dump() == {
-        "path": ".claude/skills/review-checklist/SKILL.md",
-        "content": "lib",
-        "mode": "replace",
-        "sync": False,
-    }
-    assert [f.path for f in m.files if f.path.lower() == "agents.md"] == ["AGENTS.md"]
-    assert all(f.sync for f in m.files[1:])
 
 
 def test_build_manifest_no_repo_nulls_workspace() -> None:

@@ -8,7 +8,6 @@ import pytest
 
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import (
-    MIGRATIONS_DIR,
     Conn,
     Database,
     IntegrityError,
@@ -49,8 +48,8 @@ def tables(conn: Conn) -> set[str]:
 
 def add_ticket(conn: Conn, key: str = "AOS-1") -> int:
     cursor = conn.execute(
-        "INSERT INTO tickets(key, slug, title, workspace_mode, pipeline, created_at, updated_at)"
-        " VALUES (?, 'slug', 'Title', 'none', '{}', ?, ?)",
+        "INSERT INTO tickets(key, title, pipeline, created_at, updated_at)"
+        " VALUES (?, 'Title', '{}', ?, ?)",
         (key, NOW, NOW),
     )
     assert cursor.lastrowid is not None
@@ -66,7 +65,7 @@ def add_run(conn: Conn, ticket_id: int, status: str) -> None:
 
 
 def test_migrate_creates_every_table(db: Database) -> None:
-    assert db.user_version() == len(migrations()) >= 4
+    assert db.user_version() == len(migrations()) == 1
     with db.read() as conn:
         assert tables(conn) == TABLES
 
@@ -99,35 +98,6 @@ def test_failed_migration_rolls_back(tmp_path: Path) -> None:
     assert database.user_version() == 1
     with database.read() as conn:
         assert tables(conn) == {"a"}
-
-
-def test_an_existing_0001_database_migrates_forward(tmp_path: Path) -> None:
-    only_first = tmp_path / "migrations"
-    only_first.mkdir()
-    first = MIGRATIONS_DIR / "0001_init.sql"
-    (only_first / first.name).write_bytes(first.read_bytes())
-    path = tmp_path / "agentos.db"
-    old = Database(path, only_first)
-    assert old.migrate() == 1
-    with old.tx() as conn:
-        add_ticket(conn)
-
-    db = Database(path)
-    assert db.migrate() == len(migrations())
-    with db.read() as conn:
-        row = conn.execute(
-            "SELECT key, pr_url, repo, resolution_outcome, resolution_note, resolved_by, "
-            "resolved_at FROM tickets"
-        ).fetchone()
-    assert dict(row) == {
-        "key": "AOS-1",
-        "pr_url": None,
-        "repo": None,
-        "resolution_outcome": None,
-        "resolution_note": None,
-        "resolved_by": None,
-        "resolved_at": None,
-    }
 
 
 def test_migration_numbering_must_be_contiguous(tmp_path: Path) -> None:

@@ -6,8 +6,6 @@ import { importErrorText, offersJiraImport, toImportBody } from "./importForm";
 describe("import from Jira", () => {
   it("is offered only when the server imports from Jira", () => {
     expect(offersJiraImport(["jira"])).toBe(true);
-    expect(offersJiraImport(["github", "jira"])).toBe(true);
-    expect(offersJiraImport(["github"])).toBe(false);
     expect(offersJiraImport([])).toBe(false);
   });
 

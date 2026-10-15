@@ -63,7 +63,6 @@ RUNTIMES = RuntimesConfig(
 )
 TICKET = TicketRef(
     key="AOS-1",
-    slug="",
     title="T",
     description="",
     type="task",
@@ -388,7 +387,7 @@ def test_built_in_runtimes_support_sessions_and_verdicts() -> None:
 
 
 # ------------------------------------------------------------------ through the API
-# The test toml's server default runtime ("fake") has no sessions: no repairs, makers start fresh.
+# The test Space's server default runtime ("fake") has no sessions: no repairs, makers start fresh.
 
 
 def put_pipeline(client: TestClient, key: str, edit: Callable[[dict[str, Any]], None]) -> Any:

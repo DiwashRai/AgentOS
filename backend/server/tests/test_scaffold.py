@@ -27,21 +27,16 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9-]{1,64}$")
     ],
 )
 def test_skill_is_named_by_the_key(key: str, name: str) -> None:
-    assert skill_name(key, "") == name
+    assert skill_name(key) == name
     assert len(name) <= MAX_SKILL_NAME
     assert SKILL_NAME_RE.match(name)
 
 
-def test_a_legacy_title_slug_is_kept() -> None:
-    # Tickets created before the key-only name stored a title slug: their dir must not move.
-    assert skill_name("AOS-42", "fix-login-bug") == "context-aos-42-fix-login-bug"
-
-
 def test_names_repo_mode() -> None:
-    n = names("AOS-42", "", "repo")
+    n = names("AOS-42", "repo")
     d = ".claude/skills/context-aos-42"
     assert n.skill_name == "context-aos-42"
-    assert n.skill_dir == d == skill_dir("AOS-42", "")
+    assert n.skill_dir == d == skill_dir("AOS-42")
     assert (n.skill_md, n.tasks_md, n.learnings, n.swarm, n.out) == (
         f"{d}/SKILL.md",
         f"{d}/TASKS.md",
@@ -53,7 +48,7 @@ def test_names_repo_mode() -> None:
 
 
 def test_names_no_repo_mode_has_no_branch() -> None:
-    assert names("AOS-42", "", "none").branch is None
+    assert names("AOS-42", "none").branch is None
 
 
 def test_default_pipeline_seed() -> None:

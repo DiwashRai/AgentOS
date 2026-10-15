@@ -1,6 +1,5 @@
-"""Effort per stage (request 23A): `Stage.effort`, the Space default (`TemplateDefaults.effort`,
-`AppConfig.default_effort`), the runtimes' `effort_args`, and the one-time upgrade that gives
-stored built-in runtimes their `effort_args`."""
+"""Effort per stage: `Stage.effort`, the Space default (`TemplateDefaults.effort`,
+`AppConfig.default_effort`) and the runtimes' `effort_args`."""
 
 from __future__ import annotations
 
@@ -10,11 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from agentos.context import AppContext
 from agentos.models import AppConfig, RuntimeSettings, Stage, TemplateDefaults
 from agentos.pipeline.manifest import resolve_agent
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, RuntimesConfig, RuntimeSpec
-from agentos.space_store import add_builtin_effort_args, read_area, write_area
 from tests.run_support import CSRF, RunDriver
 from tests.test_runs import put_pipeline, stage_of
 from tests.test_space_defaults import FAKE_ARGV, first_argv, set_defaults
@@ -112,7 +109,7 @@ def test_runtimes_round_trip_effort_args_and_omitted_is_none(authed: TestClient)
     give_fake_an_effort_flag(authed)
     got = runtimes(authed).runtimes
     assert got[0].effort_args == ["--effort", "{effort}"]
-    assert got[1].effort_args == []  # the test toml's claude has none
+    assert got[1].effort_args == []  # the test Space's claude has none
 
 
 def test_a_stage_effort_reaches_the_manifest(
@@ -144,32 +141,3 @@ def test_the_space_default_effort_reaches_a_stage_without_one(
         "--effort",
         "low",
     ]
-
-
-# ------------------------------------------------------------------ the stored built-ins upgrade
-
-
-def stored_runtimes(ctx: AppContext) -> tuple[list[dict[str, Any]], int]:
-    with ctx.db.read() as conn:
-        row = read_area(conn, "runtimes")
-    assert row is not None
-    return row.value["runtimes"], row.version
-
-
-def test_stored_built_ins_gain_effort_args_once(authed: TestClient, ctx: AppContext) -> None:
-    claude, copilot = (r.model_dump(mode="json") for r in BUILTIN_RUNTIMES)
-    edited = copilot | {"argv": ["copilot", "--mine"]}  # an admin changed it: left alone
-    custom = {"name": "fake", "argv": FAKE_ARGV, "model_args": [], "agent_args": []}
-    legacy = [{k: v for k, v in r.items() if k != "effort_args"} for r in (claude, edited, custom)]
-    with ctx.db.tx() as conn:
-        write_area(conn, "runtimes", {"runtimes": legacy}, version=5, actor_id=None)
-
-    assert add_builtin_effort_args(ctx.db) == ["claude"]
-    stored, version = stored_runtimes(ctx)
-    assert version == 6
-    assert stored[0]["effort_args"] == ["--effort", "{effort}"]
-    assert "effort_args" not in stored[1]
-    assert "effort_args" not in stored[2]
-
-    assert add_builtin_effort_args(ctx.db) == []  # at most once
-    assert stored_runtimes(ctx)[1] == 6

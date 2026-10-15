@@ -22,8 +22,8 @@ export default tseslint.config(
     },
   },
   {
-    // Server calls go through hooks in src/api/queries.ts, so query keys and SSE invalidation
-    // live in one place. ApiError and types may be imported anywhere.
+    // Server calls go through hooks in src/api/queries.ts, so query keys, polling and
+    // invalidation live in one place. ApiError and types may be imported anywhere.
     files: ["src/**/*.{ts,tsx}"],
     ignores: ["src/api/**"],
     rules: {
@@ -35,7 +35,7 @@ export default tseslint.config(
               group: ["**/api/client"],
               importNames: ["api", "unwrap"],
               message:
-                "Call the server through hooks in src/api/queries.ts so query keys and SSE invalidation live in one place.",
+                "Call the server through hooks in src/api/queries.ts so query keys, polling and invalidation live in one place.",
             },
           ],
         },

@@ -104,10 +104,7 @@
           },
           "sources": {
             "items": {
-              "enum": [
-                "jira",
-                "github"
-              ],
+              "const": "jira",
               "type": "string"
             },
             "title": "Sources",
@@ -1817,10 +1814,6 @@
             "title": "Key",
             "type": "string"
           },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -1828,7 +1821,6 @@
         },
         "required": [
           "key",
-          "slug",
           "title"
         ],
         "title": "ManifestTicket",
@@ -2194,13 +2186,6 @@
       "Pipeline": {
         "additionalProperties": false,
         "properties": {
-          "library_sets": {
-            "items": {
-              "type": "integer"
-            },
-            "title": "Library Sets",
-            "type": "array"
-          },
           "loops": {
             "items": {
               "$ref": "#/components/schemas/Loop"
@@ -3191,11 +3176,7 @@
             "type": "string"
           },
           "source": {
-            "enum": [
-              "jira",
-              "github",
-              "todoist"
-            ],
+            "const": "jira",
             "title": "Source",
             "type": "string"
           },
@@ -3753,43 +3734,6 @@
         "title": "StageStartedEvent",
         "type": "object"
       },
-      "StreamEvent": {
-        "additionalProperties": false,
-        "description": "Payload of each `data:` line on GET /api/stream. Notifications only: refetch on receipt.",
-        "properties": {
-          "id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Id"
-          },
-          "key": {
-            "title": "Key",
-            "type": "string"
-          },
-          "type": {
-            "enum": [
-              "ticket",
-              "chat",
-              "run"
-            ],
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "key"
-        ],
-        "title": "StreamEvent",
-        "type": "object"
-      },
       "SyncFile": {
         "additionalProperties": false,
         "properties": {
@@ -4308,10 +4252,6 @@
             "title": "Skill Name",
             "type": "string"
           },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
           "source": {
             "anyOf": [
               {
@@ -4403,7 +4343,6 @@
           "dispatch_block",
           "updated_at",
           "description",
-          "slug",
           "skill_name",
           "workspace_mode",
           "repo_url",
@@ -6504,20 +6443,6 @@
         "summary": "Put Space",
         "tags": [
           "settings"
-        ]
-      }
-    },
-    "/api/stream": {
-      "get": {
-        "operationId": "stream_api_stream_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Stream",
-        "tags": [
-          "stream"
         ]
       }
     },

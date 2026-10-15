@@ -140,7 +140,6 @@ def test_validate_pipeline_ok() -> None:
         (pipe(st("a"), st("b"), st("a")), "stage a: duplicate stage id"),
         (pipe(st("l", kind="shell")), "stage l: an enabled shell stage needs a command"),
         (pipe(st("a", runtime="gemini")), "stage a: unknown runtime 'gemini'"),
-        (Pipeline(stages=[st("a")], library_sets=[1]), "library_sets"),
     ],
 )
 def test_validate_pipeline_rejects(pipeline: Pipeline, needle: str) -> None:

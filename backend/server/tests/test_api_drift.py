@@ -17,6 +17,6 @@ def test_web_openapi_schema_is_up_to_date() -> None:
 
 
 def test_schema_includes_models_no_json_route_returns() -> None:
-    """The SSE payload and the error envelope reach the web types only through the schema."""
+    """The error envelope reaches the web types only through the schema."""
     schemas = create_app().openapi()["components"]["schemas"]
-    assert {"StreamEvent", "ErrorBody"} <= set(schemas)
+    assert "ErrorBody" in schemas

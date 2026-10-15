@@ -30,7 +30,6 @@ data/
 *.db
 *.db-wal
 *.db-shm
-agentos.toml
 .env
 .env.*
 !.env.example

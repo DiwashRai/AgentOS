@@ -1,19 +1,15 @@
 """Request 22A: an optional repo default branch, a dispatch blocked while a repo ticket has no
-base branch, and the lock once a run has started work from it (plus migration 0007)."""
+base branch, and the lock once a run has started work from it."""
 
 from __future__ import annotations
 
-import json
-import shutil
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
-from agentos.db import MIGRATIONS_DIR, Database, migrations
 from agentos.models import Me, RepoSettings, TicketDetail, TicketSummary
 from agentos.pipeline.space import RepoSpec
 from tests.run_support import RunDriver, event, log_event
@@ -336,90 +332,3 @@ def test_settings_repos_take_an_empty_default_branch(
     t = create_ticket()
     assert (t.repo_name, t.base_branch) == ("r", None)
     assert t.dispatch_block is not None
-
-
-# ------------------------------------------------------------------ migration 0007
-
-
-NOW = "2026-10-10T12:00:00.000000+00:00"
-
-
-def _ticket(conn: Any, key: str, repo: str | None, base: str | None) -> int:
-    cursor = conn.execute(
-        "INSERT INTO tickets(key, slug, title, workspace_mode, repo, base_branch, pipeline, "
-        "created_at, updated_at) VALUES (?, '', 'T', ?, ?, ?, '{}', ?, ?)",
-        (key, "repo" if repo else "none", repo, base, NOW, NOW),
-    )
-    ticket_id: int = cursor.lastrowid
-    return ticket_id
-
-
-def _run(conn: Any, ticket_id: int, mode: str, stages: list[tuple[str, str | None]]) -> int:
-    """A finished run with a manifest of workspace `mode`; stages are (status, started_at)."""
-    manifest = json.dumps({"workspace": {"mode": mode}})
-    cursor = conn.execute(
-        "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, manifest, time_budget_s, "
-        "launcher, created_at) VALUES (?, 'failed', 'plan', '[]', ?, 600, 'local', ?)",
-        (ticket_id, manifest, NOW),
-    )
-    run_id: int = cursor.lastrowid
-    for i, (status, started) in enumerate(stages):
-        conn.execute(
-            "INSERT INTO stage_runs(run_id, idx, stage_id, status, started_at) "
-            "VALUES (?, ?, 'plan', ?, ?)",
-            (run_id, i, status, started),
-        )
-    return run_id
-
-
-def test_migration_0007(tmp_path: Path) -> None:
-    old = tmp_path / "migrations-0006"
-    old.mkdir()
-    for path in sorted(MIGRATIONS_DIR.glob("000[1-6]_*.sql")):
-        shutil.copy(path, old / path.name)
-    db_path = tmp_path / "agentos.db"
-    assert Database(db_path, migrations_dir=old).migrate() == 6
-    with Database(db_path, migrations_dir=old).tx() as conn:
-        own = _ticket(conn, "AOS-1", "r", "rel")
-        _ticket(conn, "AOS-2", "r", None)  # no run
-        started = _ticket(conn, "AOS-3", "r", None)
-        _run(conn, started, "repo", [("succeeded", NOW)])
-        newest = _run(conn, started, "repo", [("failed", NOW)])
-        _run(conn, started, "repo", [("cancelled", None)])  # newer, but never got past setup
-        failed_at_setup = _ticket(conn, "AOS-4", "r", None)
-        _run(conn, failed_at_setup, "repo", [("cancelled", None)])
-        event_only = _ticket(conn, "AOS-5", "r", None)
-        via_event = _run(conn, event_only, "repo", [("cancelled", None)])
-        conn.execute(
-            "INSERT INTO run_events(run_id, seq, ts, stage_id, type, data) "
-            "VALUES (?, 1, ?, 'plan', 'stage_started', '{}')",
-            (via_event, NOW),
-        )
-        no_repo = _ticket(conn, "AOS-6", None, None)
-        _run(conn, no_repo, "none", [("succeeded", NOW)])
-        switched = _ticket(conn, "AOS-7", "r", None)  # its only started run was no-repo
-        _run(conn, switched, "none", [("succeeded", NOW)])
-        _run(conn, own, "repo", [("running", NOW)])
-
-    db = Database(db_path)
-    assert db.migrate() == len(migrations())
-    with db.read() as conn:
-        rows = {
-            r["key"]: (r["base_branch_source"], r["base_branch_locked_by_run"])
-            for r in conn.execute(
-                "SELECT key, base_branch_source, base_branch_locked_by_run FROM tickets"
-            ).fetchall()
-        }
-        extra = conn.execute(
-            "SELECT base_branch_source_value, base_branch_reason, base_branch_set_by "
-            "FROM tickets WHERE key = 'AOS-1'"
-        ).fetchone()
-    assert rows["AOS-1"][0] == "manual"
-    assert rows["AOS-1"][1] is not None
-    assert rows["AOS-2"] == ("default", None)
-    assert rows["AOS-3"] == ("default", newest)
-    assert rows["AOS-4"] == ("default", None)
-    assert rows["AOS-5"] == ("default", via_event)
-    assert rows["AOS-6"] == ("default", None)
-    assert rows["AOS-7"] == ("default", None)
-    assert tuple(extra) == (None, None, None)

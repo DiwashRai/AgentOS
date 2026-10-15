@@ -435,7 +435,6 @@ class ManifestLoop:
 class Manifest:
     run_id: int
     key: str
-    slug: str
     title: str
     mode: str  # "repo" | "none"
     repo_url: str | None
@@ -599,7 +598,7 @@ def parse_manifest(raw: object) -> Manifest:
         raise ManifestError(f"manifest: unsupported protocol {protocol!r} (worker speaks 1)")
     run_id = _int(m["run_id"], "run_id", 1)
 
-    ticket = _fields(m["ticket"], "ticket", ("key", "slug", "title"))
+    ticket = _fields(m["ticket"], "ticket", ("key", "title"))
     key = _str(ticket["key"], "ticket.key")
     if not _KEY_RE.fullmatch(key):
         raise ManifestError(f"ticket.key: invalid key {key!r}")
@@ -711,7 +710,6 @@ def parse_manifest(raw: object) -> Manifest:
     return Manifest(
         run_id=run_id,
         key=key,
-        slug=_str(ticket["slug"], "ticket.slug"),
         title=_str(ticket["title"], "ticket.title"),
         mode=mode,
         repo_url=repo_url,

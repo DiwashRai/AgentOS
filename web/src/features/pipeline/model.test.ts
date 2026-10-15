@@ -57,7 +57,6 @@ function stage(id: string, over: Partial<Stage> = {}): Stage {
 }
 
 const SEED: Pipeline = {
-  library_sets: [],
   stages: [
     stage("plan", { phase: "plan", gate_after: true }),
     stage("implement"),
@@ -91,11 +90,6 @@ describe("draftFrom / toPipeline", () => {
     expect(uidOf(after, "plan")).toBe(planUid);
     expect(after.rows.at(-1)?.uid).toBe(added?.uid);
     expect(after.rows.every((r) => !r.fresh)).toBe(true);
-  });
-
-  it("carries library_sets through", () => {
-    const d = draftFrom({ ...SEED, library_sets: [3] });
-    expect(toPipeline(reduce(d, { type: "add", kind: "shell" })).library_sets).toEqual([3]);
   });
 });
 

@@ -38,7 +38,7 @@ GateState = Literal["pending", "passed", "waiting", "you"]
 PhaseState = Literal["pending", "done", "current", "failed", "stale", "skipped"]
 Mode = Literal["replace", "block"]
 StageKind = Literal["agent", "shell"]
-SourceName = Literal["jira", "github", "todoist"]
+SourceName = Literal["jira"]
 WorkerFinalStatus = Literal["completed", "failed", "cancelled"]
 
 # Every error code the API can return. The UI branches on these (e.g. 409 stale_version vs
@@ -157,7 +157,7 @@ class AppConfig(ApiModel):
     server_default_runtime: str
     # Where tickets can be imported from (POST /api/tickets/import): ["jira"] when the Jira URL and
     # service account are configured, else [].
-    sources: list[Literal["jira", "github"]]
+    sources: list[Literal["jira"]]
 
 
 class Health(ApiModel):
@@ -264,7 +264,6 @@ class Loop(ApiModel):
 class Pipeline(ApiModel):
     stages: list[Stage] = Field(min_length=1, max_length=20)
     loops: list[Loop] = Field(default_factory=list, max_length=10)
-    library_sets: list[int] = Field(default_factory=list)
 
 
 class TemplateDefaults(ApiModel):
@@ -506,7 +505,6 @@ class TicketWorkflow(ApiModel):
 
 class TicketDetail(TicketSummary):
     description: str
-    slug: str
     skill_name: str
     # `repo_name` set → "repo". `repo_url` is resolved from the catalog (null if the repo left
     # it); `base_branch` is the resolved one: the ticket's own, else (unless a mapping left it
@@ -1100,7 +1098,6 @@ class ChatPost(ApiModel):
 
 class ManifestTicket(ApiModel):
     key: str
-    slug: str
     title: str
 
 
@@ -1371,14 +1368,3 @@ class CompleteRequest(ApiModel):
     # The PR for the run's `branch`, as last reported by a worker (repo mode, when one exists).
     # The server stores it only if it passes `validate_pr_url`; an invalid one is ignored.
     pr_url: str | None = Field(default=None, max_length=500)
-
-
-# ------------------------------------------------------------------ live updates (SSE)
-
-
-class StreamEvent(ApiModel):
-    """Payload of each `data:` line on GET /api/stream. Notifications only: refetch on receipt."""
-
-    type: Literal["ticket", "chat", "run"]
-    key: str
-    id: int | None = None

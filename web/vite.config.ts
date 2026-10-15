@@ -1,7 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
-// :8000 = real backend (`just dev-backend`); :8001 = frozen stubs (`just dev-web-stubs`).
+// The backend on :8000 (`just dev-backend`) unless AGENTOS_BACKEND_URL overrides it.
 const backend = process.env.AGENTOS_BACKEND_URL ?? "http://127.0.0.1:8000";
 
 export default defineConfig({

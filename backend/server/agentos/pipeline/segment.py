@@ -141,12 +141,11 @@ def completion_status(
 def validate_pipeline(pipeline: Pipeline, *, runtimes: Collection[str]) -> None:
     """Pipeline/template write checks → 422 `invalid_pipeline`.
 
-    Enforced: unique stage ids; `library_sets` empty (until M1); an enabled shell stage has a
-    command; an agent stage's `runtime`, if set, is a configured runtime; the loop blocks (see
-    `_check_loops`). Ids are the identity of a stage (run history refers to them), so "immutable"
-    needs no extra check: an edit may add, remove or reorder stages, and a changed id is a remove
-    plus an add. The `Stage` model already enforces the id/name/agent/model formats, prompt size
-    and timeout range.
+    Enforced: unique stage ids; an enabled shell stage has a command; an agent stage's `runtime`,
+    if set, is a configured runtime; the loop blocks (see `_check_loops`). Ids are the identity of
+    a stage (run history refers to them), so "immutable" needs no extra check: an edit may add,
+    remove or reorder stages, and a changed id is a remove plus an add. The `Stage` model already
+    enforces the id/name/agent/model formats, prompt size and timeout range.
     """
     seen: set[str] = set()
     for stage in pipeline.stages:
@@ -161,8 +160,6 @@ def validate_pipeline(pipeline: Pipeline, *, runtimes: Collection[str]) -> None:
             raise ApiError(
                 422, "invalid_pipeline", f"stage {stage.id}: unknown runtime {stage.runtime!r}"
             )
-    if pipeline.library_sets:
-        raise ApiError(422, "invalid_pipeline", "library_sets: not supported yet (M1)")
     _check_loops(pipeline)
 
 

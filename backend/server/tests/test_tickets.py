@@ -1,29 +1,24 @@
 """Tickets: create, list filters, detail, patch and pipeline PUT (SPEC §4, §6, §10), and the
-repo catalog (SPEC §17): repo by name, catalog changes, the startup backfill."""
+repo catalog (SPEC §17): repo by name, catalog changes."""
 
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.config import Settings, load_config
+from agentos.config import Settings
 from agentos.context import AppContext
-from agentos.db import Database
 from agentos.main import create_app
 from agentos.models import Me, Pipeline, TicketDetail, TicketSummary
 from agentos.pipeline.scaffold import default_pipeline
 from agentos.pipeline.space import RepoSpec
-from agentos.tickets.service import backfill_repos
 from tests.settings_support import set_repos, set_space
 
-RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
 CSRF = {"X-AgentOS": "1"}
 BASE_URL = "http://127.0.0.1:8000"
 CreateTicket = Callable[..., TicketDetail]
@@ -70,7 +65,6 @@ def test_create_returns_a_fresh_ticket(authed: TestClient) -> None:
     t = TicketDetail.model_validate(response.json())
     me = Me.model_validate(authed.get("/api/me").json())
     assert t.key == "AOS-1"
-    assert t.slug == ""  # the skill is named by the key alone
     assert t.skill_name == "context-aos-1"
     assert (t.title, t.description, t.type, t.priority) == (
         "Fix login bug",
@@ -114,9 +108,8 @@ def test_keys_are_sequential_and_skip_taken_ones(authed: TestClient, ctx: AppCon
     assert post(authed).json()["key"] == "AOS-1"
     with ctx.db.tx() as conn:  # e.g. an imported ticket that already uses the next key
         conn.execute(
-            "INSERT INTO tickets(key, slug, title, workspace_mode, pipeline, created_at, "
-            "updated_at) VALUES ('AOS-2', 's', 't', 'none', ?, '2026-01-01T00:00:00+00:00', "
-            "'2026-01-01T00:00:00+00:00')",
+            "INSERT INTO tickets(key, title, pipeline, created_at, updated_at) "
+            "VALUES ('AOS-2', 't', ?, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
             (default_pipeline().model_dump_json(),),
         )
     assert post(authed).json()["key"] == "AOS-3"
@@ -152,14 +145,11 @@ def test_create_picks_a_catalog_repo(
     assert summary.repo_name == expected[0]
 
 
-def test_omitted_repo_without_a_default_repo_is_no_repo(settings: Settings, tmp_path: Path) -> None:
-    toml = tmp_path / "no_default.toml"
-    toml.write_text(
-        RUNTIMES_TOML.read_text(encoding="utf-8").replace('default_repo = "r"\n', ""),
-        encoding="utf-8",
-    )
-    with started(settings.model_copy(update={"config": toml})) as c:
-        t = TicketDetail.model_validate(post(c).json())
+def test_omitted_repo_without_a_default_repo_is_no_repo(
+    authed: TestClient, ctx: AppContext
+) -> None:
+    set_space(ctx, default_repo=None)
+    t = TicketDetail.model_validate(post(authed).json())
     assert (t.workspace_mode, t.repo_name, t.branch) == ("none", None, None)
 
 
@@ -261,32 +251,6 @@ def test_scaffold_is_bundle_v1(authed: TestClient) -> None:
     assert skill.endswith("## Objective\nDesc.\n")
 
 
-def test_a_ticket_created_with_a_title_slug_keeps_its_skill_dir(
-    authed: TestClient, ctx: AppContext
-) -> None:
-    # Tickets created before the skill was named by the key alone stored a title slug; their
-    # bundle lives under that dir, so the name must not change under them.
-    with ctx.db.tx() as conn:
-        conn.execute(
-            "INSERT INTO tickets(key, slug, title, workspace_mode, pipeline, created_at, "
-            "updated_at) VALUES ('AOS-7', 'old-title', 'Old title', 'none', ?, "
-            "'2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')",
-            (default_pipeline().model_dump_json(),),
-        )
-    t = TicketDetail.model_validate(authed.get("/api/tickets/AOS-7").json())
-    assert (t.slug, t.skill_name) == ("old-title", "context-aos-7-old-title")
-    tasks = ".claude/skills/context-aos-7-old-title/TASKS.md"
-    response = authed.put(
-        f"/api/tickets/AOS-7/files/{tasks}",
-        json={"content": "- [x] a\n- [ ] b\n", "mode": "replace", "base_version": 0},
-        headers=CSRF,
-    )
-    assert response.status_code == 200, response.text
-    t = TicketDetail.model_validate(authed.get("/api/tickets/AOS-7").json())
-    assert t.tasks is not None
-    assert (t.tasks.done, t.tasks.total) == (1, 2)  # the legacy TASKS.md is still the plan
-
-
 def test_a_failed_scaffold_render_leaves_no_ticket_and_no_used_key(authed: TestClient) -> None:
     response = post(authed, description="x" * (1024 * 1024 + 1))  # SKILL.md > 1 MiB
     assert response.status_code == 413
@@ -366,7 +330,7 @@ def test_patch_fields(authed: TestClient, create_ticket: CreateTicket, login: Lo
         "low",
         ["a", "b"],
     )
-    assert (p.slug, p.skill_name) == (t.slug, t.skill_name)  # a title edit never renames it
+    assert p.skill_name == t.skill_name  # a title edit never renames it
     assert p.owner is not None
     assert p.owner.id == sam.id
     assert p.base_branch == "develop"
@@ -552,44 +516,3 @@ def test_a_catalog_change_reaches_existing_tickets(authed: TestClient, ctx: AppC
         None,
         None,
     )
-
-
-def test_startup_backfills_legacy_repo_urls(
-    settings: Settings, caplog: pytest.LogCaptureFixture
-) -> None:
-    with started(settings) as c:
-        k = [post(c).json()["key"] for _ in range(4)]
-    legacy = {  # tickets as created before the repo catalog: repo_url + a stored base branch
-        k[0]: ("https://GitHub.com/o/r/", "main"),  # matches r: its default branch is cleared
-        k[1]: ("git@github.com:o/docs", "release"),  # matches docs: its own branch is kept
-        k[2]: ("https://github.com/other/x.git", "main"),  # in no catalog entry
-        k[3]: (None, "main"),  # a repo ticket that never had a URL
-    }
-    db = Database(settings.db_path)
-    with db.tx() as conn:
-        for key, (url, branch) in legacy.items():
-            conn.execute(
-                "UPDATE tickets SET repo = NULL, workspace_mode = 'repo', repo_url = ?, "
-                "base_branch = ? WHERE key = ?",
-                (url, branch, key),
-            )
-
-    with caplog.at_level(logging.WARNING), started(settings) as c:
-        got = {key: TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json()) for key in k}
-    assert (got[k[0]].repo_name, got[k[0]].base_branch) == ("r", "main")
-    assert (got[k[1]].repo_name, got[k[1]].base_branch) == ("docs", "release")
-    for key in k[2:]:  # unmatched: acts as a no-repo ticket
-        assert (got[key].workspace_mode, got[key].repo_name, got[key].branch) == (
-            "none",
-            None,
-            None,
-        )
-    with db.read() as conn:
-        assert (
-            conn.execute("SELECT base_branch FROM tickets WHERE key = ?", (k[0],)).fetchone()[0]
-            is None
-        )
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any(f"{k[2]}, {k[3]}" in w for w in warnings), warnings
-    # Idempotent: a second pass changes nothing and reports the same unmatched tickets.
-    assert backfill_repos(db, load_config(RUNTIMES_TOML).space) == k[2:]

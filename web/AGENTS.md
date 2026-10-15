@@ -46,8 +46,7 @@ src/styles/    tokens.css, base.css, fonts.css
 - Login sets `me` and invalidates `keys.all`. Logout removes the ticket cache and sets `me` to `null`.
 
 ## Polling
-- The server has an SSE stream, but the client doesn't subscribe to it yet, so reads poll with `refetchInterval`. The intervals are constants in `queries.ts`: 3 s for the board and ticket reads, 1 s for an active run and its events, 60 s for Intake. The pending page polls `me` every 15 s. TanStack pauses polling in background tabs.
-- When SSE is wired, event → invalidation mapping belongs in `src/api/` next to `keys`, in one place.
+- Reads poll with `refetchInterval`. The intervals are constants in `queries.ts`: 3 s for the board and ticket reads, 1 s for an active run and its events, 60 s for Intake. The pending page polls `me` every 15 s. TanStack pauses polling in background tabs.
 - Run events are fetched incrementally (after the last `seq`) and capped at 5,000 per run in memory (`MAX_EVENTS`).
 
 ## queryClient behaviour (`src/app/queryClient.ts`)
@@ -108,6 +107,9 @@ src/styles/    tokens.css, base.css, fonts.css
 - Most logic tests are plain unit tests over `domain/` and feature `model.ts` files. Markup checks can use `renderToStaticMarkup` from `react-dom/server` in node. There is no DOM testing library.
 - Tests sit beside the code as `*.test.ts(x)`.
 - Test logic, not wording: assert behaviour (values, branches, which state or code is chosen), not full UI sentences, which only break on intended rewording. The exception is the error-code → text functions, where the text is the point; tsc against the generated schema and browser checks cover the rest of the UI.
+- Test behaviour, requirements or tricky algorithms only. An error test checks the code plus at most one crucial word, never a sentence.
+- UI tests find elements by role and accessible name, not by sentences of copy.
+- Comments describe what the code does now, never which ticket or request added it.
 - Browser checks with the Playwright MCP share one browser between agents. Open your own tab, put `page.route` fakes only on that tab, and never call `unrouteAll`. Switch themes with `document.documentElement.dataset.theme`, not the theme menu, which writes `localStorage` for every tab. Never save real settings or change real tickets from a check; fake the writes with `page.route`.
 
 ## People
@@ -116,4 +118,4 @@ src/styles/    tokens.css, base.css, fonts.css
 ## Not built on purpose
 - Never: presence, online dots or typing indicators.
 - Not in our model, so not drawn even where the design pack shows them: watchers and a "Watching" rack, reviewers, reactions, a runner pool gauge, queue positions, runner names, acceptance criteria (the TASKS.md plan stands in for them).
-- Not yet: the SSE client (see Polling), the Activity tab, Context diff, the Manifest view, row glides.
+- Not yet: the Activity tab, Context diff, the Manifest view, row glides.

@@ -4,16 +4,21 @@ Applies to `backend/**`: the FastAPI + SQLite server (`server/agentos/`), the si
 
 ## Layout
 - `server/agentos/`: one package per feature (`auth`, `tickets`, `files`, `social` (chat), `runs`, `templates`, `workflows`, `worker_api`, `intake`, `settings`), each split into `routes.py` / `deps.py` / `service.py` (+ `board.py`, `dispatcher.py`, `reaper.py` where needed).
-- Shared modules: `models.py` (the API contract), `db.py`, `config.py`, `context.py`, `clock.py`, `errors.py` + `http_errors.py`, `broker.py` + `stream.py`, `space_store.py`, `csrf.py`, `main.py`.
+- Shared modules: `models.py` (the API contract), `db.py`, `config.py`, `context.py`, `clock.py`, `errors.py` + `http_errors.py`, `space_store.py`, `csrf.py`, `main.py`.
 - Pure core: `models.py`, `validate.py`, `pipeline/*` (scaffold, render, segment, manifest, plan, runtime, space), `tickets/board.py`.
-- Plugins: `launchers/` (`local`, `github`; protocol in `launchers/base.py`) and `sources/` (`jira`; protocol in `sources/base.py`).
+- Plugins: `launchers/` (`local`, `github`, `mailbox`; protocol in `launchers/base.py`) and `stores/` (`artifactory`; protocol in `stores/base.py`). `sources/jira.py` is one HTTP adapter (no protocol) that login, import and intake call directly.
 - `migrations/NNNN_name.sql`; `worker/worker.py` + `worker/worker_tests/`; `server/tests/` (+ `fixtures/`); `deploy/` (container + GitHub Actions runner, see `deploy/README.md`).
+
+## Code rules
+- Blank lines separate the semantic steps inside a function (load, check, write, return), not every statement.
+- Docstrings and comments describe what the code does now, never which ticket or request added it.
+- try/except only at real boundaries: network, subprocess, filesystem, git, database, untrusted input. Everywhere else errors propagate; services raise `ApiError`.
 
 ## Architecture (enforced by import-linter)
 The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidance when broken. In plain words:
 - The pure core imports no web framework, `httpx`, `sqlite3`, `agentos.db` or `agentos.config`: it takes plain values, so it can be tested without I/O.
 - Inside a feature: `routes → deps → (dispatcher | reaper) → service → board`. Never import upwards.
-- Routes, deps, `meta` and `stream` never import `agentos.db` or `sqlite3`: they go through a service.
+- Routes, deps and `meta` never import `agentos.db` or `sqlite3`: they go through a service.
 - Only `agentos.db` imports `sqlite3` (keeps a Postgres swap to one module).
 - Only the HTTP layer imports FastAPI/Starlette/uvicorn. Services raise the pure `errors.ApiError`; `http_errors.py` turns it into a response.
 - Plugins are adapters: no db, services, routes or FastAPI. They get what they need as arguments (the dispatcher counts active runs; the launcher only reports `max_concurrency`).
@@ -22,12 +27,12 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 **Fix the code, never the contract.** Don't loosen a contract to make an import work.
 
 ## Request pattern
-- A route takes `ctx: Ctx` (`http_deps.py`) plus the narrowest auth dep, calls ONE service function with plain values (`ctx.db`, `ctx.broker`, `ctx.space`, ids, models) and returns its result. `tickets/routes.py` is the model to copy.
+- A route takes `ctx: Ctx` (`http_deps.py`) plus the narrowest auth dep, calls ONE service function with plain values (`ctx.db`, `ctx.space`, ids, models) and returns its result. `tickets/routes.py` is the model to copy.
 - Routers declare `responses=ERROR_RESPONSES` so the generated client knows the error shape.
 - Services own transactions and raise `ApiError(status, code, message)` with a code from `models.ErrorCode`.
 - Auth deps (`auth/deps.py`): `CurrentUser` (any approved user; `pending` gets 403 `pending_approval`), `Writer`, `Admin`, and `SignedIn` (`pending` included; only `GET /api/me`). Role deps run before body validation, so a too-low role gets 403 even with a bad body.
 - Every non-GET `/api/*` request except `/api/worker/*` needs the `X-AgentOS: 1` header (`csrf.py`).
-- `AppContext` (`context.py`) is built once in the lifespan and holds settings, db, launcher, space store, Jira client, broker and caches. Loops and tests use it directly.
+- `AppContext` (`context.py`) is built once in the lifespan and holds settings, db, launcher, space store, Jira client and caches. Loops and tests use it directly.
 - `create_app()` is cheap and side-effect free (the OpenAPI export runs it without config). Config checks, migrations, seeding and the background loops run in the lifespan in `main.py`.
 
 ## API contract
@@ -35,29 +40,23 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Add error codes to `ErrorCode`; never invent one at a raise site. The UI branches on them.
 - `server/tests/test_response_models.py` validates every GET against its model (FastAPI serializes without validating). Extend it for every new GET.
 - `server/tests/test_api_drift.py` fails when `web/src/api/openapi.json` is stale: run `just gen-api` and commit the generated files with the backend change.
-- SSE payload models that appear in no JSON route are added to the schema via `EXTRA_SCHEMAS` in `main.py`.
 
 ## Data and migrations
 - Use `db.tx()` for writes (BEGIN IMMEDIATE, commit or roll back) and `db.read()` for reads (one snapshot; writes raise). Import `Conn`, `Row`, `IntegrityError`, `OperationalError` from `agentos.db`.
 - Timestamps are stored via `clock.to_db` and read via `from_db` / `from_db_opt`; get "now" from `clock.utcnow()`.
-- Migrations are `migrations/NNNN_name.sql`, numbered 1..N with no gaps (`db.migrations()` refuses otherwise). Never edit a shipped migration; add a new one. Before migrating an existing db, `migrate()` backs it up to `{data_dir}/backups/` (5 newest kept). A server refuses a db newer than it knows.
-- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only and tickets pin `template_id` (the template holds the scaffold and agent defaults; a ticket's pipeline is copied from a `workflows` row, recorded as `workflow_id`/`_name`/`_version`); `stage_runs` is keyed by `(run_id, idx)`, one row per stage execution in execution order (a loop block's later rounds insert theirs when they start, with `round` and a check's `verdict`); a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
+- Migrations are `migrations/NNNN_name.sql`, numbered 1..N with no gaps (`db.migrations()` refuses otherwise). `0001_schema.sql` is the schema. Never edit a shipped migration; change the schema by adding the next one (`0002_….sql`). Before migrating an existing db, `migrate()` backs it up to `{data_dir}/backups/` (5 newest kept). A server refuses a db newer than it knows.
+- Schema rules: enum columns have no CHECK constraints (the `Literal`s in `models.py` are the only definition); `users` + `user_identities` (one user, many login providers); `templates` are append-only (the template holds the scaffold, rendered into a ticket at creation, and the agent defaults; a ticket's pipeline is copied from a `workflows` row, recorded as `workflow_id`/`_name`/`_version`); `stage_runs` is keyed by `(run_id, idx)`, one row per stage execution in execution order (a loop block's later rounds insert theirs when they start, with `round` and a check's `verdict`); a run's manifest is built and stored at claim; idempotent inserts use `ON CONFLICT DO NOTHING`.
 - Batch-load for lists (one query per table, never one per ticket).
 
 ## Settings and config
 - `config.Settings` reads `AGENTOS_*` env + `backend/.env` with `extra="forbid"`: a new var must be added to `Settings`, and a typo fails startup.
 - Admin-editable settings (Space, repo catalog, intake queries, runtimes, runner) live in the db `settings` table, one JSON document per area. `space_store.SpaceStore` is the cached read side (`ctx.space`, `ctx.runtimes`, `ctx.runner`); every save must call `store.invalidate()` so it applies without a restart.
-- `agentos.toml` and the moved env vars (`config.MOVED_ENV`) only seed a fresh db (`context.seed_settings`); afterwards they're ignored with a startup warning.
+- A fresh db gets each area's built-in defaults at version 1, updated_by NULL (`context.seed_settings`: Space "AgentOS"/`AOS`, no repos or intake queries, the `claude` + `copilot` runtimes, the default runner, no mappings). Every save needs the area's row, so the seed must cover every area.
 - New settings go in the db, not env, unless they are a URL, a secret, startup/dev config, or decide who may sign in. `deploy/README.md` lists what the env keeps.
-
-## Broker and stream
-- `broker.py` fans notifications out to `GET /api/stream` (SSE). Events are notifications only; the client refetches.
-- Services that change what the UI shows take `broker` as a plain argument and publish **after** the transaction commits, from plain sync code: `broker.ticket(key)`, `broker.run(key, run_id)`, `broker.chat(key, message_id)`. A run or chat change also publishes `ticket(key)`.
-- Every new mutation of a ticket, its files, a run or chat must publish.
 
 ## Runs
 - `runs/service.py` owns the state machine. Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means the run moved already (no-op or conflict; the caller decides).
-- `finish()` is the only terminal path: it runs in the caller's transaction, cancels unfinished stage_runs and stamps `finished_at`. The caller publishes after commit.
+- `finish()` is the only terminal path: it runs in the caller's transaction, cancels unfinished stage_runs and stamps `finished_at`.
 - `runs/dispatcher.py` `tick(ctx)` launches queued runs within `launcher.max_concurrency`; `runs/reaper.py` `Reaper(ctx).tick(now)` (injected clock) fails runs whose worker never connects, goes silent or exceeds the time budget (rules in its docstring). `main.py` runs both as loops.
 - Dispatch and worker tokens are stored only as SHA-256 hex digests and never cleared (a token's validity follows the run's status).
 - The ticket's bundle is read-only (409 `bundle_locked`) only while a run is `running`.
@@ -80,18 +79,20 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Every agent call's output is also echoed on the worker's stderr as it arrives (`Echo`: readable `[stage id] ...` lines from Claude stream-json and Copilot JSONL, anything else as plain text cut short), so a job console or the launcher's log shows the run live; the log events are unchanged. `AGENTOS_ECHO=0` turns it off. Every printed line carries the prefix (control characters are stripped), so agent output can't start a workflow command.
 
 ## Testing
+- Test behaviour, requirements or tricky algorithms only, at the highest seam that shows it: the HTTP API for features, a table for a pure function.
+- An error test asserts the status and `error.code`, plus at most one crucial word of the message, never a sentence.
 - `just check-backend` runs `pytest -n auto` (pytest-xdist, one worker per CPU thread). A plain `uv run pytest [file]` stays serial. The suite runs in random order (pytest-randomly) on every run; the seed is printed at the end (`random order: --randomly-seed=N`, from `server/tests/conftest.py`). Reproduce a failing order with `--randomly-seed=<seed>` (or `=last`), serially or with the same `-n`; `-p no:randomly` runs in file order. For the inner loop, `-m 'not e2e'` skips the end-to-end tests. `gc.freeze()` and a raised GC threshold were measured under xdist and saved nothing, so the test session leaves the GC alone.
-- One app per session (per xdist worker): the session fixture `session_server` creates the app (`run_loops=False`), enters one `TestClient` (base URL `127.0.0.1`, because dev auth needs a loopback host), so the real lifespan migrates and seeds once, and keeps that db as `template.db`. Each test's `ctx` copies the template to its own `settings.db_path`, builds an `AppContext` from that test's `settings` and `launcher` (`build_context`), binds its broker to the app's loop and sets `app.state.ctx`; teardown closes the broker and deletes `app.state.ctx`. `client` depends on `ctx` (not the other way round) and is the session client with its cookies cleared.
-- Tests never modify the shared app (teardown asserts `dependency_overrides` is empty). A module overrides `settings` or `launcher` and the per-test `ctx` picks it up (`test_jira_login.py` swaps in Jira login that way). A test that needs other startup behaviour (startup checks, first-start seeding, loops, an https base URL, the SPA dir) builds its own app with `create_app` and its own `TestClient` on a fresh db, as `test_auth.py`'s `started()` does; never seed those from the template.
+- One app per session (per xdist worker): the session fixture `session_server` writes the test Space into a fresh db (`seed_test_settings`), creates the app (`run_loops=False`) on it, enters one `TestClient` (base URL `127.0.0.1`, because dev auth needs a loopback host), so the real lifespan runs its checks and seeds the template and the Standard workflow once, and keeps that db as `template.db`. Each test's `ctx` copies the template to its own `settings.db_path`, builds an `AppContext` from that test's `settings` and `launcher` (`build_context`) and sets `app.state.ctx`; teardown deletes `app.state.ctx`. `client` depends on `ctx` (not the other way round) and is the session client with its cookies cleared.
+- Tests never modify the shared app (teardown asserts `dependency_overrides` is empty). A module overrides `settings` or `launcher` and the per-test `ctx` picks it up (`test_jira_login.py` swaps in Jira login that way). A test that needs other startup behaviour (startup checks, the fresh-start defaults, loops, an https base URL, the SPA dir) builds its own app with `create_app` and its own `TestClient` on a fresh db, as `test_auth.py`'s `started()` does; never seed those from the template.
 - Fixtures in `server/tests/conftest.py`: `settings` (tmp dirs, dev auth, `Settings(_env_file=None)` so a developer's `.env` never leaks in), `launcher` (a `FakeLauncher`), `app` (the session app), `client`, `ctx`, `authed`, `login(username, role=None)`, `set_role`, `create_ticket`, `add_run` (inserts run rows directly) and `runs` (a `RunDriver` that dispatches, ticks and acts as the worker). `test_fixtures.py` pins the isolation: every test starts signed out on an empty db.
 - An autouse `_clean_env` drops every `AGENTOS_*` var from the shell, so tests see only the settings they pass. Session fixtures run before it, so `session_server` strips them itself.
 - Mutating requests send `CSRF = {"X-AgentOS": "1"}`. Tests drive `dispatcher.tick` / `Reaper.tick` themselves; no loops run.
-- Helpers: `run_support.py` (`FakeLauncher`, `RunDriver`, `Worker`, `event`, `log_event`, `finished`, `bearer`), `settings_support.py` (`set_space`, `set_repos`, `set_queries`). HTTP to Jira/GitHub is faked with `httpx.MockTransport`.
+- Helpers: `run_support.py` (`FakeLauncher`, `RunDriver`, `Worker`, `event`, `log_event`, `finished`, `bearer`), `settings_support.py` (`seed_test_settings`, `set_space`, `set_repos`, `set_queries`). HTTP to Jira/GitHub is faked with `httpx.MockTransport`.
 - `test_e2e.py` is marked `e2e` (real launcher, worker and git; deselect with `-m 'not e2e'`).
 - What bounds the parallel run (~30 s) is real git and subprocess work in the worker run tests and `test_e2e.py` (3–10 s each), not fixture setup: speed it up there, not by re-tuning fixtures.
 - Worker tests: helpers and fixtures in `worker_tests/worker_support.py` (re-exported by its `conftest.py`); autouse `fast` shrinks the timing constants and `no_pr_lookup` sets `AGENTOS_PR_LOOKUP=0`. The fake `server` polls for shutdown every 10 ms. `origin` is a per-test `copytree` of a bare repo the session fixture `origin_template` builds once (tests push to it and add hooks, so it is never shared).
 - PR lookup: `worker.pr_lookup_result` (pure) turns the captured `gh` output into a URL or a reason; `test_worker_pr_lookup.py` tests it as a table. Whole runs are kept only for what a table can't show: a found PR on a failed run, a missing `gh`, the opt-out and no-repo mode.
-- Test runtimes TOML is `fixtures/runtimes_test.toml`. Never name a test file `agentos.toml` (gitignored).
+- The test Space is `settings_support.TEST_SPACE` + `TEST_RUNTIMES`: Space "Test Space", repos `r` (the default repo) and `docs`, runtimes `fake` (the default) and `claude`. `seed_test_settings(settings, space=..., runtimes=...)` migrates the data dir's db and writes every settings area at version 1 (updated_by NULL) as a first start does, so tests send `base_version: 1`. Call it before the app starts; startup then seeds no settings. An own app that needs the test Space calls it first (`test_e2e.py` passes its own repo and runtime).
 
 ## Launchers and deploy
 - `launchers/local.py` `LocalProcessLauncher.from_settings(settings, worker_path)` spawns detached workers (`CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, tested against Ctrl+C) so a `--reload` doesn't kill runs.

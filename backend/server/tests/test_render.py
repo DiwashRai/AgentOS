@@ -18,13 +18,12 @@ from agentos.pipeline.render import (
     render_scaffold,
     yaml_safe_json,
 )
-from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, LEGACY_SKILL_MD_V1, PROMPTS
+from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, PROMPTS
 
 D = ".claude/skills/context-aos-42"
 
 TICKET = TicketRef(
     key="AOS-42",
-    slug="",
     title="Fix login bug: session expires early",
     description="Sessions expire after 5 minutes instead of 14 days.",
     type="bug",
@@ -236,11 +235,6 @@ def test_skill_md_frontmatter_valid_for_awkward_titles(title: str) -> None:
         fm["description"] == "Objective and working context for AOS-42. Use when working on AOS-42."
     )
     assert f"\n---\n# AOS-42: {title}\n" in skill.content  # the title lives in the body
-    # A stored template may still carry the old SKILL.md (title in the description): still valid.
-    legacy = render_scaffold([FileEntry(path="{{paths.skill_md}}", content=LEGACY_SKILL_MD_V1)], t)
-    fm = _frontmatter(legacy[0].content)
-    assert title in fm["description"]
-    assert len(fm["description"]) <= 1024
 
 
 def test_scaffold_render_error_names_entry() -> None:

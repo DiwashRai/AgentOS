@@ -1,4 +1,4 @@
-# AgentOS task runner. `just check` is the single gate CI and agents run.
+# AgentOS task runner. `just check` runs every gate.
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 default: check
@@ -44,28 +44,17 @@ gen-api:
     cd backend; uv run python -m agentos.openapi_export ../web/src/api/openapi.json
     cd web; npm run gen:api
 
-# Real backend on :8000 (one instance only). Short graceful shutdown so open SSE streams
+# Real backend on :8000 (one instance only). Short graceful shutdown so open connections
 # don't block --reload.
 [working-directory('backend')]
 dev-backend:
     if (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue) { throw "port 8000 is already in use: another backend is running" }
     uv run uvicorn --factory agentos.main:create_app --reload --timeout-graceful-shutdown 2 --host 127.0.0.1 --port 8000 --app-dir server
 
-# Frozen stub backend on :8001 for UI work, from a worktree at tag `stubs-v1`. It never changes
-# while the real backend is being built.
-dev-stubs:
-    if (-not (Test-Path ../AgentOS-stubs)) { git worktree add ../AgentOS-stubs stubs-v1 }
-    cd ../AgentOS-stubs/backend; uv run uvicorn --factory agentos.main:create_app --host 127.0.0.1 --port 8001 --app-dir server
-
 # Web dev server against the real backend (:8000).
 [working-directory('web')]
 dev-web:
     npm run dev
-
-# Web dev server against the frozen stubs (:8001).
-[working-directory('web')]
-dev-web-stubs:
-    $env:AGENTOS_BACKEND_URL = 'http://127.0.0.1:8001'; npm run dev
 
 # Fast gates used by the pre-commit hook, scoped to the staged half.
 [working-directory('backend')]

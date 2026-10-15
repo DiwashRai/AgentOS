@@ -1,7 +1,7 @@
 """A fake agent runtime for the end-to-end test (SPEC §14): no network, no LLM.
 
-Configured as `[sys.executable, <this file>]` with `prompt_via = "stdin"` in a runtimes TOML the
-test writes. It reads the prompt from stdin and acts on the LAST line of the form
+Configured as `[sys.executable, <this file>]` with `prompt_via = "stdin"` as the runtime the test
+seeds. It reads the prompt from stdin and acts on the LAST line of the form
 `fake-agent: <mode>` (the test appends one to each stage's prompt through the pipeline API):
 
   plan       write a 3-item checklist to TASKS.md, append to learnings.log

@@ -40,7 +40,7 @@ from agentos.pipeline.render import TicketRef, render_prompt
 from agentos.pipeline.runtime import RuntimesConfig, RuntimeSpec, space_defaults
 from agentos.pipeline.scaffold import names
 from agentos.pipeline.segment import RunPlan, loops_by_stage
-from agentos.validate import MAX_AGENT_LINE_BYTES, MAX_FILE_BYTES, path_key
+from agentos.validate import MAX_AGENT_LINE_BYTES, MAX_FILE_BYTES
 
 VERDICT_SCHEMA_JSON = json.dumps(VERDICT_SCHEMA, separators=(",", ":"))
 FOLLOW_UP = "The checks found problems with the last change. Address every point, then stop."
@@ -292,22 +292,15 @@ def build_manifest(
     runtimes: RuntimesConfig,
     *,
     defaults: TemplateDefaults,
-    library: Sequence[FileEntry] = (),
     new_session: NewSession = new_session_id,
 ) -> Manifest:
     """The manifest a worker receives at claim.
 
-    `bundle` is the ticket's current (non-deleted) files → `sync=True`. `library` (M1 seam:
-    library-set files) → `sync=False`, listed first; the bundle wins a (case-insensitive) path
-    collision. In no-repo mode the workspace's `repo_url`/`base_branch`/`branch` are null.
+    `bundle` is the ticket's current (non-deleted) files → `sync=True`. In no-repo mode the
+    workspace's `repo_url`/`base_branch`/`branch` are null.
     """
-    n = names(ticket.key, ticket.slug, ticket.workspace_mode)
-    bundle_paths = {path_key(f.path) for f in bundle}
-    files = [
-        ManifestFile(path=f.path, content=f.content, mode=f.mode, sync=False)
-        for f in library
-        if path_key(f.path) not in bundle_paths
-    ] + [ManifestFile(path=f.path, content=f.content, mode=f.mode, sync=True) for f in bundle]
+    n = names(ticket.key, ticket.workspace_mode)
+    files = [ManifestFile(path=f.path, content=f.content, mode=f.mode, sync=True) for f in bundle]
     repo = ticket.workspace_mode == "repo"
     stages = render_stages(
         run_id,
@@ -320,7 +313,7 @@ def build_manifest(
     )
     return Manifest(
         run_id=run_id,
-        ticket=ManifestTicket(key=ticket.key, slug=ticket.slug, title=ticket.title),
+        ticket=ManifestTicket(key=ticket.key, title=ticket.title),
         workspace=ManifestWorkspace(
             mode=ticket.workspace_mode,
             repo_url=ticket.repo_url if repo else None,

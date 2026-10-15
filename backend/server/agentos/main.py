@@ -1,6 +1,6 @@
 """App factory. Run with: uvicorn --factory agentos.main:create_app
 
-`create_app()` is cheap and side-effect free (the OpenAPI export needs no .env or agentos.toml).
+`create_app()` is cheap and side-effect free (the OpenAPI export needs no .env).
 Config checks, migrations and background loops run in the lifespan.
 """
 
@@ -13,7 +13,6 @@ from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.openapi.utils import get_openapi
 
 from agentos.auth.routes import router as auth_router
 from agentos.clock import utcnow
@@ -30,7 +29,6 @@ from agentos.mailbox import dispatcher as mailbox_dispatcher
 from agentos.mailbox.reaper import INTERVAL_S as MAILBOX_REAPER_INTERVAL_S
 from agentos.mailbox.reaper import MailboxReaper
 from agentos.meta import router as meta_router
-from agentos.models import StreamEvent
 from agentos.runs import dispatcher
 from agentos.runs.reaper import INTERVAL_S as REAPER_INTERVAL_S
 from agentos.runs.reaper import Reaper
@@ -38,19 +36,14 @@ from agentos.runs.routes import router as runs_router
 from agentos.settings.routes import router as settings_router
 from agentos.social.routes import router as chat_router
 from agentos.spa import router as spa_router
-from agentos.stream import router as stream_router
 from agentos.templates.routes import router as template_router
 from agentos.templates.service import seed_default as seed_default_template
 from agentos.tickets.routes import router as tickets_router
-from agentos.tickets.service import backfill_repos as backfill_ticket_repos
 from agentos.worker_api.routes import router as worker_router
 from agentos.workflows.routes import router as workflows_router
 from agentos.workflows.service import seed_standard as seed_standard_workflow
 
 log = logging.getLogger(__name__)
-
-# Models that never appear in a JSON route but are part of the contract (SSE payloads).
-EXTRA_SCHEMAS = (StreamEvent,)
 
 
 async def _every(
@@ -119,10 +112,8 @@ def create_app(
             log.critical("AgentOS cannot start. %s", exc)  # fail fast with the readable message
             raise
         app.state.ctx = ctx
-        ctx.broker.bind(asyncio.get_running_loop())
         seed_default_template(ctx.db)
         seed_standard_workflow(ctx.db)  # after the template: Standard copies its pipeline
-        backfill_ticket_repos(ctx.db, ctx.space)
         stop = asyncio.Event()
         loops: list[asyncio.Task[None]] = []
         if run_loops:
@@ -130,9 +121,6 @@ def create_app(
         try:
             yield
         finally:
-            # Open SSE streams end here at the latest (uvicorn's --timeout-graceful-shutdown
-            # cancels them before the lifespan stops, so a reload never waits on a browser tab).
-            ctx.broker.close()
             stop.set()
             await asyncio.gather(*loops, return_exceptions=True)
 
@@ -150,22 +138,8 @@ def create_app(
         template_router,
         workflows_router,
         settings_router,
-        stream_router,
         worker_router,
         spa_router,  # last: its catch-all serves the SPA for every non-/api path
     ):
         app.include_router(router)
-
-    def openapi() -> dict[str, Any]:
-        if app.openapi_schema is None:
-            schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
-            components = schema.setdefault("components", {}).setdefault("schemas", {})
-            for model in EXTRA_SCHEMAS:
-                components[model.__name__] = model.model_json_schema(
-                    ref_template="#/components/schemas/{model}"
-                )
-            app.openapi_schema = schema
-        return app.openapi_schema
-
-    app.openapi = openapi  # type: ignore[method-assign]
     return app
