@@ -1,8 +1,8 @@
 """Publish to a real GitHub repo through the Git Data API, the way the worker does on Actions.
 
-A manual check, not a test: pytest never collects it and CI never runs it. From backend/:
+A live check, run by hand: pytest never collects `live/` and CI never runs it. From backend/:
 
-    uv run python worker/live_publish.py <owner/repo>
+    uv run python worker/worker_tests/live/github_publish.py <owner/repo>
 
 with GH_TOKEN set to a token that can write to the repo's contents (GITHUB_API_URL and
 GITHUB_SERVER_URL default to github.com). It clones the repo into a temp dir and, on a throwaway
@@ -23,6 +23,8 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import worker
 
 GIT_TIMEOUT_S = 300
@@ -34,8 +36,8 @@ class Fail(Exception):
 
 def make_git(workdir: Path, env: dict[str, str]) -> worker.GitRunner:
     def git(*args: str, stdin: bytes | None = None) -> worker.GitResult:
-        p = subprocess.run(  # noqa: S603 - git with argv built by this script, no shell
-            ["git", "-c", "core.quotePath=false", *args],  # noqa: S607 - git from PATH, as the worker
+        p = subprocess.run(
+            ["git", "-c", "core.quotePath=false", *args],
             cwd=workdir,
             env=env,
             input=stdin,
@@ -170,7 +172,10 @@ def main(argv: list[str]) -> int:
     api_url = os.environ.get("GITHUB_API_URL", "https://api.github.com").strip()
     server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").strip()
     if len(argv) != 1 or not token:
-        print("usage: GH_TOKEN=... python worker/live_publish.py <owner/repo>", file=sys.stderr)
+        print(
+            "usage: GH_TOKEN=... python worker/worker_tests/live/github_publish.py <owner/repo>",
+            file=sys.stderr,
+        )
         return 2
     repo, why = worker.github_repo(f"{server_url.rstrip('/')}/{argv[0]}", server_url)
     if repo is None:

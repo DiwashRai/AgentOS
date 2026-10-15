@@ -200,8 +200,8 @@ launcher, a client and a plain `worker.py` still use `git push`. There is no set
   through the outbox to Artifactory.
 
 **Checking against the real API** (by hand, never in CI): from `backend/`, with `GH_TOKEN` set to
-a token that can write the repo's contents, run `uv run python worker/live_publish.py
-<owner/repo>` (use a scratch repo). It clones the repo, publishes added, modified, deleted,
+a token that can write the repo's contents, run `uv run python
+worker/worker_tests/live/github_publish.py <owner/repo>` (use a scratch repo). It clones the repo, publishes added, modified, deleted,
 executable, symlinked and binary files to a new throwaway branch, checks the remote tree, then
 publishes a second batch and checks it fast-forwards. It prints PASS or FAIL and deletes the
 branch. `GITHUB_API_URL` / `GITHUB_SERVER_URL` default to github.com.
