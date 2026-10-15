@@ -39,7 +39,6 @@ from agentos.spa import router as spa_router
 from agentos.templates.routes import router as template_router
 from agentos.templates.service import seed_default as seed_default_template
 from agentos.tickets.routes import router as tickets_router
-from agentos.tickets.service import backfill_repos as backfill_ticket_repos
 from agentos.worker_api.routes import router as worker_router
 from agentos.workflows.routes import router as workflows_router
 from agentos.workflows.service import seed_standard as seed_standard_workflow
@@ -115,7 +114,6 @@ def create_app(
         app.state.ctx = ctx
         seed_default_template(ctx.db)
         seed_standard_workflow(ctx.db)  # after the template: Standard copies its pipeline
-        backfill_ticket_repos(ctx.db, ctx.space)
         stop = asyncio.Event()
         loops: list[asyncio.Task[None]] = []
         if run_loops:

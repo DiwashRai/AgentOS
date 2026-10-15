@@ -1,10 +1,9 @@
 """Tickets: create, list filters, detail, patch and pipeline PUT (SPEC §4, §6, §10), and the
-repo catalog (SPEC §17): repo by name, catalog changes, the startup backfill."""
+repo catalog (SPEC §17): repo by name, catalog changes."""
 
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -14,13 +13,11 @@ from fastapi.testclient import TestClient
 
 from agentos.config import Settings
 from agentos.context import AppContext
-from agentos.db import Database
 from agentos.main import create_app
 from agentos.models import Me, Pipeline, TicketDetail, TicketSummary
 from agentos.pipeline.scaffold import default_pipeline
 from agentos.pipeline.space import RepoSpec
-from agentos.tickets.service import backfill_repos
-from tests.settings_support import TEST_SPACE, seed_test_settings, set_repos, set_space
+from tests.settings_support import set_repos, set_space
 
 CSRF = {"X-AgentOS": "1"}
 BASE_URL = "http://127.0.0.1:8000"
@@ -547,45 +544,3 @@ def test_a_catalog_change_reaches_existing_tickets(authed: TestClient, ctx: AppC
         None,
         None,
     )
-
-
-def test_startup_backfills_legacy_repo_urls(
-    settings: Settings, caplog: pytest.LogCaptureFixture
-) -> None:
-    seed_test_settings(settings)
-    with started(settings) as c:
-        k = [post(c).json()["key"] for _ in range(4)]
-    legacy = {  # tickets as created before the repo catalog: repo_url + a stored base branch
-        k[0]: ("https://GitHub.com/o/r/", "main"),  # matches r: its default branch is cleared
-        k[1]: ("git@github.com:o/docs", "release"),  # matches docs: its own branch is kept
-        k[2]: ("https://github.com/other/x.git", "main"),  # in no catalog entry
-        k[3]: (None, "main"),  # a repo ticket that never had a URL
-    }
-    db = Database(settings.db_path)
-    with db.tx() as conn:
-        for key, (url, branch) in legacy.items():
-            conn.execute(
-                "UPDATE tickets SET repo = NULL, workspace_mode = 'repo', repo_url = ?, "
-                "base_branch = ? WHERE key = ?",
-                (url, branch, key),
-            )
-
-    with caplog.at_level(logging.WARNING), started(settings) as c:
-        got = {key: TicketDetail.model_validate(c.get(f"/api/tickets/{key}").json()) for key in k}
-    assert (got[k[0]].repo_name, got[k[0]].base_branch) == ("r", "main")
-    assert (got[k[1]].repo_name, got[k[1]].base_branch) == ("docs", "release")
-    for key in k[2:]:  # unmatched: acts as a no-repo ticket
-        assert (got[key].workspace_mode, got[key].repo_name, got[key].branch) == (
-            "none",
-            None,
-            None,
-        )
-    with db.read() as conn:
-        assert (
-            conn.execute("SELECT base_branch FROM tickets WHERE key = ?", (k[0],)).fetchone()[0]
-            is None
-        )
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any(f"{k[2]}, {k[3]}" in w for w in warnings), warnings
-    # Idempotent: a second pass changes nothing and reports the same unmatched tickets.
-    assert backfill_repos(db, TEST_SPACE) == k[2:]

@@ -49,7 +49,6 @@ __all__ = [
     "SpaceConfig",
     "SpaceSection",
     "query_id",
-    "repo_url_key",
     "resolve_base_branch",
 ]
 
@@ -224,11 +223,6 @@ class SpaceConfig(BaseModel):
             )
         return repo
 
-    def repo_for_url(self, url: str) -> RepoSpec | None:
-        """The catalog entry for a repo URL (see `repo_url_key`), if any."""
-        key = repo_url_key(url)
-        return next((r for r in self.repos if repo_url_key(r.url) == key), None)
-
     def resolve(
         self, repo: str | None, base_branch: str | None, *, source: BaseBranchSource
     ) -> ResolvedRepo:
@@ -279,20 +273,6 @@ class ResolvedRepo:
     url: str | None
     base_branch: str | None
     origin: BaseBranchOrigin | None  # None in no-repo mode
-
-
-def repo_url_key(url: str) -> str:
-    """A repo URL's identity for matching: no trailing `/` or `.git`, host case-insensitive.
-
-    `https://GitHub.com/o/r.git/` and `https://github.com/o/r` match; https vs ssh don't.
-    """
-    u = url.strip().rstrip("/").removesuffix(".git").rstrip("/")
-    if "://" in u:
-        scheme, rest = u.split("://", 1)
-        authority, sep, path = rest.partition("/")
-        return f"{scheme.lower()}://{authority.lower()}{sep}{path}"
-    authority, sep, path = u.partition(":")  # scp-like git@host:path
-    return f"{authority.lower()}{sep}{path}"
 
 
 def query_id(name: str, taken: Collection[str]) -> str:
