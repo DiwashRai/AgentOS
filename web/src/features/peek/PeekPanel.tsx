@@ -11,7 +11,7 @@ import { firstName, repoShort } from "../../domain/format";
 import { outcomeWord, resolvedBy } from "../../domain/outcome";
 import { firstParagraph, paragraphs, planView } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
-import { runLine, sourceWord, stageCount, statusMark } from "../../domain/ticketView";
+import { runLine, sourceWord, stageCount, statusLine, statusMark } from "../../domain/ticketView";
 import { words } from "../../domain/words";
 import {
   Button,
@@ -81,8 +81,8 @@ function Run({ ticket: t }: { ticket: Summary }) {
 
 function Status({ ticket: t }: { ticket: Summary }) {
   const mark = statusMark(t);
-  // A closed ticket's note (Complete / Abandoned) says more than the server's status line.
-  const note = t.resolution?.note ?? t.now.text;
+  // A closed ticket's note (Complete / Abandoned) says more than the status line.
+  const note = t.resolution?.note ?? statusLine(t).text;
   return (
     <Stack as="section" gap={4} className={s.sec} aria-label="Status">
       <h3 className={cx(text.label, s.lab)}>Status</h3>
