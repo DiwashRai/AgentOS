@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 // A versioned document page: its loading / admins-only / error states, a save sending the value
 // over its base version, a 422 putting every issue on its field at once, a 409 whose Reload keeps
-// the draft and saves over the fresh version, validate-only issues after a pause, and one leave
-// warning for a page with two documents. Real TanStack Query and react-router; a fake server.
+// the draft and saves over the fresh version (and whose Discard shows the other admin's copy),
+// validate-only issues after a pause, a save answering late, a draft reverted to the saved copy
+// starting over, and one leave warning for the page's documents and its own `dirty`. Real TanStack
+// Query and react-router; a fake server.
 import {
   QueryClient,
   QueryClientProvider,
@@ -27,6 +29,7 @@ import {
   type DocumentSave,
   type DocumentState,
 } from "./useDocument";
+import { useDraftState } from "./useDraft";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,21 +58,34 @@ function invalid(issues: ValidationIssue[]): ApiError {
 /** One document on a fake server; `overwrite` is another admin's save. */
 function fakeServer(value: Repo) {
   let doc: Read = { value, version: 1, updated_at: "2026-10-12T09:00:00Z", updated_by: null };
+  const apply = (body: DocumentSave<Repo>): Promise<Read> => {
+    if (body.base_version !== doc.version) {
+      return Promise.reject(new ApiError(409, "stale_version", "stale"));
+    }
+    const issues = check(body.value);
+    if (issues.length > 0) return Promise.reject(invalid(issues));
+    doc = { ...doc, value: body.value, version: doc.version + 1 };
+    return Promise.resolve(doc);
+  };
+  const save = vi.fn(apply);
   return {
     current: () => doc,
     overwrite(next: Repo) {
       doc = { ...doc, value: next, version: doc.version + 1 };
     },
+    /** Hold the next save until the returned function is called; it then answers as usual. */
+    hold(): () => void {
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      save.mockImplementationOnce((body) => gate.then(() => apply(body)));
+      return () => {
+        release();
+      };
+    },
     read: vi.fn(() => Promise.resolve(doc)),
-    save: vi.fn((body: DocumentSave<Repo>) => {
-      if (body.base_version !== doc.version) {
-        return Promise.reject(new ApiError(409, "stale_version", "stale"));
-      }
-      const issues = check(body.value);
-      if (issues.length > 0) return Promise.reject(invalid(issues));
-      doc = { ...doc, value: body.value, version: doc.version + 1 };
-      return Promise.resolve(doc);
-    }),
+    save,
     validate: vi.fn((body: { value: Repo }) => {
       const issues = check(body.value);
       return issues.length > 0 ? Promise.reject(invalid(issues)) : Promise.resolve(undefined);
@@ -129,19 +145,20 @@ function RepoSection({ title, doc }: { title: string; doc: DocumentState<Read, R
   );
 }
 
+/** `viewerRole` undefined: the signed-in person is still loading. */
 function OnePage({
   server,
   viewerRole,
   live,
 }: {
   server: Server;
-  viewerRole: string;
+  viewerRole: string | undefined;
   live: boolean;
 }) {
   const doc = useRepoDocument(server, "one", live);
   return (
     <DocumentPage
-      viewer={{ role: viewerRole }}
+      viewer={viewerRole === undefined ? undefined : { role: viewerRole }}
       adminsOnly={ADMINS_ONLY}
       noun="repo"
       sources={[doc]}
@@ -160,6 +177,38 @@ function TwoPage({ first, second }: { first: Server; second: Server }) {
         <>
           <RepoSection title="First" doc={a} />
           <RepoSection title="Second" doc={b} />
+        </>
+      )}
+    </DocumentPage>
+  );
+}
+
+/** A document plus a plain draft on the same page (the runtimes on Runners), passed as `dirty`. */
+function DraftPropPage({ server }: { server: Server }) {
+  const doc = useRepoDocument(server, "one", false);
+  const runtime = useDraftState("claude", 1, (a, b) => a === b);
+  return (
+    <DocumentPage
+      viewer={{ role: "admin" }}
+      adminsOnly={ADMINS_ONLY}
+      noun="runner"
+      sources={[doc]}
+      dirty={runtime.dirty}
+    >
+      {() => (
+        <>
+          <RepoSection title="Repo" doc={doc} />
+          <Field label="Runtime">
+            {({ id }) => (
+              <Input
+                id={id}
+                value={runtime.value ?? ""}
+                onChange={(e) => {
+                  runtime.edit(e.target.value);
+                }}
+              />
+            )}
+          </Field>
         </>
       )}
     </DocumentPage>
@@ -199,7 +248,7 @@ function mount(page: ReactNode) {
       </QueryClientProvider>,
     );
   });
-  return { el, router };
+  return { el, router, client };
 }
 
 /** Let fetches, mutations and their re-renders finish. */
@@ -255,6 +304,12 @@ function click(b: HTMLElement) {
   });
 }
 
+async function navigate(router: ReturnType<typeof createMemoryRouter>, to: string) {
+  await act(async () => {
+    await router.navigate(to);
+  });
+}
+
 const VALID: Repo = { name: "a", url: "https://x/a" };
 
 // ------------------------------------------------------------------ tests
@@ -283,6 +338,17 @@ describe("DocumentPage", () => {
     ({ el } = mount(<OnePage server={broken} viewerRole="admin" live={false} />));
     await settle();
     expect(roles(el, "alert")).toHaveLength(1);
+    expect(el.querySelector("input")).toBeNull();
+  });
+
+  it("shows loading while the viewer is unknown, even once the document has loaded", async () => {
+    const server = fakeServer(VALID);
+    const { el } = mount(<OnePage server={server} viewerRole={undefined} live={false} />);
+    await settle();
+
+    expect(server.read).toHaveBeenCalled();
+    expect(roles(el, "status")).toHaveLength(1);
+    expect(roles(el, "status")).not.toEqual([ADMINS_ONLY]);
     expect(el.querySelector("input")).toBeNull();
   });
 
@@ -377,7 +443,99 @@ describe("DocumentPage", () => {
     expect(server.current().version).toBe(1);
   });
 
-  it("gives a page with two documents one leave warning", async () => {
+  it("keeps a newer validate's issues when an older save's 422 comes back late", async () => {
+    const server = fakeServer(VALID);
+    const { el } = mount(<OnePage server={server} viewerRole="admin" live />);
+    await settle();
+    const name = textbox(el, "Repo name");
+    const url = textbox(el, "Repo URL");
+    const release = server.hold();
+
+    // The save sends a bad name; while it is out, the name is fixed and the URL broken.
+    type(name, "A");
+    click(button(el, "Save"));
+    type(name, "a");
+    type(url, "ftp://x/a");
+    await settle(VALIDATE_DELAY_MS + 50);
+    expect(description(url)).toBe("url rule");
+
+    release();
+    await settle();
+
+    expect(server.save).toHaveBeenCalledTimes(1);
+    expect(description(url)).toBe("url rule");
+    expect(name.getAttribute("aria-invalid")).toBe("false");
+    expect(button(el, "Save").disabled).toBe(true);
+  });
+
+  it("keeps an edit made while a save is in flight, over the version that save wrote", async () => {
+    const server = fakeServer(VALID);
+    const { el } = mount(<OnePage server={server} viewerRole="admin" live />);
+    await settle();
+    const url = textbox(el, "Repo URL");
+    const release = server.hold();
+
+    type(url, "https://y/a");
+    click(button(el, "Save"));
+    type(url, "ftp://y/a");
+    await settle(VALIDATE_DELAY_MS + 50);
+    release();
+    await settle();
+
+    expect(server.current()).toMatchObject({ version: 2, value: { url: "https://y/a" } });
+    expect(url.value).toBe("ftp://y/a");
+    expect(description(url)).toBe("url rule");
+
+    type(url, "https://z/a");
+    click(button(el, "Save"));
+    await settle();
+    expect(server.save.mock.calls[1]?.[0].base_version).toBe(2);
+    expect(server.current()).toMatchObject({ version: 3, value: { url: "https://z/a" } });
+  });
+
+  it("discards after a conflict and shows the other admin's copy", async () => {
+    const server = fakeServer(VALID);
+    const { el } = mount(<OnePage server={server} viewerRole="admin" live={false} />);
+    await settle();
+
+    server.overwrite({ name: "a", url: "https://other/a" });
+    type(textbox(el, "Repo URL"), "https://mine/a");
+    click(button(el, "Save"));
+    await settle();
+    expect(roles(section(el, "Repo"), "alert")).toHaveLength(1);
+
+    click(button(section(el, "Repo"), "Discard"));
+    await settle();
+
+    expect(textbox(el, "Repo URL").value).toBe("https://other/a");
+    expect(roles(section(el, "Repo"), "alert")).toEqual([]);
+    expect(button(el, "Save").disabled).toBe(true);
+  });
+
+  it("starts a draft reverted to the saved copy over the current version", async () => {
+    const server = fakeServer(VALID);
+    const { el, client } = mount(<OnePage server={server} viewerRole="admin" live={false} />);
+    await settle();
+
+    type(textbox(el, "Repo URL"), "https://y/a");
+    type(textbox(el, "Repo URL"), "https://x/a");
+    expect(button(el, "Save").disabled).toBe(true);
+
+    // Another admin's save arrives with the next read.
+    server.overwrite({ name: "a", url: "https://other/a" });
+    void client.refetchQueries();
+    await settle();
+    expect(textbox(el, "Repo URL").value).toBe("https://other/a");
+
+    type(textbox(el, "Repo URL"), "https://mine/a");
+    click(button(el, "Save"));
+    await settle();
+
+    expect(server.save.mock.calls[0]?.[0].base_version).toBe(2);
+    expect(server.current()).toMatchObject({ version: 3, value: { url: "https://mine/a" } });
+  });
+
+  it("gives a page with two documents one leave warning, over either document", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const { el, router } = mount(
@@ -385,26 +543,38 @@ describe("DocumentPage", () => {
     );
     await settle();
 
-    type(textbox(el, "First URL"), "https://y/a");
     type(textbox(el, "Second URL"), "https://y/b");
 
-    await act(async () => {
-      await router.navigate("/other");
-    });
+    await navigate(router, "/other");
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(router.state.location.pathname).toBe("/settings");
 
     // A query-string change (a peek opening) keeps the page, so it doesn't ask.
-    await act(async () => {
-      await router.navigate("/settings?peek=AB-1");
-    });
+    await navigate(router, "/settings?peek=AB-1");
     expect(confirm).toHaveBeenCalledTimes(1);
 
     confirm.mockReturnValue(true);
-    await act(async () => {
-      await router.navigate("/other");
-    });
+    await navigate(router, "/other");
     expect(confirm).toHaveBeenCalledTimes(2);
+    expect(router.state.location.pathname).toBe("/other");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns for a plain draft passed as the page's dirty", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { el, router } = mount(<DraftPropPage server={fakeServer(VALID)} />);
+    await settle();
+
+    type(textbox(el, "Runtime"), "copilot");
+    await navigate(router, "/other");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(router.state.location.pathname).toBe("/settings");
+
+    // Back to the saved copy: nothing to lose, so it leaves without asking.
+    type(textbox(el, "Runtime"), "claude");
+    await navigate(router, "/other");
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(router.state.location.pathname).toBe("/other");
     expect(warn).not.toHaveBeenCalled();
   });

@@ -16,7 +16,7 @@ import {
   usePreview,
   type Issues,
 } from "../../../editor";
-import { Button, CountPill } from "../../../ui";
+import { Button, CountPill, text } from "../../../ui";
 import { typeText } from "../../intake/model";
 import s from "./IntakeSettings.module.css";
 import {
@@ -107,6 +107,13 @@ function QueryFields({ row, label, issues, readOnly, preview, onPatch }: QueryFi
   const test = usePreview(preview, jql === "" ? undefined : jql);
   const line = previewLine(test);
 
+  // Issues about the row as a whole and about its id (which has no field) show under the JQL,
+  // beside the id hint.
+  const rowIssues = [
+    ...messagesAt(issues, pathOf("queries", row.key)),
+    ...messagesAt(issues, pathOf("queries", row.key, "id")),
+  ];
+
   return (
     <div className={s.fields}>
       <Field label="Name" error={errorAt(issues, pathOf("queries", row.key, "name"))}>
@@ -148,6 +155,12 @@ function QueryFields({ row, label, issues, readOnly, preview, onPatch }: QueryFi
           />
         )}
       </Field>
+
+      {rowIssues.map((msg) => (
+        <p key={msg} className={text.error} role="alert">
+          {msg}
+        </p>
+      ))}
 
       <div className={s.test}>
         <div className={s.testBar}>

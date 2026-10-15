@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../../api/client";
+import { messagesAt, pathOf, placeIssues } from "../../../editor/issues";
 import {
   fromForm,
   patchQuery,
   previewLine,
   queryLabels,
   sameForm,
+  sentKeys,
+  SHOWN,
   toForm,
   type IntakePreview,
   type PreviewItem,
@@ -43,6 +46,25 @@ describe("form ↔ value", () => {
     expect(sameForm(a, toForm(SAVED))).toBe(true);
     expect(sameForm(a, { queries: [...a.queries].reverse() })).toBe(false);
     expect(sameForm(a, patchQuery(a, a.queries[1]?.key ?? "", { jql: "x" }))).toBe(false);
+  });
+});
+
+describe("issue placement", () => {
+  it("puts a row's own issues and its id's on that row, not on the list", () => {
+    const form = toForm(SAVED);
+    const second = form.queries[1]?.key ?? "";
+    const issues = placeIssues(
+      [
+        { loc: ["value", "queries", 1, "id"], message: "duplicate" },
+        { loc: ["value", "queries", 1], message: "whole row" },
+      ],
+      { keys: sentKeys(form), shown: SHOWN },
+    );
+
+    expect(messagesAt(issues, pathOf("queries", second, "id"))).toEqual(["duplicate"]);
+    expect(messagesAt(issues, pathOf("queries", second))).toEqual(["whole row"]);
+    expect(messagesAt(issues, "queries")).toEqual([]);
+    expect(issues.form).toEqual([]);
   });
 });
 

@@ -188,11 +188,15 @@ def _raise_issues(
     checked: _D | None,
     issues: list[ValidationIssue],
 ) -> _D:
-    """`checked`, or one 422 listing `issues` plus the db-dependent ones."""
+    """`checked`, or one 422 listing `issues` plus the db-dependent ones. A check answers no
+    document only with an issue, so no document and no issue is a server bug."""
     if doc.db_check is not None:
         issues = [*issues, *doc.db_check(conn, value)]
-    if checked is None or issues:
+    if issues:
         raise validation_error(issues)
+
+    if checked is None:
+        raise RuntimeError(f"the {doc.area!r} check answered no document and no issue")
     return checked
 
 
@@ -474,15 +478,14 @@ def put_runtimes(db: Database, actor: Me, body: RuntimeSettingsUpdate) -> Runtim
     for i, entry in enumerate(body.runtimes):
         named, problems = parsed(NamedRuntime, entry.model_dump(), ("runtimes", i))
         issues += problems
-        if entry.name in names:
-            issues.append(
-                ValidationIssue(
-                    loc=["runtimes", i, "name"], message=f"{entry.name!r} is listed twice"
-                )
-            )
-        names.add(entry.name)
-        if named is not None:
-            entries.append(named)
+        if named is None:
+            continue
+
+        if named.name in names:
+            message = f"{named.name!r} is listed twice"
+            issues.append(ValidationIssue(loc=["runtimes", i, "name"], message=message))
+        names.add(named.name)
+        entries.append(named)
     if issues:
         raise validation_error(issues)
 

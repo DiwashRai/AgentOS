@@ -12,7 +12,7 @@ import {
   useValidateSettings,
 } from "../../../api/queries";
 import { DocumentPage, DocumentSection, pageStyles as pages, useDocument } from "../../../editor";
-import { linkClass } from "../../../ui";
+import { linkClass, text } from "../../../ui";
 import s from "./IntakeSettings.module.css";
 import { fromForm, sameForm, sentKeys, SHOWN, toForm } from "./model";
 import { QueryEditor } from "./QueryEditor";
@@ -48,7 +48,7 @@ export function IntakeSettingsPage() {
           document={doc}
           description={
             <p className={pages.banner} role="note">
-              <span className={pages.k}>Intake</span>
+              <span className={text.label}>Intake</span>
               <span>
                 The server adds <code className={s.code}>ORDER BY updated DESC</code> unless the JQL
                 has its own ORDER BY. Issues outside the Space&apos;s Jira projects are never

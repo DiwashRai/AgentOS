@@ -30,8 +30,10 @@ class ApiError(Exception):
 
 
 def validation_error(issues: Sequence[ValidationIssue]) -> ApiError:
-    """A 422 `validation_error` listing every issue (at least one). Its message is the first
-    issue as `a.0.b: message` (just the message when `loc` is empty)."""
+    """A 422 `validation_error` listing every issue. Its message is the first issue as
+    `a.0.b: message` (just the message when `loc` is empty); no issues give one request-level
+    "Invalid." issue."""
+    issues = list(issues) or [ValidationIssue(loc=[], message="Invalid.")]
     first = issues[0]
     where = ".".join(str(part) for part in first.loc)
     message = f"{where}: {first.message}" if where else first.message

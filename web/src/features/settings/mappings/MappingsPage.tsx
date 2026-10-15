@@ -18,6 +18,7 @@ import {
   pageStyles as pages,
   useDocument,
 } from "../../../editor";
+import { text } from "../../../ui";
 import { MappingCard, type FieldsState } from "./MappingCard";
 import s from "./Mappings.module.css";
 import {
@@ -71,7 +72,7 @@ export function MappingsPage() {
           document={doc}
           description={
             <p className={pages.banner} role="note">
-              <span className={pages.k}>Jira</span>
+              <span className={text.label}>Jira</span>
               <span>
                 Rules apply when a Jira issue is imported or taken in. Saving re-applies them to
                 tickets a mapping set that haven&apos;t started a run yet; branches set by hand and

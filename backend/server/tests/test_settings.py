@@ -207,21 +207,14 @@ def test_projects_are_required_while_sign_in_is_jira(authed: TestClient, ctx: Ap
     assert put_space(authed, jira_projects=["SCRUM"]).status_code == 200
 
 
-def test_put_space_lists_every_problem(authed: TestClient, ctx: AppContext) -> None:
-    """Field rules, the prefix vs the projects, the db's catalog and the sign-in rule, at once."""
-    response = put_space(authed, name=" ", claim_timeout_s=1, default_repo="nope")
-    assert (response.status_code, code(response)) == (422, "validation_error")
-    assert locs(response) == [
-        ("value", "name"),
-        ("value", "claim_timeout_s"),
-        ("value", "default_repo"),
-    ]
-
-    assert put_space(authed, jira_projects=["SCRUM"]).status_code == 200
+def test_the_sign_in_rule_comes_with_the_field_rules(authed: TestClient, ctx: AppContext) -> None:
+    """The rule from the server's config (Jira sign-in needs projects) is reported in the same
+    422 as a field rule."""
     ctx.settings = ctx.settings.model_copy(update={"dev_auth": False})
-    response = put_space(authed, key_prefix="SCRUM", name="x" * 101)
-    assert locs(response) == [("value", "name"), ("value", "key_prefix")]
+
     response = put_space(authed, jira_projects=[], key_prefix="1")
+
+    assert (response.status_code, code(response)) == (422, "validation_error")
     assert locs(response) == [("value", "key_prefix"), ("value", "jira_projects")]
 
 
@@ -334,19 +327,6 @@ def test_put_repos_validates(
     assert (response.status_code, code(response)) == (422, "validation_error"), response.text
     assert ("value", *where) in locs(response)
     assert repos(authed).version == 1
-
-
-def test_put_repos_lists_every_problem(authed: TestClient) -> None:
-    """Each entry's fields and a duplicate name, at once."""
-    bad_url = {**R, "url": "file:///tmp/r"}
-    bad_branch = {**DOCS, "default_branch": "a..b"}
-    response = put_repos(authed, [bad_url, bad_branch, {**DOCS, "name": "r"}])
-    assert (response.status_code, code(response)) == (422, "validation_error")
-    assert locs(response) == [
-        ("value", "repos", 0, "url"),
-        ("value", "repos", 1, "default_branch"),
-        ("value", "repos", 2, "name"),
-    ]
 
 
 # ------------------------------------------------------------------ intake

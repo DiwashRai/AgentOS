@@ -4,7 +4,8 @@
 //   version;
 // - Save sends `{value, base_version}`. A 409 `stale_version` offers Reload, which refetches and
 //   keeps the draft on the fresh version, so the next save overwrites the other change on purpose;
-//   Discard drops the draft and shows the other admin's copy;
+//   Discard drops the draft and shows the other admin's copy. An edit made while a save is in
+//   flight stays a draft, over the version that save wrote;
 // - a 422's issues, from the last save or from the validate-only call (run after a pause while the
 //   draft is dirty), show only while the draft still equals what was checked. Their list indices
 //   become the row keys of the form as it was sent;
@@ -139,10 +140,11 @@ export function useDocument<R extends DocumentRead, F>(
   const [failure, setFailure] = useState<unknown>(null);
   const checkSeq = useRef(0);
 
-  // The validate-only call reads the latest conversion and placement without re-arming its timer.
-  const latest = useRef({ fromForm, keys: options.keys, shown: options.shown });
+  // The validate-only call reads the latest conversion and placement without re-arming its timer;
+  // a save that comes back reads the form as it is now, not as it was sent.
+  const latest = useRef({ fromForm, keys: options.keys, shown: options.shown, form: draft.value });
   useEffect(() => {
-    latest.current = { fromForm, keys: options.keys, shown: options.shown };
+    latest.current = { fromForm, keys: options.keys, shown: options.shown, form: draft.value };
   });
 
   const runValidate = validate?.mutateAsync;
@@ -188,18 +190,25 @@ export function useDocument<R extends DocumentRead, F>(
       if (form === undefined || draft.baseVersion === undefined) return;
       const sent = form;
       const sentKeys = options.keys?.(sent) ?? {};
-      // A save answers for the draft as sent; a validate still in flight is for an older one.
+      // A save answers for the draft as sent: a validate still in flight is for an older one, and
+      // one started after the save (the draft changed meanwhile) answers for a newer one, so the
+      // save's answer only replaces the issues while no check has started since.
       checkSeq.current += 1;
+      const mine = checkSeq.current;
       setFailure(null);
       save.mutateAsync({ value: fromForm(sent), base_version: draft.baseVersion }).then(
-        () => {
-          setChecked(null);
-          draft.discard();
+        (fresh) => {
+          if (checkSeq.current === mine) setChecked(null);
+
+          // An edit made while the save was in flight stays, now over the version just saved.
+          const now = latest.current.form;
+          if (now !== undefined && !same(now, sent)) draft.rebase(fresh.version);
+          else draft.discard();
         },
         (e: unknown) => {
           const placed = issuesFrom(e, sentKeys, options.shown);
           if (placed === null) setFailure(e);
-          else setChecked({ form: sent, issues: placed });
+          else if (checkSeq.current === mine) setChecked({ form: sent, issues: placed });
         },
       );
     },

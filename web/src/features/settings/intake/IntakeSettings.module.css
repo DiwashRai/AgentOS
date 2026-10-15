@@ -51,6 +51,10 @@
   gap: var(--sp-5);
   min-width: 0;
 }
+/* the row's own issues (and its id's), under the JQL */
+.fields > p {
+  margin: 0;
+}
 
 /* the Test query line and its result */
 .test {

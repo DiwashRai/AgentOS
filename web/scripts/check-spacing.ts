@@ -54,8 +54,18 @@ export const ALLOWED: readonly Allowed[] = [
   },
   {
     file: "src/ui/Stepper.module.css",
-    declaration: "margin: 1.5px 0",
-    reason: "centres the 8px gate diamond on the stepper's 11px track",
+    declaration: "margin: 3.5px 0",
+    reason: "centres the 3px bar on the stepper's 10px track",
+  },
+  {
+    file: "src/ui/Stepper.module.css",
+    declaration: "margin: 4.25px 0",
+    reason: "centres the 1.5px skipped bar on the stepper's 10px track",
+  },
+  {
+    file: "src/ui/Stepper.module.css",
+    declaration: "margin: 1px 0",
+    reason: "centres the 8px gate diamond on the stepper's 10px track",
   },
   {
     file: "src/ui/Stepper.module.css",
@@ -171,4 +181,4 @@ function main(): number {
   return 0;
 }
 
-if (import.meta.main) process.exitCode = main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = main();

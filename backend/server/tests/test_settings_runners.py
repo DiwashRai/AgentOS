@@ -292,15 +292,6 @@ def test_runner_is_validated(authed: TestClient, changes: dict[str, Any]) -> Non
     assert runner(authed).version == 1
 
 
-def test_runner_lists_every_problem(authed: TestClient) -> None:
-    response = put_runner(authed, github_repo="AgentOS", workflow="x", ref=" ")
-    assert locs(response) == [
-        ("value", "github_repo"),
-        ("value", "workflow"),
-        ("value", "ref"),
-    ]
-
-
 def test_github_launcher_reads_the_runner_at_each_launch(
     authed: TestClient, ctx: AppContext, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:

@@ -95,7 +95,8 @@
 }
 .rule {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--sp-8) minmax(0, 1fr) auto;
+  /* the arrow's track is a fixed width (no sizing token fits it), not a spacing step */
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--sp-5);
   row-gap: var(--sp-2);

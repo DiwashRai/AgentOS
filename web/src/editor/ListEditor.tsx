@@ -272,8 +272,8 @@ export function ListEditor<T extends { key: string }>(props: ListEditorProps<T>)
         </List>
       )}
 
-      {issues.map((msg) => (
-        <p key={msg} className={text.error} role="alert">
+      {issues.map((msg, i) => (
+        <p key={`${String(i)}:${msg}`} className={text.error} role="alert">
           {msg}
         </p>
       ))}

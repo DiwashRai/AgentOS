@@ -48,9 +48,11 @@ export function useDraftState<T>(
     value: dirty ? draft.value : saved,
     dirty,
     baseVersion: dirty ? draft.base : version,
-    // A draft that matches the saved copy again starts over from the current version.
+    // A draft that matches the saved copy is dropped, so the next edit starts over from the version
+    // current then (even if the saved copy has moved on meanwhile).
     edit: (value) => {
-      setDraft({ value, base: dirty ? draft.base : version });
+      if (saved !== undefined && same(value, saved)) setDraft(null);
+      else setDraft({ value, base: dirty ? draft.base : version });
     },
     discard: () => {
       setDraft(null);

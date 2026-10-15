@@ -9,7 +9,8 @@ import {
   useSettings,
   useValidateSettings,
 } from "../../../api/queries";
-import { DocumentPage, DocumentSection, pageStyles, useDocument } from "../../../editor";
+import { DocumentPage, DocumentSection, useDocument } from "../../../editor";
+import { text } from "../../../ui";
 import {
   repoKeys,
   REPOS_SHOWN,
@@ -58,7 +59,7 @@ export function SpacePage() {
       sources={[space, repos, config]}
       description={
         <>
-          <span className={pageStyles.k}>Space</span>
+          <span className={text.label}>Space</span>
           Changes apply at once, without a restart. The Space and its repos save separately.
         </>
       }

@@ -36,8 +36,17 @@ export function sentKeys(form: IntakeForm): SentKeys {
   return { queries: keysOf(form.queries) };
 }
 
-/** Where the page shows issues: on the list itself, and on each row's name and JQL. */
-export const SHOWN: readonly FieldPath[] = ["queries", "queries.*.name", "queries.*.jql"];
+/**
+ * Where the page shows issues: on the list itself, on a row as a whole, on its id (which has no
+ * field of its own, so it shows with the row's) and on its name and JQL.
+ */
+export const SHOWN: readonly FieldPath[] = [
+  "queries",
+  "queries.*",
+  "queries.*.id",
+  "queries.*.name",
+  "queries.*.jql",
+];
 
 export function newQuery(): QueryRow {
   return { key: newKey(), item: { id: null, name: "", jql: "" } };

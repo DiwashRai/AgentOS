@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// The list editor: Add focuses the new row, Remove asks first (unless the row is blank), a move
-// keeps focus on the moved row and every row keeps its key, min / max turn Remove / Add off, and a
-// preview shows only while its input equals what ran.
+// The list editor: Add focuses the new row, Remove asks first (unless the row is blank; Escape
+// cancels) and then focuses the neighbour, a move keeps focus on the moved row and every row keeps
+// its key, details expand and collapse, min / max turn Remove / Add off, and a preview shows only
+// while its input equals what ran, from its latest run.
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -41,7 +42,14 @@ function render(node: ReactNode): HTMLDivElement {
   return el;
 }
 
-function Repos({ initial, min, max }: { initial: readonly Row[]; min?: number; max?: number }) {
+interface Options {
+  min?: number;
+  max?: number;
+  /** Give each row details (a notes field) behind an expand toggle. */
+  details?: boolean;
+}
+
+function Repos({ initial, min, max, details }: Options & { initial: readonly Row[] }) {
   const [rows, setRows] = useState(initial);
   return (
     <ListEditor
@@ -50,6 +58,11 @@ function Repos({ initial, min, max }: { initial: readonly Row[]; min?: number; m
       ordered
       min={min}
       max={max}
+      details={
+        details === true
+          ? (row) => <input aria-label={`Notes of repo ${row.item.name || "new"}`} />
+          : undefined
+      }
       addLabel="Add repo"
       label={(row) => `repo ${row.item.name || "new"}`}
       isBlank={(row) => row.item.name.trim() === ""}
@@ -75,10 +88,56 @@ function Repos({ initial, min, max }: { initial: readonly Row[]; min?: number; m
   );
 }
 
-function mountRepos(names: readonly string[], limits: { min?: number; max?: number } = {}) {
+function mountRepos(names: readonly string[], options: Options = {}) {
   const initial = keyed(names.map((name) => ({ name })));
   latest = initial;
-  return { el: render(<Repos initial={initial} {...limits} />), initial };
+  return { el: render(<Repos initial={initial} {...options} />), initial };
+}
+
+/** A preview of the query typed in its box, with a Test button and its result. */
+function PreviewTester({ run }: { run: (q: string) => Promise<string> }) {
+  const [q, setQ] = useState("x");
+  const preview = usePreview(run, q.trim());
+  return (
+    <>
+      <input
+        aria-label="Query"
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+        }}
+      />
+      <button type="button" onClick={preview.run}>
+        Test
+      </button>
+      {preview.pending ? <p role="status" aria-label="Pending" /> : null}
+      {preview.result === undefined ? null : (
+        <p role="status" aria-label="Result">
+          {preview.result}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** A run whose calls each wait until the test finishes them, in any order. */
+function deferredRun() {
+  const finishers: ((value: string) => void)[] = [];
+  const run = vi.fn(
+    (q: string) =>
+      new Promise<string>((resolve) => {
+        finishers.push((v) => {
+          resolve(`${v} for ${q}`);
+        });
+      }),
+  );
+  const finish = async (call: number, value: string) => {
+    await act(async () => {
+      finishers[call]?.(value);
+      await Promise.resolve();
+    });
+  };
+  return { run, finish };
 }
 
 /** An element by role and accessible name (aria-label, else its text). */
@@ -107,6 +166,14 @@ function type(input: HTMLElement, value: string) {
   act(() => {
     Reflect.set(HTMLInputElement.prototype, "value", value, input);
     input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function press(key: string) {
+  const target = document.activeElement;
+  if (!(target instanceof HTMLElement)) throw new Error("nothing focused");
+  act(() => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
 }
 
@@ -170,43 +237,63 @@ describe("ListEditor", () => {
     expect(byRole(el, "button", "Remove repo b")).toHaveProperty("disabled", true);
   });
 
+  it("expands and collapses a row's details, and opens a newly added row", () => {
+    const { el } = mountRepos(["a"], { details: true });
+    const toggle = byRole(el, "button", "repo a details");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(query(el, "textbox", "Notes of repo a")).toBeUndefined();
+
+    click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const panel = document.getElementById(toggle.getAttribute("aria-controls") ?? "");
+    expect(panel?.contains(byRole(el, "textbox", "Notes of repo a"))).toBe(true);
+
+    click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(query(el, "textbox", "Notes of repo a")).toBeUndefined();
+
+    click(byRole(el, "button", "Add repo"));
+    expect(byRole(el, "button", "repo new details").getAttribute("aria-expanded")).toBe("true");
+    expect(query(el, "textbox", "Notes of repo new")).toBeDefined();
+    expect(document.activeElement).toBe(byRole(el, "textbox", "Name of repo new"));
+  });
+
+  it("cancels a remove confirmation on Escape, focus back on the row's Remove", () => {
+    const { el } = mountRepos(["a", "b"]);
+
+    click(byRole(el, "button", "Remove repo a"));
+    expect(byRole(el, "group", "Remove repo a?").contains(document.activeElement)).toBe(true);
+
+    press("Escape");
+    expect(query(el, "group", "Remove repo a?")).toBeUndefined();
+    expect(names()).toEqual(["a", "b"]);
+    expect(document.activeElement).toBe(byRole(el, "button", "Remove repo a"));
+  });
+
+  it("focuses the neighbour's Remove after a remove, and Add once the list is empty", () => {
+    const { el } = mountRepos(["a", "b", "c"]);
+    const removeConfirmed = (name: string) => {
+      click(byRole(el, "button", `Remove repo ${name}`));
+      click(byRole(byRole(el, "group", `Remove repo ${name}?`), "button", "Remove"));
+    };
+
+    removeConfirmed("b");
+    expect(names()).toEqual(["a", "c"]);
+    expect(document.activeElement).toBe(byRole(el, "button", "Remove repo c"));
+
+    // The last row's neighbour is the one before it.
+    removeConfirmed("c");
+    expect(names()).toEqual(["a"]);
+    expect(document.activeElement).toBe(byRole(el, "button", "Remove repo a"));
+
+    removeConfirmed("a");
+    expect(names()).toEqual([]);
+    expect(document.activeElement).toBe(byRole(el, "button", "Add repo"));
+  });
+
   it("shows a preview only while the input equals what ran", async () => {
-    let finish: (value: string) => void = () => undefined;
-    const run = vi.fn(
-      (q: string) =>
-        new Promise<string>((resolve) => {
-          finish = (v) => {
-            resolve(`${v} for ${q}`);
-          };
-        }),
-    );
-
-    function Tester() {
-      const [q, setQ] = useState("x");
-      const preview = usePreview(run, q.trim());
-      return (
-        <>
-          <input
-            aria-label="Query"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-            }}
-          />
-          <button type="button" onClick={preview.run}>
-            Test
-          </button>
-          {preview.pending ? <p role="status" aria-label="Pending" /> : null}
-          {preview.result === undefined ? null : (
-            <p role="status" aria-label="Result">
-              {preview.result}
-            </p>
-          )}
-        </>
-      );
-    }
-
-    const el = render(<Tester />);
+    const { run, finish } = deferredRun();
+    const el = render(<PreviewTester run={run} />);
     const input = byRole(el, "textbox", "Query");
 
     click(byRole(el, "button", "Test"));
@@ -216,13 +303,25 @@ describe("ListEditor", () => {
     type(input, "y");
     expect(query(el, "status", "Pending")).toBeUndefined();
 
-    await act(async () => {
-      finish("2");
-      await Promise.resolve();
-    });
+    await finish(0, "2");
     expect(query(el, "status", "Result")).toBeUndefined();
 
     type(input, "x ");
     expect(byRole(el, "status", "Result").textContent).toBe("2 for x");
+  });
+
+  it("counts only the latest preview run, even when an older one finishes last", async () => {
+    const { run, finish } = deferredRun();
+    const el = render(<PreviewTester run={run} />);
+
+    click(byRole(el, "button", "Test"));
+    click(byRole(el, "button", "Test"));
+    expect(run).toHaveBeenCalledTimes(2);
+
+    await finish(1, "second");
+    expect(byRole(el, "status", "Result").textContent).toBe("second for x");
+
+    await finish(0, "first");
+    expect(byRole(el, "status", "Result").textContent).toBe("second for x");
   });
 });

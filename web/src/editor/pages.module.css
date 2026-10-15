@@ -104,7 +104,9 @@
   color: var(--ink-2);
 }
 /* the banner's lead-in word ("Template", "Read-only"): it read as a caps kicker; now an ink label */
-.banner > .k {
+/* the banner's lead word: pageStyles.k, or a 	ext.label span on the kit pages */
+.banner > .k,
+.banner > span:first-child {
   flex: none;
   font-size: var(--fs-control);
   font-weight: 600;

@@ -58,7 +58,8 @@ export function DocumentPage(props: DocumentPageProps) {
   );
   if (failed) {
     const why = failed.error instanceof Error ? failed.error.message : "";
-    return <StatusLine error>{`Can't load ${props.noun} · ${why}`}</StatusLine>;
+    const line = why === "" ? `Can't load ${props.noun}` : `Can't load ${props.noun} · ${why}`;
+    return <StatusLine error>{line}</StatusLine>;
   }
   if (sources.some((x) => x.data === undefined)) {
     return <StatusLine>{`Loading ${props.noun}`}</StatusLine>;

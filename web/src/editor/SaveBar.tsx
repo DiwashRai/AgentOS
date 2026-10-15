@@ -68,8 +68,8 @@ export function SaveBar(props: SaveBarProps) {
           ) : null}
         </p>
       ) : null}
-      {props.issues?.map((msg) => (
-        <p key={msg} className={s.problem} role="alert">
+      {props.issues?.map((msg, i) => (
+        <p key={`${String(i)}:${msg}`} className={s.problem} role="alert">
           {msg}
         </p>
       ))}

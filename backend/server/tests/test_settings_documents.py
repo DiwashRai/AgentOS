@@ -61,9 +61,19 @@ AREAS = [
                 {"name": "new", "url": "https://x.example/n.git", "default_branch": "trunk"},
             ]
         },
-        # A bad URL and a duplicate name.
-        invalid=lambda v: {"repos": [{**R, "url": "file:///tmp/r"}, R]},
-        locs=[("value", "repos", 0, "url"), ("value", "repos", 1, "name")],
+        # A bad URL, a bad branch, and a name the bad entry already uses.
+        invalid=lambda v: {
+            "repos": [
+                {**R, "url": "file:///tmp/r"},
+                {**R, "name": "docs", "default_branch": "a..b"},
+                R,
+            ]
+        },
+        locs=[
+            ("value", "repos", 0, "url"),
+            ("value", "repos", 1, "default_branch"),
+            ("value", "repos", 2, "name"),
+        ],
     ),
     Area(
         "intake",
@@ -86,17 +96,19 @@ AREAS = [
     Area(
         "mappings",
         edit=lambda v: {"mappings": [MAPPING]},
-        # A bad rule value, then a second mapping for the same target with a bad field.
+        # A bad rule value, then a second mapping for the same target with a bad field and a bad
+        # rule value (rule values are checked even when another field fails).
         invalid=lambda v: {
             "mappings": [
                 {**MAPPING, "rules": [{"match": "x", "value": "a..b"}]},
-                {**MAPPING, "field": "a,b"},
+                {**MAPPING, "field": "a,b", "rules": [{"match": "x", "value": "a..b"}]},
             ]
         },
         locs=[
             ("value", "mappings", 0, "rules", 0, "value"),
             ("value", "mappings", 1, "target"),
             ("value", "mappings", 1, "field"),
+            ("value", "mappings", 1, "rules", 0, "value"),
         ],
     ),
 ]

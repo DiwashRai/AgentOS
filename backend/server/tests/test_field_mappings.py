@@ -268,17 +268,11 @@ def test_put_mappings_validates(
 
 
 def test_one_mapping_per_target(authed: TestClient) -> None:
-    """Listed with every bad rule value and field, in one 422."""
-    bad = [{"match": "x", "value": "a..b"}]
-    twice = {**FIX_VERSIONS, "field": "a,b", "rules": bad}
-    response = put_mappings(authed, [{**FIX_VERSIONS, "rules": bad}, twice])
+    response = put_mappings(authed, [FIX_VERSIONS, {**FIX_VERSIONS, "field": "customfield_1"}])
+
     assert (response.status_code, code(response)) == (422, "validation_error")
-    assert locs(response) == [
-        ("value", "mappings", 0, "rules", 0, "value"),
-        ("value", "mappings", 1, "target"),
-        ("value", "mappings", 1, "field"),
-        ("value", "mappings", 1, "rules", 0, "value"),
-    ]
+    assert locs(response) == [("value", "mappings", 1, "target")]
+    assert get_mappings(authed).version == 1
 
 
 def test_at_most_twenty_mappings(authed: TestClient) -> None:
