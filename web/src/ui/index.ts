@@ -22,6 +22,7 @@ export { Checklist, type ChecklistProps } from "./Checklist";
 export { Chip, type ChipProps } from "./Chip";
 export { CountPill, type CountPillProps } from "./CountPill";
 export { cx } from "./cx";
+export { Dialog, DialogTitle, type DialogProps, type DialogTitleProps } from "./Dialog";
 export { Disclosure, Fold, type DisclosureProps, type FoldProps } from "./Disclosure";
 export { EmptyRow, type EmptyRowProps } from "./EmptyRow";
 export { EmptyState, type EmptyForm, type EmptyStateProps } from "./EmptyState";
@@ -61,4 +62,6 @@ export { TickBadge, type TickBadgeProps } from "./TickBadge";
 export { TypeIcon, type TicketType, type TypeIconProps } from "./TypeIcon";
 /** The ticking clock behind ages and elapsed times. */
 export { useNow } from "./useNow";
+/** One document `keydown` listener (shortcuts, a dialog's outside keys). */
+export { useDocumentKey, type DocumentKeyOptions } from "./useDocumentKey";
 export { ZoneHead, type ZoneHeadProps } from "./ZoneHead";

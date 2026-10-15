@@ -130,6 +130,9 @@
 .peekWidth {
   max-width: 420px;
 }
+.dialogBody {
+  padding: var(--sp-10);
+}
 .meters {
   display: grid;
   grid-template-columns: 80px minmax(0, 1fr) auto auto;

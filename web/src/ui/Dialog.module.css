@@ -1,0 +1,76 @@
+/* Dialog: a layer over the app holding the scrim and one panel (DESIGN §9: --surface, radius 14px,
+   --surface-shadow over --scrim). The panel's default geometry is a centred modal (`.centred`); a
+   host that passes its own panel class (the peek's side sheet) replaces it. Open state is
+   `[data-open]` on the scrim and the panel, set a frame after mount and removed on close. */
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--dialog-z, 50);
+  display: grid;
+  place-items: start center;
+  padding: 10vh var(--sp-6) var(--sp-6);
+  overflow: auto;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: var(--scrim);
+  cursor: default;
+  opacity: 0;
+  transition: opacity var(--dur-scrim) ease;
+}
+.scrim[data-open] {
+  opacity: 1;
+}
+
+/* What every panel shares; geometry and motion come from `.centred` or the host's class. */
+.panel {
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--surface-shadow);
+}
+/* Focused on open when nothing inside asks for it: no ring on the panel itself. */
+.panel:focus,
+.panel:focus-visible {
+  outline: none;
+}
+
+.centred {
+  position: relative;
+  width: min(560px, 100%);
+  box-shadow: var(--surface-shadow), var(--float-shadow);
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 220ms ease,
+    transform var(--dur-panel) var(--ease-out);
+}
+.centred[data-open] {
+  opacity: 1;
+  transform: none;
+}
+
+/* The dialog's heading: the peek's ticket title and New ticket's heading. Margins are the host's. */
+.title {
+  font-family: var(--font-display);
+  font-size: var(--fs-title);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink-1);
+}
+
+/* base.css turns transitions off under reduced motion; a paused (hidden) tab skips them too. */
+:global(html.ao-paused) .scrim,
+:global(html.ao-paused) .centred {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .centred {
+    transition: none;
+  }
+}

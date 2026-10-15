@@ -12,6 +12,7 @@ import { Checklist } from "./Checklist";
 import { Chip } from "./Chip";
 import { CountPill } from "./CountPill";
 import { cx } from "./cx";
+import { Dialog, DialogTitle } from "./Dialog";
 import { Disclosure, Fold } from "./Disclosure";
 import { EmptyRow } from "./EmptyRow";
 import { EmptyState } from "./EmptyState";
@@ -713,6 +714,7 @@ const FLAT_PLAN = PLAN.map(({ text: t, done }) => ({ text: t, done }));
 /** Stack / Inline, Sheet / FramedList, Badge, EmptyState, Disclosure / Fold and Checklist. */
 function LayoutKit({ id }: { id: (x: string) => string }) {
   const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState(false);
   return (
     <section className={s.section} aria-labelledby={id("layout")}>
       <ZoneHead id={id("layout")} title="Layout, surfaces, badges, empty states, folds" />
@@ -861,6 +863,37 @@ function LayoutKit({ id }: { id: (x: string) => string }) {
         />
         <span className={s.cap}>Compact, headless (the label is the view&apos;s)</span>
         <Checklist plan={planView(FLAT_PLAN.slice(0, 3))} density="compact" label="Plan" />
+      </div>
+
+      <div className={s.card}>
+        <Button
+          size="sm"
+          onClick={() => {
+            setDialog(true);
+          }}
+        >
+          Open dialog
+        </Button>
+        {dialog ? (
+          <Dialog
+            onClose={() => {
+              setDialog(false);
+            }}
+          >
+            {(close) => (
+              <Stack gap={6} className={s.dialogBody}>
+                <DialogTitle>A dialog</DialogTitle>
+                <p className={text.meta}>Tab stays inside; Escape or the scrim closes it.</p>
+                <Inline gap={4}>
+                  <Spacer />
+                  <Button size="sm" onClick={close} data-autofocus>
+                    Close
+                  </Button>
+                </Inline>
+              </Stack>
+            )}
+          </Dialog>
+        ) : null}
       </div>
     </section>
   );
