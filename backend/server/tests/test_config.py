@@ -23,6 +23,7 @@ from agentos.main import create_app
 from agentos.models import AppConfig, RepoInfo
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES
 from agentos.pipeline.space import SpaceConfig
+from tests.settings_support import seed_test_settings, set_space
 
 RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
 RUNTIME_Y = '[runtimes.y]\nargv = ["y"]\n'
@@ -34,7 +35,6 @@ def make(tmp_path: Path, **overrides: Any) -> Settings:
         "data_dir": tmp_path / "data",
         "workspaces_dir": tmp_path / "workspaces",
         "dev_auth": True,
-        "config": RUNTIMES_TOML,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -383,10 +383,12 @@ def test_health(tmp_path: Path) -> None:
         assert client.get("/api/health").json() == {"status": "ok"}
 
 
-def test_api_config_reflects_dev_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_KEY_PREFIX", "XYZ")  # seeds Settings > Space on first start
+def test_api_config_reflects_dev_settings(tmp_path: Path) -> None:
     settings = make(tmp_path)
-    with TestClient(create_app(settings)) as client:
+    seed_test_settings(settings)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        set_space(app.state.ctx, key_prefix="XYZ")
         config = AppConfig.model_validate(client.get("/api/config").json())
     assert config == AppConfig(
         auth_mode="dev",

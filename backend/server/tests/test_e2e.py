@@ -12,7 +12,6 @@ Skip with `pytest -m "not e2e"`.
 from __future__ import annotations
 
 import ctypes
-import json
 import os
 import re
 import socket
@@ -41,7 +40,10 @@ from agentos.models import (
     TaskProgress,
     TicketDetail,
 )
+from agentos.pipeline.runtime import NamedRuntime
+from agentos.pipeline.space import RepoSpec, SpaceConfig
 from agentos.runs import dispatcher
+from tests.settings_support import seed_test_settings
 
 pytestmark = pytest.mark.e2e
 
@@ -260,12 +262,6 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
         mp.setattr(dispatcher, "INTERVAL_S", 0.1)
 
         remote = make_remote(root)
-        runtimes = root / "runtimes_e2e.toml"  # never `agentos.toml` (gitignored)
-        argv = json.dumps([sys.executable, str(FAKE_AGENT)])
-        runtimes.write_bytes(
-            f'default_runtime = "fake"\n\n[[repos]]\nname = "remote"\nurl = "{REPO_URL}"\n\n'
-            f'[runtimes.fake]\nargv = {argv}\nprompt_via = "stdin"\n'.encode()
-        )
         worker_env = root / "worker.env"
         worker_env.write_bytes(
             (
@@ -282,12 +278,21 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
             _env_file=None,
             data_dir=root / "data",
             workspaces_dir=root / "workspaces",
-            config=runtimes,
             dev_auth=True,
             public_url=url,
             worker_env_file=worker_env,
             local_max_concurrency=None,
         )
+        seed_test_settings(
+            settings,
+            space=SpaceConfig(repos=(RepoSpec(name="remote", url=REPO_URL),)),
+            runtimes=[
+                NamedRuntime(
+                    name="fake", argv=[sys.executable, str(FAKE_AGENT)], prompt_via="stdin"
+                )
+            ],
+        )
+
         server = uvicorn.Server(
             uvicorn.Config(create_app(settings), log_config=None, access_log=False)
         )

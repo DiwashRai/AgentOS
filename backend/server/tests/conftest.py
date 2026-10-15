@@ -1,7 +1,8 @@
 """Shared fixtures: isolated settings (tmp data + workspaces, dev auth), the app and clients.
 
 One app and client serve the whole session; each test gets its own `ctx` on a copy of the
-template db the session app's startup migrated and seeded."""
+template db: the test Space's settings (`settings_support.seed_test_settings`) plus what the
+session app's startup migrated and seeded."""
 
 from __future__ import annotations
 
@@ -25,9 +26,8 @@ from agentos.context import AppContext, build_context
 from agentos.main import create_app
 from agentos.models import Me, Role, RunStatus, StageRunStatus, TicketDetail
 from tests.run_support import FakeLauncher, RunDriver
+from tests.settings_support import seed_test_settings
 
-FIXTURES = Path(__file__).parent / "fixtures"
-RUNTIMES_TOML = FIXTURES / "runtimes_test.toml"
 CSRF = {"X-AgentOS": "1"}
 # Dev auth only accepts a loopback Host header (TestClient's default is `testserver`).
 BASE_URL = "http://127.0.0.1:8000"
@@ -71,7 +71,6 @@ def _test_settings(root: Path) -> Settings:
         data_dir=root / "data",
         workspaces_dir=root / "workspaces",
         dev_auth=True,
-        config=RUNTIMES_TOML,
     )
 
 
@@ -96,8 +95,9 @@ class SessionServer:
 
 @pytest.fixture(scope="session")
 def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SessionServer]:
-    """Start one app (the real lifespan: checks, migrations, seeding) and keep a copy of its
-    migrated, seeded db as the template every test's `ctx` starts from.
+    """Write the test Space's settings (`seed_test_settings`), start one app on that db (the real
+    lifespan: checks, migrations, the template and workflow seeds) and keep a copy of the db as
+    the template every test's `ctx` starts from.
 
     Session fixtures run before the autouse `_clean_env`, so this strips AGENTOS_* itself while
     the settings are read and the app starts."""
@@ -106,6 +106,8 @@ def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session
         with pytest.MonkeyPatch.context() as monkeypatch:
             _strip_agentos_env(monkeypatch)
             settings = _test_settings(root)
+            seed_test_settings(settings)
+
             # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
             app = create_app(settings, launcher=FakeLauncher(), run_loops=False)
             client = stack.enter_context(TestClient(app, base_url=BASE_URL))

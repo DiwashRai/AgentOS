@@ -112,7 +112,7 @@ def test_runtimes_round_trip_effort_args_and_omitted_is_none(authed: TestClient)
     give_fake_an_effort_flag(authed)
     got = runtimes(authed).runtimes
     assert got[0].effort_args == ["--effort", "{effort}"]
-    assert got[1].effort_args == []  # the test toml's claude has none
+    assert got[1].effort_args == []  # the test Space's claude has none
 
 
 def test_a_stage_effort_reaches_the_manifest(

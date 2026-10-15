@@ -27,7 +27,7 @@ from tests.test_runs import put_pipeline, stage_of
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Any]
 
-FAKE_ARGV = ["python", "fake_agent.py"]  # runtimes_test.toml: default_runtime = "fake"
+FAKE_ARGV = ["python", "fake_agent.py"]  # settings_support.TEST_RUNTIMES: `fake` is the default
 CLAUDE_ARGV = ["claude", "-p", "--output-format", "stream-json", "--verbose"]
 
 

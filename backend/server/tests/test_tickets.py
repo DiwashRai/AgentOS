@@ -7,13 +7,12 @@ import json
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.config import Settings, load_config
+from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.db import Database
 from agentos.main import create_app
@@ -21,9 +20,8 @@ from agentos.models import Me, Pipeline, TicketDetail, TicketSummary
 from agentos.pipeline.scaffold import default_pipeline
 from agentos.pipeline.space import RepoSpec
 from agentos.tickets.service import backfill_repos
-from tests.settings_support import set_repos, set_space
+from tests.settings_support import TEST_SPACE, seed_test_settings, set_repos, set_space
 
-RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
 CSRF = {"X-AgentOS": "1"}
 BASE_URL = "http://127.0.0.1:8000"
 CreateTicket = Callable[..., TicketDetail]
@@ -152,14 +150,11 @@ def test_create_picks_a_catalog_repo(
     assert summary.repo_name == expected[0]
 
 
-def test_omitted_repo_without_a_default_repo_is_no_repo(settings: Settings, tmp_path: Path) -> None:
-    toml = tmp_path / "no_default.toml"
-    toml.write_text(
-        RUNTIMES_TOML.read_text(encoding="utf-8").replace('default_repo = "r"\n', ""),
-        encoding="utf-8",
-    )
-    with started(settings.model_copy(update={"config": toml})) as c:
-        t = TicketDetail.model_validate(post(c).json())
+def test_omitted_repo_without_a_default_repo_is_no_repo(
+    authed: TestClient, ctx: AppContext
+) -> None:
+    set_space(ctx, default_repo=None)
+    t = TicketDetail.model_validate(post(authed).json())
     assert (t.workspace_mode, t.repo_name, t.branch) == ("none", None, None)
 
 
@@ -557,6 +552,7 @@ def test_a_catalog_change_reaches_existing_tickets(authed: TestClient, ctx: AppC
 def test_startup_backfills_legacy_repo_urls(
     settings: Settings, caplog: pytest.LogCaptureFixture
 ) -> None:
+    seed_test_settings(settings)
     with started(settings) as c:
         k = [post(c).json()["key"] for _ in range(4)]
     legacy = {  # tickets as created before the repo catalog: repo_url + a stored base branch
@@ -592,4 +588,4 @@ def test_startup_backfills_legacy_repo_urls(
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any(f"{k[2]}, {k[3]}" in w for w in warnings), warnings
     # Idempotent: a second pass changes nothing and reports the same unmatched tickets.
-    assert backfill_repos(db, load_config(RUNTIMES_TOML).space) == k[2:]
+    assert backfill_repos(db, TEST_SPACE) == k[2:]
