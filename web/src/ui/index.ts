@@ -1,4 +1,5 @@
-// Kit primitives (design pack kit.css + the visual refresh): presentational only, props in, markup out.
+// Kit primitives (design pack kit.css + the visual refresh): presentational only, props in, markup
+// out, plus `useNow`, the clock that ages and elapsed times tick on.
 export { Age, type AgeProps } from "./Age";
 export {
   Avatar,
@@ -34,9 +35,14 @@ export { PriorityIcon, type Priority, type PriorityIconProps } from "./PriorityI
 export { RunMeter, type RunMeterProps } from "./RunMeter";
 export { StageGlyph, type StageGlyphProps } from "./StageGlyph";
 export { MARK_WORD, StatusMark, YouPill, type MarkKind, type StatusMarkProps } from "./StatusMark";
+export { StatusLine, type StatusLineProps } from "./StatusLine";
 export { Stepper, type StepperProps } from "./Stepper";
 export { Tabs, type TabItem, type TabsProps } from "./Tabs";
 export { Tag, type TagProps } from "./Tag";
+/** Text utilities (`label`, `meta`, `error`, `ellipsis`) as CSS module classes. */
+export { default as text } from "./text.module.css";
 export { TickBadge, type TickBadgeProps } from "./TickBadge";
 export { TypeIcon, type TicketType, type TypeIconProps } from "./TypeIcon";
+/** The ticking clock behind ages and elapsed times. */
+export { useNow } from "./useNow";
 export { ZoneHead, type ZoneHeadProps } from "./ZoneHead";

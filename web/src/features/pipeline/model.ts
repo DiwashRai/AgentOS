@@ -2,7 +2,7 @@
 // identity while its id is being typed), the edit reducer, client-side checks that mirror
 // models.py `Stage`/`Pipeline` and segment.py `validate_pipeline`, and the preview model.
 // The server stays the authority: it re-validates on save and its 422 message is shown as-is.
-import { ApiError, type Schemas } from "../../api/client";
+import type { Schemas } from "../../api/client";
 import type { GlyphModel, GlyphStage } from "../../domain/stage";
 
 export type Pipeline = Schemas["Pipeline"];
@@ -656,25 +656,6 @@ export function loopStageOptions(
     opts.push({ value: st.id, label: st.name.trim() || st.id });
   }
   return seen.has(current) ? opts : [...opts, { value: current, label: `${current} (missing)` }];
-}
-
-/** What a failed save tells the user, and whether it offers Reload (a 409 `stale_version`). */
-export interface SaveProblem {
-  text: string;
-  reload: boolean;
-}
-
-export function describeSaveError(e: unknown): SaveProblem {
-  if (e instanceof ApiError) {
-    if (e.code === "stale_version") {
-      return { text: "Changed by someone else. Reload (your draft will be lost).", reload: true };
-    }
-    if (e.code === "run_active") {
-      return { text: "A run is active; edit the pipeline when it finishes.", reload: false };
-    }
-    return { text: e.message, reload: false };
-  }
-  return { text: e instanceof Error ? e.message : "Something went wrong.", reload: false };
 }
 
 // ------------------------------------------------------------------ Space defaults

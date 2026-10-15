@@ -1,4 +1,4 @@
-"""Workflows (request 23B): the "Standard" seed, the admin endpoints, the Space default, copying a
+"""Workflows (request 23B): the "Standard" seed, the admin endpoints, the default, copying a
 workflow into new tickets, and switching a ticket's workflow (also after runs)."""
 
 from __future__ import annotations
@@ -84,12 +84,13 @@ def detail(response: httpx.Response) -> TicketDetail:
     return TicketDetail.model_validate(response.json())
 
 
-def put_space(client: TestClient, **changes: Any) -> httpx.Response:
-    current = client.get("/api/settings/space").json()
-    body = {k: v for k, v in current.items() if k not in ("version", "updated_at", "updated_by")}
-    body |= {"base_version": current["version"], **changes}
-    response: httpx.Response = client.put("/api/settings/space", json=body, headers=CSRF)
+def make_default(client: TestClient, workflow_id: int) -> httpx.Response:
+    response: httpx.Response = client.post(f"/api/workflows/{workflow_id}/default", headers=CSRF)
     return response
+
+
+def default_id(client: TestClient) -> int:
+    return AppConfig.model_validate(client.get("/api/config").json()).default_workflow_id
 
 
 def rail(client: TestClient, key: str) -> list[tuple[str, str]]:
@@ -103,9 +104,7 @@ def test_standard_is_seeded_from_the_template_and_is_the_default(authed: TestCli
     (only,) = workflows(authed)
     assert (only.name, only.default, only.version, only.updated_by) == ("Standard", True, 1, None)
     assert only.pipeline == default_pipeline()
-    config = AppConfig.model_validate(authed.get("/api/config").json())
-    assert config.default_workflow_id == only.id
-    assert authed.get("/api/settings/space").json()["default_workflow_id"] == only.id
+    assert default_id(authed) == only.id
 
 
 def test_the_seed_runs_once(authed: TestClient, ctx: AppContext) -> None:
@@ -211,31 +210,28 @@ def test_writes_are_admin_only(client: TestClient, login: LoginFn) -> None:
     login("wanda", "writer")
     assert create(client, "W", [stage("a")]).status_code == 403
     assert update(client, standard(client)).status_code == 403
+    assert make_default(client, standard(client).id).status_code == 403
     assert client.delete(f"/api/workflows/{standard(client).id}", headers=CSRF).status_code == 403
 
 
-# ------------------------------------------------------------------ the Space default
+# ------------------------------------------------------------------ the default
 
 
-def test_the_space_settings_set_the_default(
-    authed: TestClient, create_ticket: CreateTicket
-) -> None:
+def test_making_a_workflow_the_default(authed: TestClient, create_ticket: CreateTicket) -> None:
     made = created(authed, "Quick", [stage("a")])
-    response = put_space(authed, default_workflow_id=made.id)
+    response = make_default(authed, made.id)
     assert response.status_code == 200, response.text
-    assert response.json()["default_workflow_id"] == made.id
+    saved = Workflow.model_validate(response.json())
+    assert (saved.id, saved.default, saved.version) == (made.id, True, made.version)
     assert [w.name for w in workflows(authed) if w.default] == ["Quick"]
-    assert AppConfig.model_validate(authed.get("/api/config").json()).default_workflow_id == made.id
+    assert default_id(authed) == made.id
     assert [s.id for s in create_ticket().pipeline.stages] == ["a"]
-    # omitted keeps the default; an unknown one is refused
-    space = authed.get("/api/settings/space").json()
-    body = {k: space[k] for k in ("name", "default_repo", "key_prefix", "jira_projects")}
-    body |= {"claim_timeout_s": space["claim_timeout_s"], "base_version": space["version"]}
-    assert authed.put("/api/settings/space", json=body, headers=CSRF).status_code == 200
-    assert authed.get("/api/settings/space").json()["default_workflow_id"] == made.id
-    status, code, message = error(put_space(authed, default_workflow_id=999))
-    assert (status, code) == (422, "validation_error")
-    assert "default_workflow_id" in message
+
+    # again is a no-op; an unknown one is refused and changes nothing
+    assert make_default(authed, made.id).status_code == 200
+    assert error(make_default(authed, 999))[:2] == (404, "not_found")
+    assert default_id(authed) == made.id
+
     # the old default can be deleted now
     old = standard(authed).id
     assert authed.delete(f"/api/workflows/{old}", headers=CSRF).status_code == 204
@@ -347,7 +343,6 @@ def test_switch_rechecks_the_copy(
         assert row is not None
         value = {"runtimes": [r for r in row.value["runtimes"] if r["name"] != "claude"]}
         write_area(conn, "runtimes", value, version=row.version + 1, actor_id=None)
-    ctx.space_store.invalidate()
     status, code, message = error(switch(authed, ticket.key, made.id))
     assert (status, code) == (422, "invalid_pipeline")
     assert "unknown runtime 'claude'" in message

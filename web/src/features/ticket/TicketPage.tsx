@@ -5,9 +5,8 @@ import { Link as RouterLink, useLocation, useNavigate, useParams } from "react-r
 
 import { ApiError } from "../../api/client";
 import { useFiles, useRuns, useTicket } from "../../api/queries";
-import { Quiet } from "../../app/Quiet";
 import { TopBar } from "../../app/TopBar";
-import { CloseIcon, IconButton, Tabs, linkClass, type TabItem } from "../../ui";
+import { CloseIcon, IconButton, StatusLine, Tabs, linkClass, type TabItem } from "../../ui";
 import { ContextTab } from "../context/ContextTab";
 import { PipelineTab } from "../pipeline";
 import { RunsTab } from "../runs/RunsTab";
@@ -25,20 +24,20 @@ function TicketBody({ ticketKey, tab }: { ticketKey: string; tab: TicketTab }) {
   const files = useFiles(ticketKey);
   const runs = useRuns(ticketKey);
 
-  if (ticket.isPending) return <Quiet>{`Loading ${ticketKey}`}</Quiet>;
+  if (ticket.isPending) return <StatusLine inset>{`Loading ${ticketKey}`}</StatusLine>;
   if (ticket.isError) {
     const e = ticket.error;
     if (e instanceof ApiError && (e.code === "ticket_not_found" || e.status === 404)) {
       return (
         <div className={s.missing}>
-          <Quiet>{`Ticket not found · ${ticketKey}`}</Quiet>
+          <StatusLine inset>{`Ticket not found · ${ticketKey}`}</StatusLine>
           <RouterLink className={linkClass} to="/">
             Back to My queue
           </RouterLink>
         </div>
       );
     }
-    return <Quiet error>{`Can't load ${ticketKey} · ${e.message}`}</Quiet>;
+    return <StatusLine inset error>{`Can't load ${ticketKey} · ${e.message}`}</StatusLine>;
   }
 
   const t = ticket.data;

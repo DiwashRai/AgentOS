@@ -1,40 +1,31 @@
-// The Users page (SPEC §4 roles, §10 users routes): every person who has signed in, with their
-// role and whether they may sign in at all. Admin only; everyone else gets one quiet line (the API
-// would 403 anyway). Renders a content column; the route wraps it in the shell's TopBar + Surface.
-import { ApiError } from "../../api/client";
+// The Users page: every person who has signed in, with their role and whether they may sign in at
+// all. DocumentPage draws its loading, admins-only (a non-admin, or a 403) and error states and its
+// header; there is no document and no save bar, because each change applies at once. Renders a
+// content column; the route wraps it in the shell's TopBar + Surface.
 import { useMe, usePatchUser, useUsers } from "../../api/queries";
-import pages from "../pipeline/pages.module.css";
-import { useNow } from "../runs/useNow";
-import { describePatchError, locksFor, sortUsers, summary, type User } from "./model";
+import { DocumentPage } from "../../editor";
+import { text, useNow } from "../../ui";
+import { ADMINS_ONLY, rowErrors, sortUsers, summary, type User } from "./model";
 import { UserRow } from "./UserRow";
 import s from "./Users.module.css";
 
-const ADMINS_ONLY = "Only admins can manage users.";
-
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
+interface PatchableRowProps {
+  user: User;
+  meId: number | undefined;
+  now: number;
 }
 
-/** One row with its own mutation, so pending and error belong to that row only. */
-function PatchableRow({ user, meId, now }: { user: User; meId: number | undefined; now: number }) {
+/** One row with its own mutation, so pending and problems belong to that row only. */
+function PatchableRow({ user, meId, now }: PatchableRowProps) {
   const patch = usePatchUser();
   return (
     <UserRow
       user={user}
       self={user.id === meId}
-      locks={locksFor(user, meId)}
       now={now}
       pending={patch.isPending}
       pendingRole={patch.variables?.role}
-      error={patch.error ? describePatchError(patch.error) : null}
+      errors={rowErrors(patch.error)}
       onPatch={(body) => {
         patch.mutate({ id: user.id, ...body });
       }}
@@ -44,34 +35,28 @@ function PatchableRow({ user, meId, now }: { user: User; meId: number | undefine
 
 export function UsersPage() {
   const me = useMe();
-  const isAdmin = me.data?.role === "admin";
-  const users = useUsers(isAdmin);
+  const users = useUsers(me.data?.role === "admin");
   const now = useNow(60_000);
 
-  if (me.isPending) return <Line>Loading users</Line>;
-  if (!isAdmin) return <Line>{ADMINS_ONLY}</Line>;
-  if (users.isPending) return <Line>Loading users</Line>;
-  if (users.isError) {
-    const e = users.error;
-    if (e instanceof ApiError && e.status === 403) return <Line>{ADMINS_ONLY}</Line>;
-    return <Line error>{`Can't load users · ${e.message}`}</Line>;
-  }
-
-  const list = sortUsers(users.data);
+  const list = users.data === undefined ? [] : sortUsers(users.data);
   const meId = me.data?.id;
+
   return (
-    <div className={pages.page}>
-      <header className={pages.bar}>
-        <h2 className={pages.title}>Users</h2>
-        <span className={pages.meta}>{summary(list)}</span>
-      </header>
-
-      <p className={pages.banner} role="note">
-        <span className={pages.k}>Access</span>
-        People appear here after their first sign-in, waiting for approval: they see nothing until
-        an admin approves them. Changes apply at once; disabling someone signs them out.
-      </p>
-
+    <DocumentPage
+      viewer={me.data}
+      adminsOnly={ADMINS_ONLY}
+      noun="users"
+      sources={[users]}
+      title="Users"
+      meta={summary(list)}
+      description={
+        <>
+          <span className={text.label}>Access</span>
+          People appear here after their first sign-in, waiting for approval: they see nothing until
+          an admin approves them. Changes apply at once; disabling someone signs them out.
+        </>
+      }
+    >
       <div className={s.frame}>
         <table className={s.table}>
           <thead>
@@ -88,6 +73,6 @@ export function UsersPage() {
           ))}
         </table>
       </div>
-    </div>
+    </DocumentPage>
   );
 }

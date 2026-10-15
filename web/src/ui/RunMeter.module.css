@@ -2,7 +2,7 @@
    Ported from kit.css `.ao-rm` / `.ao-seg`. */
 .rm {
   display: flex;
-  gap: 3px;
+  gap: var(--sp-1);
   min-width: 0;
   list-style: none;
   margin: 0;
@@ -64,10 +64,10 @@
 
 /* sizes */
 .tile {
-  gap: 3px;
+  gap: var(--sp-1);
 }
 .row {
-  gap: 2px;
+  gap: var(--sp-1);
   width: var(--rm-w, 56px);
   flex: none;
 }
@@ -79,14 +79,14 @@
 }
 /* strip: the ticket's run strip: the same segments, with the step names under them */
 .strip {
-  gap: 10px;
+  gap: var(--sp-5);
 }
 .strip > li {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .strip > li > .seg {
   flex: none;
@@ -123,7 +123,7 @@
 /* strip past STRIP_LABEL_MAX steps: bare segments (the strip's left side names the step and k/n).
    The gaps never take more than 40% of the width, so any step count fits. */
 .strip.bare {
-  gap: min(3px, calc(40% / var(--rm-n, 1)));
+  gap: min(var(--sp-1), calc(40% / var(--rm-n, 1)));
 }
 
 /* reduced motion: no sweep; the current step is solid live */

@@ -2,13 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../api/client";
 import {
-  describePatchError,
-  ENV_ADMIN_LOCK,
+  ADMINS_ONLY,
   isWaiting,
   lastSignIn,
-  locksFor,
   roleHint,
   ROLES,
+  rowErrors,
   shortDate,
   sortUsers,
   summary,
@@ -71,31 +70,6 @@ describe("isWaiting", () => {
   });
 });
 
-describe("locksFor", () => {
-  const none = { role: undefined, disabled: undefined, note: undefined };
-
-  it("locks role and disabling on the signed-in admin's own row only", () => {
-    expect(locksFor({ id: 2, env_admin: false }, 1)).toEqual(none);
-    const own = locksFor({ id: 1, env_admin: false }, 1);
-    expect(own.role).toMatch(/own role/);
-    expect(own.disabled).toMatch(/disable yourself/);
-    expect(own.note).toBeUndefined();
-  });
-
-  it("locks nothing while the viewer is unknown", () => {
-    expect(locksFor({ id: 1, env_admin: false }, undefined)).toEqual(none);
-  });
-
-  it("locks a config admin's row with one reason, said out loud", () => {
-    const want = { role: ENV_ADMIN_LOCK, disabled: ENV_ADMIN_LOCK, note: ENV_ADMIN_LOCK };
-    expect(ENV_ADMIN_LOCK).toBe("Set in server config (AGENTOS_ADMINS)");
-    expect(locksFor({ id: 2, env_admin: true }, 1)).toEqual(want);
-    // The config reason wins over the self-lock: another admin can't change it either.
-    expect(locksFor({ id: 1, env_admin: true }, 1)).toEqual(want);
-    expect(locksFor({ id: 1, env_admin: true }, undefined)).toEqual(want);
-  });
-});
-
 describe("lastSignIn", () => {
   it("says never when there is no sign-in", () => {
     expect(lastSignIn(null, NOW)).toBe("never signed in");
@@ -118,18 +92,31 @@ describe("shortDate", () => {
   });
 });
 
-describe("describePatchError", () => {
-  it("turns a 403 into the admins-only line", () => {
-    expect(describePatchError(new ApiError(403, "forbidden", "Requires the admin role"))).toBe(
-      "Only admins can manage users.",
-    );
+describe("rowErrors", () => {
+  it("is empty without a failure", () => {
+    expect(rowErrors(null)).toEqual([]);
+    expect(rowErrors(undefined)).toEqual([]);
   });
 
-  it("shows the server's message otherwise (e.g. an env admin can't be demoted)", () => {
-    const e = new ApiError(422, "validation_error", "This user is listed in AGENTOS_ADMINS");
-    expect(describePatchError(e)).toBe("This user is listed in AGENTOS_ADMINS");
-    expect(describePatchError(new Error("offline"))).toBe("offline");
-    expect(describePatchError("??")).toBe("Something went wrong.");
+  it("turns a 403 into the admins-only line", () => {
+    expect(rowErrors(new ApiError(403, "forbidden", "x"))).toEqual([ADMINS_ONLY]);
+  });
+
+  it("shows every issue of a 422 at the row, a message-only refusal as is", () => {
+    const refusal = new ApiError(422, "validation_error", "x", [{ loc: [], message: "demote" }]);
+    expect(rowErrors(refusal)).toEqual(["demote"]);
+
+    const body = new ApiError(422, "validation_error", "x", [
+      { loc: ["role"], message: "bad" },
+      { loc: ["disabled"], message: "bad" },
+    ]);
+    expect(rowErrors(body)).toEqual(["role: bad", "disabled: bad"]);
+  });
+
+  it("shows the message of a failure without issues", () => {
+    expect(rowErrors(new ApiError(404, "user_not_found", "gone"))).toEqual(["gone"]);
+    expect(rowErrors(new Error("offline"))).toEqual(["offline"]);
+    expect(rowErrors("??")).toHaveLength(1);
   });
 });
 

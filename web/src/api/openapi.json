@@ -469,6 +469,13 @@
             "title": "Code",
             "type": "string"
           },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
           "message": {
             "title": "Message",
             "type": "string"
@@ -476,7 +483,8 @@
         },
         "required": [
           "code",
-          "message"
+          "message",
+          "issues"
         ],
         "title": "ErrorDetail",
         "type": "object"
@@ -543,28 +551,22 @@
         "title": "EventsResponse",
         "type": "object"
       },
-      "FieldMapping": {
+      "FieldMappingEntry": {
         "additionalProperties": false,
-        "description": "A Jira field \u2192 an AgentOS field, by rules. `field` = the Jira field id (`fixVersions`,\n`customfield_10042`); `field_name` = its display name (stored, so the UI and the ticket's\nreasons can say \"Fix versions\" without a Jira call).",
+        "description": "A mapping as sent and read (the rules are `FieldMapping`'s).",
         "properties": {
           "field": {
-            "maxLength": 255,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9_.:-]+$",
             "title": "Field",
             "type": "string"
           },
           "field_name": {
-            "maxLength": 255,
-            "minLength": 1,
             "title": "Field Name",
             "type": "string"
           },
           "rules": {
             "items": {
-              "$ref": "#/components/schemas/MappingRule"
+              "$ref": "#/components/schemas/MappingRuleEntry"
             },
-            "maxItems": 100,
             "title": "Rules",
             "type": "array"
           },
@@ -586,71 +588,7 @@
           "field_name",
           "rules"
         ],
-        "title": "FieldMapping",
-        "type": "object"
-      },
-      "FieldMappings": {
-        "additionalProperties": false,
-        "description": "Settings > Field mappings: at most one mapping per target. A `base_branch` mapping sets an\nimported (manual import or Intake Take in) repo ticket's base branch from the Jira field; no\nmatch leaves it blank and blocked from dispatch (the repo default does not fill it).",
-        "properties": {
-          "mappings": {
-            "items": {
-              "$ref": "#/components/schemas/FieldMapping"
-            },
-            "title": "Mappings",
-            "type": "array"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
-          },
-          "updated_by": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Person"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "version": {
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "mappings",
-          "version",
-          "updated_at",
-          "updated_by"
-        ],
-        "title": "FieldMappings",
-        "type": "object"
-      },
-      "FieldMappingsUpdate": {
-        "additionalProperties": false,
-        "description": "PUT /api/settings/mappings: the whole list. 422 `validation_error` naming the mapping and\nrule (`mappings.0.rules.3.value: ...`) or a target listed twice. Saving re-applies the rules\nto every unlocked ticket whose base branch came from a mapping (from its stored Jira value; no\nJira call), except during a run; hand-set and locked tickets are never touched.",
-        "properties": {
-          "base_version": {
-            "title": "Base Version",
-            "type": "integer"
-          },
-          "mappings": {
-            "items": {
-              "$ref": "#/components/schemas/FieldMapping"
-            },
-            "maxItems": 20,
-            "title": "Mappings",
-            "type": "array"
-          }
-        },
-        "required": [
-          "mappings",
-          "base_version"
-        ],
-        "title": "FieldMappingsUpdate",
+        "title": "FieldMappingEntry",
         "type": "object"
       },
       "FileContent": {
@@ -1021,6 +959,24 @@
         "title": "IntakeAssignee",
         "type": "object"
       },
+      "IntakeDoc": {
+        "additionalProperties": false,
+        "description": "Settings > Intake: the queries, in tab order. The JQL isn't checked against Jira (it might\nbe down): use the preview. Saving drops the intake cache.",
+        "properties": {
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeQueryEntry"
+            },
+            "title": "Queries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queries"
+        ],
+        "title": "IntakeDoc",
+        "type": "object"
+      },
       "IntakeItem": {
         "additionalProperties": false,
         "description": "A Jira issue that matches an intake query and isn't in AgentOS yet. `type` and `priority`\nuse the import's mapping, so they are what \"Take in\" (POST /api/tickets/import) creates;\n`status` is the Jira status name.",
@@ -1190,14 +1146,13 @@
         "title": "IntakeQuery",
         "type": "object"
       },
-      "IntakeQueryIn": {
+      "IntakeQueryEntry": {
         "additionalProperties": false,
-        "description": "`id: null` = a new query: the server makes a unique id from its name. Sent ids are kept.",
+        "description": "`id: null` = a new query: the server makes a unique id from its name. Sent ids are kept\n(always set when read).",
         "properties": {
           "id": {
             "anyOf": [
               {
-                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
                 "type": "string"
               },
               {
@@ -1207,14 +1162,10 @@
             "title": "Id"
           },
           "jql": {
-            "maxLength": 4000,
-            "minLength": 1,
             "title": "Jql",
             "type": "string"
           },
           "name": {
-            "maxLength": 100,
-            "minLength": 1,
             "title": "Name",
             "type": "string"
           }
@@ -1224,50 +1175,12 @@
           "name",
           "jql"
         ],
-        "title": "IntakeQueryIn",
-        "type": "object"
-      },
-      "IntakeQuerySpec": {
-        "additionalProperties": false,
-        "description": "One intake query: a JQL whose matches the Intake tab lists (request 14).",
-        "properties": {
-          "id": {
-            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
-            "title": "Id",
-            "type": "string"
-          },
-          "jql": {
-            "maxLength": 4000,
-            "minLength": 1,
-            "title": "Jql",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "jql"
-        ],
-        "title": "IntakeQuerySpec",
+        "title": "IntakeQueryEntry",
         "type": "object"
       },
       "IntakeSettings": {
         "additionalProperties": false,
-        "description": "Settings > Intake: the queries, in tab order.",
         "properties": {
-          "queries": {
-            "items": {
-              "$ref": "#/components/schemas/IntakeQuerySpec"
-            },
-            "title": "Queries",
-            "type": "array"
-          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1283,42 +1196,52 @@
               }
             ]
           },
+          "value": {
+            "$ref": "#/components/schemas/IntakeDoc"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
           }
         },
         "required": [
-          "queries",
           "version",
           "updated_at",
-          "updated_by"
+          "updated_by",
+          "value"
         ],
         "title": "IntakeSettings",
         "type": "object"
       },
       "IntakeSettingsUpdate": {
         "additionalProperties": false,
-        "description": "PUT /api/settings/intake. The JQL isn't checked against Jira (it might be down): use the\npreview. Saving drops the intake cache.",
         "properties": {
           "base_version": {
             "title": "Base Version",
             "type": "integer"
           },
-          "queries": {
-            "items": {
-              "$ref": "#/components/schemas/IntakeQueryIn"
-            },
-            "maxItems": 50,
-            "title": "Queries",
-            "type": "array"
+          "value": {
+            "$ref": "#/components/schemas/IntakeDoc"
           }
         },
         "required": [
-          "queries",
+          "value",
           "base_version"
         ],
         "title": "IntakeSettingsUpdate",
+        "type": "object"
+      },
+      "IntakeSettingsValidate": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/IntakeDoc"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "IntakeSettingsValidate",
         "type": "object"
       },
       "JiraField": {
@@ -1936,7 +1859,7 @@
       },
       "MappingPreviewRequest": {
         "additionalProperties": false,
-        "description": "\"Try it\": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira\nkey or browse link, read with the service account). Exactly one of `values` / `issue`.",
+        "description": "\"Try it\": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira\nkey or browse link, read with the service account). Exactly one of `values` / `issue`; the\nother is null. `mapping` is checked as on save.",
         "properties": {
           "issue": {
             "anyOf": [
@@ -1952,7 +1875,7 @@
             "title": "Issue"
           },
           "mapping": {
-            "$ref": "#/components/schemas/FieldMapping"
+            "$ref": "#/components/schemas/FieldMappingEntry"
           },
           "values": {
             "anyOf": [
@@ -1972,24 +1895,22 @@
           }
         },
         "required": [
-          "mapping"
+          "mapping",
+          "values",
+          "issue"
         ],
         "title": "MappingPreviewRequest",
         "type": "object"
       },
-      "MappingRule": {
+      "MappingRuleEntry": {
         "additionalProperties": false,
-        "description": "`match`: a wildcard pattern, not a regex: `*` = any run of characters, everything else\nliteral, matched against the whole (trimmed) value, case-insensitive. `value`: what the target\ngets (`base_branch`: a valid branch name). Rules are ordered; the first match wins.",
+        "description": "A rule as sent and read (the rules are `MappingRule`'s).",
         "properties": {
           "match": {
-            "maxLength": 200,
-            "minLength": 1,
             "title": "Match",
             "type": "string"
           },
           "value": {
-            "maxLength": 255,
-            "minLength": 1,
             "title": "Value",
             "type": "string"
           }
@@ -1998,7 +1919,91 @@
           "match",
           "value"
         ],
-        "title": "MappingRule",
+        "title": "MappingRuleEntry",
+        "type": "object"
+      },
+      "MappingSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Person"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/MappingsDoc"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "updated_at",
+          "updated_by",
+          "value"
+        ],
+        "title": "MappingSettings",
+        "type": "object"
+      },
+      "MappingSettingsUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "value": {
+            "$ref": "#/components/schemas/MappingsDoc"
+          }
+        },
+        "required": [
+          "value",
+          "base_version"
+        ],
+        "title": "MappingSettingsUpdate",
+        "type": "object"
+      },
+      "MappingSettingsValidate": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/MappingsDoc"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "MappingSettingsValidate",
+        "type": "object"
+      },
+      "MappingsDoc": {
+        "additionalProperties": false,
+        "description": "Settings > Field mappings: at most one mapping per target, each rule's `value` valid for\nits target. A `base_branch` mapping sets an imported (manual import or Intake Take in) repo\nticket's base branch from the Jira field; no match leaves it blank and blocked from dispatch\n(the repo default does not fill it). Saving re-applies the rules to every unlocked ticket\nwhose base branch came from a mapping (from its stored Jira value; no Jira call), except\nduring a run; hand-set and locked tickets are never touched.",
+        "properties": {
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/FieldMappingEntry"
+            },
+            "title": "Mappings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mappings"
+        ],
+        "title": "MappingsDoc",
         "type": "object"
       },
       "Me": {
@@ -2340,48 +2345,11 @@
       },
       "RepoEntry": {
         "additionalProperties": false,
-        "properties": {
-          "default_branch": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Default Branch"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "open_ticket_count": {
-            "title": "Open Ticket Count",
-            "type": "integer"
-          },
-          "url": {
-            "title": "Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "url",
-          "default_branch",
-          "open_ticket_count"
-        ],
-        "title": "RepoEntry",
-        "type": "object"
-      },
-      "RepoEntryIn": {
-        "additionalProperties": false,
         "description": "`url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).\n`default_branch`: null or blank = none (then each ticket on the repo needs its own).",
         "properties": {
           "default_branch": {
             "anyOf": [
               {
-                "maxLength": 255,
                 "type": "string"
               },
               {
@@ -2391,13 +2359,10 @@
             "title": "Default Branch"
           },
           "name": {
-            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
             "title": "Name",
             "type": "string"
           },
           "url": {
-            "maxLength": 500,
-            "minLength": 1,
             "title": "Url",
             "type": "string"
           }
@@ -2407,7 +2372,7 @@
           "url",
           "default_branch"
         ],
-        "title": "RepoEntryIn",
+        "title": "RepoEntry",
         "type": "object"
       },
       "RepoInfo": {
@@ -2444,14 +2409,13 @@
       },
       "RepoSettings": {
         "additionalProperties": false,
-        "description": "Settings > Repos: the Space's repo catalog. Tickets reference a repo by name, so changing a\nURL or default branch reaches every ticket that uses it.",
         "properties": {
-          "repos": {
-            "items": {
-              "$ref": "#/components/schemas/RepoEntry"
+          "open_ticket_counts": {
+            "additionalProperties": {
+              "type": "integer"
             },
-            "title": "Repos",
-            "type": "array"
+            "title": "Open Ticket Counts",
+            "type": "object"
           },
           "updated_at": {
             "format": "date-time",
@@ -2468,42 +2432,71 @@
               }
             ]
           },
+          "value": {
+            "$ref": "#/components/schemas/ReposDoc"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
           }
         },
         "required": [
-          "repos",
           "version",
           "updated_at",
-          "updated_by"
+          "updated_by",
+          "value",
+          "open_ticket_counts"
         ],
         "title": "RepoSettings",
         "type": "object"
       },
       "RepoSettingsUpdate": {
         "additionalProperties": false,
-        "description": "PUT /api/settings/repos: the whole catalog, in order. Names are unique and can't be renamed\n(a missing name = removed, a new one = added). Removing a repo that open tickets or the\nSpace's `default_repo` use \u2192 409 `in_use`; done and closed tickets keep the name.",
         "properties": {
           "base_version": {
             "title": "Base Version",
             "type": "integer"
           },
+          "value": {
+            "$ref": "#/components/schemas/ReposDoc"
+          }
+        },
+        "required": [
+          "value",
+          "base_version"
+        ],
+        "title": "RepoSettingsUpdate",
+        "type": "object"
+      },
+      "RepoSettingsValidate": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/ReposDoc"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "RepoSettingsValidate",
+        "type": "object"
+      },
+      "ReposDoc": {
+        "additionalProperties": false,
+        "description": "Settings > Repos: the Space's repo catalog, in order. Tickets reference a repo by name, so\nchanging a URL or default branch reaches every ticket that uses it. Names are unique and\ncan't be renamed (a missing name = removed, a new one = added). Removing a repo that open\ntickets or the Space's `default_repo` use \u2192 409 `in_use` on save; done and closed tickets keep\nthe name.",
+        "properties": {
           "repos": {
             "items": {
-              "$ref": "#/components/schemas/RepoEntryIn"
+              "$ref": "#/components/schemas/RepoEntry"
             },
-            "maxItems": 100,
             "title": "Repos",
             "type": "array"
           }
         },
         "required": [
-          "repos",
-          "base_version"
+          "repos"
         ],
-        "title": "RepoSettingsUpdate",
+        "title": "ReposDoc",
         "type": "object"
       },
       "Resolution": {
@@ -2880,9 +2873,9 @@
         "title": "RunSummary",
         "type": "object"
       },
-      "RunnerSettings": {
+      "RunnerDoc": {
         "additionalProperties": false,
-        "description": "Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow. Read at\nevery launch (no restart). `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN\nis set) come from the server's env and are read-only. `github_repo` null = none set: with the\ngithub launcher, runs then fail at launch saying so.",
+        "description": "Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow, read at\nevery launch (no restart). `github_repo`: `owner/name`, or null = none set (with the github\nlauncher, runs then fail at launch saying so); `workflow`: a .yml file name in that repo's\n.github/workflows/; `ref`: the branch or tag the workflow file is on.",
         "properties": {
           "github_repo": {
             "anyOf": [
@@ -2895,6 +2888,27 @@
             ],
             "title": "Github Repo"
           },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "workflow": {
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "github_repo",
+          "workflow",
+          "ref"
+        ],
+        "title": "RunnerDoc",
+        "type": "object"
+      },
+      "RunnerSettings": {
+        "additionalProperties": false,
+        "description": "`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the\nserver's env and are read-only.",
+        "properties": {
           "launcher": {
             "enum": [
               "local",
@@ -2902,10 +2916,6 @@
               "mailbox"
             ],
             "title": "Launcher",
-            "type": "string"
-          },
-          "ref": {
-            "title": "Ref",
             "type": "string"
           },
           "token_set": {
@@ -2927,69 +2937,54 @@
               }
             ]
           },
+          "value": {
+            "$ref": "#/components/schemas/RunnerDoc"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
-          },
-          "workflow": {
-            "title": "Workflow",
-            "type": "string"
           }
         },
         "required": [
-          "launcher",
-          "github_repo",
-          "workflow",
-          "ref",
-          "token_set",
           "version",
           "updated_at",
-          "updated_by"
+          "updated_by",
+          "value",
+          "launcher",
+          "token_set"
         ],
         "title": "RunnerSettings",
         "type": "object"
       },
       "RunnerSettingsUpdate": {
         "additionalProperties": false,
-        "description": "PUT /api/settings/runner. `github_repo`: `owner/name` or null; `workflow`: a .yml file name\nin that repo's .github/workflows/; `ref`: the branch or tag the workflow file is on.",
         "properties": {
           "base_version": {
             "title": "Base Version",
             "type": "integer"
           },
-          "github_repo": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Github Repo"
-          },
-          "ref": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Ref",
-            "type": "string"
-          },
-          "workflow": {
-            "maxLength": 200,
-            "pattern": "^[A-Za-z0-9_.-]+\\.ya?ml$",
-            "title": "Workflow",
-            "type": "string"
+          "value": {
+            "$ref": "#/components/schemas/RunnerDoc"
           }
         },
         "required": [
-          "github_repo",
-          "workflow",
-          "ref",
+          "value",
           "base_version"
         ],
         "title": "RunnerSettingsUpdate",
+        "type": "object"
+      },
+      "RunnerSettingsValidate": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/RunnerDoc"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "RunnerSettingsValidate",
         "type": "object"
       },
       "RuntimeEntry": {
@@ -3193,9 +3188,9 @@
         "title": "SourceLink",
         "type": "object"
       },
-      "SpaceSettings": {
+      "SpaceDoc": {
         "additionalProperties": false,
-        "description": "Settings > Space. `key_prefix` only affects new native tickets (stored keys never change).\n`jira_projects`: signing in needs browse access to one of them (AGENTOS_ADMINS people\nexcepted); imports and intake only take issues from them.",
+        "description": "Settings > Space. `key_prefix` only affects new native tickets (stored keys never change);\nit can't be one of `jira_projects` (native keys would take real Jira keys). `jira_projects`:\nsigning in needs browse access to one of them (AGENTOS_ADMINS people excepted), so at least one\nis needed while sign-in is with Jira; imports and intake only take issues from them.",
         "properties": {
           "claim_timeout_s": {
             "title": "Claim Timeout S",
@@ -3212,10 +3207,6 @@
             ],
             "title": "Default Repo"
           },
-          "default_workflow_id": {
-            "title": "Default Workflow Id",
-            "type": "integer"
-          },
           "jira_projects": {
             "items": {
               "type": "string"
@@ -3230,7 +3221,21 @@
           "name": {
             "title": "Name",
             "type": "string"
-          },
+          }
+        },
+        "required": [
+          "name",
+          "default_repo",
+          "key_prefix",
+          "jira_projects",
+          "claim_timeout_s"
+        ],
+        "title": "SpaceDoc",
+        "type": "object"
+      },
+      "SpaceSettings": {
+        "additionalProperties": false,
+        "properties": {
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -3246,91 +3251,52 @@
               }
             ]
           },
+          "value": {
+            "$ref": "#/components/schemas/SpaceDoc"
+          },
           "version": {
             "title": "Version",
             "type": "integer"
           }
         },
         "required": [
-          "name",
-          "default_repo",
-          "key_prefix",
-          "jira_projects",
-          "claim_timeout_s",
-          "default_workflow_id",
           "version",
           "updated_at",
-          "updated_by"
+          "updated_by",
+          "value"
         ],
         "title": "SpaceSettings",
         "type": "object"
       },
       "SpaceSettingsUpdate": {
         "additionalProperties": false,
-        "description": "PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,\n`key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project\nrepeats, `jira_projects` is empty while sign-in is with Jira, or `default_workflow_id` isn't a\nworkflow.",
         "properties": {
           "base_version": {
             "title": "Base Version",
             "type": "integer"
           },
-          "claim_timeout_s": {
-            "maximum": 86400.0,
-            "minimum": 60.0,
-            "title": "Claim Timeout S",
-            "type": "integer"
-          },
-          "default_repo": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Default Repo"
-          },
-          "default_workflow_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Default Workflow Id"
-          },
-          "jira_projects": {
-            "items": {
-              "pattern": "^[A-Z][A-Z0-9_]+$",
-              "type": "string"
-            },
-            "maxItems": 50,
-            "title": "Jira Projects",
-            "type": "array"
-          },
-          "key_prefix": {
-            "pattern": "^[A-Z][A-Z0-9]{0,9}$",
-            "title": "Key Prefix",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
+          "value": {
+            "$ref": "#/components/schemas/SpaceDoc"
           }
         },
         "required": [
-          "name",
-          "default_repo",
-          "key_prefix",
-          "jira_projects",
-          "claim_timeout_s",
+          "value",
           "base_version"
         ],
         "title": "SpaceSettingsUpdate",
+        "type": "object"
+      },
+      "SpaceSettingsValidate": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/SpaceDoc"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "SpaceSettingsValidate",
         "type": "object"
       },
       "Stage": {
@@ -4794,6 +4760,36 @@
         "title": "UserPatch",
         "type": "object"
       },
+      "ValidationIssue": {
+        "additionalProperties": false,
+        "description": "One problem with a request. `loc` is the path to the field, like pydantic's, relative to\nthe request body (no leading `body`); an empty `loc` is the request as a whole.",
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "message"
+        ],
+        "title": "ValidationIssue",
+        "type": "object"
+      },
       "VerdictData": {
         "additionalProperties": false,
         "description": "A check's verdict in a round (sent before its `stage_finished`). `repairs`: how many\nrepairs it took (0 = valid at once).",
@@ -5897,6 +5893,50 @@
         ]
       }
     },
+    "/api/settings/intake/validate": {
+      "post": {
+        "operationId": "validate_intake_api_settings_intake_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakeSettingsValidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Validate Intake",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/mappings": {
       "get": {
         "operationId": "get_mappings_api_settings_mappings_get",
@@ -5905,7 +5945,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FieldMappings"
+                  "$ref": "#/components/schemas/MappingSettings"
                 }
               }
             },
@@ -5944,7 +5984,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/FieldMappingsUpdate"
+                "$ref": "#/components/schemas/MappingSettingsUpdate"
               }
             }
           },
@@ -5955,7 +5995,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FieldMappings"
+                  "$ref": "#/components/schemas/MappingSettings"
                 }
               }
             },
@@ -6086,6 +6126,50 @@
         ]
       }
     },
+    "/api/settings/mappings/validate": {
+      "post": {
+        "operationId": "validate_mappings_api_settings_mappings_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingSettingsValidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Validate Mappings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/repos": {
       "get": {
         "operationId": "get_repos_api_settings_repos_get",
@@ -6176,6 +6260,50 @@
         ]
       }
     },
+    "/api/settings/repos/validate": {
+      "post": {
+        "operationId": "validate_repos_api_settings_repos_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoSettingsValidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Validate Repos",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/runner": {
       "get": {
         "operationId": "get_runner_api_settings_runner_get",
@@ -6217,6 +6345,7 @@
         ]
       },
       "put": {
+        "description": "The github launcher reads the runner at its next launch.",
         "operationId": "put_runner_api_settings_runner_put",
         "requestBody": {
           "content": {
@@ -6261,6 +6390,50 @@
           }
         },
         "summary": "Put Runner",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/runner/validate": {
+      "post": {
+        "operationId": "validate_runner_api_settings_runner_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerSettingsValidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Validate Runner",
         "tags": [
           "settings"
         ]
@@ -6441,6 +6614,50 @@
           }
         },
         "summary": "Put Space",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/space/validate": {
+      "post": {
+        "operationId": "validate_space_api_settings_space_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceSettingsValidate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Validate Space",
         "tags": [
           "settings"
         ]
@@ -8211,6 +8428,59 @@
           }
         },
         "summary": "Update Workflow",
+        "tags": [
+          "workflows"
+        ]
+      }
+    },
+    "/api/workflows/{workflow_id}/default": {
+      "post": {
+        "description": "Make this workflow the one a new ticket gets when it names none (`/api/config`\n`default_workflow_id`); the previous default stops being it. Answers the workflow, now\n`default`. 404 `not_found` for an unknown id.",
+        "operationId": "make_default_api_workflows__workflow_id__default_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workflow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Make Default",
         "tags": [
           "workflows"
         ]

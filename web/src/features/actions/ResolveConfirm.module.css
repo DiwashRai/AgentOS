@@ -4,10 +4,10 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
   width: 100%;
   max-width: 380px;
-  padding: 10px 12px;
+  padding: var(--sp-5) var(--sp-6);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-sheet);
@@ -27,7 +27,7 @@
   display: block;
   width: 100%;
   min-height: 40px;
-  padding: 7px 10px;
+  padding: var(--sp-3) var(--sp-5);
   border: 1px solid var(--rule);
   border-radius: var(--r-control);
   background: var(--field);
@@ -59,7 +59,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .keys {
   margin-right: auto;

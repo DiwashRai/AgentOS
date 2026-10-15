@@ -22,10 +22,12 @@ import { RunMeter } from "./RunMeter";
 import type { MeterState } from "./meter";
 import { PriorityIcon } from "./PriorityIcon";
 import { StageGlyph } from "./StageGlyph";
+import { StatusLine } from "./StatusLine";
 import { StatusMark } from "./StatusMark";
 import { Stepper } from "./Stepper";
 import { Tabs } from "./Tabs";
 import { Tag } from "./Tag";
+import text from "./text.module.css";
 import { TickBadge } from "./TickBadge";
 import { TypeIcon } from "./TypeIcon";
 import { ZoneHead } from "./ZoneHead";
@@ -541,6 +543,23 @@ function Panel({ theme, title }: { theme: "light" | "dark"; title: string }) {
             <Link href="#kit">Open ticket →</Link>
             <LinkButton>Show all</LinkButton>
           </div>
+        </div>
+      </section>
+
+      <section className={s.section} aria-labelledby={id("text")}>
+        <ZoneHead id={id("text")} title="Text and status lines" />
+        <div className={s.card}>
+          <div className={s.row}>
+            <span className={text.label}>Label</span>
+            <span className={text.meta}>Meta · saved 3 min ago by Maya</span>
+            <span className={text.error}>Required.</span>
+            <span className={cx(text.meta, text.ellipsis, s.narrow)}>
+              An ellipsis cuts a long line to one row
+            </span>
+          </div>
+          <StatusLine>Loading Space settings</StatusLine>
+          <StatusLine error>Can&apos;t load Space settings · 502</StatusLine>
+          <StatusLine inset>Loading</StatusLine>
         </div>
       </section>
 

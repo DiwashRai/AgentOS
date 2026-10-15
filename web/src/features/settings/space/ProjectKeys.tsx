@@ -1,10 +1,10 @@
 // The Jira project keys as chips plus an input: Enter, comma or leaving the field adds what was
-// typed (several at once when pasted), × removes one. Controlled; what's typed but not yet added
-// stays local.
+// typed (several at once when pasted, upper-cased), × removes one. The server checks the keys; a
+// chip it named in an issue is marked. Controlled; what's typed but not yet added stays local.
 import { useState } from "react";
 
 import { CloseIcon } from "../../../ui";
-import { addProjectKeys } from "./model";
+import { splitProjectKeys } from "./model";
 import s from "./Space.module.css";
 
 export interface ProjectKeysProps {
@@ -12,26 +12,21 @@ export interface ProjectKeysProps {
   describedBy: string | undefined;
   invalid: boolean;
   value: readonly string[];
+  /** Whether the server named the key at this position in an issue. */
+  flagged: (index: number) => boolean;
   readOnly: boolean;
   onChange: (keys: string[]) => void;
-  /** A problem with what was typed (null clears it); shown by the surrounding Field. */
-  onTypingError: (error: string | null) => void;
 }
 
 export function ProjectKeys(props: ProjectKeysProps) {
-  const { value, readOnly, onChange, onTypingError } = props;
+  const { value, readOnly, onChange } = props;
   const [text, setText] = useState("");
 
   const commit = () => {
     if (readOnly) return;
-    if (text.trim() === "") {
-      onTypingError(null);
-      return;
-    }
-    const { keys, error, rest } = addProjectKeys(text, value);
+    const keys = splitProjectKeys(text);
     if (keys.length > 0) onChange([...value, ...keys]);
-    setText(rest);
-    onTypingError(error ?? null);
+    setText("");
   };
 
   return (
@@ -40,8 +35,13 @@ export function ProjectKeys(props: ProjectKeysProps) {
       data-invalid={props.invalid ? "" : undefined}
       data-readonly={readOnly ? "" : undefined}
     >
-      {value.map((key) => (
-        <span key={key} className={s.chip}>
+      {value.map((key, index) => (
+        <span
+          // The same key twice is the server's to report; the position keeps the chips apart.
+          key={`${String(index)}-${key}`}
+          className={s.chip}
+          data-invalid={props.flagged(index) ? "" : undefined}
+        >
           {key}
           {readOnly ? null : (
             <button
@@ -49,7 +49,7 @@ export function ProjectKeys(props: ProjectKeysProps) {
               aria-label={`Remove ${key}`}
               title={`Remove ${key}`}
               onClick={() => {
-                onChange(value.filter((k) => k !== key));
+                onChange(value.filter((_, i) => i !== index));
               }}
             >
               <CloseIcon />
@@ -75,7 +75,6 @@ export function ProjectKeys(props: ProjectKeysProps) {
         aria-invalid={props.invalid}
         onChange={(e) => {
           setText(e.target.value.toUpperCase());
-          onTypingError(null);
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === ",") {

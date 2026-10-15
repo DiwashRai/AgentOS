@@ -7,8 +7,7 @@ from typing import Any
 
 import pytest
 
-from agentos.errors import ApiError
-from agentos.models import FieldMapping, MappingRule
+from agentos.models import FieldMappingEntry, MappingRule, MappingsDoc
 from agentos.pipeline.mapping import (
     MappingResult,
     apply_rules,
@@ -111,27 +110,37 @@ def test_values_are_stored_joined_and_read_back() -> None:
     assert split_values(None) == []
 
 
-def mapping(*pairs: tuple[str, str], target: str = "base_branch") -> FieldMapping:
-    return FieldMapping.model_validate(
+def mapping(*pairs: tuple[str, str], field: str = "fixVersions") -> FieldMappingEntry:
+    return FieldMappingEntry.model_validate(
         {
-            "target": target,
+            "target": "base_branch",
             "source": "jira",
-            "field": "fixVersions",
+            "field": field,
             "field_name": "Fix versions",
             "rules": [{"match": m, "value": v} for m, v in pairs],
         }
     )
 
 
-def test_check_mappings() -> None:
-    check_mappings([mapping(("version_1*", "App-1.Latest"))])
-    with pytest.raises(ApiError) as bad_value:
-        check_mappings([mapping(("a", "ok"), ("b", "bad..branch"))])
-    assert (bad_value.value.status, bad_value.value.code) == (422, "validation_error")
-    assert bad_value.value.message.startswith("mappings.0.rules.1.value: ")
-    with pytest.raises(ApiError) as twice:
-        check_mappings([mapping(("a", "x")), mapping(("b", "y"))])
-    assert twice.value.message.startswith("mappings.1.target: ")
+@pytest.mark.parametrize(
+    ("mappings", "locs"),
+    [
+        ([mapping(("version_1*", "App-1.Latest"))], []),
+        ([mapping(("a", "ok"), ("b", "bad..branch"))], [["mappings", 0, "rules", 1, "value"]]),
+        ([mapping(("a", "x")), mapping(("b", "y"))], [["mappings", 1, "target"]]),
+        # A bad field doesn't hide a bad rule value.
+        (
+            [mapping(("a", "a..b"), field="a,b")],
+            [["mappings", 0, "field"], ["mappings", 0, "rules", 0, "value"]],
+        ),
+        # A value pydantic refuses is reported once.
+        ([mapping(("a", " "))], [["mappings", 0, "rules", 0, "value"]]),
+    ],
+)
+def test_check_mappings(mappings: list[FieldMappingEntry], locs: list[list[str | int]]) -> None:
+    checked, issues = check_mappings(MappingsDoc(mappings=mappings), prefix=())
+    assert [issue.loc for issue in issues] == locs
+    assert (checked is None) == bool(locs)
 
 
 @pytest.mark.parametrize(

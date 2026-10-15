@@ -1,11 +1,9 @@
-// A draft over a saved copy, shared by the Pipeline tab (a pipeline), the Space defaults page and
-// the Settings pages (one settings document each). `base` is
+// A draft over a saved copy, shared by the Pipeline tab (a pipeline), the Template page,
+// Workflows, the runtimes editor and `useDocument` (one versioned document each). `base` is
 // the version the draft started from, so a save never silently overwrites someone else's change
 // (the server answers 409 `stale_version` instead).
 import { useEffect, useState } from "react";
 import { useBlocker } from "react-router";
-
-import { samePipeline, type Pipeline } from "./model";
 
 const LEAVE = "Leave without saving your changes?";
 
@@ -17,20 +15,15 @@ export interface Draft<T> {
   baseVersion: number | undefined;
   edit: (value: T) => void;
   discard: () => void;
-}
-
-export type PipelineDraft = Draft<Pipeline>;
-
-export function usePipelineDraft(
-  saved: Pipeline | undefined,
-  version: number | undefined,
-): PipelineDraft {
-  return useDraft(saved, version, samePipeline);
+  /** Keep the draft but save it over `version` (after a conflict, the copy just reloaded). */
+  rebase: (version: number) => void;
 }
 
 /**
- * `warn: false` skips the leave warning, for a page with two drafts: the router allows one blocker
- * at a time, so that page calls `useUnsavedWarning(a.dirty || b.dirty)` once itself.
+ * A draft with its own leave warning. `warn: false` turns the warning off for a page with two
+ * drafts, which calls `useUnsavedWarning(a.dirty || b.dirty)` once itself, after both drafts. The
+ * off warning still holds a router blocker that never blocks; react-router consults only the
+ * blocker registered last, so the page's own must come after. `useDraftState` holds none.
  */
 export function useDraft<T>(
   saved: T | undefined,
@@ -38,24 +31,42 @@ export function useDraft<T>(
   same: (a: T, b: T) => boolean,
   options: { warn?: boolean } = {},
 ): Draft<T> {
+  const draft = useDraftState(saved, version, same);
+  useUnsavedWarning(draft.dirty && options.warn !== false);
+  return draft;
+}
+
+/** The draft alone, with no leave warning: the page (or `DocumentPage`) warns once for all. */
+export function useDraftState<T>(
+  saved: T | undefined,
+  version: number | undefined,
+  same: (a: T, b: T) => boolean,
+): Draft<T> {
   const [draft, setDraft] = useState<{ value: T; base: number | undefined } | null>(null);
   const dirty = draft !== null && saved !== undefined && !same(draft.value, saved);
-  useUnsavedWarning(dirty && options.warn !== false);
   return {
     value: dirty ? draft.value : saved,
     dirty,
     baseVersion: dirty ? draft.base : version,
-    // A draft that matches the saved copy again starts over from the current version.
+    // A draft that matches the saved copy is dropped, so the next edit starts over from the version
+    // current then (even if the saved copy has moved on meanwhile).
     edit: (value) => {
-      setDraft({ value, base: dirty ? draft.base : version });
+      if (saved !== undefined && same(value, saved)) setDraft(null);
+      else setDraft({ value, base: dirty ? draft.base : version });
     },
     discard: () => {
       setDraft(null);
     },
+    rebase: (base) => {
+      setDraft((d) => (d === null ? null : { ...d, base }));
+    },
   };
 }
 
-/** Warn before leaving with unsaved changes: closing the tab, or navigating to another page. */
+/**
+ * Warn before leaving with unsaved changes: closing the tab, or navigating to another page. It
+ * holds a router blocker, and the router allows one at a time: call it once per page.
+ */
 export function useUnsavedWarning(dirty: boolean) {
   useEffect(() => {
     if (!dirty) return;

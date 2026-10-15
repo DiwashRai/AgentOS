@@ -12,7 +12,7 @@
 .labelled {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
   white-space: nowrap;
 }

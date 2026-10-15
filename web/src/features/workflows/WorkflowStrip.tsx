@@ -7,8 +7,8 @@ import { Link as RouterLink } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useCreateWorkflow, useSwitchWorkflow, useWorkflows } from "../../api/queries";
+import { Field, Select, fieldStyles as f } from "../../editor";
 import { Button, linkClass } from "../../ui";
-import { Field, Select, fieldStyles as f } from "../pipeline/fields";
 import {
   createBody,
   DESCRIPTION_MAX,

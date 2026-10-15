@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentos.errors import ApiError
+from agentos.models import matching
 from agentos.validate import (
     MAX_BUNDLE_BYTES,
     MAX_FILE_BYTES,
+    base_branch_problem,
     block_markers,
     check_bundle_size,
     check_file_size,
     check_unique_paths,
+    parsed,
+    repo_url_problem,
     validate_base_branch,
     validate_block_content,
     validate_key,
@@ -33,6 +39,64 @@ def _rejects(fn: object, value: str, code: str = "validation_error", status: int
         fn(value)
     assert (e.value.status, e.value.code) == (status, code)
     return e.value.message
+
+
+# ------------------------------------------------------------------ pydantic errors as UI text
+
+
+_CAPITALS = "Capital letters only."
+
+
+class _Rules(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=5)
+    timeout: int = Field(ge=60, le=100)
+    tags: list[str] = Field(max_length=2)
+    prefix: Annotated[str, matching(r"^[A-Z]+$", _CAPITALS)]
+
+
+_VALID: dict[str, Any] = {"name": "n", "timeout": 60, "tags": [], "prefix": "AOS"}
+
+
+@pytest.mark.parametrize(
+    ("change", "field", "token"),
+    [
+        ({"name": ""}, "name", "Required"),
+        ({"name": "abcdef"}, "name", "5"),
+        ({"name": None}, "name", "Required"),  # missing (dropped below)
+        ({"timeout": 59}, "timeout", "60"),
+        ({"timeout": 101}, "timeout", "100"),
+        ({"timeout": "soon"}, "timeout", None),
+        ({"tags": ["a", "b", "c"]}, "tags", "2"),
+        ({"prefix": "aos"}, "prefix", _CAPITALS),
+        ({"prefix": "AOS\n"}, "prefix", _CAPITALS),  # `$` doesn't skip a newline
+        ({"prefix": ""}, "prefix", "Required"),
+        ({"owner": "me"}, "owner", None),
+    ],
+)
+def test_pydantic_errors_read_as_ui_text(
+    change: dict[str, Any], field: str, token: str | None
+) -> None:
+    """One issue at the field, worded apart from pydantic's own message and keeping the
+    constraint (`token`); a `matching` rule gives its own message."""
+    data = {k: v for k, v in {**_VALID, **change}.items() if v is not None}
+    with pytest.raises(ValidationError) as raw:
+        _Rules.model_validate(data)
+
+    model, issues = parsed(_Rules, data, ("value",))
+
+    assert model is None
+    (issue,) = issues
+    assert issue.loc == ["value", field]
+    assert issue.message != raw.value.errors()[0]["msg"]
+    if token is not None:
+        assert token in issue.message
+
+
+def test_matching_keeps_what_the_pattern_accepts() -> None:
+    model, issues = parsed(_Rules, _VALID)
+    assert (model, issues) == (_Rules(**_VALID), [])
 
 
 # ------------------------------------------------------------------ paths
@@ -104,6 +168,7 @@ def test_invalid_keys(key: str) -> None:
     ],
 )
 def test_valid_repo_urls(url: str) -> None:
+    assert repo_url_problem(url) is None
     assert validate_repo_url(url) == url
 
 
@@ -139,11 +204,24 @@ def test_valid_repo_urls(url: str) -> None:
     ],
 )
 def test_invalid_repo_urls(url: str) -> None:
-    _rejects(validate_repo_url, url)
+    assert repo_url_problem(url) is not None
 
 
-def test_repo_url_message_names_field() -> None:
-    assert _rejects(validate_repo_url, "file:///x").startswith("repo_url: ")
+@pytest.mark.parametrize(
+    ("check", "value", "field"),
+    [
+        (validate_repo_url, "file:///x", "repo_url"),
+        (validate_base_branch, "a..b", "base_branch"),
+    ],
+)
+def test_a_wrapper_rejects_at_its_field(
+    check: Callable[[str], str], value: str, field: str
+) -> None:
+    with pytest.raises(ApiError) as e:
+        check(value)
+    assert (e.value.status, e.value.code) == (422, "validation_error")
+    assert [issue.loc for issue in e.value.issues] == [[field]]
+    assert e.value.message.startswith(f"{field}: ")
 
 
 # ------------------------------------------------------------------ PR URLs
@@ -190,6 +268,7 @@ def test_invalid_pr_urls(url: str) -> None:
     "branch", ["main", "develop", "release/1.2", "feature/a-b_c.d", "v2", "A" * 200]
 )
 def test_valid_branches(branch: str) -> None:
+    assert base_branch_problem(branch) is None
     assert validate_base_branch(branch) == branch
 
 
@@ -218,7 +297,7 @@ def test_valid_branches(branch: str) -> None:
     ],
 )
 def test_invalid_branches(branch: str) -> None:
-    _rejects(validate_base_branch, branch)
+    assert base_branch_problem(branch) is not None
 
 
 # ------------------------------------------------------------------ block content & sizes

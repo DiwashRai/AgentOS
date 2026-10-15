@@ -1,139 +1,86 @@
-// Settings › Intake, pure: the draft list of queries (each with a client-side `key` until the
-// server gives it an id), the PUT body, validation that mirrors the server (models.py
-// IntakeQueryIn / IntakeSettingsUpdate), and what a row's "Test query" line says.
-import type { Schemas } from "../../../api/client";
-import { describeSaveError } from "../../pipeline/model";
+// Settings › Intake queries, pure: the form the page edits (the server's queries as keyed rows, so
+// a row keeps its issues and its Test result across moves) and what a row's "Test query" line says.
+import { ApiError, type Schemas } from "../../../api/client";
+import type { FieldPath, SentKeys } from "../../../editor/issues";
+import { keyed, keysOf, newKey, unkeyed, type Keyed } from "../../../editor/list";
+import { describeSaveError } from "../../../editor/save";
 
-export type IntakeSettings = Schemas["IntakeSettings"];
-export type IntakeSettingsUpdate = Schemas["IntakeSettingsUpdate"];
+export type IntakeRead = Schemas["IntakeSettings"];
+export type IntakeDoc = Schemas["IntakeDoc"];
+export type QueryEntry = Schemas["IntakeQueryEntry"];
 export type IntakePreview = Schemas["IntakePreview"];
 export type PreviewItem = Schemas["IntakeItem"];
 
-/** Server limits (models.py MAX_INTAKE_QUERIES, INTAKE_NAME_MAX, JQL_MAX). */
-export const MAX_QUERIES = 50;
-export const NAME_MAX = 100;
-export const JQL_MAX = 4000;
-/** The preview lists at most this many issues (the server sends ≤ 5). */
-export const PREVIEW_ITEMS = 5;
+/** One query in the draft. A new one has `id: null`; the server makes its id from the name. */
+export type QueryRow = Keyed<QueryEntry>;
 
-/** One query in the draft. `key` is the React key and preview identity: `id:<id>` for a saved
- *  query, `new:<n>` for one added here (its `id` stays null; the server makes one from the name). */
-export interface QueryRow {
-  key: string;
-  id: string | null;
-  name: string;
-  jql: string;
+export interface IntakeForm {
+  queries: QueryRow[];
 }
 
-export type IntakeForm = readonly QueryRow[];
-
-export function formOf(settings: Pick<IntakeSettings, "queries">): IntakeForm {
-  return settings.queries.map((q) => ({ key: `id:${q.id}`, id: q.id, name: q.name, jql: q.jql }));
+export function toForm(value: IntakeDoc): IntakeForm {
+  return { queries: keyed(value.queries) };
 }
 
-/** Same content, ignoring the client keys (so undoing an edit makes the draft clean again). */
+export function fromForm(form: IntakeForm): IntakeDoc {
+  return { queries: unkeyed(form.queries) };
+}
+
+/** Same content, ignoring the row keys (so undoing an edit makes the draft clean again). */
 export function sameForm(a: IntakeForm, b: IntakeForm): boolean {
-  return (
-    a.length === b.length &&
-    a.every((r, i) => {
-      const o = b[i];
-      return r.id === o?.id && r.name === o.name && r.jql === o.jql;
-    })
-  );
+  return JSON.stringify(fromForm(a)) === JSON.stringify(fromForm(b));
 }
 
-/** The PUT body: in tab order, trimmed (the server strips too), without the client keys. */
-export function toBody(form: IntakeForm, baseVersion: number): IntakeSettingsUpdate {
-  return {
-    queries: form.map((r) => ({ id: r.id, name: r.name.trim(), jql: r.jql.trim() })),
-    base_version: baseVersion,
-  };
+/** The row keys of the form as sent, so a 422's issues land on their row. */
+export function sentKeys(form: IntakeForm): SentKeys {
+  return { queries: keysOf(form.queries) };
 }
 
-/** Append an empty new query with the next free `new:<n>` key. */
-export function addQuery(form: IntakeForm): IntakeForm {
-  let n = 0;
-  for (const r of form) {
-    const m = /^new:(\d+)$/.exec(r.key);
-    if (m) n = Math.max(n, Number(m[1]));
-  }
-  return [...form, { key: `new:${String(n + 1)}`, id: null, name: "", jql: "" }];
+/**
+ * Where the page shows issues: on the list itself, on a row as a whole, on its id (which has no
+ * field of its own, so it shows with the row's) and on its name and JQL.
+ */
+export const SHOWN: readonly FieldPath[] = [
+  "queries",
+  "queries.*",
+  "queries.*.id",
+  "queries.*.name",
+  "queries.*.jql",
+];
+
+export function newQuery(): QueryRow {
+  return { key: newKey(), item: { id: null, name: "", jql: "" } };
 }
 
-export function removeQuery(form: IntakeForm, index: number): IntakeForm {
-  return form.filter((_, i) => i !== index);
+export function isBlank(row: QueryRow): boolean {
+  return row.item.name.trim() === "" && row.item.jql.trim() === "";
 }
 
-/** Swap with the neighbour above (-1) or below (1); out of range = unchanged. */
-export function moveQuery(form: IntakeForm, index: number, delta: -1 | 1): IntakeForm {
-  const to = index + delta;
-  const a = form[index];
-  const b = form[to];
-  if (a === undefined || b === undefined) return form;
-  const next = [...form];
-  next[index] = b;
-  next[to] = a;
-  return next;
+/**
+ * How each row's controls name it, unique per row: its name; its place for one not named yet; and
+ * both for a name another row shares ("Ready (query 2)").
+ */
+export function queryLabels(rows: readonly QueryRow[]): string[] {
+  const names = rows.map((row) => row.item.name.trim());
+  const seen = new Map<string, number>();
+  for (const name of names) seen.set(name.toLowerCase(), (seen.get(name.toLowerCase()) ?? 0) + 1);
+
+  return names.map((name, index) => {
+    const place = `query ${String(index + 1)}`;
+    if (name === "") return place;
+    return (seen.get(name.toLowerCase()) ?? 0) > 1 ? `${name} (${place})` : name;
+  });
 }
 
 export function patchQuery(
   form: IntakeForm,
-  index: number,
-  patch: Partial<Pick<QueryRow, "name" | "jql">>,
+  key: string,
+  patch: Partial<Pick<QueryEntry, "name" | "jql">>,
 ): IntakeForm {
-  return form.map((r, i) => (i === index ? { ...r, ...patch } : r));
-}
-
-// ------------------------------------------------------------------ validation
-
-export interface RowIssues {
-  name?: string;
-  jql?: string;
-}
-
-export interface Issues {
-  form: string[];
-  /** By index, one entry per row (empty when the row is fine). */
-  rows: RowIssues[];
-}
-
-/** The JQL problem the server would reject (blank or too long), or undefined. Also gates Test. */
-export function jqlIssue(jql: string): string | undefined {
-  const v = jql.trim();
-  if (v === "") return "Write a JQL query";
-  if (v.length > JQL_MAX) return `At most ${String(JQL_MAX)} characters`;
-  return undefined;
-}
-
-function nameIssue(name: string): string | undefined {
-  const v = name.trim();
-  if (v === "") return "Name the query (it heads its Intake group)";
-  if (v.length > NAME_MAX) return `At most ${String(NAME_MAX)} characters`;
-  return undefined;
-}
-
-export function validate(form: IntakeForm): Issues {
-  const rows = form.map((r) => {
-    const issues: RowIssues = {};
-    const name = nameIssue(r.name);
-    const jql = jqlIssue(r.jql);
-    if (name !== undefined) issues.name = name;
-    if (jql !== undefined) issues.jql = jql;
-    return issues;
-  });
-  const formIssues =
-    form.length > MAX_QUERIES ? [`At most ${String(MAX_QUERIES)} queries`] : ([] as string[]);
-  return { form: formIssues, rows };
-}
-
-export function issueCount(issues: Issues): number {
-  return issues.form.length + issues.rows.reduce((n, r) => n + Object.keys(r).length, 0);
-}
-
-/** SaveBar's reason Save is off, or undefined. */
-export function fixLine(count: number): string | undefined {
-  if (count === 0) return undefined;
-  return `Fix ${count === 1 ? "1 issue" : `${String(count)} issues`} first`;
+  return {
+    ...form,
+    queries: form.queries.map((r) => (r.key === key ? { ...r, item: { ...r.item, ...patch } } : r)),
+  };
 }
 
 // ------------------------------------------------------------------ Test query
@@ -146,34 +93,33 @@ export type PreviewLine =
   | { kind: "empty" }
   | { kind: "items"; count: string; items: readonly PreviewItem[]; more: string | null };
 
+/** The row's preview for its current JQL (`usePreview`: only a run of exactly this JQL counts). */
 export interface PreviewState {
-  /** The JQL the last Test ran (the mutation's variables), if any. */
-  ran: string | undefined;
   pending: boolean;
-  data: IntakePreview | undefined;
+  result: IntakePreview | undefined;
   error: unknown;
 }
 
-/**
- * The row's preview line. A result only counts while the row's JQL is still the one tested, so an
- * edit (or Discard, or Reload) hides it at once, even before the row resets it.
- */
-export function previewLine(state: PreviewState, jql: string): PreviewLine {
-  if (state.ran === undefined || state.ran !== jql.trim()) return { kind: "none" };
-  if (state.pending) return { kind: "pending" };
-  if (state.error !== null && state.error !== undefined) {
-    return { kind: "error", text: describeSaveError(state.error).text };
-  }
-  const data = state.data;
-  if (!data) return { kind: "none" };
-  if (data.error) return { kind: "error", text: data.error };
-  if (data.total === 0 && data.items.length === 0) return { kind: "empty" };
-  const items = data.items.slice(0, PREVIEW_ITEMS);
-  const total = Math.max(data.total, items.length);
+export function previewLine({ pending, result, error }: PreviewState): PreviewLine {
+  if (pending) return { kind: "pending" };
+  if (error !== undefined && error !== null) return { kind: "error", text: failureText(error) };
+  if (!result) return { kind: "none" };
+  if (result.error) return { kind: "error", text: result.error };
+  if (result.total === 0 && result.items.length === 0) return { kind: "empty" };
+
+  const total = Math.max(result.total, result.items.length);
   return {
     kind: "items",
     count: `${String(total)} to take in`,
-    items,
-    more: total > items.length ? `first ${String(items.length)} shown` : null,
+    items: result.items,
+    more: total > result.items.length ? `first ${String(result.items.length)} shown` : null,
   };
+}
+
+/** A refused preview says what the server found wrong with the JQL; any other failure, its text. */
+function failureText(error: unknown): string {
+  if (error instanceof ApiError && error.issues.length > 0) {
+    return error.issues.map((issue) => issue.message).join(" ");
+  }
+  return describeSaveError(error).text;
 }

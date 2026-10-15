@@ -44,6 +44,11 @@ def message(response: httpx.Response) -> str:
     return value
 
 
+def locs(response: httpx.Response) -> list[tuple[str | int, ...]]:
+    """Where each issue of a 422 is."""
+    return [tuple(issue["loc"]) for issue in response.json()["error"]["issues"]]
+
+
 def space(client: TestClient) -> SpaceSettings:
     response = client.get("/api/settings/space")
     assert response.status_code == 200, response.text
@@ -66,23 +71,35 @@ def config(client: TestClient) -> AppConfig:
     return AppConfig.model_validate(client.get("/api/config").json())
 
 
-def put_space(client: TestClient, **changes: Any) -> httpx.Response:
-    """PUT the current Space settings with `changes` (base_version = the current version)."""
+def put_space(
+    client: TestClient, base_version: int | None = None, **changes: Any
+) -> httpx.Response:
+    """PUT the current Space document with `changes` (base_version: the current version)."""
     current = space(client)
-    body = current.model_dump(exclude={"version", "updated_at", "updated_by"})
-    body |= {"base_version": current.version, **changes}
+    body = {
+        "value": current.value.model_dump() | changes,
+        "base_version": current.version if base_version is None else base_version,
+    }
     response: httpx.Response = client.put("/api/settings/space", json=body, headers=CSRF)
     return response
 
 
-def put_repos(client: TestClient, entries: list[dict[str, Any]], **extra: Any) -> httpx.Response:
-    body = {"repos": entries, "base_version": repos(client).version, **extra}
+def put_repos(
+    client: TestClient, entries: list[dict[str, Any]], base_version: int | None = None
+) -> httpx.Response:
+    if base_version is None:
+        base_version = repos(client).version
+    body = {"value": {"repos": entries}, "base_version": base_version}
     response: httpx.Response = client.put("/api/settings/repos", json=body, headers=CSRF)
     return response
 
 
-def put_queries(client: TestClient, entries: list[dict[str, Any]], **extra: Any) -> httpx.Response:
-    body = {"queries": entries, "base_version": queries(client).version, **extra}
+def put_queries(
+    client: TestClient, entries: list[dict[str, Any]], base_version: int | None = None
+) -> httpx.Response:
+    if base_version is None:
+        base_version = queries(client).version
+    body = {"value": {"queries": entries}, "base_version": base_version}
     response: httpx.Response = client.put("/api/settings/intake", json=body, headers=CSRF)
     return response
 
@@ -97,12 +114,13 @@ DOCS = {"name": "docs", "url": "git@github.com:o/docs.git", "default_branch": "d
 def test_seeded_space_settings(authed: TestClient) -> None:
     got = space(authed)
     assert got.model_dump(exclude={"updated_at"}) == {
-        "name": "Test Space",
-        "default_repo": "r",
-        "key_prefix": "AOS",
-        "jira_projects": [],
-        "claim_timeout_s": 900,
-        "default_workflow_id": 1,
+        "value": {
+            "name": "Test Space",
+            "default_repo": "r",
+            "key_prefix": "AOS",
+            "jira_projects": [],
+            "claim_timeout_s": 900,
+        },
         "version": 1,
         "updated_by": None,  # seeded, not saved by anyone
     }
@@ -121,8 +139,9 @@ def test_put_space_applies_without_a_restart(authed: TestClient) -> None:
     )
     assert response.status_code == 200, response.text
     saved = SpaceSettings.model_validate(response.json())
-    assert (saved.name, saved.default_repo, saved.key_prefix) == ("Renamed", "docs", "ZED")
-    assert (saved.jira_projects, saved.claim_timeout_s) == (["SCRUM", "OPS_2"], 60)
+    got = saved.value
+    assert (got.name, got.default_repo, got.key_prefix) == ("Renamed", "docs", "ZED")
+    assert (got.jira_projects, got.claim_timeout_s) == (["SCRUM", "OPS_2"], 60)
     assert saved.version == before.version + 1
     assert saved.updated_by is not None
     assert (saved.updated_by.id, saved.updated_at >= before.updated_at) == (me.id, True)
@@ -136,31 +155,35 @@ def test_put_space_applies_without_a_restart(authed: TestClient) -> None:
 @pytest.mark.parametrize(
     ("changes", "where"),
     [
-        pytest.param({"key_prefix": "aos"}, "key_prefix", id="prefix-lowercase"),
-        pytest.param({"key_prefix": "1AB"}, "key_prefix", id="prefix-digit-first"),
-        pytest.param({"key_prefix": "ABCDEFGHIJK"}, "key_prefix", id="prefix-too-long"),
-        pytest.param({"key_prefix": ""}, "key_prefix", id="prefix-empty"),
-        pytest.param({"jira_projects": ["scrum"]}, "jira_projects.0", id="project-lowercase"),
-        pytest.param({"jira_projects": ["S"]}, "jira_projects.0", id="project-too-short"),
-        pytest.param({"jira_projects": ["OK", "SC-1"]}, "jira_projects.1", id="project-dash"),
-        pytest.param({"jira_projects": ["OPS", "OPS"]}, "jira_projects", id="project-twice"),
+        pytest.param({"key_prefix": "aos"}, ("key_prefix",), id="prefix-lowercase"),
+        pytest.param({"key_prefix": "1AB"}, ("key_prefix",), id="prefix-digit-first"),
+        pytest.param({"key_prefix": "ABCDEFGHIJK"}, ("key_prefix",), id="prefix-too-long"),
+        pytest.param({"key_prefix": ""}, ("key_prefix",), id="prefix-empty"),
+        pytest.param({"jira_projects": ["scrum"]}, ("jira_projects", 0), id="project-lowercase"),
+        pytest.param({"jira_projects": ["S"]}, ("jira_projects", 0), id="project-too-short"),
+        pytest.param({"jira_projects": ["OK", "SC-1"]}, ("jira_projects", 1), id="project-dash"),
+        pytest.param({"jira_projects": ["OPS", "OPS"]}, ("jira_projects",), id="project-twice"),
         pytest.param(
             {"key_prefix": "SCRUM", "jira_projects": ["SCRUM"]},
-            "key_prefix",
+            ("key_prefix",),
             id="prefix-is-a-project",
         ),
-        pytest.param({"claim_timeout_s": 59}, "claim_timeout_s", id="timeout-low"),
-        pytest.param({"claim_timeout_s": 86401}, "claim_timeout_s", id="timeout-high"),
-        pytest.param({"name": "   "}, "name", id="name-blank"),
-        pytest.param({"name": "x" * 101}, "name", id="name-long"),
-        pytest.param({"default_repo": "nope"}, "default_repo", id="unknown-repo"),
-        pytest.param({"default_repo": None, "version": 1}, "version", id="read-only-field"),
+        pytest.param({"claim_timeout_s": 59}, ("claim_timeout_s",), id="timeout-low"),
+        pytest.param({"claim_timeout_s": 86401}, ("claim_timeout_s",), id="timeout-high"),
+        pytest.param({"name": "   "}, ("name",), id="name-blank"),
+        pytest.param({"name": "x" * 101}, ("name",), id="name-long"),
+        pytest.param({"jira_projects": ["OPS"] * 51}, ("jira_projects",), id="projects-many"),
+        pytest.param({"default_repo": "nope"}, ("default_repo",), id="unknown-repo"),
+        pytest.param({"default_repo": None, "version": 1}, ("version",), id="read-only-field"),
+        pytest.param({"claim_timeout_s": None}, ("claim_timeout_s",), id="null"),
     ],
 )
-def test_put_space_validates(authed: TestClient, changes: dict[str, Any], where: str) -> None:
+def test_put_space_validates(
+    authed: TestClient, changes: dict[str, Any], where: tuple[str | int, ...]
+) -> None:
     response = put_space(authed, **changes)
     assert (response.status_code, code(response)) == (422, "validation_error"), response.text
-    assert where in message(response)
+    assert ("value", *where) in locs(response)
     assert space(authed).version == 1  # nothing saved
 
 
@@ -169,8 +192,10 @@ def test_a_project_key_can_not_become_the_prefix(authed: TestClient) -> None:
     assert put_space(authed, jira_projects=["SCRUM"]).status_code == 200
     response = put_space(authed, key_prefix="SCRUM")
     assert (response.status_code, code(response)) == (422, "validation_error")
+    assert locs(response) == [("value", "key_prefix")]
     response = put_space(authed, jira_projects=["SCRUM", "AOS"])
     assert (response.status_code, code(response)) == (422, "validation_error")
+    assert locs(response) == [("value", "key_prefix")]
 
 
 def test_projects_are_required_while_sign_in_is_jira(authed: TestClient, ctx: AppContext) -> None:
@@ -178,15 +203,19 @@ def test_projects_are_required_while_sign_in_is_jira(authed: TestClient, ctx: Ap
     ctx.settings = ctx.settings.model_copy(update={"dev_auth": False})
     response = put_space(authed, jira_projects=[])
     assert (response.status_code, code(response)) == (422, "validation_error")
-    assert "jira_projects" in message(response)
+    assert locs(response) == [("value", "jira_projects")]
     assert put_space(authed, jira_projects=["SCRUM"]).status_code == 200
 
 
-def test_put_space_with_a_stale_version(authed: TestClient) -> None:
-    assert put_space(authed, name="First").status_code == 200
-    response = put_space(authed, name="Second", base_version=1)
-    assert (response.status_code, code(response)) == (409, "stale_version")
-    assert space(authed).name == "First"
+def test_the_sign_in_rule_comes_with_the_field_rules(authed: TestClient, ctx: AppContext) -> None:
+    """The rule from the server's config (Jira sign-in needs projects) is reported in the same
+    422 as a field rule."""
+    ctx.settings = ctx.settings.model_copy(update={"dev_auth": False})
+
+    response = put_space(authed, jira_projects=[], key_prefix="1")
+
+    assert (response.status_code, code(response)) == (422, "validation_error")
+    assert locs(response) == [("value", "key_prefix"), ("value", "jira_projects")]
 
 
 def test_settings_are_admin_only(client: TestClient, login: LoginFn) -> None:
@@ -206,10 +235,11 @@ def test_seeded_repos_count_open_tickets(authed: TestClient, create_ticket: Crea
     authed.post(f"/api/tickets/{done.key}/resolve", json={"outcome": "completed"}, headers=CSRF)
     create_ticket("no repo", repo=None)
     got = repos(authed)
-    assert [(e.name, e.url, e.default_branch, e.open_ticket_count) for e in got.repos] == [
-        ("r", "https://github.com/o/r.git", "main", 1),
-        ("docs", "git@github.com:o/docs.git", "develop", 1),
+    assert [(e.name, e.url, e.default_branch) for e in got.value.repos] == [
+        ("r", "https://github.com/o/r.git", "main"),
+        ("docs", "git@github.com:o/docs.git", "develop"),
     ]
+    assert got.open_ticket_counts == {"r": 1, "docs": 1}
     assert (got.version, got.updated_by) == (1, None)
 
 
@@ -222,7 +252,8 @@ def test_put_repos_applies_without_a_restart(
     response = put_repos(authed, [new, moved, R])  # add, change, reorder
     assert response.status_code == 200, response.text
     saved = RepoSettings.model_validate(response.json())
-    assert [e.name for e in saved.repos] == ["new.repo", "docs", "r"]
+    assert [e.name for e in saved.value.repos] == ["new.repo", "docs", "r"]
+    assert saved.open_ticket_counts == {"new.repo": 0, "docs": 1, "r": 0}
     assert (saved.version, saved.updated_by is not None) == (2, True)
     assert [r.name for r in config(authed).repos] == ["new.repo", "docs", "r"]
     t = TicketDetail.model_validate(authed.get(f"/api/tickets/{ticket.key}").json())
@@ -239,7 +270,7 @@ def test_removing_a_repo_open_tickets_use_is_in_use(
     response = put_repos(authed, [R])
     assert (response.status_code, code(response)) == (409, "in_use")
     assert "'docs' (2 open tickets use it)" in message(response)
-    assert len(repos(authed).repos) == 2
+    assert len(repos(authed).value.repos) == 2
 
 
 def test_done_and_closed_tickets_dont_block_a_removal(
@@ -266,28 +297,36 @@ def test_removing_the_default_repo_is_in_use(authed: TestClient) -> None:
 @pytest.mark.parametrize(
     ("entries", "where"),
     [
-        pytest.param([{**R, "name": "Bad Name"}], "repos.0.name", id="bad-name"),
-        pytest.param([R, {**DOCS, "url": "file:///tmp/r"}], "repos.1.url", id="file-url"),
+        pytest.param([{**R, "name": "Bad Name"}], ("repos", 0, "name"), id="bad-name"),
+        pytest.param([R, {**DOCS, "url": "file:///tmp/r"}], ("repos", 1, "url"), id="file-url"),
         pytest.param(
-            [{**R, "url": "https://user:pw@example.com/r.git"}], "repos.0.url", id="credentials"
+            [{**R, "url": "https://user:pw@example.com/r.git"}],
+            ("repos", 0, "url"),
+            id="credentials",
         ),
-        pytest.param([{**R, "default_branch": "a..b"}], "repos.0.default_branch", id="branch"),
-        pytest.param([R, {**DOCS, "name": "r"}], "repos.1.name", id="duplicate"),
-        pytest.param([{"name": "r", "url": R["url"]}], "default_branch", id="missing-field"),
-        pytest.param([{**R, "open_ticket_count": 0}], "open_ticket_count", id="read-only-field"),
+        pytest.param(
+            [{**R, "default_branch": "a..b"}], ("repos", 0, "default_branch"), id="branch"
+        ),
+        pytest.param([R, {**DOCS, "name": "r"}], ("repos", 1, "name"), id="duplicate"),
+        pytest.param(
+            [{"name": "r", "url": R["url"]}], ("repos", 0, "default_branch"), id="missing-field"
+        ),
+        pytest.param(
+            [{**R, "open_ticket_count": 0}], ("repos", 0, "open_ticket_count"), id="read-only-field"
+        ),
+        pytest.param(
+            [{**R, "url": "https://x.example/" + "r" * 500}], ("repos", 0, "url"), id="long"
+        ),
+        pytest.param([{**R, "name": f"r{i}"} for i in range(101)], ("repos",), id="too-many"),
     ],
 )
-def test_put_repos_validates(authed: TestClient, entries: list[dict[str, Any]], where: str) -> None:
+def test_put_repos_validates(
+    authed: TestClient, entries: list[dict[str, Any]], where: tuple[str | int, ...]
+) -> None:
     response = put_repos(authed, entries)
     assert (response.status_code, code(response)) == (422, "validation_error"), response.text
-    assert where in message(response)
+    assert ("value", *where) in locs(response)
     assert repos(authed).version == 1
-
-
-def test_put_repos_with_a_stale_version(authed: TestClient) -> None:
-    assert put_repos(authed, [R, DOCS]).status_code == 200
-    response = put_repos(authed, [R], base_version=1)
-    assert (response.status_code, code(response)) == (409, "stale_version")
 
 
 # ------------------------------------------------------------------ intake
@@ -306,7 +345,7 @@ def test_query_ids() -> None:
 
 def test_put_intake_makes_ids_and_keeps_sent_ones(authed: TestClient) -> None:
     assert queries(authed).model_dump(exclude={"updated_at"}) == {
-        "queries": [],
+        "value": {"queries": []},
         "version": 1,
         "updated_by": None,
     }
@@ -321,7 +360,7 @@ def test_put_intake_makes_ids_and_keeps_sent_ones(authed: TestClient) -> None:
     )
     assert response.status_code == 200, response.text
     saved = IntakeSettings.model_validate(response.json())
-    assert [(q.id, q.name, q.jql) for q in saved.queries] == [
+    assert [(q.id, q.name, q.jql) for q in saved.value.queries] == [
         ("to-do-2", "To do", "project = SCRUM"),
         ("to-do", "Kept", "a"),
         ("to-do-3", "To do", "b"),
@@ -329,36 +368,51 @@ def test_put_intake_makes_ids_and_keeps_sent_ones(authed: TestClient) -> None:
     ]
     assert (saved.version, saved.updated_by is not None) == (2, True)
     # Sent back as-is (ids included), they stay; order = tab order.
-    again = put_queries(authed, [q.model_dump() for q in reversed(saved.queries)])
-    assert [q["id"] for q in again.json()["queries"]] == ["query", "to-do-3", "to-do", "to-do-2"]
+    again = put_queries(authed, [q.model_dump() for q in reversed(saved.value.queries)])
+    assert [q["id"] for q in again.json()["value"]["queries"]] == [
+        "query",
+        "to-do-3",
+        "to-do",
+        "to-do-2",
+    ]
 
 
 @pytest.mark.parametrize(
     ("entries", "where"),
     [
-        pytest.param([{"id": "Bad Id", "name": "x", "jql": "a"}], "queries.0.id", id="bad-id"),
+        pytest.param(
+            [{"id": "Bad Id", "name": "x", "jql": "a"}], ("queries", 0, "id"), id="bad-id"
+        ),
         pytest.param(
             [{"id": "a", "name": "x", "jql": "a"}, {"id": "a", "name": "y", "jql": "b"}],
-            "queries.1.id",
+            ("queries", 1, "id"),
             id="duplicate-id",
         ),
-        pytest.param([{"id": None, "name": " ", "jql": "a"}], "queries.0.name", id="blank-name"),
-        pytest.param([{"id": None, "name": "x", "jql": ""}], "queries.0.jql", id="empty-jql"),
-        pytest.param([{"name": "x", "jql": "a"}], "queries.0.id", id="id-is-required"),
+        pytest.param(
+            [{"id": None, "name": " ", "jql": "a"}], ("queries", 0, "name"), id="blank-name"
+        ),
+        pytest.param([{"id": None, "name": "x", "jql": ""}], ("queries", 0, "jql"), id="empty-jql"),
+        pytest.param([{"name": "x", "jql": "a"}], ("queries", 0, "id"), id="id-is-required"),
+        pytest.param(
+            [{"id": None, "name": "x" * 101, "jql": "a"}], ("queries", 0, "name"), id="long-name"
+        ),
+        pytest.param(
+            [{"id": None, "name": "x", "jql": "a" * 4001}], ("queries", 0, "jql"), id="long-jql"
+        ),
+        pytest.param(
+            [{"id": None, "name": f"q{i}", "jql": "a"} for i in range(51)],
+            ("queries",),
+            id="too-many",
+        ),
     ],
 )
 def test_put_intake_validates(
-    authed: TestClient, entries: list[dict[str, Any]], where: str
+    authed: TestClient, entries: list[dict[str, Any]], where: tuple[str | int, ...]
 ) -> None:
     response = put_queries(authed, entries)
     assert (response.status_code, code(response)) == (422, "validation_error"), response.text
-    assert where in message(response)
-
-
-def test_put_intake_with_a_stale_version(authed: TestClient) -> None:
-    assert put_queries(authed, []).status_code == 200
-    response = put_queries(authed, [], base_version=1)
-    assert (response.status_code, code(response)) == (409, "stale_version")
+    assert ("value", *where) in locs(response)
+    assert queries(authed).version == 1
 
 
 def test_saving_intake_drops_the_cache_and_applies_at_once(

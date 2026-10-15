@@ -1,6 +1,6 @@
 // The New ticket dialog's Workflow select: every workflow, the default first and preselected, the
 // chosen one's description as the hint. Presentational: the dialog owns the value.
-import { Field, Select } from "../pipeline/fields";
+import { Field, Select } from "../../editor";
 import { workflowHint, workflowOptions, type Workflow } from "./model";
 
 export interface WorkflowPickerProps {

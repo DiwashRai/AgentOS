@@ -1,8 +1,8 @@
-// Small form controls for the pipeline editor, in kit values (.ao-input, .ao-select, .ao-check).
-// Not in src/ui because the pack doesn't design forms; promote them if other features need them.
-import { useId, type ReactNode } from "react";
+// Form controls in kit values (.ao-input, .ao-select, .ao-check): a labelled Field that wires its
+// control to the label, hint and error, and the Input / Textarea / Select / Toggle controls.
+import { useId, type ComponentPropsWithRef, type ReactNode } from "react";
 
-import { ChevronIcon, cx } from "../../ui";
+import { ChevronIcon, cx, text } from "../ui";
 import s from "./fields.module.css";
 
 interface FieldProps {
@@ -21,17 +21,34 @@ export function Field({ label, hint, error, className, children }: FieldProps) {
   const note = error ?? hint;
   return (
     <div className={cx(s.field, className)}>
-      <label className={s.label} htmlFor={id}>
+      <label className={text.label} htmlFor={id}>
         {label}
       </label>
       {children({ id, describedBy: note ? noteId : undefined, invalid: error !== undefined })}
       {note ? (
-        <span id={noteId} className={cx(s.note, error !== undefined && s.error)}>
+        <span id={noteId} className={error !== undefined ? text.error : text.meta}>
           {note}
         </span>
       ) : null}
     </div>
   );
+}
+
+type InputProps = ComponentPropsWithRef<"input"> & {
+  /** Monospace text (ids, branches, commands). */
+  mono?: boolean | undefined;
+};
+
+/** A native input in the kit's `.ao-input` look; every other prop (and the ref) goes through. */
+export function Input({ mono, className, ...rest }: InputProps) {
+  return <input {...rest} className={cx(s.input, mono && s.mono, className)} />;
+}
+
+type TextareaProps = ComponentPropsWithRef<"textarea">;
+
+/** A native textarea in the kit's monospace editor look; every other prop (and the ref) goes through. */
+export function Textarea({ className, ...rest }: TextareaProps) {
+  return <textarea {...rest} className={cx(s.textarea, className)} />;
 }
 
 interface SelectProps {

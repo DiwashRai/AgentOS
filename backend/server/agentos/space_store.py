@@ -5,16 +5,14 @@ Areas: `space` (a SpaceSection), `repos` ({"repos": [RepoSpec...]}), `intake`
 first is the server default), `runner` (a RunnerSection) and `mappings` ({"mappings":
 [FieldMapping...]}, request 22B). Each save overwrites its row and bumps `version`; no history.
 
-`SpaceStore` is the read side every feature uses (through `AppContext.space` / `.runtimes` /
-`.runner` / `.mappings`): the current rows as one `Snapshot`, cached in-process and dropped on
-every save, so a
-change applies without a restart. Correct within one server process (the only deployment shape).
+Nothing is cached: every feature reads the current rows per request (through `AppContext.space` /
+`.runtimes` / `.runner` / `.mappings`, or `AppContext.snapshot()` for several areas at once), so a
+saved change applies at once, without a restart.
 """
 
 from __future__ import annotations
 
 import json
-import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -191,52 +189,3 @@ def seed(db: Database, values: Mapping[Area, dict[str, Any]]) -> list[Area]:
             if cursor.rowcount == 1:
                 seeded.append(area)
     return seeded
-
-
-# ------------------------------------------------------------------ the cached read side
-
-
-class SpaceStore:
-    """The current settings Snapshot, read from the db once and cached until `invalidate()`.
-
-    Thread-safe (sync routes and the loops run in threads). A read that raced a save never caches
-    the older value: each invalidation bumps a generation, and a load only caches if none happened
-    while it read.
-    """
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-        self._lock = threading.Lock()
-        self._cached: Snapshot | None = None
-        self._generation = 0
-
-    def snapshot(self) -> Snapshot:
-        with self._lock:
-            if self._cached is not None:
-                return self._cached
-            generation = self._generation
-        with self._db.read() as conn:
-            snapshot = load_snapshot(conn)
-        with self._lock:
-            if generation == self._generation:
-                self._cached = snapshot
-        return snapshot
-
-    def current(self) -> SpaceConfig:
-        """The Space's settings, repo catalog and intake queries."""
-        return self.snapshot().space
-
-    def runtimes(self) -> RuntimesConfig:
-        return self.snapshot().runtimes
-
-    def runner(self) -> RunnerSection:
-        return self.snapshot().runner
-
-    def mappings(self) -> tuple[FieldMapping, ...]:
-        return self.snapshot().mappings
-
-    def invalidate(self) -> None:
-        """Call after a save's transaction committed."""
-        with self._lock:
-            self._generation += 1
-            self._cached = None

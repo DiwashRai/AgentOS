@@ -12,11 +12,18 @@ Pure: services pass a `SpaceConfig` in.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from agentos.errors import ApiError
 from agentos.models import (
@@ -27,20 +34,31 @@ from agentos.models import (
     GITHUB_WORKFLOW_PATTERN,
     INTAKE_QUERY_ID_PATTERN,
     KEY_PREFIX_PATTERN,
+    MAX_INTAKE_QUERIES,
+    MAX_JIRA_PROJECTS,
+    MAX_REPOS,
     REPO_NAME_PATTERN,
+    REPO_URL_MAX,
     SPACE_NAME_MAX,
     BaseBranchOrigin,
     BaseBranchSource,
+    IntakeDoc,
     IntakeQuerySpec,
     JiraProjectKey,
     RepoInfo,
+    ReposDoc,
+    RunnerDoc,
+    SpaceDoc,
+    ValidationIssue,
     WorkspaceMode,
+    matching,
 )
-from agentos.validate import validate_base_branch, validate_repo_url
+from agentos.validate import base_branch_problem, parsed, repo_url_problem, too_many
 
 __all__ = [
     "INTAKE_QUERY_ID_PATTERN",
     "REPO_NAME_PATTERN",
+    "VALUE",
     "IntakeQuerySpec",
     "IntakeSection",
     "RepoSpec",
@@ -48,9 +66,16 @@ __all__ = [
     "RunnerSection",
     "SpaceConfig",
     "SpaceSection",
+    "check_intake",
+    "check_repos",
+    "check_runner",
+    "check_space",
     "query_id",
     "resolve_base_branch",
 ]
+
+# Where a settings document sits in its request body: the checks report issues under it.
+VALUE: tuple[str] = ("value",)
 
 DEFAULT_SPACE_NAME = "AgentOS"
 DEFAULT_BRANCH = "main"
@@ -61,21 +86,19 @@ DEFAULT_QUERY_ID = "query"
 _QUERY_ID_MAX = 64
 
 
-def _checked(check: Callable[[str], str], value: str) -> str:
-    """Run a `validate.py` check, turning its ApiError into the ValueError pydantic reports."""
-    try:
-        return check(value)
-    except ApiError as exc:
-        raise ValueError(exc.message.split(": ", 1)[-1]) from None
-
-
 class RepoSpec(BaseModel):
     """One repo catalog entry."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = Field(pattern=REPO_NAME_PATTERN)
-    url: str
+    name: Annotated[
+        str,
+        matching(
+            REPO_NAME_PATTERN,
+            "Lowercase letters, digits, . _ or -, starting with a letter or digit, at most 64.",
+        ),
+    ]
+    url: str = Field(max_length=REPO_URL_MAX)
     # None = no default branch: each ticket on the repo needs its own. Omitted → "main"; null or
     # blank → None.
     default_branch: str | None = DEFAULT_BRANCH
@@ -83,16 +106,18 @@ class RepoSpec(BaseModel):
     @field_validator("url")
     @classmethod
     def _url(cls, value: str) -> str:
-        return _checked(validate_repo_url, value)
+        if problem := repo_url_problem(value):
+            raise ValueError(problem)
+        return value
 
     @field_validator("default_branch", mode="before")
     @classmethod
     def _branch(cls, value: object) -> object:
         if value is None or (isinstance(value, str) and not value.strip()):
             return None
-        if isinstance(value, str):
-            return _checked(validate_base_branch, value)
-        return value  # not a string: the type check reports it
+        if isinstance(value, str) and (problem := base_branch_problem(value)):
+            raise ValueError(problem)
+        return value  # a valid branch, or not a string: the type check reports it
 
     def info(self) -> RepoInfo:
         return RepoInfo(name=self.name, url=self.url, default_branch=self.default_branch)
@@ -100,14 +125,18 @@ class RepoSpec(BaseModel):
 
 class SpaceSection(BaseModel):
     """The Space's own settings (Settings > Space; the db `space` area). Every rule that needs no
-    other area lives here."""
+    other area lives here, each reported at its field so one validation lists them all."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(default=DEFAULT_SPACE_NAME, min_length=1, max_length=SPACE_NAME_MAX)
     default_repo: str | None = None
-    key_prefix: str = Field(default=DEFAULT_KEY_PREFIX, pattern=KEY_PREFIX_PATTERN)
-    jira_projects: tuple[JiraProjectKey, ...] = ()
+    # Before `key_prefix`: its validator checks the prefix against the projects.
+    jira_projects: tuple[JiraProjectKey, ...] = Field(default=(), max_length=MAX_JIRA_PROJECTS)
+    key_prefix: Annotated[
+        str,
+        matching(KEY_PREFIX_PATTERN, "Up to 10 capital letters or digits, starting with a letter."),
+    ] = DEFAULT_KEY_PREFIX
     claim_timeout_s: int = Field(
         default=DEFAULT_CLAIM_TIMEOUT_S, ge=CLAIM_TIMEOUT_MIN_S, le=CLAIM_TIMEOUT_MAX_S
     )
@@ -116,22 +145,30 @@ class SpaceSection(BaseModel):
     @classmethod
     def _name(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("must not be blank")
+            raise ValueError("Required.")
         return value.strip()
 
-    @model_validator(mode="after")
-    def _consistent(self) -> Self:
+    @field_validator("jira_projects")
+    @classmethod
+    def _projects(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         seen: set[str] = set()
-        for key in self.jira_projects:
+        for key in value:
             if key in seen:
-                raise ValueError(f"jira_projects: {key!r} is listed twice")
+                raise ValueError(f"{key} is listed twice.")
             seen.add(key)
-        if self.key_prefix in seen:
+        return value
+
+    @field_validator("key_prefix")
+    @classmethod
+    def _prefix(cls, value: str, info: ValidationInfo) -> str:
+        """Not one of the projects (absent from `info.data` when they are invalid themselves):
+        native keys would take real Jira keys, whose issues then can't be imported."""
+        if value in info.data.get("jira_projects", ()):
             raise ValueError(
-                f"key_prefix: {self.key_prefix!r} is one of jira_projects (native keys would take "
-                "real Jira keys, which then can't be imported); pick another prefix"
+                f"{value} is also a Jira project, so new tickets would take its real keys. "
+                "Pick another prefix."
             )
-        return self
+        return value
 
 
 class IntakeSection(BaseModel):
@@ -149,15 +186,29 @@ class RunnerSection(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    github_repo: str | None = Field(default=None, pattern=GITHUB_REPO_PATTERN, max_length=200)
-    workflow: str = Field(default=DEFAULT_WORKFLOW, pattern=GITHUB_WORKFLOW_PATTERN, max_length=200)
+    github_repo: (
+        Annotated[
+            str,
+            Field(max_length=200),
+            matching(GITHUB_REPO_PATTERN, "Use owner/name, e.g. acme/agentos."),
+        ]
+        | None
+    ) = None
+    workflow: Annotated[
+        str,
+        Field(max_length=200),
+        matching(
+            GITHUB_WORKFLOW_PATTERN,
+            "A file name ending in .yml or .yaml, e.g. agentos-worker.yml.",
+        ),
+    ] = DEFAULT_WORKFLOW
     ref: str = Field(default=DEFAULT_BRANCH, min_length=1, max_length=GIT_REF_MAX)
 
     @field_validator("ref")
     @classmethod
     def _ref(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("must not be blank")
+            raise ValueError("Name the branch or tag the workflow file is on.")
         return value.strip()
 
 
@@ -287,3 +338,74 @@ def query_id(name: str, taken: Collection[str]) -> str:
         suffix = f"-{n}"
         candidate = base[: _QUERY_ID_MAX - len(suffix)].rstrip("-") + suffix
     return candidate
+
+
+# ------------------------------------------------------------------ settings document checks
+#
+# Each runs an area's rule models entry by entry and adds the list and cross-field rules, so one
+# pass reports every problem, each at `prefix` + its field. They answer the normalised document
+# (trimmed; new intake queries with their ids), or None when there is any issue. The rules that
+# need the db or the server's config are the settings service's.
+
+
+def check_space(
+    doc: SpaceDoc, prefix: Sequence[str | int] = VALUE
+) -> tuple[SpaceSection | None, list[ValidationIssue]]:
+    """The Space's fields, its projects (each a project key, none twice) and the key prefix vs the
+    projects."""
+    return parsed(SpaceSection, doc.model_dump(), prefix)
+
+
+def check_repos(
+    doc: ReposDoc, prefix: Sequence[str | int] = VALUE
+) -> tuple[tuple[RepoSpec, ...] | None, list[ValidationIssue]]:
+    """Each repo's fields, and no name twice."""
+    issues = too_many(doc.repos, MAX_REPOS, (*prefix, "repos"), "repos")
+    specs: list[RepoSpec] = []
+    names: set[str] = set()
+    for i, entry in enumerate(doc.repos):
+        spec, problems = parsed(RepoSpec, entry.model_dump(), (*prefix, "repos", i))
+        issues += problems
+        if entry.name in names:
+            loc: list[str | int] = [*prefix, "repos", i, "name"]
+            issues.append(ValidationIssue(loc=loc, message=f"{entry.name} is listed twice."))
+        names.add(entry.name)
+        if spec is not None:
+            specs.append(spec)
+
+    return (None if issues else tuple(specs)), issues
+
+
+def check_runner(
+    doc: RunnerDoc, prefix: Sequence[str | int] = VALUE
+) -> tuple[RunnerSection | None, list[ValidationIssue]]:
+    return parsed(RunnerSection, doc.model_dump(), prefix)
+
+
+def check_intake(
+    doc: IntakeDoc, prefix: Sequence[str | int] = VALUE
+) -> tuple[tuple[IntakeQuerySpec, ...] | None, list[ValidationIssue]]:
+    """Each query's fields, and no sent id twice. A query with `id: None` gets a new id made from
+    its name (`query_id`), unique among the sent ones and the ones made before it."""
+    issues = too_many(doc.queries, MAX_INTAKE_QUERIES, (*prefix, "queries"), "queries")
+    taken = {q.id for q in doc.queries if q.id is not None}
+    seen: set[str] = set()
+    specs: list[IntakeQuerySpec] = []
+    for i, query in enumerate(doc.queries):
+        qid = query.id
+        if qid is None:
+            qid = query_id(query.name, taken)
+            taken.add(qid)
+        elif qid in seen:
+            loc: list[str | int] = [*prefix, "queries", i, "id"]
+            issues.append(ValidationIssue(loc=loc, message=f"{qid} is listed twice."))
+        else:
+            seen.add(qid)
+
+        data = {"id": qid, "name": query.name, "jql": query.jql}
+        spec, problems = parsed(IntakeQuerySpec, data, (*prefix, "queries", i))
+        issues += problems
+        if spec is not None:
+            specs.append(spec)
+
+    return (None if issues else tuple(specs)), issues

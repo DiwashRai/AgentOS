@@ -3,7 +3,7 @@
 .editor {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-7);
   min-width: 0;
 }
 
@@ -19,8 +19,8 @@
 .preview {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px 16px 12px;
+  gap: var(--sp-6);
+  padding: var(--sp-7) var(--sp-8) var(--sp-6);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-sheet);
@@ -29,7 +29,7 @@
 
 .adds {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 
 .formError {
@@ -44,7 +44,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 
 /* a stage: kit .ao-sheet */
@@ -63,9 +63,9 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-7);
   min-height: 48px;
-  padding: 0 14px 0 8px;
+  padding: 0 var(--sp-7) 0 var(--sp-4);
 }
 
 .move {
@@ -81,7 +81,7 @@
 }
 .num {
   width: 26px;
-  padding-left: 6px;
+  padding-left: var(--sp-3);
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   color: var(--ink-3);
@@ -92,7 +92,7 @@
 .head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-5);
   min-width: 0;
   height: 100%;
   min-height: 48px;
@@ -150,12 +150,12 @@
 
 .tags {
   display: inline-flex;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 
 /* the sign-off toggle carries the stepper's gate diamond */
 .gate {
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .diamond {
   display: inline-block;
@@ -178,8 +178,8 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 2px 0 2px 18px;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-9);
 }
 .block::before {
   content: "";
@@ -214,20 +214,20 @@
 .body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px 16px 12px;
+  gap: var(--sp-7);
+  padding: var(--sp-7) var(--sp-8) var(--sp-6);
   border-top: 1px solid var(--rule-soft);
 }
 .grid2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--sp-6);
 }
 .grid3,
 .grid4 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--sp-6);
   align-items: start;
 }
 /* an agent stage's settings: runtime, model, effort, then agent and timeout (three columns keep
@@ -238,7 +238,7 @@
 .foot {
   display: flex;
   justify-content: flex-end;
-  margin: -4px -6px 0 0;
+  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-3)) 0 0;
 }
 .stageError {
   margin: 0;
@@ -260,8 +260,8 @@
 .loopsZone {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
+  gap: var(--sp-5);
+  margin-top: var(--sp-4);
 }
 .loopsEmpty {
   margin: 0;
@@ -275,13 +275,13 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 .loop {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-7);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-sheet);
@@ -291,22 +291,22 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) 120px auto;
   align-items: start;
-  gap: 12px;
+  gap: var(--sp-6);
 }
 .loopName {
-  padding-top: 26px;
+  padding-top: var(--sp-10);
   font-size: var(--fs-row-title);
   font-weight: 500;
   color: var(--ink-1);
   white-space: nowrap;
 }
 .loopRemove {
-  margin-top: 21px;
+  margin-top: var(--sp-9);
 }
 .loopRoles {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: var(--sp-2) var(--sp-8);
   margin: 0;
   font-size: var(--fs-meta);
   line-height: 1.4;
@@ -316,8 +316,8 @@
 @media (max-width: 900px) {
   .line {
     grid-template-columns: auto minmax(0, 1fr) auto;
-    row-gap: 6px;
-    padding-bottom: 8px;
+    row-gap: var(--sp-3);
+    padding-bottom: var(--sp-4);
   }
   .grid3,
   .grid4 {

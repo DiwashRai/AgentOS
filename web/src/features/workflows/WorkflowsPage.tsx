@@ -11,26 +11,27 @@ import {
   useCreateWorkflow,
   useDeleteWorkflow,
   useMe,
-  useSaveSpaceSettings,
   useSaveWorkflow,
-  useSpaceSettings,
+  useSetDefaultWorkflow,
   useWorkflows,
 } from "../../api/queries";
-import { Button, Tag, ZoneHead } from "../../ui";
+import {
+  Field,
+  fieldStyles as f,
+  fixFirst,
+  pageStyles as pages,
+  SaveBar,
+  useDraft,
+} from "../../editor";
+import { Button, StatusLine, Tag, ZoneHead } from "../../ui";
 import { withoutParam, withParam } from "../peek/params";
-import { Field, fieldStyles as f } from "../pipeline/fields";
 import { configDefaults, issueCount, pipelineIssues } from "../pipeline/model";
-import pages from "../pipeline/pages.module.css";
 import { PipelineEditor } from "../pipeline/PipelineEditor";
-import { SaveBar } from "../pipeline/SaveBar";
-import { useDraft } from "../pipeline/useDraft";
-import { spaceBody, spaceForm } from "../settings/space/model";
 import {
   createBody,
   deleteBlock,
   deleteConfirmText,
   DESCRIPTION_MAX,
-  makeDefaultErrorText,
   NAME_MAX,
   NEW,
   newWorkflowForm,
@@ -51,18 +52,6 @@ import s from "./Workflows.module.css";
 
 const LEAVE = "Leave without saving your changes?";
 
-function Line({ children, error }: { children: string; error?: boolean }) {
-  return (
-    <p
-      className={pages.quiet}
-      role={error ? "alert" : "status"}
-      data-error={error ? "" : undefined}
-    >
-      {children}
-    </p>
-  );
-}
-
 export function WorkflowsPage() {
   const me = useMe();
   const config = useConfig();
@@ -73,13 +62,13 @@ export function WorkflowsPage() {
   const dirty = useRef(false);
 
   if (workflows.isPending || config.isPending || me.isPending) {
-    return <Line>Loading workflows</Line>;
+    return <StatusLine>Loading workflows</StatusLine>;
   }
   if (workflows.isError || config.isError) {
     return (
-      <Line
+      <StatusLine
         error
-      >{`Can't load workflows · ${(workflows.error ?? config.error)?.message ?? ""}`}</Line>
+      >{`Can't load workflows · ${(workflows.error ?? config.error)?.message ?? ""}`}</StatusLine>
     );
   }
 
@@ -181,9 +170,9 @@ export function WorkflowsPage() {
           }}
         />
       ) : selection !== null ? (
-        <Line>
+        <StatusLine>
           {selection === NEW ? "Only admins can add workflows." : "That workflow no longer exists."}
-        </Line>
+        </StatusLine>
       ) : null}
     </div>
   );
@@ -215,8 +204,7 @@ function WorkflowEditor({
   const create = useCreateWorkflow();
   const save = useSaveWorkflow(workflow?.id ?? 0);
   const remove = useDeleteWorkflow();
-  const spaceDoc = useSpaceSettings(isAdmin && workflow !== null && !workflow.default);
-  const saveSpace = useSaveSpaceSettings();
+  const setDefault = useSetDefaultWorkflow();
   // A new one starts from a copy of the default's pipeline, fixed when the editor opens.
   const [start] = useState(() => (workflow ? undefined : newWorkflowForm(all)));
   const saved = useMemo(() => (workflow ? workflowForm(workflow) : start), [workflow, start]);
@@ -225,10 +213,10 @@ function WorkflowEditor({
     dirtyRef.current = draft.dirty;
   }, [draft.dirty, dirtyRef]);
 
-  if (!saved) return <Line>No workflow to start from.</Line>;
+  if (!saved) return <StatusLine>No workflow to start from.</StatusLine>;
   const value = draft.value ?? saved;
   const { runtimes } = config;
-  const busy = create.isPending || save.isPending || remove.isPending || saveSpace.isPending;
+  const busy = create.isPending || save.isPending || remove.isPending || setDefault.isPending;
   const readOnly = !isAdmin || busy;
   const formIssues = validateWorkflowForm(value, all, workflow?.id ?? null);
   const issues =
@@ -243,18 +231,8 @@ function WorkflowEditor({
   };
 
   const makeDefault = () => {
-    if (!workflow || !spaceDoc.data) return;
-    saveSpace.mutate(
-      {
-        ...spaceBody(spaceForm(spaceDoc.data), spaceDoc.data.version),
-        default_workflow_id: workflow.id,
-      },
-      {
-        onError: () => {
-          void spaceDoc.refetch();
-        },
-      },
-    );
+    if (!workflow) return;
+    setDefault.mutate(workflow.id);
   };
 
   const extra =
@@ -263,7 +241,7 @@ function WorkflowEditor({
         {workflow.default ? null : (
           <Button
             size="sm"
-            disabled={busy || !spaceDoc.data || draft.dirty}
+            disabled={busy || draft.dirty}
             title={
               draft.dirty
                 ? "Save or discard your changes first"
@@ -271,7 +249,7 @@ function WorkflowEditor({
             }
             onClick={makeDefault}
           >
-            {saveSpace.isPending ? "Making default…" : "Make default"}
+            {setDefault.isPending ? "Making default…" : "Make default"}
           </Button>
         )}
         <Button
@@ -300,18 +278,14 @@ function WorkflowEditor({
         }
         dirty={draft.dirty}
         readOnly={!isAdmin}
-        saveDisabledReason={
-          issues > 0
-            ? `Fix ${issues === 1 ? "1 issue" : `${String(issues)} issues`} first`
-            : undefined
-        }
+        saveDisabledReason={fixFirst(issues)}
         saving={mutation.isPending}
         problem={problem ? workflowErrorText(problem) : null}
         onDiscard={() => {
           draft.discard();
           mutation.reset();
           remove.reset();
-          saveSpace.reset();
+          setDefault.reset();
         }}
         onReload={() => {
           draft.discard();
@@ -320,7 +294,7 @@ function WorkflowEditor({
           onReload();
         }}
         onSave={() => {
-          saveSpace.reset();
+          setDefault.reset();
           remove.reset();
           if (isNew) {
             create.mutate(createBody(value), {
@@ -338,9 +312,9 @@ function WorkflowEditor({
         }}
         extra={extra}
       />
-      {saveSpace.error ? (
+      {setDefault.error ? (
         <p className={s.problem} role="alert">
-          {makeDefaultErrorText(saveSpace.error)}
+          {workflowErrorText(setDefault.error).text}
         </p>
       ) : null}
 

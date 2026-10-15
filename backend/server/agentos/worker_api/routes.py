@@ -31,8 +31,9 @@ def worker_source() -> str:
 # Bearer: the dispatch token. Every other worker route: the worker token bound at claim.
 @router.post("/api/worker/claim")
 def claim(body: ClaimRequest, token: RunToken, ctx: Ctx) -> ClaimResponse:
+    snapshot = ctx.snapshot()
     return ClaimResponse(
-        manifest=service.claim(ctx.db, ctx.runtimes, ctx.space, token, body.worker_token)
+        manifest=service.claim(ctx.db, snapshot.runtimes, snapshot.space, token, body.worker_token)
     )
 
 

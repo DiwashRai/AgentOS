@@ -5,9 +5,9 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   height: var(--h-group-head);
-  padding: 0 4px;
+  padding: 0 var(--sp-2);
   border: 0;
   background: none;
   border-radius: var(--r-control);
@@ -63,7 +63,7 @@
 .s {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -4,7 +4,8 @@
 // the Pipeline tab's "Switch workflow…" and "Save as workflow…". The server stays the authority:
 // it re-validates (prompts render, runtimes exist) and its message is shown when we have no better.
 import { ApiError, type Schemas } from "../../api/client";
-import { samePipeline, type Pipeline, type SaveProblem } from "../pipeline/model";
+import type { SaveProblem } from "../../editor";
+import { samePipeline, type Pipeline } from "../pipeline/model";
 
 export type Workflow = Schemas["Workflow"];
 export type TicketWorkflow = Schemas["TicketWorkflow"];
@@ -174,14 +175,6 @@ export function workflowErrorText(e: unknown): SaveProblem {
     default:
       return { text: e.message, reload: false };
   }
-}
-
-/** "Make default" PUTs the whole Space document, so its 409 is about the Space, not the draft. */
-export function makeDefaultErrorText(e: unknown): string {
-  if (e instanceof ApiError && e.code === "stale_version") {
-    return "The Space settings changed meanwhile. Try again.";
-  }
-  return workflowErrorText(e).text;
 }
 
 /** What a failed switch tells the writer on the Pipeline tab. */

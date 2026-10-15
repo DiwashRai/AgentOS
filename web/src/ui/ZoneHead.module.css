@@ -3,7 +3,7 @@
 .zh {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   height: 24px;
   min-width: 0;
 }
@@ -39,7 +39,7 @@
 .right {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--sp-7);
   font-size: var(--fs-meta);
   color: var(--ink-2);
   white-space: nowrap;

@@ -246,6 +246,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/intake/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Intake */
+        post: operations["validate_intake_api_settings_intake_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/mappings": {
         parameters: {
             query?: never;
@@ -309,6 +326,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/mappings/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Mappings */
+        post: operations["validate_mappings_api_settings_mappings_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/repos": {
         parameters: {
             query?: never;
@@ -327,6 +361,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/repos/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Repos */
+        post: operations["validate_repos_api_settings_repos_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/runner": {
         parameters: {
             query?: never;
@@ -336,9 +387,29 @@ export interface paths {
         };
         /** Get Runner */
         get: operations["get_runner_api_settings_runner_get"];
-        /** Put Runner */
+        /**
+         * Put Runner
+         * @description The github launcher reads the runner at its next launch.
+         */
         put: operations["put_runner_api_settings_runner_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/runner/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Runner */
+        post: operations["validate_runner_api_settings_runner_validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -375,6 +446,23 @@ export interface paths {
         /** Put Space */
         put: operations["put_space_api_settings_space_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/space/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Space */
+        post: operations["validate_space_api_settings_space_validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -769,6 +857,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make Default
+         * @description Make this workflow the one a new ticket gets when it names none (`/api/config`
+         *     `default_workflow_id`); the previous default stops being it. Answers the workflow, now
+         *     `default`. 404 `not_found` for an unknown id.
+         */
+        post: operations["make_default_api_workflows__workflow_id__default_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -909,6 +1019,8 @@ export interface components {
              * @enum {string}
              */
             code: "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "http_error" | "validation_error" | "internal_error" | "not_implemented" | "csrf_header_missing" | "rate_limited" | "upstream_error" | "too_large" | "missing_credentials" | "invalid_credentials" | "no_project_access" | "user_disabled" | "pending_approval" | "ticket_not_found" | "file_not_found" | "version_not_found" | "run_not_found" | "user_not_found" | "stale_version" | "run_active" | "bundle_locked" | "already_claimed" | "key_taken" | "in_use" | "invalid_stage" | "invalid_pipeline" | "render_error" | "run_gone" | "base_branch_missing" | "base_branch_locked";
+            /** Issues */
+            issues: components["schemas"]["ValidationIssue"][];
             /** Message */
             message: string;
         };
@@ -923,18 +1035,16 @@ export interface components {
             cancel: boolean;
         };
         /**
-         * FieldMapping
-         * @description A Jira field → an AgentOS field, by rules. `field` = the Jira field id (`fixVersions`,
-         *     `customfield_10042`); `field_name` = its display name (stored, so the UI and the ticket's
-         *     reasons can say "Fix versions" without a Jira call).
+         * FieldMappingEntry
+         * @description A mapping as sent and read (the rules are `FieldMapping`'s).
          */
-        FieldMapping: {
+        FieldMappingEntry: {
             /** Field */
             field: string;
             /** Field Name */
             field_name: string;
             /** Rules */
-            rules: components["schemas"]["MappingRule"][];
+            rules: components["schemas"]["MappingRuleEntry"][];
             /**
              * Source
              * @constant
@@ -945,37 +1055,6 @@ export interface components {
              * @constant
              */
             target: "base_branch";
-        };
-        /**
-         * FieldMappings
-         * @description Settings > Field mappings: at most one mapping per target. A `base_branch` mapping sets an
-         *     imported (manual import or Intake Take in) repo ticket's base branch from the Jira field; no
-         *     match leaves it blank and blocked from dispatch (the repo default does not fill it).
-         */
-        FieldMappings: {
-            /** Mappings */
-            mappings: components["schemas"]["FieldMapping"][];
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-            updated_by: components["schemas"]["Person"] | null;
-            /** Version */
-            version: number;
-        };
-        /**
-         * FieldMappingsUpdate
-         * @description PUT /api/settings/mappings: the whole list. 422 `validation_error` naming the mapping and
-         *     rule (`mappings.0.rules.3.value: ...`) or a target listed twice. Saving re-applies the rules
-         *     to every unlocked ticket whose base branch came from a mapping (from its stored Jira value; no
-         *     Jira call), except during a run; hand-set and locked tickets are never touched.
-         */
-        FieldMappingsUpdate: {
-            /** Base Version */
-            base_version: number;
-            /** Mappings */
-            mappings: components["schemas"]["FieldMapping"][];
         };
         /** FileContent */
         FileContent: {
@@ -1126,6 +1205,15 @@ export interface components {
             display_name: string;
         };
         /**
+         * IntakeDoc
+         * @description Settings > Intake: the queries, in tab order. The JQL isn't checked against Jira (it might
+         *     be down): use the preview. Saving drops the intake cache.
+         */
+        IntakeDoc: {
+            /** Queries */
+            queries: components["schemas"]["IntakeQueryEntry"][];
+        };
+        /**
          * IntakeItem
          * @description A Jira issue that matches an intake query and isn't in AgentOS yet. `type` and `priority`
          *     use the import's mapping, so they are what "Take in" (POST /api/tickets/import) creates;
@@ -1196,10 +1284,11 @@ export interface components {
             total: number;
         };
         /**
-         * IntakeQueryIn
-         * @description `id: null` = a new query: the server makes a unique id from its name. Sent ids are kept.
+         * IntakeQueryEntry
+         * @description `id: null` = a new query: the server makes a unique id from its name. Sent ids are kept
+         *     (always set when read).
          */
-        IntakeQueryIn: {
+        IntakeQueryEntry: {
             /** Id */
             id: string | null;
             /** Jql */
@@ -1207,44 +1296,27 @@ export interface components {
             /** Name */
             name: string;
         };
-        /**
-         * IntakeQuerySpec
-         * @description One intake query: a JQL whose matches the Intake tab lists (request 14).
-         */
-        IntakeQuerySpec: {
-            /** Id */
-            id: string;
-            /** Jql */
-            jql: string;
-            /** Name */
-            name: string;
-        };
-        /**
-         * IntakeSettings
-         * @description Settings > Intake: the queries, in tab order.
-         */
+        /** IntakeSettings */
         IntakeSettings: {
-            /** Queries */
-            queries: components["schemas"]["IntakeQuerySpec"][];
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
             updated_by: components["schemas"]["Person"] | null;
+            value: components["schemas"]["IntakeDoc"];
             /** Version */
             version: number;
         };
-        /**
-         * IntakeSettingsUpdate
-         * @description PUT /api/settings/intake. The JQL isn't checked against Jira (it might be down): use the
-         *     preview. Saving drops the intake cache.
-         */
+        /** IntakeSettingsUpdate */
         IntakeSettingsUpdate: {
             /** Base Version */
             base_version: number;
-            /** Queries */
-            queries: components["schemas"]["IntakeQueryIn"][];
+            value: components["schemas"]["IntakeDoc"];
+        };
+        /** IntakeSettingsValidate */
+        IntakeSettingsValidate: {
+            value: components["schemas"]["IntakeDoc"];
         };
         /**
          * JiraField
@@ -1486,26 +1558,60 @@ export interface components {
         /**
          * MappingPreviewRequest
          * @description "Try it": run `mapping`'s (unsaved) rules on `values`, or on the field of `issue` (a Jira
-         *     key or browse link, read with the service account). Exactly one of `values` / `issue`.
+         *     key or browse link, read with the service account). Exactly one of `values` / `issue`; the
+         *     other is null. `mapping` is checked as on save.
          */
         MappingPreviewRequest: {
             /** Issue */
-            issue?: string | null;
-            mapping: components["schemas"]["FieldMapping"];
+            issue: string | null;
+            mapping: components["schemas"]["FieldMappingEntry"];
             /** Values */
-            values?: string[] | null;
+            values: string[] | null;
         };
         /**
-         * MappingRule
-         * @description `match`: a wildcard pattern, not a regex: `*` = any run of characters, everything else
-         *     literal, matched against the whole (trimmed) value, case-insensitive. `value`: what the target
-         *     gets (`base_branch`: a valid branch name). Rules are ordered; the first match wins.
+         * MappingRuleEntry
+         * @description A rule as sent and read (the rules are `MappingRule`'s).
          */
-        MappingRule: {
+        MappingRuleEntry: {
             /** Match */
             match: string;
             /** Value */
             value: string;
+        };
+        /** MappingSettings */
+        MappingSettings: {
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            updated_by: components["schemas"]["Person"] | null;
+            value: components["schemas"]["MappingsDoc"];
+            /** Version */
+            version: number;
+        };
+        /** MappingSettingsUpdate */
+        MappingSettingsUpdate: {
+            /** Base Version */
+            base_version: number;
+            value: components["schemas"]["MappingsDoc"];
+        };
+        /** MappingSettingsValidate */
+        MappingSettingsValidate: {
+            value: components["schemas"]["MappingsDoc"];
+        };
+        /**
+         * MappingsDoc
+         * @description Settings > Field mappings: at most one mapping per target, each rule's `value` valid for
+         *     its target. A `base_branch` mapping sets an imported (manual import or Intake Take in) repo
+         *     ticket's base branch from the Jira field; no match leaves it blank and blocked from dispatch
+         *     (the repo default does not fill it). Saving re-applies the rules to every unlocked ticket
+         *     whose base branch came from a mapping (from its stored Jira value; no Jira call), except
+         *     during a run; hand-set and locked tickets are never touched.
+         */
+        MappingsDoc: {
+            /** Mappings */
+            mappings: components["schemas"]["FieldMappingEntry"][];
         };
         /** Me */
         Me: {
@@ -1625,23 +1731,12 @@ export interface components {
              */
             state: "pending" | "done" | "current" | "failed" | "stale" | "skipped";
         };
-        /** RepoEntry */
-        RepoEntry: {
-            /** Default Branch */
-            default_branch: string | null;
-            /** Name */
-            name: string;
-            /** Open Ticket Count */
-            open_ticket_count: number;
-            /** Url */
-            url: string;
-        };
         /**
-         * RepoEntryIn
+         * RepoEntry
          * @description `url`: https://..., ssh://... or git@host:path (GitHub Actions runners: https).
          *     `default_branch`: null or blank = none (then each ticket on the repo needs its own).
          */
-        RepoEntryIn: {
+        RepoEntry: {
             /** Default Branch */
             default_branch: string | null;
             /** Name */
@@ -1661,34 +1756,43 @@ export interface components {
             /** Url */
             url: string;
         };
-        /**
-         * RepoSettings
-         * @description Settings > Repos: the Space's repo catalog. Tickets reference a repo by name, so changing a
-         *     URL or default branch reaches every ticket that uses it.
-         */
+        /** RepoSettings */
         RepoSettings: {
-            /** Repos */
-            repos: components["schemas"]["RepoEntry"][];
+            /** Open Ticket Counts */
+            open_ticket_counts: {
+                [key: string]: number;
+            };
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
             updated_by: components["schemas"]["Person"] | null;
+            value: components["schemas"]["ReposDoc"];
             /** Version */
             version: number;
         };
-        /**
-         * RepoSettingsUpdate
-         * @description PUT /api/settings/repos: the whole catalog, in order. Names are unique and can't be renamed
-         *     (a missing name = removed, a new one = added). Removing a repo that open tickets or the
-         *     Space's `default_repo` use → 409 `in_use`; done and closed tickets keep the name.
-         */
+        /** RepoSettingsUpdate */
         RepoSettingsUpdate: {
             /** Base Version */
             base_version: number;
+            value: components["schemas"]["ReposDoc"];
+        };
+        /** RepoSettingsValidate */
+        RepoSettingsValidate: {
+            value: components["schemas"]["ReposDoc"];
+        };
+        /**
+         * ReposDoc
+         * @description Settings > Repos: the Space's repo catalog, in order. Tickets reference a repo by name, so
+         *     changing a URL or default branch reaches every ticket that uses it. Names are unique and
+         *     can't be renamed (a missing name = removed, a new one = added). Removing a repo that open
+         *     tickets or the Space's `default_repo` use → 409 `in_use` on save; done and closed tickets keep
+         *     the name.
+         */
+        ReposDoc: {
             /** Repos */
-            repos: components["schemas"]["RepoEntryIn"][];
+            repos: components["schemas"]["RepoEntry"][];
         };
         /**
          * Resolution
@@ -1803,22 +1907,31 @@ export interface components {
             ticket_key: string;
         };
         /**
-         * RunnerSettings
-         * @description Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow. Read at
-         *     every launch (no restart). `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN
-         *     is set) come from the server's env and are read-only. `github_repo` null = none set: with the
-         *     github launcher, runs then fail at launch saying so.
+         * RunnerDoc
+         * @description Settings > Runners: where `AGENTOS_LAUNCHER=github` dispatches each run's workflow, read at
+         *     every launch (no restart). `github_repo`: `owner/name`, or null = none set (with the github
+         *     launcher, runs then fail at launch saying so); `workflow`: a .yml file name in that repo's
+         *     .github/workflows/; `ref`: the branch or tag the workflow file is on.
          */
-        RunnerSettings: {
+        RunnerDoc: {
             /** Github Repo */
             github_repo: string | null;
+            /** Ref */
+            ref: string;
+            /** Workflow */
+            workflow: string;
+        };
+        /**
+         * RunnerSettings
+         * @description `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the
+         *     server's env and are read-only.
+         */
+        RunnerSettings: {
             /**
              * Launcher
              * @enum {string}
              */
             launcher: "local" | "github" | "mailbox";
-            /** Ref */
-            ref: string;
             /** Token Set */
             token_set: boolean;
             /**
@@ -1827,25 +1940,19 @@ export interface components {
              */
             updated_at: string;
             updated_by: components["schemas"]["Person"] | null;
+            value: components["schemas"]["RunnerDoc"];
             /** Version */
             version: number;
-            /** Workflow */
-            workflow: string;
         };
-        /**
-         * RunnerSettingsUpdate
-         * @description PUT /api/settings/runner. `github_repo`: `owner/name` or null; `workflow`: a .yml file name
-         *     in that repo's .github/workflows/; `ref`: the branch or tag the workflow file is on.
-         */
+        /** RunnerSettingsUpdate */
         RunnerSettingsUpdate: {
             /** Base Version */
             base_version: number;
-            /** Github Repo */
-            github_repo: string | null;
-            /** Ref */
-            ref: string;
-            /** Workflow */
-            workflow: string;
+            value: components["schemas"]["RunnerDoc"];
+        };
+        /** RunnerSettingsValidate */
+        RunnerSettingsValidate: {
+            value: components["schemas"]["RunnerDoc"];
         };
         /**
          * RuntimeEntry
@@ -1938,55 +2045,45 @@ export interface components {
             url: string;
         };
         /**
-         * SpaceSettings
-         * @description Settings > Space. `key_prefix` only affects new native tickets (stored keys never change).
-         *     `jira_projects`: signing in needs browse access to one of them (AGENTOS_ADMINS people
-         *     excepted); imports and intake only take issues from them.
+         * SpaceDoc
+         * @description Settings > Space. `key_prefix` only affects new native tickets (stored keys never change);
+         *     it can't be one of `jira_projects` (native keys would take real Jira keys). `jira_projects`:
+         *     signing in needs browse access to one of them (AGENTOS_ADMINS people excepted), so at least one
+         *     is needed while sign-in is with Jira; imports and intake only take issues from them.
          */
-        SpaceSettings: {
+        SpaceDoc: {
             /** Claim Timeout S */
             claim_timeout_s: number;
             /** Default Repo */
             default_repo: string | null;
-            /** Default Workflow Id */
-            default_workflow_id: number;
             /** Jira Projects */
             jira_projects: string[];
             /** Key Prefix */
             key_prefix: string;
             /** Name */
             name: string;
+        };
+        /** SpaceSettings */
+        SpaceSettings: {
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
             updated_by: components["schemas"]["Person"] | null;
+            value: components["schemas"]["SpaceDoc"];
             /** Version */
             version: number;
         };
-        /**
-         * SpaceSettingsUpdate
-         * @description PUT /api/settings/space. 422 `validation_error` when `default_repo` isn't a configured repo,
-         *     `key_prefix` is one of `jira_projects` (native keys would take real Jira keys), a project
-         *     repeats, `jira_projects` is empty while sign-in is with Jira, or `default_workflow_id` isn't a
-         *     workflow.
-         */
+        /** SpaceSettingsUpdate */
         SpaceSettingsUpdate: {
             /** Base Version */
             base_version: number;
-            /** Claim Timeout S */
-            claim_timeout_s: number;
-            /** Default Repo */
-            default_repo: string | null;
-            /** Default Workflow Id */
-            default_workflow_id?: number | null;
-            /** Jira Projects */
-            jira_projects: string[];
-            /** Key Prefix */
-            key_prefix: string;
-            /** Name */
-            name: string;
+            value: components["schemas"]["SpaceDoc"];
+        };
+        /** SpaceSettingsValidate */
+        SpaceSettingsValidate: {
+            value: components["schemas"]["SpaceDoc"];
         };
         /** Stage */
         Stage: {
@@ -2493,6 +2590,17 @@ export interface components {
              * @enum {string}
              */
             role?: "pending" | "viewer" | "writer" | "admin";
+        };
+        /**
+         * ValidationIssue
+         * @description One problem with a request. `loc` is the path to the field, like pydantic's, relative to
+         *     the request body (no leading `body`); an empty `loc` is the request as a whole.
+         */
+        ValidationIssue: {
+            /** Loc */
+            loc: (string | number)[];
+            /** Message */
+            message: string;
         };
         /**
          * VerdictData
@@ -3219,6 +3327,46 @@ export interface operations {
             };
         };
     };
+    validate_intake_api_settings_intake_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntakeSettingsValidate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_mappings_api_settings_mappings_get: {
         parameters: {
             query?: never;
@@ -3234,7 +3382,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FieldMappings"];
+                    "application/json": components["schemas"]["MappingSettings"];
                 };
             };
             /** @description Client error */
@@ -3266,7 +3414,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FieldMappingsUpdate"];
+                "application/json": components["schemas"]["MappingSettingsUpdate"];
             };
         };
         responses: {
@@ -3276,7 +3424,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FieldMappings"];
+                    "application/json": components["schemas"]["MappingSettings"];
                 };
             };
             /** @description Client error */
@@ -3379,6 +3527,46 @@ export interface operations {
             };
         };
     };
+    validate_mappings_api_settings_mappings_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MappingSettingsValidate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_repos_api_settings_repos_get: {
         parameters: {
             query?: never;
@@ -3459,6 +3647,46 @@ export interface operations {
             };
         };
     };
+    validate_repos_api_settings_repos_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoSettingsValidate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     get_runner_api_settings_runner_get: {
         parameters: {
             query?: never;
@@ -3518,6 +3746,46 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RunnerSettings"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    validate_runner_api_settings_runner_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerSettingsValidate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {
@@ -3678,6 +3946,46 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SpaceSettings"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    validate_space_api_settings_space_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceSettingsValidate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {
@@ -4940,6 +5248,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    make_default_api_workflows__workflow_id__default_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workflow"];
+                };
             };
             /** @description Client error */
             "4XX": {

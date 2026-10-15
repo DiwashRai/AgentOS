@@ -1,25 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../../api/client";
+import { messagesAt, pathOf, placeIssues } from "../../../editor/issues";
 import {
-  addQuery,
-  fixLine,
-  formOf,
-  issueCount,
-  JQL_MAX,
-  MAX_QUERIES,
-  moveQuery,
-  NAME_MAX,
+  fromForm,
   patchQuery,
   previewLine,
-  removeQuery,
+  queryLabels,
   sameForm,
-  toBody,
-  validate,
+  sentKeys,
+  SHOWN,
+  toForm,
   type IntakePreview,
   type PreviewItem,
   type PreviewState,
-  type QueryRow,
 } from "./model";
 
 const SAVED = {
@@ -28,10 +22,6 @@ const SAVED = {
     { id: "bugs", name: "Bugs", jql: "project = PLAT AND type = Bug" },
   ],
 };
-
-function row(over: Partial<QueryRow> = {}): QueryRow {
-  return { key: "id:x", id: "x", name: "X", jql: "project = X", ...over };
-}
 
 function item(key: string): PreviewItem {
   return {
@@ -46,140 +36,97 @@ function item(key: string): PreviewItem {
   };
 }
 
-describe("form ↔ body", () => {
-  it("keys saved queries by id and drops the keys from the body", () => {
-    const form = formOf(SAVED);
-    expect(form.map((r) => r.key)).toEqual(["id:ready", "id:bugs"]);
-    const body = toBody([...form, { key: "new:1", id: null, name: "  New ", jql: " a = b\n" }], 7);
-    expect(body).toEqual({
-      base_version: 7,
+describe("form ↔ value", () => {
+  it("round-trips the queries without the row keys", () => {
+    expect(fromForm(toForm(SAVED))).toEqual(SAVED);
+  });
+
+  it("sameForm ignores the row keys but not order or content", () => {
+    const a = toForm(SAVED);
+    expect(sameForm(a, toForm(SAVED))).toBe(true);
+    expect(sameForm(a, { queries: [...a.queries].reverse() })).toBe(false);
+    expect(sameForm(a, patchQuery(a, a.queries[1]?.key ?? "", { jql: "x" }))).toBe(false);
+  });
+});
+
+describe("issue placement", () => {
+  it("puts a row's own issues and its id's on that row, not on the list", () => {
+    const form = toForm(SAVED);
+    const second = form.queries[1]?.key ?? "";
+    const issues = placeIssues(
+      [
+        { loc: ["value", "queries", 1, "id"], message: "duplicate" },
+        { loc: ["value", "queries", 1], message: "whole row" },
+      ],
+      { keys: sentKeys(form), shown: SHOWN },
+    );
+
+    expect(messagesAt(issues, pathOf("queries", second, "id"))).toEqual(["duplicate"]);
+    expect(messagesAt(issues, pathOf("queries", second))).toEqual(["whole row"]);
+    expect(messagesAt(issues, "queries")).toEqual([]);
+    expect(issues.form).toEqual([]);
+  });
+});
+
+describe("queryLabels", () => {
+  it("names every row uniquely, by name, then by place where a name is blank or shared", () => {
+    const form = toForm({
       queries: [
-        { id: "ready", name: "Ready for agents", jql: "project = PLAT AND labels = agent" },
-        { id: "bugs", name: "Bugs", jql: "project = PLAT AND type = Bug" },
-        { id: null, name: "New", jql: "a = b" },
+        { id: "a", name: "Ready", jql: "" },
+        { id: null, name: " ", jql: "" },
+        { id: "b", name: "Bugs", jql: "" },
+        { id: "c", name: "ready ", jql: "" },
       ],
     });
-  });
-
-  it("sameForm ignores the client keys but not order or content", () => {
-    const a = formOf(SAVED);
-    const relabelled = a.map((r) => ({ ...r, key: `other:${r.key}` }));
-    expect(sameForm(a, relabelled)).toBe(true);
-    expect(sameForm(a, moveQuery(a, 0, 1))).toBe(false);
-    expect(sameForm(a, patchQuery(a, 1, { jql: "x" }))).toBe(false);
-    expect(sameForm(a, a.slice(1))).toBe(false);
-  });
-});
-
-describe("list edits", () => {
-  it("adds empty new queries with fresh keys, even after one is removed", () => {
-    const one = addQuery(formOf(SAVED));
-    expect(one[2]).toEqual({ key: "new:1", id: null, name: "", jql: "" });
-    const two = addQuery(one);
-    expect(two[3]?.key).toBe("new:2");
-    expect(addQuery(removeQuery(two, 2)).map((r) => r.key)).toEqual([
-      "id:ready",
-      "id:bugs",
-      "new:2",
-      "new:3",
-    ]);
-  });
-
-  it("moves within bounds only and removes by index", () => {
-    const form = formOf(SAVED);
-    expect(moveQuery(form, 1, -1).map((r) => r.id)).toEqual(["bugs", "ready"]);
-    expect(moveQuery(form, 0, -1)).toBe(form);
-    expect(moveQuery(form, 1, 1)).toBe(form);
-    expect(removeQuery(form, 0).map((r) => r.id)).toEqual(["bugs"]);
-  });
-
-  it("patches one row", () => {
-    const form = patchQuery(formOf(SAVED), 0, { name: "Ready" });
-    expect(form[0]?.name).toBe("Ready");
-    expect(form[1]?.name).toBe("Bugs");
-  });
-});
-
-describe("validate", () => {
-  it("needs a name and a JQL, trimmed, within the server's limits", () => {
-    const issues = validate([
-      row({ name: "  ", jql: "\n" }),
-      row({ name: "n".repeat(NAME_MAX + 1), jql: "j".repeat(JQL_MAX + 1) }),
-      row({ name: ` ${"n".repeat(NAME_MAX)} `, jql: "ok" }),
-    ]);
-    expect(Object.keys(issues.rows[0] ?? {})).toEqual(["name", "jql"]);
-    expect(issues.rows[1]).toEqual({
-      name: `At most ${String(NAME_MAX)} characters`,
-      jql: `At most ${String(JQL_MAX)} characters`,
-    });
-    expect(issues.rows[2]).toEqual({});
-    expect(issueCount(issues)).toBe(4);
-  });
-
-  it("caps the number of queries", () => {
-    const many = Array.from({ length: MAX_QUERIES + 1 }, (_, i) =>
-      row({ key: `new:${String(i)}` }),
-    );
-    const issues = validate(many);
-    expect(issues.form).toHaveLength(1);
-    expect(issueCount(issues)).toBe(1);
-    expect(validate(many.slice(1)).form).toEqual([]);
-  });
-
-  it("says how many issues block Save", () => {
-    expect(fixLine(0)).toBeUndefined();
-    expect(fixLine(1)).toBe("Fix 1 issue first");
-    expect(fixLine(3)).toBe("Fix 3 issues first");
+    const labels = queryLabels(form.queries);
+    expect(new Set(labels).size).toBe(4);
+    expect(labels[2]).toBe("Bugs");
+    expect(labels[0]).toContain("Ready");
+    expect(labels[3]).toContain("ready");
+    expect(labels.every((l) => l.trim() !== "")).toBe(true);
   });
 });
 
 describe("previewLine", () => {
-  const JQL = "project = PLAT";
-  const done = (data: IntakePreview): PreviewState => ({
-    ran: JQL,
+  const done = (result: IntakePreview): PreviewState => ({
     pending: false,
-    data,
-    error: null,
+    result,
+    error: undefined,
   });
 
-  it("shows nothing until tested, and nothing once the JQL changed", () => {
-    expect(
-      previewLine({ ran: undefined, pending: false, data: undefined, error: null }, JQL),
-    ).toEqual({ kind: "none" });
-    const state = done({ total: 0, error: null, items: [] });
-    expect(previewLine(state, `${JQL} AND x = y`)).toEqual({ kind: "none" });
-    // Whitespace around the JQL is not a change (the test sends it trimmed).
-    expect(previewLine(state, `  ${JQL}\n`).kind).toBe("empty");
+  it("nothing before a run, then pending", () => {
+    expect(previewLine({ pending: false, result: undefined, error: undefined }).kind).toBe("none");
+    expect(previewLine({ pending: true, result: undefined, error: undefined }).kind).toBe(
+      "pending",
+    );
   });
 
-  it("pending, then the count with up to 5 items", () => {
-    expect(previewLine({ ran: JQL, pending: true, data: undefined, error: null }, JQL)).toEqual({
-      kind: "pending",
+  it("the count over the items the server sent", () => {
+    const items = ["A-1", "A-2", "A-3"].map(item);
+    const line = previewLine(done({ total: 12, error: null, items }));
+    expect(line).toMatchObject({ kind: "items", count: "12 to take in", more: "first 3 shown" });
+    expect(previewLine(done({ total: 3, error: null, items }))).toMatchObject({ more: null });
+    expect(previewLine(done({ total: 0, error: null, items: [] })).kind).toBe("empty");
+  });
+
+  it("Jira's error, the server's issues with the JQL, or the request's own failure", () => {
+    expect(previewLine(done({ total: 0, error: "Field 'x' does not exist", items: [] }))).toEqual({
+      kind: "error",
+      text: "Field 'x' does not exist",
     });
-    const items = ["A-1", "A-2", "A-3", "A-4", "A-5", "A-6"].map(item);
-    const line = previewLine(done({ total: 12, error: null, items }), JQL);
-    expect(line).toMatchObject({ kind: "items", count: "12 to take in", more: "first 5 shown" });
-    if (line.kind !== "items") throw new Error("expected items");
-    expect(line.items.map((i) => i.key)).toEqual(["A-1", "A-2", "A-3", "A-4", "A-5"]);
-    expect(
-      previewLine(done({ total: 2, error: null, items: items.slice(0, 2) }), JQL),
-    ).toMatchObject({ count: "2 to take in", more: null });
-  });
 
-  it("Jira's error text, or the request's own failure", () => {
-    expect(
-      previewLine(done({ total: 0, error: "Field 'x' does not exist", items: [] }), JQL),
-    ).toEqual({ kind: "error", text: "Field 'x' does not exist" });
-    const failed: PreviewState = {
-      ran: JQL,
-      pending: false,
-      data: undefined,
-      error: new ApiError(403, "forbidden", "Admins only"),
-    };
-    expect(previewLine(failed, JQL)).toEqual({ kind: "error", text: "Admins only" });
-  });
+    const refused = new ApiError(422, "validation_error", "jql: too long", [
+      { loc: ["jql"], message: "too long" },
+    ]);
+    expect(previewLine({ pending: false, result: undefined, error: refused })).toEqual({
+      kind: "error",
+      text: "too long",
+    });
 
-  it("nothing to take in", () => {
-    expect(previewLine(done({ total: 0, error: null, items: [] }), JQL)).toEqual({ kind: "empty" });
+    const forbidden = new ApiError(403, "forbidden", "Admins only");
+    expect(previewLine({ pending: false, result: undefined, error: forbidden })).toEqual({
+      kind: "error",
+      text: "Admins only",
+    });
   });
 });

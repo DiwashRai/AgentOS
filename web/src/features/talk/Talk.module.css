@@ -9,7 +9,7 @@
   background: var(--recess);
   box-shadow: var(--recess-shadow);
   border-radius: var(--r-lg);
-  padding: 7px;
+  padding: var(--sp-3);
 }
 .ticket {
   height: 100%;
@@ -34,8 +34,8 @@
 .head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-7);
   border-bottom: 1px solid var(--rule-soft);
 }
 .head > b {
@@ -64,7 +64,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 6px 14px 12px;
+  padding: var(--sp-3) var(--sp-7) var(--sp-6);
   scroll-padding-bottom: 12px;
   display: flex;
   flex-direction: column;
@@ -78,7 +78,7 @@
 .day {
   text-align: center;
   color: var(--ink-3);
-  margin: 6px 0 2px;
+  margin: var(--sp-3) 0 var(--sp-1);
   font-size: var(--fs-meta);
   font-weight: 500;
 }
@@ -86,15 +86,15 @@
 .msg {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
-  gap: 9px;
-  margin-top: 10px;
+  gap: var(--sp-4);
+  margin-top: var(--sp-5);
 }
 .who {
   font-size: 12.5px;
   color: var(--ink-1);
   font-weight: 600;
   display: flex;
-  gap: 8px;
+  gap: var(--sp-4);
   align-items: baseline;
 }
 /* the message time: tabular, at the floor */
@@ -109,15 +109,15 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
-  margin-top: 3px;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
 }
 .bub {
   display: inline-block;
   max-width: 94%;
   background: var(--bubble);
   border-radius: 4px 14px 14px 14px;
-  padding: 7px 12px;
+  padding: var(--sp-3) var(--sp-6);
   font-size: 13px;
   line-height: 1.45;
   color: var(--bubble-ink);
@@ -171,12 +171,12 @@
 }
 
 .empty {
-  margin: 14px 0 4px;
+  margin: var(--sp-7) 0 var(--sp-2);
   font-size: 12.5px;
   color: var(--ink-3);
 }
 .quiet {
-  margin: 14px 0 4px;
+  margin: var(--sp-7) 0 var(--sp-2);
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
@@ -187,7 +187,7 @@
   left: 50%;
   bottom: 10px;
   translate: -50% 0;
-  padding: 5px 12px;
+  padding: var(--sp-2) var(--sp-6);
   border: 1px solid var(--rule);
   border-radius: 999px;
   background: var(--surface-raised);
@@ -215,9 +215,9 @@
 .compose {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  margin: 8px 10px 10px;
-  padding: 5px 5px 5px 13px;
+  gap: var(--sp-3);
+  margin: var(--sp-4) var(--sp-5) var(--sp-5);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-6);
   border: 1px solid var(--rule);
   border-radius: 11px;
   background: var(--field);
@@ -240,7 +240,7 @@
   color: var(--ink-1);
   height: 30px;
   line-height: 20px;
-  padding: 5px 0;
+  padding: var(--sp-2) 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -251,7 +251,7 @@
   margin-bottom: 1px;
 }
 .error {
-  margin: -4px 14px 10px;
+  margin: calc(-1 * var(--sp-2)) var(--sp-7) var(--sp-5);
   font-size: var(--fs-meta);
   color: var(--blocked);
 }

@@ -12,7 +12,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: var(--sp-9);
   height: 100%;
   min-width: 0;
 }
@@ -51,7 +51,7 @@
   flex: 0 0.001 auto;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: var(--sp-9);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -60,8 +60,8 @@
 .counter {
   display: inline-flex;
   align-items: baseline;
-  gap: 5px;
-  padding: 3px 0;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 0;
   font-size: var(--fs-control);
   color: var(--ink-2);
 }
@@ -85,7 +85,7 @@
 
 /* a non-zero "need you": the one tinted counter */
 .counter.isYou {
-  padding: 3px 10px 3px 8px;
+  padding: var(--sp-1) var(--sp-5) var(--sp-1) var(--sp-4);
   border-radius: var(--r-pill);
   background: var(--you-tint);
   color: var(--you-text);
@@ -111,12 +111,12 @@
 .search {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   height: var(--h-btn);
   width: 268px;
   flex: 0 1 268px;
   min-width: 150px;
-  padding: 0 7px 0 10px;
+  padding: 0 var(--sp-3) 0 var(--sp-5);
   border: 1px solid var(--rule);
   border-radius: var(--r-control);
   background: var(--surface-raised);
@@ -186,13 +186,13 @@
    (a click on it or "/" focuses the input); New ticket becomes "+" (its name stays for AT) */
 @container topbar (max-width: 759px) {
   .row {
-    gap: 12px;
+    gap: var(--sp-6);
   }
   .ctx {
     display: none;
   }
   .counters {
-    gap: 12px;
+    gap: var(--sp-6);
   }
   .search {
     position: relative;
@@ -227,8 +227,8 @@
     inset: 50% 0 auto;
     z-index: 3;
     width: auto;
-    gap: 8px;
-    padding: 0 7px 0 10px;
+    gap: var(--sp-4);
+    padding: 0 var(--sp-3) 0 var(--sp-5);
     justify-content: flex-start;
     transform: translateY(-50%);
     cursor: text;
@@ -266,10 +266,10 @@
 /* 4. the pill keeps its number; the words stay for AT and in its title */
 @container topbar (max-width: 319px) {
   .row {
-    gap: 8px;
+    gap: var(--sp-4);
   }
   .counter.isYou {
-    padding: 3px 9px 3px 8px;
+    padding: var(--sp-1) var(--sp-4) var(--sp-1) var(--sp-4);
   }
   .counter > .label {
     position: absolute;

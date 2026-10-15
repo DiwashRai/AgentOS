@@ -17,8 +17,9 @@ router = APIRouter(prefix="/api", tags=["runs"], responses=ERROR_RESPONSES)
 
 @router.post("/tickets/{key}/runs", status_code=201)
 def dispatch(key: str, body: DispatchRequest, user: Writer, ctx: Ctx) -> RunSummary:
+    snapshot = ctx.snapshot()
     return service.dispatch(
-        ctx.db, ctx.runtimes, ctx.space, ctx.launcher.name, key, user, body.from_stage
+        ctx.db, snapshot.runtimes, snapshot.space, ctx.launcher.name, key, user, body.from_stage
     )
 
 

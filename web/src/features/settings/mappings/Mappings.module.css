@@ -1,31 +1,15 @@
 /* Settings › Field mappings. Not designed in the pack: kit values, as the Intake and Runners
-   settings pages (.ao-sheet cards, .ao-k labels, mono values). */
-.cards {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
+   settings pages (ListEditor rows as .ao-sheet cards, .ao-k labels, mono values). */
+.mappings {
+  max-width: 880px;
 }
 
-/* a target: kit .ao-sheet */
+/* one mapping, inside its list row */
 .card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-7);
   min-width: 0;
-  max-width: 880px;
-  padding: 14px 16px 16px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  box-shadow: var(--row-edge);
-}
-.cardHead {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  margin-bottom: -8px;
 }
 .cardTitle {
   margin: 0;
@@ -33,26 +17,12 @@
   font-weight: 600;
   color: var(--ink-1);
 }
-.spacer {
-  flex: 1;
-}
 .lead {
   margin: 0;
   max-width: 680px;
   font-size: var(--fs-meta);
   line-height: 1.45;
   color: var(--ink-3);
-}
-.empty {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-}
-.none {
-  margin: 0;
-  font-size: var(--fs-control);
-  color: var(--ink-2);
 }
 
 /* a label / status line: sentence case, 12/500 --ink-3 (refresh §3.4, §6) */
@@ -73,17 +43,12 @@
   font-size: max(var(--fs-mono), 0.95em);
   color: var(--ink-1);
 }
-.formError {
-  margin: 0;
-  font-size: var(--fs-meta);
-  color: var(--blocked);
-}
 
 /* the Jira field picker */
 .fieldRow {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
 }
 .picker {
@@ -96,7 +61,7 @@
 .typed {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: var(--sp-4) var(--sp-8);
 }
 .typed > .picker {
   flex: 1 1 220px;
@@ -110,87 +75,44 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: var(--sp-3) var(--sp-6);
   font-size: var(--fs-meta);
   color: var(--blocked);
 }
 
-/* rules: [arrows · nn] [match] → [value] [Remove] */
+/* rules: [match] → [value] [Matched], the list chrome around them */
 .rules {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
 }
 .rulesHead {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: var(--sp-2) var(--sp-6);
 }
-.ruleList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.colHead,
 .rule {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr) 16px minmax(0, 1fr) 120px;
+  /* the arrow's track is a fixed width (no sizing token fits it), not a spacing step */
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 10px;
+  column-gap: var(--sp-5);
+  row-gap: var(--sp-2);
   min-width: 0;
-}
-.colHead {
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-3);
-}
-.rule {
-  padding: 6px 8px 6px 4px;
+  padding: var(--sp-2);
   border: 1px solid transparent;
   border-radius: var(--r-control);
 }
-/* the rule the last Try it matched: the selected-row edge (ink), no hue */
+/* the rule the current Try it matched: the selected-row edge (ink), no hue */
 .matched {
   border-color: var(--row-selected-edge);
   background: var(--field);
 }
-.handle {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.move {
-  display: inline-flex;
-}
-.move button {
-  width: 26px;
-  height: 26px;
-}
-.up svg {
-  transform: rotate(180deg);
-}
-.num {
-  width: 24px;
-  padding-left: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
-}
 .arrow {
   text-align: center;
   color: var(--ink-3);
-}
-.remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
 }
 .hit {
   font-size: var(--fs-meta);
@@ -198,44 +120,39 @@
   color: var(--ink-1);
   white-space: nowrap;
 }
-.ruleErrors {
-  display: contents;
+.hit:empty {
+  display: none;
+}
+.matchError {
+  grid-column: 1;
+}
+.valueError {
+  grid-column: 3;
 }
 .ruleError {
-  font-size: var(--fs-meta);
-  line-height: 1.4;
-  color: var(--blocked);
-}
-.ruleError:first-child {
-  grid-column: 2;
-}
-.ruleError:last-child {
-  grid-column: 4;
-}
-.adds {
-  display: flex;
+  grid-column: 1 / -1;
 }
 
 /* Try it */
 .try {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-4);
   min-width: 0;
-  padding-top: 14px;
+  padding-top: var(--sp-7);
   border-top: 1px solid var(--rule-soft);
 }
 .tryHead {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: var(--sp-2) var(--sp-6);
 }
 .tryBar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-4);
   max-width: 680px;
 }
 .tryInput {
@@ -246,14 +163,14 @@
 /* Issue / Value: two pressed-or-not halves (kit .ao-pills, small) */
 .seg {
   display: inline-flex;
-  padding: 2px;
+  padding: var(--sp-1);
   border: 1px solid var(--rule);
   border-radius: var(--r-control);
   background: var(--field);
 }
 .segBtn {
   height: 28px;
-  padding: 0 10px;
+  padding: 0 var(--sp-5);
   border: 0;
   border-radius: calc(var(--r-control) - 2px);
   background: transparent;
@@ -281,10 +198,10 @@
   margin: 0;
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 6px 14px;
+  gap: var(--sp-3) var(--sp-7);
   align-items: baseline;
   max-width: 680px;
-  padding: 10px 12px;
+  padding: var(--sp-5) var(--sp-6);
   border: 1px solid var(--rule-soft);
   border-radius: 8px;
   background: var(--field);
@@ -294,7 +211,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
+  gap: var(--sp-2) var(--sp-4);
   min-width: 0;
   font-size: var(--fs-control);
   color: var(--ink-2);
@@ -327,35 +244,16 @@
 }
 
 @media (max-width: 640px) {
-  .colHead {
-    display: none;
-  }
   .rule {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    row-gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
-  .rule > input:nth-of-type(1) {
+  .rule > input:nth-of-type(1),
+  .rule > input:nth-of-type(2),
+  .matchError,
+  .valueError {
     grid-column: 1 / -1;
-    grid-row: 2;
   }
   .arrow {
     display: none;
-  }
-  .rule > input:nth-of-type(2) {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
-  .rule > .remove {
-    grid-column: 3;
-    grid-row: 1;
-  }
-  .ruleErrors {
-    display: flex;
-    flex-direction: column;
-    grid-column: 1 / -1;
-  }
-  .ruleError:first-child,
-  .ruleError:last-child {
-    grid-column: auto;
   }
 }

@@ -7,7 +7,6 @@
 import { type ReactNode, useMemo } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router";
 
-import { Quiet } from "../../app/Quiet";
 import { Surface } from "../../app/Surface";
 import { TopBar } from "../../app/TopBar";
 import { useBoard } from "../../app/useBoard";
@@ -16,10 +15,10 @@ import { counts, doneThisWeek, shippedThisWeek } from "../../domain/counts";
 import { groups } from "../../domain/groups";
 import { bySearch } from "../../domain/search";
 import { statusWords, words } from "../../domain/words";
-import { Button, EmptyRow, linkClass, StatusMark, TickBadge, ZoneHead } from "../../ui";
+import { Button, EmptyRow, linkClass, StatusLine, StatusMark, TickBadge, ZoneHead } from "../../ui";
 import { usePeek } from "../peek/usePeek";
 import { withParam } from "../peek/params";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import { atWorkNote, CAP, compactHref, listsAnything, myRunning, rackGroups } from "./model";
 import s from "./Queue.module.css";
 import { NeedRow, QuietRow } from "./Rows";
@@ -88,9 +87,9 @@ export function QueueView() {
   const doneRecent = doneThisWeek(g.doneMine, now);
 
   let body;
-  if (board.isPending) body = <Quiet>Loading</Quiet>;
+  if (board.isPending) body = <StatusLine inset>Loading</StatusLine>;
   else if (board.error)
-    body = <Quiet error>{`Can't reach the server · ${board.error.message}`}</Quiet>;
+    body = <StatusLine inset error>{`Can't reach the server · ${board.error.message}`}</StatusLine>;
   else if (board.tickets.length === 0) body = <NewTicketPrompt />;
   else if (query.length > 0 && !listsAnything({ ...g, doneMine: doneRecent }, rack))
     body = (

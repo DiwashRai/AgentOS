@@ -8,9 +8,9 @@
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
-  gap: 2px;
-  padding: 3px;
-  margin-left: 8px;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  margin-left: var(--sp-4);
   background: var(--recess);
   box-shadow: var(--recess-shadow);
   border-radius: 10px;
@@ -19,7 +19,7 @@
 /* refresh mock §4.13 `.filter-chip`: 12.5/500 --ink-2; the current one is a raised sheet, 600 */
 .pills > a {
   height: 26px;
-  padding: 0 10px;
+  padding: 0 var(--sp-5);
   border-radius: var(--r-btn-sm);
   font-size: var(--fs-control);
   font-weight: 500;
@@ -58,7 +58,7 @@
   }
   .below {
     display: flex;
-    margin: 0 0 12px;
+    margin: 0 0 var(--sp-6);
     align-self: flex-start;
   }
 }

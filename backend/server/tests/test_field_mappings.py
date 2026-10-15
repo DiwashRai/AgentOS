@@ -18,10 +18,10 @@ from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.intake import service as intake
 from agentos.models import (
-    FieldMappings,
     IntakeQuerySpec,
     JiraField,
     MappingPreview,
+    MappingSettings,
     Me,
     TicketDetail,
 )
@@ -168,10 +168,15 @@ def message(response: httpx.Response) -> str:
     return value
 
 
-def get_mappings(client: TestClient) -> FieldMappings:
+def locs(response: httpx.Response) -> list[tuple[str | int, ...]]:
+    """Where each issue of a 422 is."""
+    return [tuple(issue["loc"]) for issue in response.json()["error"]["issues"]]
+
+
+def get_mappings(client: TestClient) -> MappingSettings:
     response = client.get("/api/settings/mappings")
     assert response.status_code == 200, response.text
-    return FieldMappings.model_validate(response.json())
+    return MappingSettings.model_validate(response.json())
 
 
 def put_mappings(
@@ -179,15 +184,15 @@ def put_mappings(
 ) -> httpx.Response:
     if base_version is None:
         base_version = get_mappings(client).version
-    body = {"mappings": mappings, "base_version": base_version}
+    body = {"value": {"mappings": mappings}, "base_version": base_version}
     response: httpx.Response = client.put("/api/settings/mappings", json=body, headers=CSRF)
     return response
 
 
-def save(client: TestClient, *mappings: dict[str, Any]) -> FieldMappings:
+def save(client: TestClient, *mappings: dict[str, Any]) -> MappingSettings:
     response = put_mappings(client, list(mappings))
     assert response.status_code == 200, response.text
-    return FieldMappings.model_validate(response.json())
+    return MappingSettings.model_validate(response.json())
 
 
 def take_in(client: TestClient, key: str) -> TicketDetail:
@@ -214,19 +219,19 @@ def branch(t: TicketDetail) -> tuple[str | None, str | None, str | None, str | N
 
 def test_mappings_start_empty_and_save(authed: TestClient) -> None:
     seeded = get_mappings(authed)
-    assert (seeded.mappings, seeded.version, seeded.updated_by) == ([], 1, None)
+    assert (seeded.value.mappings, seeded.version, seeded.updated_by) == ([], 1, None)
     rules = [{"match": "  version_1* ", "value": " App-1.Latest "}]
     saved = save(authed, {**FIX_VERSIONS, "rules": rules, "field_name": " Fix versions "})
     assert saved.version == 2
     assert saved.updated_by is not None
-    (mapping,) = saved.mappings
+    (mapping,) = saved.value.mappings
     assert (mapping.field_name, mapping.rules[0].match, mapping.rules[0].value) == (
         "Fix versions",
         "version_1*",
         "App-1.Latest",
     )
     assert get_mappings(authed) == saved
-    assert save(authed).mappings == []  # removing it is a save like any other
+    assert save(authed).value.mappings == []  # removing it is a save like any other
 
 
 @pytest.mark.parametrize(
@@ -234,39 +239,38 @@ def test_mappings_start_empty_and_save(authed: TestClient) -> None:
     [
         (
             {"rules": [*RELEASES, {"match": "x", "value": "bad..branch"}]},
-            "mappings.0.rules.2.value",
+            ("mappings", 0, "rules", 2, "value"),
         ),
-        ({"rules": [{"match": "x", "value": "has space"}]}, "mappings.0.rules.0.value"),
-        ({"rules": [{"match": "x" * 201, "value": "b"}]}, "mappings.0.rules.0.match"),
-        ({"rules": [{"match": "   ", "value": "b"}]}, "mappings.0.rules.0.match"),
-        ({"rules": [{"match": "", "value": "b"}]}, "mappings.0.rules.0.match"),
-        ({"rules": [{"match": f"v{i}", "value": "b"} for i in range(101)]}, "mappings.0.rules"),
-        ({"field": ""}, "mappings.0.field"),
-        ({"field": "fixVersions,summary"}, "mappings.0.field"),
-        ({"field": "x" * 256}, "mappings.0.field"),
-        ({"field_name": " "}, "mappings.0.field_name"),
-        ({"target": "repo"}, "mappings.0.target"),
-        ({"source": "github"}, "mappings.0.source"),
+        ({"rules": [{"match": "x", "value": "has space"}]}, ("mappings", 0, "rules", 0, "value")),
+        ({"rules": [{"match": "x" * 201, "value": "b"}]}, ("mappings", 0, "rules", 0, "match")),
+        ({"rules": [{"match": "   ", "value": "b"}]}, ("mappings", 0, "rules", 0, "match")),
+        ({"rules": [{"match": "", "value": "b"}]}, ("mappings", 0, "rules", 0, "match")),
+        (
+            {"rules": [{"match": f"v{i}", "value": "b"} for i in range(101)]},
+            ("mappings", 0, "rules"),
+        ),
+        ({"field": ""}, ("mappings", 0, "field")),
+        ({"field": "fixVersions,summary"}, ("mappings", 0, "field")),
+        ({"field": "x" * 256}, ("mappings", 0, "field")),
+        ({"field_name": " "}, ("mappings", 0, "field_name")),
+        ({"target": "repo"}, ("mappings", 0, "target")),
+        ({"source": "github"}, ("mappings", 0, "source")),
+        ({"rules": None}, ("mappings", 0, "rules")),
     ],
 )
-def test_put_mappings_validates(authed: TestClient, change: dict[str, Any], where: str) -> None:
+def test_put_mappings_validates(
+    authed: TestClient, change: dict[str, Any], where: tuple[str | int, ...]
+) -> None:
     response = put_mappings(authed, [{**FIX_VERSIONS, **change}])
     assert (response.status_code, code(response)) == (422, "validation_error"), response.text
-    assert where in message(response)
+    assert ("value", *where) in locs(response)
     assert get_mappings(authed).version == 1
 
 
-def test_one_mapping_per_target(authed: TestClient) -> None:
-    response = put_mappings(authed, [FIX_VERSIONS, {**FIX_VERSIONS, "field": "customfield_1"}])
+def test_at_most_twenty_mappings(authed: TestClient) -> None:
+    response = put_mappings(authed, [FIX_VERSIONS] * 21)
     assert (response.status_code, code(response)) == (422, "validation_error")
-    assert message(response).startswith("mappings.1.target")
-
-
-def test_put_mappings_with_a_stale_version(authed: TestClient) -> None:
-    save(authed, FIX_VERSIONS)
-    response = put_mappings(authed, [], base_version=1)
-    assert (response.status_code, code(response)) == (409, "stale_version")
-    assert len(get_mappings(authed).mappings) == 1
+    assert ("value", "mappings") in locs(response)
 
 
 def test_mappings_are_admin_only(client: TestClient, login: LoginFn, jira: FakeJira) -> None:
@@ -276,7 +280,7 @@ def test_mappings_are_admin_only(client: TestClient, login: LoginFn, jira: FakeJ
     assert client.get("/api/settings/mappings/jira-fields").status_code == 403
     preview = client.post(
         "/api/settings/mappings/preview",
-        json={"mapping": FIX_VERSIONS, "issue": "SCRUM-1"},
+        json={"mapping": FIX_VERSIONS, "values": None, "issue": "SCRUM-1"},
         headers=CSRF,
     )
     assert preview.status_code == 403
@@ -536,8 +540,10 @@ def test_jira_fields_without_jira_is_501(
 
 
 def preview(client: TestClient, **body: Any) -> httpx.Response:
+    """POST FIX_VERSIONS with `body` (`values` and `issue` null unless given)."""
+    sent = {"mapping": FIX_VERSIONS, "values": None, "issue": None, **body}
     response: httpx.Response = client.post(
-        "/api/settings/mappings/preview", json={"mapping": FIX_VERSIONS, **body}, headers=CSRF
+        "/api/settings/mappings/preview", json=sent, headers=CSRF
     )
     return response
 
@@ -551,7 +557,7 @@ def test_preview_with_values(authed: TestClient, jira: FakeJira) -> None:
     empty = MappingPreview.model_validate(preview(authed, values=[]).json())
     assert (empty.value, empty.reason) == (None, "Fix versions is empty in Jira")
     assert jira.calls == []
-    assert get_mappings(authed).mappings == []  # nothing saved
+    assert get_mappings(authed).value.mappings == []  # nothing saved
 
 
 def test_preview_with_an_issue(authed: TestClient, jira: FakeJira) -> None:
@@ -567,11 +573,7 @@ def test_preview_with_an_issue(authed: TestClient, jira: FakeJira) -> None:
     assert jira.requested_fields() == [["fixVersions"]]
     # The unsaved rules are what runs.
     one = {**FIX_VERSIONS, "rules": [{"match": "*", "value": "trunk"}]}
-    got = authed.post(
-        "/api/settings/mappings/preview",
-        json={"mapping": one, "issue": "SCRUM-7"},
-        headers=CSRF,
-    )
+    got = preview(authed, mapping=one, issue="SCRUM-7")
     assert (got.json()["value"], got.json()["rule"]) == ("trunk", 0)
 
 
@@ -593,16 +595,10 @@ def test_preview_needs_exactly_one_input(
 
 
 def test_preview_errors(authed: TestClient, jira: FakeJira, ctx: AppContext) -> None:
-    bad_rule = authed.post(
-        "/api/settings/mappings/preview",
-        json={
-            "mapping": {**FIX_VERSIONS, "rules": [{"match": "x", "value": "a..b"}]},
-            "values": ["x"],
-        },
-        headers=CSRF,
-    )
+    mapping = {**FIX_VERSIONS, "field": "a,b", "rules": [{"match": "x", "value": "a..b"}]}
+    bad_rule = preview(authed, mapping=mapping, values=["x"])
     assert (bad_rule.status_code, code(bad_rule)) == (422, "validation_error")
-    assert message(bad_rule).startswith("mapping.rules.0.value")
+    assert locs(bad_rule) == [("mapping", "field"), ("mapping", "rules", 0, "value")]
     not_a_ref = preview(authed, issue="https://evil.example/browse/SCRUM-1")
     assert (not_a_ref.status_code, code(not_a_ref)) == (422, "validation_error")
     unknown = preview(authed, issue="SCRUM-404")

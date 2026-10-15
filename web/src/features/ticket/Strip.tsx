@@ -14,7 +14,7 @@ import { statusKind } from "../../domain/status";
 import { attentionWords, outcomeWords } from "../../domain/words";
 import { RunMeter, StatusMark, cx, linkClass } from "../../ui";
 import { isTasksFile } from "../context/files";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import {
   gateMeta,
   gatePerson,

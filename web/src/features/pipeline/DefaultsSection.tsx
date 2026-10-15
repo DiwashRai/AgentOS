@@ -1,7 +1,7 @@
 // The "Space defaults" page's fields: the runtime, model and effort every agent stage uses unless
 // it sets its own. Controlled; saved with the template. Unset is null (never "").
+import { Field, fieldStyles as f, Select } from "../../editor";
 import { cx, ZoneHead } from "../../ui";
-import { Field, fieldStyles as f, Select } from "./fields";
 import {
   CLI_DEFAULT,
   optional,
@@ -12,7 +12,7 @@ import {
   type DefaultsBody,
   type DefaultsIssues,
 } from "./model";
-import s from "./pages.module.css";
+import s from "./pipelinePages.module.css";
 
 export interface DefaultsSectionProps {
   value: Defaults;

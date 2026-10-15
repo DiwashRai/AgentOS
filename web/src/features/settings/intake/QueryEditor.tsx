@@ -1,32 +1,185 @@
-// Settings › Intake: the queries as an ordered list (order = the Intake tab's group order). Each
-// row edits its name and JQL, moves, is removed, and tests its draft JQL live ("Test query", one
-// preview mutation per row so its result belongs to that row). Controlled: the page owns the draft.
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+// Settings › Intake: the queries as an ordered list (order = the Intake tab's group order) on the
+// kit's ListEditor. Each row edits its name and JQL and tests its draft JQL live ("Test query");
+// the result shows only while the row's JQL still equals what ran. Controlled: the page owns the
+// draft and the issues.
+import { useId } from "react";
 
-import { usePreviewIntake } from "../../../api/queries";
 import { OpenIcon } from "../../../app/icons";
-import { Button, ChevronIcon, IconButton, ZoneHead } from "../../../ui";
+import {
+  errorAt,
+  Field,
+  Input,
+  ListEditor,
+  messagesAt,
+  pathOf,
+  Textarea,
+  usePreview,
+  type Issues,
+} from "../../../editor";
+import { Button, CountPill, text } from "../../../ui";
 import { typeText } from "../../intake/model";
-import { Field, fieldStyles as f } from "../../pipeline/fields";
 import s from "./IntakeSettings.module.css";
 import {
-  addQuery,
-  jqlIssue,
-  MAX_QUERIES,
-  moveQuery,
+  isBlank,
+  newQuery,
   patchQuery,
   previewLine,
-  removeQuery,
-  validate,
+  queryLabels,
   type IntakeForm,
+  type IntakePreview,
   type PreviewLine,
   type QueryRow,
-  type RowIssues,
 } from "./model";
 
 const JQL_PLACEHOLDER = 'project = PLAT AND status = "To Do"';
 
-export function PreviewResult({ line }: { line: PreviewLine }) {
+/** Runs a JQL live against Jira (nothing saved). */
+export type RunPreview = (jql: string) => Promise<IntakePreview>;
+
+export interface QueryEditorProps {
+  form: IntakeForm;
+  issues: Issues;
+  readOnly: boolean;
+  onChange: (form: IntakeForm) => void;
+  preview: RunPreview;
+}
+
+export function QueryEditor({ form, issues, readOnly, onChange, preview }: QueryEditorProps) {
+  const headId = useId();
+  const labels = queryLabels(form.queries);
+  const labelAt = (index: number) => labels[index] ?? `query ${String(index + 1)}`;
+
+  // A region inside the page's "Intake queries" section, so its heading is one level below.
+  return (
+    <section className={s.zone} aria-labelledby={headId}>
+      <div className={s.head}>
+        <h3 id={headId}>Queries</h3>
+        <CountPill count={form.queries.length} />
+        <span className={s.note}>Each is a group on the Intake tab, in this order.</span>
+        <span className={s.rule} aria-hidden="true" />
+      </div>
+
+      <ListEditor
+        name="Queries"
+        rows={form.queries}
+        ordered
+        readOnly={readOnly}
+        label={(_, index) => labelAt(index)}
+        create={newQuery}
+        addLabel="Add query"
+        isBlank={isBlank}
+        empty="No intake queries: the Intake tab is empty until you add one."
+        issue={messagesAt(issues, "queries")}
+        className={s.queries}
+        onChange={(queries) => {
+          onChange({ ...form, queries });
+        }}
+      >
+        {(row, ctx) => (
+          <QueryFields
+            row={row}
+            label={labelAt(ctx.index)}
+            issues={issues}
+            readOnly={readOnly}
+            preview={preview}
+            onPatch={(patch) => {
+              onChange(patchQuery(form, row.key, patch));
+            }}
+          />
+        )}
+      </ListEditor>
+    </section>
+  );
+}
+
+interface QueryFieldsProps {
+  row: QueryRow;
+  label: string;
+  issues: Issues;
+  readOnly: boolean;
+  preview: RunPreview;
+  onPatch: (patch: { name?: string; jql?: string }) => void;
+}
+
+/** One row's fields and its Test query line (a component of its own: the preview is a hook). */
+function QueryFields({ row, label, issues, readOnly, preview, onPatch }: QueryFieldsProps) {
+  const jql = row.item.jql.trim();
+  const test = usePreview(preview, jql === "" ? undefined : jql);
+  const line = previewLine(test);
+
+  // Issues about the row as a whole and about its id (which has no field) show under the JQL,
+  // beside the id hint.
+  const rowIssues = [
+    ...messagesAt(issues, pathOf("queries", row.key)),
+    ...messagesAt(issues, pathOf("queries", row.key, "id")),
+  ];
+
+  return (
+    <div className={s.fields}>
+      <Field label="Name" error={errorAt(issues, pathOf("queries", row.key, "name"))}>
+        {({ id, describedBy, invalid }) => (
+          <Input
+            id={id}
+            value={row.item.name}
+            placeholder="Ready for agents"
+            readOnly={readOnly}
+            autoComplete="off"
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+            onChange={(e) => {
+              onPatch({ name: e.target.value });
+            }}
+          />
+        )}
+      </Field>
+
+      <Field
+        label="JQL"
+        hint={row.item.id ? `id · ${row.item.id}` : "New: its id comes from the name when you save"}
+        error={errorAt(issues, pathOf("queries", row.key, "jql"))}
+      >
+        {({ id, describedBy, invalid }) => (
+          <Textarea
+            id={id}
+            value={row.item.jql}
+            rows={3}
+            placeholder={JQL_PLACEHOLDER}
+            readOnly={readOnly}
+            spellCheck={false}
+            autoComplete="off"
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+            onChange={(e) => {
+              onPatch({ jql: e.target.value });
+            }}
+          />
+        )}
+      </Field>
+
+      {rowIssues.map((msg, i) => (
+        <p key={`${String(i)}:${msg}`} className={text.error} role="alert">
+          {msg}
+        </p>
+      ))}
+
+      <div className={s.test}>
+        <div className={s.testBar}>
+          <Button
+            size="sm"
+            disabled={jql === "" || test.pending}
+            aria-label={`${test.pending ? "Testing" : "Test query"} ${label}`}
+            onClick={test.run}
+          >
+            {test.pending ? "Testing…" : "Test query"}
+          </Button>
+        </div>
+        <PreviewResult line={line} />
+      </div>
+    </div>
+  );
+}
+
+function PreviewResult({ line }: { line: PreviewLine }) {
   switch (line.kind) {
     case "none":
       return null;
@@ -87,265 +240,4 @@ export function PreviewResult({ line }: { line: PreviewLine }) {
         </div>
       );
   }
-}
-
-export interface QueryRowViewProps {
-  row: QueryRow;
-  index: number;
-  count: number;
-  issues: RowIssues;
-  readOnly: boolean;
-  preview: PreviewLine;
-  testing: boolean;
-  focusName: boolean;
-  moveId: (key: string, delta: -1 | 1) => string;
-  onPatch: (patch: Partial<Pick<QueryRow, "name" | "jql">>) => void;
-  onMove: (delta: -1 | 1) => void;
-  onRemove: () => void;
-  onTest: () => void;
-}
-
-export function QueryRowView(props: QueryRowViewProps) {
-  const { row, index, count, issues, readOnly } = props;
-  const nameRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (props.focusName) nameRef.current?.focus();
-  }, [props.focusName]);
-
-  const label = row.name.trim() || `query ${String(index + 1)}`;
-  const cantTest = jqlIssue(row.jql);
-
-  return (
-    <li className={s.row}>
-      <div className={s.line}>
-        <span className={s.lead}>
-          {readOnly ? null : (
-            <span className={s.move}>
-              <IconButton
-                id={props.moveId(row.key, -1)}
-                bare
-                className={s.up}
-                label={`Move ${label} up`}
-                disabled={index === 0}
-                onClick={() => {
-                  props.onMove(-1);
-                }}
-              >
-                <ChevronIcon />
-              </IconButton>
-              <IconButton
-                id={props.moveId(row.key, 1)}
-                bare
-                label={`Move ${label} down`}
-                disabled={index === count - 1}
-                onClick={() => {
-                  props.onMove(1);
-                }}
-              >
-                <ChevronIcon />
-              </IconButton>
-            </span>
-          )}
-          <span className={s.num} aria-hidden="true">
-            {String(index + 1).padStart(2, "0")}
-          </span>
-        </span>
-        <Field label="Name" error={issues.name} className={s.name}>
-          {({ id, describedBy, invalid }) => (
-            <input
-              ref={nameRef}
-              id={id}
-              className={f.input}
-              value={row.name}
-              placeholder="Ready for agents"
-              readOnly={readOnly}
-              autoComplete="off"
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => {
-                props.onPatch({ name: e.target.value });
-              }}
-            />
-          )}
-        </Field>
-        <span className={s.remove}>
-          {readOnly ? null : (
-            <Button
-              size="sm"
-              variant="quiet"
-              aria-label={`Remove ${label}`}
-              onClick={props.onRemove}
-            >
-              Remove
-            </Button>
-          )}
-        </span>
-      </div>
-
-      <div className={s.body}>
-        <Field
-          label="JQL"
-          hint={row.id ? `id · ${row.id}` : "New: its id comes from the name when you save"}
-          error={issues.jql}
-        >
-          {({ id, describedBy, invalid }) => (
-            <textarea
-              id={id}
-              className={f.textarea}
-              value={row.jql}
-              rows={3}
-              placeholder={JQL_PLACEHOLDER}
-              readOnly={readOnly}
-              spellCheck={false}
-              autoComplete="off"
-              aria-describedby={describedBy}
-              aria-invalid={invalid}
-              onChange={(e) => {
-                props.onPatch({ jql: e.target.value });
-              }}
-            />
-          )}
-        </Field>
-
-        <div className={s.test}>
-          <div className={s.testBar}>
-            <Button
-              size="sm"
-              disabled={cantTest !== undefined || props.testing}
-              title={cantTest}
-              aria-label={`Test ${label}`}
-              onClick={props.onTest}
-            >
-              {props.testing ? "Testing…" : "Test query"}
-            </Button>
-          </div>
-          <PreviewResult line={props.preview} />
-        </div>
-      </div>
-    </li>
-  );
-}
-
-type TestableRowProps = Omit<QueryRowViewProps, "preview" | "testing" | "onTest">;
-
-/** One row with its own preview mutation; editing the JQL drops the result. */
-function TestableRow(props: TestableRowProps) {
-  const preview = usePreviewIntake();
-  const line = previewLine(
-    {
-      ran: preview.variables?.jql,
-      pending: preview.isPending,
-      data: preview.data,
-      error: preview.error,
-    },
-    props.row.jql,
-  );
-  return (
-    <QueryRowView
-      {...props}
-      preview={line}
-      testing={line.kind === "pending"}
-      onPatch={(patch) => {
-        if (patch.jql !== undefined && patch.jql !== props.row.jql) preview.reset();
-        props.onPatch(patch);
-      }}
-      onTest={() => {
-        preview.mutate({ jql: props.row.jql.trim() });
-      }}
-    />
-  );
-}
-
-export interface QueryEditorProps {
-  value: IntakeForm;
-  onChange: (value: IntakeForm) => void;
-  readOnly: boolean;
-}
-
-export function QueryEditor({ value, onChange, readOnly }: QueryEditorProps) {
-  const issues = useMemo(() => validate(value), [value]);
-  const [focusKey, setFocusKey] = useState<string | null>(null);
-  const prefix = useId();
-  const moveId = (key: string, delta: -1 | 1) => `${prefix}-${key}-${delta < 0 ? "up" : "down"}`;
-  const atLimit = value.length >= MAX_QUERIES;
-
-  const move = (key: string, index: number, delta: -1 | 1) => {
-    onChange(moveQuery(value, index, delta));
-    // Reordering can drop focus from the moved row's arrow; put it back (or on the other arrow,
-    // if this one is now disabled at an end).
-    const to = index + delta;
-    const atEnd = delta < 0 ? to === 0 : to === value.length - 1;
-    const target = moveId(key, atEnd ? (delta < 0 ? 1 : -1) : delta);
-    requestAnimationFrame(() => {
-      document.getElementById(target)?.focus();
-    });
-  };
-
-  const remove = (row: QueryRow, index: number) => {
-    const blank = row.name.trim() === "" && row.jql.trim() === "";
-    const name = row.name.trim() || `query ${String(index + 1)}`;
-    if (!blank && !window.confirm(`Remove the query "${name}"? It is gone once you save.`)) return;
-    onChange(removeQuery(value, index));
-  };
-
-  return (
-    <section className={s.queries} aria-labelledby="intake-queries-head">
-      <ZoneHead
-        id="intake-queries-head"
-        title="Queries"
-        count={value.length}
-        note="Each is a group on the Intake tab, in this order."
-        right={
-          readOnly ? null : (
-            <Button
-              size="sm"
-              disabled={atLimit}
-              title={atLimit ? `At most ${String(MAX_QUERIES)} queries` : undefined}
-              onClick={() => {
-                const next = addQuery(value);
-                setFocusKey(next[next.length - 1]?.key ?? null);
-                onChange(next);
-              }}
-            >
-              + Add query
-            </Button>
-          )
-        }
-      />
-
-      {issues.form.map((msg) => (
-        <p key={msg} className={s.formError} role="alert">
-          {msg}
-        </p>
-      ))}
-
-      {value.length === 0 ? (
-        <p className={s.none}>No intake queries: the Intake tab is empty until you add one.</p>
-      ) : (
-        <ol className={s.list}>
-          {value.map((row, index) => (
-            <TestableRow
-              key={row.key}
-              row={row}
-              index={index}
-              count={value.length}
-              issues={issues.rows[index] ?? {}}
-              readOnly={readOnly}
-              focusName={focusKey === row.key}
-              moveId={moveId}
-              onPatch={(patch) => {
-                onChange(patchQuery(value, index, patch));
-              }}
-              onMove={(delta) => {
-                move(row.key, index, delta);
-              }}
-              onRemove={() => {
-                remove(row, index);
-              }}
-            />
-          ))}
-        </ol>
-      )}
-    </section>
-  );
 }

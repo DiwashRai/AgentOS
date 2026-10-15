@@ -6,7 +6,6 @@ import {
   commandPreview,
   dispatchesWorkflow,
   effortArgs,
-  fixFirst,
   hasSessions,
   launcherLabel,
   linesToArgs,
@@ -17,17 +16,16 @@ import {
   previewLine,
   removeRuntime,
   rowsFrom,
-  runnerBody,
   runnerForm,
+  runnerValue,
   runtimesBody,
   runtimesIssueCount,
   sameRunner,
   sameRuntimes,
   setPromptVia,
   shownArg,
-  validateRunner,
   validateRuntimes,
-  type RunnerSettings,
+  type RunnerDoc,
   type RuntimeEntry,
 } from "./model";
 
@@ -75,47 +73,26 @@ function withoutEffortArgs(e: RuntimeEntry): RuntimeEntry {
   return out;
 }
 
-const RUNNER: RunnerSettings = {
-  launcher: "github",
+const RUNNER: RunnerDoc = {
   github_repo: "DiwashRai/AgentOS",
   workflow: "agentos-worker.yml",
   ref: "main",
-  token_set: true,
-  version: 2,
-  updated_at: "2026-10-12T09:00:00Z",
-  updated_by: null,
 };
 
 describe("runner form", () => {
   it("round-trips the server copy; an empty repo is sent as null and fields are trimmed", () => {
     const form = runnerForm({ ...RUNNER, github_repo: null });
     expect(form.github_repo).toBe("");
-    expect(runnerBody({ ...form, workflow: " w.yaml ", ref: " dev " }, 4)).toEqual({
-      github_repo: null,
-      workflow: "w.yaml",
-      ref: "dev",
-      base_version: 4,
-    });
-    expect(runnerBody(runnerForm(RUNNER), 2).github_repo).toBe("DiwashRai/AgentOS");
+    expect(runnerValue({ ...form, github_repo: "  ", workflow: " w.yaml ", ref: " dev " })).toEqual(
+      { github_repo: null, workflow: "w.yaml", ref: "dev" },
+    );
+    expect(runnerValue(runnerForm(RUNNER))).toEqual(RUNNER);
   });
 
   it("compares as typed", () => {
     const form = runnerForm(RUNNER);
     expect(sameRunner(form, { ...form })).toBe(true);
     expect(sameRunner(form, { ...form, ref: "main " })).toBe(false);
-  });
-
-  it("mirrors the server's patterns", () => {
-    const ok = runnerForm(RUNNER);
-    expect(validateRunner(ok)).toEqual({});
-    expect(validateRunner({ ...ok, github_repo: "" })).toEqual({});
-    expect(validateRunner({ ...ok, github_repo: "AgentOS" }).github_repo).toBeDefined();
-    expect(validateRunner({ ...ok, github_repo: "a/b/c" }).github_repo).toBeDefined();
-    expect(validateRunner({ ...ok, workflow: "worker.json" }).workflow).toBeDefined();
-    expect(validateRunner({ ...ok, workflow: ".github/workflows/w.yml" }).workflow).toBeDefined();
-    expect(validateRunner({ ...ok, workflow: "w.yaml" })).toEqual({});
-    expect(validateRunner({ ...ok, ref: "  " }).ref).toBeDefined();
-    expect(validateRunner({ ...ok, ref: "x".repeat(256) }).ref).toBeDefined();
   });
 
   it("names each launcher; the repo, workflow and ref apply to both GitHub launchers", () => {
@@ -274,12 +251,6 @@ describe("validateRuntimes", () => {
     expect(validateRuntimes([]).form).toHaveLength(1);
     const many = Array.from({ length: 21 }, (_, i) => ({ ...CLAUDE, name: `r${String(i)}` }));
     expect(check(...many).form).toHaveLength(1);
-  });
-
-  it("says how many issues to fix", () => {
-    expect(fixFirst(0)).toBeUndefined();
-    expect(fixFirst(1)).toBe("Fix 1 issue first");
-    expect(fixFirst(3)).toBe("Fix 3 issues first");
   });
 });
 

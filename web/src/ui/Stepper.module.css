@@ -10,13 +10,13 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 .stepper > li {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--sp-3);
   min-width: 0;
 }
 .stepper .s {
@@ -33,7 +33,7 @@
 .stepper .nm {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--sp-2);
   font-size: var(--fs-control);
   line-height: 1.25;
   color: var(--ink-3);
@@ -45,7 +45,7 @@
   font-size: 11.5px;
   line-height: 1.25;
   color: var(--ink-3);
-  margin-top: -3px;
+  margin-top: calc(-1 * var(--sp-1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -110,7 +110,7 @@
   flex: none;
   align-items: center;
   width: auto;
-  padding: 0 8px;
+  padding: 0 var(--sp-4);
 }
 .stepper .g > u {
   display: block;
@@ -155,17 +155,17 @@
   padding: 0 1px;
 }
 .stepper.isCompact {
-  gap: 5px;
+  gap: var(--sp-2);
 }
 .stepper.isCompact .g {
-  padding: 0 2px;
+  padding: 0 var(--sp-1);
 }
 .stepper.isCompact .g:not(.isBare) {
-  padding: 0 6px;
+  padding: 0 var(--sp-3);
 }
 /* a loop stage's round (request 24): its own quiet line under the caption, never clipped into it */
 .stepper .s > .st.round {
-  margin-top: -6px;
+  margin-top: calc(-1 * var(--sp-3));
   color: var(--ink-3);
   font-weight: 400;
 }

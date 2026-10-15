@@ -10,8 +10,7 @@ import { TemplatePage } from "../../features/pipeline";
 import { IntakeSettingsPage, MappingsPage, RunnersPage, SpacePage } from "../../features/settings";
 import { UsersPage } from "../../features/users";
 import { WorkflowsPage } from "../../features/workflows";
-import { cx } from "../../ui";
-import { Quiet } from "../Quiet";
+import { cx, StatusLine } from "../../ui";
 import { Surface } from "../Surface";
 import { TopBar } from "../TopBar";
 import s from "./Settings.module.css";
@@ -73,7 +72,11 @@ function SettingsView({ children }: { children: ReactNode }) {
       />
       <Surface className={v.scroll}>
         <SettingsNav place="below" />
-        {logout.error && <Quiet error>{logout.error.message}</Quiet>}
+        {logout.error && (
+          <StatusLine inset error>
+            {logout.error.message}
+          </StatusLine>
+        )}
         {children}
       </Surface>
     </>

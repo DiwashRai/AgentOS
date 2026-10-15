@@ -296,7 +296,8 @@ def test_a_fresh_start_seeds_the_built_in_defaults(tmp_path: Path) -> None:
     assert config.runtimes == ["claude", "copilot"]
     assert (config.default_runtime, config.server_default_runtime) == ("claude", "claude")
 
-    assert (space.name, space.key_prefix, space.jira_projects, space.claim_timeout_s) == (
+    got = space.value
+    assert (got.name, got.key_prefix, got.jira_projects, got.claim_timeout_s) == (
         "AgentOS",
         "AOS",
         [],
@@ -305,7 +306,11 @@ def test_a_fresh_start_seeds_the_built_in_defaults(tmp_path: Path) -> None:
     assert [r.model_dump() for r in runtimes.runtimes] == [
         r.model_dump(mode="json") for r in BUILTIN_RUNTIMES
     ]
-    assert (runner.github_repo, runner.workflow, runner.ref) == (None, "agentos-worker.yml", "main")
+    assert runner.value.model_dump() == {
+        "github_repo": None,
+        "workflow": "agentos-worker.yml",
+        "ref": "main",
+    }
     for area in (space, runtimes, runner):
         assert (area.version, area.updated_by) == (1, None)
 

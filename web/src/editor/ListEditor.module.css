@@ -1,0 +1,111 @@
+/* ListEditor: rows as kit sheets (.ao-sheet) with the chrome around the page's fields.
+   `--list-chrome-offset` drops the arrows and Remove to the fields' control line (e.g. past a
+   Field label); a page sets it on its `className`. */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--sp-5) var(--sp-7);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  min-width: 0;
+  padding: var(--sp-6) var(--sp-7) var(--sp-6) var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+.isOpen {
+  border-color: var(--rule-strong);
+}
+
+.line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+
+.lead,
+.tail {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 34px;
+  margin-top: var(--list-chrome-offset, 0);
+}
+
+.move {
+  display: inline-flex;
+}
+.move button {
+  width: 26px;
+  height: 26px;
+}
+.up svg {
+  transform: rotate(180deg);
+}
+
+.num {
+  width: 26px;
+  padding-left: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.fields {
+  flex: 1;
+  min-width: 0;
+}
+
+.toggle svg {
+  transition: transform var(--t-fast) ease;
+}
+.toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+/* details and the removal confirmation line up with the fields, past the lead */
+.details,
+.confirm {
+  min-width: 0;
+  padding-left: var(--sp-4);
+}
+
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.adds {
+  display: flex;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle svg {
+    transition: none;
+  }
+}

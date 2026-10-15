@@ -1,47 +1,53 @@
-"""Settings > Space, Repos, Intake, Runtimes, Runner and Field mappings (request 22B: plus the
-Jira field picker and the mapping preview): read and save each area's document (SPEC
-"Settings in the app"). Storage and the cached read side every feature uses live in
+"""Settings > Space, Repos, Intake, Runtimes, Runner and Field mappings (plus the Jira field
+picker and the mapping preview): read, check and save each area's document. Storage lives in
 `agentos.space_store`.
 
-Every save: validate (422 `validation_error` with the field path), then in one transaction check
-`base_version` (409 `stale_version`) and the cross-area rules, write version+1, and after the
-commit drop the SpaceStore cache so the change applies at once.
+Space, repos, intake, runner and mappings are versioned documents (`Document`), read and saved by
+one generic `read` / `save`; `validate` runs a save's checks without writing. A save: check (one
+422 `validation_error` listing every problem at its `value...` field: the area's pure check plus
+the rules that need the db or the server's config), then in one transaction the stale check
+(409 `stale_version`), the area's own refusals (repos: 409 `in_use`), the write at version+1 and
+the area's after-write step, then its after-commit step. Features read the settings per request,
+so the change applies at once. Runtimes keep their own read and save.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from typing import Any, TypeVar
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database
-from agentos.errors import ApiError
+from agentos.errors import ApiError, field_error, validation_error
 from agentos.intake import service as intake
 from agentos.models import (
     FieldMapping,
-    FieldMappings,
-    FieldMappingsUpdate,
-    IntakeQuerySpec,
+    FieldMappingEntry,
+    IntakeDoc,
+    IntakeQueryEntry,
     IntakeSettings,
-    IntakeSettingsUpdate,
     JiraField,
     LauncherName,
     MappingPreview,
     MappingPreviewRequest,
+    MappingsDoc,
+    MappingSettings,
     Me,
     RepoEntry,
+    ReposDoc,
     RepoSettings,
-    RepoSettingsUpdate,
+    RunnerDoc,
     RunnerSettings,
-    RunnerSettingsUpdate,
     RuntimeEntry,
     RuntimeSettings,
     RuntimeSettingsUpdate,
+    SpaceDoc,
     SpaceSettings,
-    SpaceSettingsUpdate,
+    ValidationIssue,
 )
 from agentos.pipeline.mapping import (
     apply_rules,
@@ -52,12 +58,21 @@ from agentos.pipeline.mapping import (
     split_values,
 )
 from agentos.pipeline.runtime import NamedRuntime
-from agentos.pipeline.space import RepoSpec, RunnerSection, SpaceSection, query_id
+from agentos.pipeline.space import (
+    VALUE,
+    IntakeQuerySpec,
+    RepoSpec,
+    RunnerSection,
+    SpaceSection,
+    check_intake,
+    check_repos,
+    check_runner,
+    check_space,
+)
 from agentos.sources.jira import JiraError, JiraNotFound, JiraSearch, JiraSource, JiraUnauthorized
 from agentos.space_store import (
     Area,
     AreaRow,
-    SpaceStore,
     mappings_of,
     mappings_value,
     queries_of,
@@ -72,11 +87,11 @@ from agentos.space_store import (
 )
 from agentos.templates.service import current as current_template
 from agentos.ttlcache import TtlCache
+from agentos.validate import parsed
 from agentos.workflows import service as workflows
 
 log = logging.getLogger(__name__)
 
-_M = TypeVar("_M", bound=BaseModel)
 _LABELS: dict[Area, str] = {
     "space": "Space settings",
     "repos": "repos",
@@ -87,99 +102,157 @@ _LABELS: dict[Area, str] = {
 }
 
 
-# ------------------------------------------------------------------ space
+@dataclass(frozen=True)
+class SettingsEnv:
+    """What the settings documents take from the server: whether people sign in with Jira, the
+    env's launcher and whether its GitHub token is set (shown read-only with the runner), and the
+    intake cache a save of the queries drops."""
+
+    jira_auth: bool
+    launcher: LauncherName
+    token_set: bool
+    intake_cache: TtlCache[str, JiraSearch | str]
 
 
-def get_space(db: Database) -> SpaceSettings:
+_V = TypeVar("_V", bound=BaseModel)  # the document as sent (`value`)
+_D = TypeVar("_D")  # the checked, normalised document
+_R = TypeVar("_R", bound=BaseModel)  # the document as read
+
+
+@dataclass(frozen=True)
+class Document(Generic[_V, _D, _R]):
+    """One settings area as a versioned document.
+
+    `check`: the rules that need neither the db nor a transaction (the pure check plus config
+    rules), answering the normalised document or None, and every issue. `db_check`: the rules
+    that read other areas, on the sent value (so they report alongside the others). `stored`: the
+    db document. `read`: the read model of the area's row. `before_write` may refuse the save
+    (409); `after_write` runs in the save's transaction; `after_commit` once it is committed."""
+
+    area: Area
+    check: Callable[[_V, SettingsEnv], tuple[_D | None, list[ValidationIssue]]]
+    stored: Callable[[_D], dict[str, Any]]
+    read: Callable[[Conn, AreaRow, SettingsEnv], _R]
+    db_check: Callable[[Conn, _V], list[ValidationIssue]] | None = None
+    before_write: Callable[[Conn, AreaRow, _D], None] | None = None
+    after_write: Callable[[Conn, _D], None] | None = None
+    after_commit: Callable[[SettingsEnv], None] | None = None
+
+
+def read(db: Database, doc: Document[_V, _D, _R], env: SettingsEnv) -> _R:
     with db.read() as conn:
-        return _space_settings(conn, _row(conn, "space"))
+        return doc.read(conn, _row(conn, doc.area), env)
 
 
-def put_space(
-    db: Database, store: SpaceStore, actor: Me, body: SpaceSettingsUpdate, *, jira_auth: bool
-) -> SpaceSettings:
-    """Replace the Space settings. 422 when `key_prefix` is one of `jira_projects`, a project
-    repeats, `jira_projects` is empty while sign-in is with Jira (`jira_auth`), `default_repo`
-    isn't in the repo catalog, or `default_workflow_id` isn't a workflow (null keeps the current
-    default; the default is stored on the workflows, `workflows.service.set_default`)."""
-    section = _validated(
-        SpaceSection, body.model_dump(exclude={"base_version", "default_workflow_id"})
-    )
-    if jira_auth and not section.jira_projects:
-        raise ApiError(
-            422,
-            "validation_error",
-            "jira_projects: at least one is needed while people sign in with Jira",
-        )
+def validate(db: Database, doc: Document[_V, _D, _R], value: _V, env: SettingsEnv) -> None:
+    """A save's checks without the save: nothing, or the 422 the save would give. A save's 409s
+    (`stale_version`, `in_use`) aren't checked."""
+    checked, issues = doc.check(value, env)
+    with db.read() as conn:
+        _raise_issues(conn, doc, value, checked, issues)
+
+
+def save(
+    db: Database,
+    doc: Document[_V, _D, _R],
+    actor: Me,
+    value: _V,
+    base_version: int,
+    env: SettingsEnv,
+) -> _R:
+    """Replace the area's document with `value` (see the module docstring) and answer its read."""
+    checked, issues = doc.check(value, env)
+
     with db.tx() as conn:
-        row = _current(conn, "space", body.base_version)
-        default = section.default_repo
-        if default is not None and default not in {r.name for r in _repos(conn)}:
-            raise ApiError(
-                422, "validation_error", f"default_repo: {default!r} is not in this Space's repos"
-            )
-        if body.default_workflow_id is not None:
-            workflows.set_default(conn, body.default_workflow_id)
+        normalised = _raise_issues(conn, doc, value, checked, issues)
+        row = _current(conn, doc.area, base_version)
+        if doc.before_write is not None:
+            doc.before_write(conn, row, normalised)
+
         write_area(
-            conn,
-            "space",
-            section.model_dump(mode="json"),
-            version=row.version + 1,
-            actor_id=actor.id,
+            conn, doc.area, doc.stored(normalised), version=row.version + 1, actor_id=actor.id
         )
-        result = _space_settings(conn, _row(conn, "space"))
-    store.invalidate()
+        if doc.after_write is not None:
+            doc.after_write(conn, normalised)
+        result = doc.read(conn, _row(conn, doc.area), env)
+
+    if doc.after_commit is not None:
+        doc.after_commit(env)
     return result
 
 
-def _space_settings(conn: Conn, row: AreaRow) -> SpaceSettings:
-    section = section_of(row)
-    return SpaceSettings(
-        name=section.name,
-        default_repo=section.default_repo,
-        key_prefix=section.key_prefix,
-        jira_projects=list(section.jira_projects),
-        claim_timeout_s=section.claim_timeout_s,
-        default_workflow_id=workflows.default_id(conn),
-        version=row.version,
-        updated_at=row.updated_at,
-        updated_by=row.updated_by,
-    )
+def _raise_issues(
+    conn: Conn,
+    doc: Document[_V, _D, _R],
+    value: _V,
+    checked: _D | None,
+    issues: list[ValidationIssue],
+) -> _D:
+    """`checked`, or one 422 listing `issues` plus the db-dependent ones. A check answers no
+    document only with an issue, so no document and no issue is a server bug."""
+    if doc.db_check is not None:
+        issues = [*issues, *doc.db_check(conn, value)]
+    if issues:
+        raise validation_error(issues)
+
+    if checked is None:
+        raise RuntimeError(f"the {doc.area!r} check answered no document and no issue")
+    return checked
+
+
+def _meta(row: AreaRow) -> dict[str, Any]:
+    return {"version": row.version, "updated_at": row.updated_at, "updated_by": row.updated_by}
+
+
+# ------------------------------------------------------------------ space
+
+
+def _check_space(
+    value: SpaceDoc, env: SettingsEnv
+) -> tuple[SpaceSection | None, list[ValidationIssue]]:
+    """Plus: at least one project while people sign in with Jira (`env.jira_auth`)."""
+    section, issues = check_space(value)
+    if env.jira_auth and not value.jira_projects:
+        loc: list[str | int] = [*VALUE, "jira_projects"]
+        message = "At least one is needed while people sign in with Jira."
+        issues.append(ValidationIssue(loc=loc, message=message))
+    return (None if issues else section), issues
+
+
+def _space_db_check(conn: Conn, value: SpaceDoc) -> list[ValidationIssue]:
+    """`default_repo` is in the repo catalog."""
+    default = value.default_repo
+    if default is None or default in {r.name for r in _repos(conn)}:
+        return []
+    message = f"{default} isn't one of this Space's repos."
+    return [ValidationIssue(loc=[*VALUE, "default_repo"], message=message)]
+
+
+def _space_settings(conn: Conn, row: AreaRow, env: SettingsEnv) -> SpaceSettings:
+    value = SpaceDoc.model_validate(section_of(row).model_dump())
+    return SpaceSettings(value=value, **_meta(row))
+
+
+SPACE: Document[SpaceDoc, SpaceSection, SpaceSettings] = Document(
+    area="space",
+    check=_check_space,
+    db_check=_space_db_check,
+    stored=lambda section: section.model_dump(mode="json"),
+    read=_space_settings,
+)
 
 
 # ------------------------------------------------------------------ repos
 
 
-def get_repos(db: Database) -> RepoSettings:
-    with db.read() as conn:
-        return _repo_settings(conn)
+def _check_unused(conn: Conn, row: AreaRow, specs: tuple[RepoSpec, ...]) -> None:
+    """A repo missing from the save is a removal: 409 `in_use` while open tickets or the Space's
+    `default_repo` use it."""
+    kept = {s.name for s in specs}
+    removed = [r.name for r in repos_of(row) if r.name not in kept]
+    if not removed:
+        return
 
-
-def put_repos(db: Database, store: SpaceStore, actor: Me, body: RepoSettingsUpdate) -> RepoSettings:
-    """Replace the repo catalog (in the order sent). A name missing from the body is a removal:
-    409 `in_use` while open tickets or the Space's `default_repo` use it."""
-    specs: list[RepoSpec] = []
-    for i, entry in enumerate(body.repos):
-        spec = _validated(RepoSpec, entry.model_dump(), f"repos.{i}")
-        if any(s.name == spec.name for s in specs):
-            raise ApiError(
-                422, "validation_error", f"repos.{i}.name: {spec.name!r} is listed twice"
-            )
-        specs.append(spec)
-    with db.tx() as conn:
-        row = _current(conn, "repos", body.base_version)
-        kept = {s.name for s in specs}
-        removed = [r.name for r in repos_of(row) if r.name not in kept]
-        if removed:
-            _check_unused(conn, removed)
-        value = {"repos": [s.model_dump(mode="json") for s in specs]}
-        write_area(conn, "repos", value, version=row.version + 1, actor_id=actor.id)
-        result = _repo_settings(conn)
-    store.invalidate()
-    return result
-
-
-def _check_unused(conn: Conn, removed: list[str]) -> None:
     default = section_of(read_area(conn, "space")).default_repo
     counts = _open_counts(conn)
     problems: list[str] = []
@@ -207,75 +280,184 @@ def _repos(conn: Conn) -> tuple[RepoSpec, ...]:
     return repos_of(read_area(conn, "repos"))
 
 
-def _repo_settings(conn: Conn) -> RepoSettings:
-    row = _row(conn, "repos")
+def _repo_settings(conn: Conn, row: AreaRow, env: SettingsEnv) -> RepoSettings:
+    specs = repos_of(row)
     counts = _open_counts(conn)
+    entries = [RepoEntry(name=r.name, url=r.url, default_branch=r.default_branch) for r in specs]
     return RepoSettings(
-        repos=[
-            RepoEntry(
-                name=r.name,
-                url=r.url,
-                default_branch=r.default_branch,
-                open_ticket_count=counts.get(r.name, 0),
-            )
-            for r in repos_of(row)
-        ],
-        version=row.version,
-        updated_at=row.updated_at,
-        updated_by=row.updated_by,
+        value=ReposDoc(repos=entries),
+        open_ticket_counts={r.name: counts.get(r.name, 0) for r in specs},
+        **_meta(row),
     )
+
+
+REPOS: Document[ReposDoc, tuple[RepoSpec, ...], RepoSettings] = Document(
+    area="repos",
+    check=lambda value, env: check_repos(value),
+    stored=lambda specs: {"repos": [s.model_dump(mode="json") for s in specs]},
+    read=_repo_settings,
+    before_write=_check_unused,
+)
 
 
 # ------------------------------------------------------------------ intake
 
 
-def get_intake(db: Database) -> IntakeSettings:
-    with db.read() as conn:
-        return _intake_settings(_row(conn, "intake"))
+def _intake_settings(conn: Conn, row: AreaRow, env: SettingsEnv) -> IntakeSettings:
+    queries = [IntakeQueryEntry.model_validate(q.model_dump()) for q in queries_of(row)]
+    return IntakeSettings(value=IntakeDoc(queries=queries), **_meta(row))
 
 
-def put_intake(
-    db: Database,
-    store: SpaceStore,
-    cache: TtlCache[str, JiraSearch | str],
-    actor: Me,
-    body: IntakeSettingsUpdate,
-) -> IntakeSettings:
-    """Replace the intake queries (in tab order). A query with `id: null` gets a new unique id
-    made from its name; sent ids are kept (422 if one repeats). Drops the intake cache."""
-    sent: set[str] = set()
-    for i, query in enumerate(body.queries):
-        if query.id is not None:
-            if query.id in sent:
-                raise ApiError(
-                    422, "validation_error", f"queries.{i}.id: {query.id!r} is listed twice"
-                )
-            sent.add(query.id)
-    taken = set(sent)
-    specs: list[IntakeQuerySpec] = []
-    for query in body.queries:
-        qid = query.id
-        if qid is None:
-            qid = query_id(query.name, taken)
-            taken.add(qid)
-        specs.append(IntakeQuerySpec(id=qid, name=query.name, jql=query.jql))
-    with db.tx() as conn:
-        row = _current(conn, "intake", body.base_version)
-        value = {"queries": [s.model_dump(mode="json") for s in specs]}
-        write_area(conn, "intake", value, version=row.version + 1, actor_id=actor.id)
-        result = _intake_settings(_row(conn, "intake"))
-    cache.clear()
-    store.invalidate()
-    return result
+def _drop_intake_cache(env: SettingsEnv) -> None:
+    env.intake_cache.clear()
 
 
-def _intake_settings(row: AreaRow) -> IntakeSettings:
-    return IntakeSettings(
-        queries=list(queries_of(row)),
-        version=row.version,
-        updated_at=row.updated_at,
-        updated_by=row.updated_by,
+INTAKE: Document[IntakeDoc, tuple[IntakeQuerySpec, ...], IntakeSettings] = Document(
+    area="intake",
+    check=lambda value, env: check_intake(value),
+    stored=lambda specs: {"queries": [s.model_dump(mode="json") for s in specs]},
+    read=_intake_settings,
+    after_commit=_drop_intake_cache,
+)
+
+
+# ------------------------------------------------------------------ runner
+
+
+def _runner_settings(conn: Conn, row: AreaRow, env: SettingsEnv) -> RunnerSettings:
+    value = RunnerDoc.model_validate(runner_of(row).model_dump())
+    return RunnerSettings(value=value, launcher=env.launcher, token_set=env.token_set, **_meta(row))
+
+
+RUNNER: Document[RunnerDoc, RunnerSection, RunnerSettings] = Document(
+    area="runner",
+    check=lambda value, env: check_runner(value),
+    stored=runner_value,
+    read=_runner_settings,
+)
+
+
+# ------------------------------------------------------------------ field mappings
+
+# Tickets a `base_branch` mapping re-apply may change: repo tickets whose base branch came from a
+# mapping, not locked by a run, and with no active run (as a PATCH, which answers `run_active`).
+_SQL_MAPPED_TICKETS = (
+    "SELECT t.id, t.key, t.base_branch, t.base_branch_source_value, t.base_branch_reason "
+    "FROM tickets t WHERE t.repo IS NOT NULL AND t.base_branch_source = 'mapping' "
+    "AND t.base_branch_locked_by_run IS NULL AND NOT EXISTS ("
+    "  SELECT 1 FROM runs r WHERE r.ticket_id = t.id "
+    "  AND r.status IN ('queued', 'dispatched', 'running')) "
+    "ORDER BY t.id"
+)
+_FIELDS_KEY = "fields"  # the one key of the Jira fields cache
+
+
+def _reapply_base_branch(conn: Conn, mappings: tuple[FieldMapping, ...]) -> None:
+    """Re-apply a `base_branch` mapping to every ticket `_SQL_MAPPED_TICKETS` selects, from the
+    Jira value stored at import (no Jira call), setting its base branch and blank reason.
+    Hand-set (`manual`), repo-default (`default`) and locked tickets are never touched; with the
+    `base_branch` mapping removed, mapped tickets keep what they have."""
+    mapping = mapping_for(mappings, "base_branch")
+    rows = conn.execute(_SQL_MAPPED_TICKETS).fetchall()
+    if mapping is None:
+        if rows:
+            log.info(
+                "Field mappings: no base_branch mapping any more; %d mapped ticket(s) keep their "
+                "base branch",
+                len(rows),
+            )
+        return
+
+    now = to_db(utcnow())
+    changed = 0
+    for row in rows:
+        values = split_values(row["base_branch_source_value"])
+        mapped = apply_rules(mapping.rules, values, mapping.field_name)
+        if (mapped.value, mapped.reason) == (row["base_branch"], row["base_branch_reason"]):
+            continue
+        conn.execute(
+            "UPDATE tickets SET base_branch = ?, base_branch_reason = ?, updated_at = ? "
+            "WHERE id = ?",
+            (mapped.value, mapped.reason, now, row["id"]),
+        )
+        changed += 1
+    log.info(
+        "Field mappings: re-applied base_branch rules to %d ticket(s); %d changed",
+        len(rows),
+        changed,
     )
+
+
+def _mapping_settings(conn: Conn, row: AreaRow, env: SettingsEnv) -> MappingSettings:
+    entries = [FieldMappingEntry.model_validate(m.model_dump()) for m in mappings_of(row)]
+    return MappingSettings(value=MappingsDoc(mappings=entries), **_meta(row))
+
+
+MAPPINGS: Document[MappingsDoc, tuple[FieldMapping, ...], MappingSettings] = Document(
+    area="mappings",
+    check=lambda value, env: check_mappings(value),
+    stored=lambda mappings: mappings_value(list(mappings)),
+    read=_mapping_settings,
+    after_write=_reapply_base_branch,
+)
+
+
+def jira_fields(
+    source: JiraSource | None, cache: TtlCache[str, list[JiraField]]
+) -> list[JiraField]:
+    """Jira's fields for the mapping field picker, by name; cached (`AppContext.jira_fields_cache`,
+    successes only). 501 `not_implemented` without a Jira service account; 502 `upstream_error`
+    when Jira rejects it or doesn't answer."""
+    if source is None:
+        raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
+    cached = cache.get(_FIELDS_KEY)
+    if cached is not None:
+        return cached
+    try:
+        fields = source.jira_fields()
+    except JiraUnauthorized:
+        raise ApiError(502, "upstream_error", intake.UNAUTHORIZED) from None
+    except JiraError:
+        raise ApiError(502, "upstream_error", intake.UNAVAILABLE) from None
+    cache.put(_FIELDS_KEY, fields)
+    return fields
+
+
+def preview_mapping(source: JiraSource | None, body: MappingPreviewRequest) -> MappingPreview:
+    """Run the (unsaved) mapping on `values`, or on the field of `issue` read live with the
+    service account (any issue it can see). The mapping is checked as on save (422, at
+    `mapping...`). With `issue`: 501 without a service account, 422 for a ref that isn't a key or
+    link to this Jira, 404 `ticket_not_found` when Jira can't see it, 502 `upstream_error` when
+    Jira fails."""
+    mapping, issues = check_mapping(body.mapping)
+    if mapping is None:
+        raise validation_error(issues)
+
+    if body.values is not None:
+        values = body.values
+    else:
+        values = _issue_values(source, body.issue or "", mapping.field)
+    cleaned = clean_values(values)
+    mapped = apply_rules(mapping.rules, cleaned, mapping.field_name)
+    return MappingPreview(
+        values=cleaned, value=mapped.value, rule=mapped.rule, reason=mapped.reason
+    )
+
+
+def _issue_values(source: JiraSource | None, ref: str, field_id: str) -> list[str]:
+    if source is None:
+        raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
+    key = source.parse_ref(ref)
+    if key is None:
+        raise field_error(["issue"], "Not a Jira issue key or a link to one.")
+    try:
+        return source.read_fields(key, [field_id]).get(field_id, [])
+    except JiraNotFound:
+        raise ApiError(404, "ticket_not_found", f"Jira can't see {key}") from None
+    except JiraUnauthorized:
+        raise ApiError(502, "upstream_error", intake.UNAUTHORIZED) from None
+    except JiraError:
+        raise ApiError(502, "upstream_error", intake.UNAVAILABLE) from None
 
 
 # ------------------------------------------------------------------ runtimes
@@ -286,20 +468,27 @@ def get_runtimes(db: Database) -> RuntimeSettings:
         return _runtime_settings(_row(conn, "runtimes"))
 
 
-def put_runtimes(
-    db: Database, store: SpaceStore, actor: Me, body: RuntimeSettingsUpdate
-) -> RuntimeSettings:
+def put_runtimes(db: Database, actor: Me, body: RuntimeSettingsUpdate) -> RuntimeSettings:
     """Replace the runtimes (in order: the first is the server default). A name missing from the
     body is a removal: 409 `in_use` while the template's `defaults` or a workflow's stages use
     it."""
     entries: list[NamedRuntime] = []
+    issues: list[ValidationIssue] = []
+    names: set[str] = set()
     for i, entry in enumerate(body.runtimes):
-        named = _validated(NamedRuntime, entry.model_dump(), f"runtimes.{i}")
-        if any(e.name == named.name for e in entries):
-            raise ApiError(
-                422, "validation_error", f"runtimes.{i}.name: {named.name!r} is listed twice"
-            )
+        named, problems = parsed(NamedRuntime, entry.model_dump(), ("runtimes", i))
+        issues += problems
+        if named is None:
+            continue
+
+        if named.name in names:
+            message = f"{named.name!r} is listed twice"
+            issues.append(ValidationIssue(loc=["runtimes", i, "name"], message=message))
+        names.add(named.name)
         entries.append(named)
+    if issues:
+        raise validation_error(issues)
+
     with db.tx() as conn:
         row = _current(conn, "runtimes", body.base_version)
         kept = {e.name for e in entries}
@@ -309,9 +498,7 @@ def put_runtimes(
         write_area(
             conn, "runtimes", runtimes_value(entries), version=row.version + 1, actor_id=actor.id
         )
-        result = _runtime_settings(_row(conn, "runtimes"))
-    store.invalidate()
-    return result
+        return _runtime_settings(_row(conn, "runtimes"))
 
 
 def _check_runtimes_unused(conn: Conn, removed: list[str]) -> None:
@@ -358,184 +545,6 @@ def _runtime_settings(row: AreaRow) -> RuntimeSettings:
     )
 
 
-# ------------------------------------------------------------------ runner
-
-
-def get_runner(db: Database, *, launcher: LauncherName, token_set: bool) -> RunnerSettings:
-    """`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from env."""
-    with db.read() as conn:
-        return _runner_settings(_row(conn, "runner"), launcher=launcher, token_set=token_set)
-
-
-def put_runner(
-    db: Database,
-    store: SpaceStore,
-    actor: Me,
-    body: RunnerSettingsUpdate,
-    *,
-    launcher: LauncherName,
-    token_set: bool,
-) -> RunnerSettings:
-    """Replace where runs are dispatched. The github launcher reads it at its next launch."""
-    section = _validated(RunnerSection, body.model_dump(exclude={"base_version"}))
-    with db.tx() as conn:
-        row = _current(conn, "runner", body.base_version)
-        write_area(
-            conn, "runner", runner_value(section), version=row.version + 1, actor_id=actor.id
-        )
-        result = _runner_settings(_row(conn, "runner"), launcher=launcher, token_set=token_set)
-    store.invalidate()
-    return result
-
-
-def _runner_settings(row: AreaRow, *, launcher: LauncherName, token_set: bool) -> RunnerSettings:
-    runner = runner_of(row)
-    return RunnerSettings(
-        launcher=launcher,
-        github_repo=runner.github_repo,
-        workflow=runner.workflow,
-        ref=runner.ref,
-        token_set=token_set,
-        version=row.version,
-        updated_at=row.updated_at,
-        updated_by=row.updated_by,
-    )
-
-
-# ------------------------------------------------------------------ field mappings (request 22B)
-
-# Tickets a `base_branch` mapping re-apply may change: repo tickets whose base branch came from a
-# mapping, not locked by a run, and with no active run (as a PATCH, which answers `run_active`).
-_SQL_MAPPED_TICKETS = (
-    "SELECT t.id, t.key, t.base_branch, t.base_branch_source_value, t.base_branch_reason "
-    "FROM tickets t WHERE t.repo IS NOT NULL AND t.base_branch_source = 'mapping' "
-    "AND t.base_branch_locked_by_run IS NULL AND NOT EXISTS ("
-    "  SELECT 1 FROM runs r WHERE r.ticket_id = t.id "
-    "  AND r.status IN ('queued', 'dispatched', 'running')) "
-    "ORDER BY t.id"
-)
-_FIELDS_KEY = "fields"  # the one key of the Jira fields cache
-
-
-def get_mappings(db: Database) -> FieldMappings:
-    with db.read() as conn:
-        return _mappings_settings(_row(conn, "mappings"))
-
-
-def put_mappings(
-    db: Database, store: SpaceStore, actor: Me, body: FieldMappingsUpdate
-) -> FieldMappings:
-    """Replace the field mappings (at most one per target; each rule's `value` valid for its
-    target, else 422 naming the rule). Then, in the same transaction, re-apply a `base_branch`
-    mapping to every ticket `_SQL_MAPPED_TICKETS` selects, from the Jira value stored at import
-    (no Jira call). Hand-set (`manual`), repo-default (`default`) and locked tickets are never
-    touched; with the `base_branch` mapping removed, mapped tickets keep what they have."""
-    check_mappings(body.mappings)
-    with db.tx() as conn:
-        row = _current(conn, "mappings", body.base_version)
-        value = mappings_value(list(body.mappings))
-        write_area(conn, "mappings", value, version=row.version + 1, actor_id=actor.id)
-        _reapply_base_branch(conn, mapping_for(body.mappings, "base_branch"))
-        result = _mappings_settings(_row(conn, "mappings"))
-    store.invalidate()
-    return result
-
-
-def _reapply_base_branch(conn: Conn, mapping: FieldMapping | None) -> None:
-    """Set each mapped ticket's base branch (and blank reason) from `mapping`'s rules."""
-    rows = conn.execute(_SQL_MAPPED_TICKETS).fetchall()
-    if mapping is None:
-        if rows:
-            log.info(
-                "Field mappings: no base_branch mapping any more; %d mapped ticket(s) keep their "
-                "base branch",
-                len(rows),
-            )
-        return
-    now = to_db(utcnow())
-    changed = 0
-    for row in rows:
-        values = split_values(row["base_branch_source_value"])
-        mapped = apply_rules(mapping.rules, values, mapping.field_name)
-        if (mapped.value, mapped.reason) == (row["base_branch"], row["base_branch_reason"]):
-            continue
-        conn.execute(
-            "UPDATE tickets SET base_branch = ?, base_branch_reason = ?, updated_at = ? "
-            "WHERE id = ?",
-            (mapped.value, mapped.reason, now, row["id"]),
-        )
-        changed += 1
-    log.info(
-        "Field mappings: re-applied base_branch rules to %d ticket(s); %d changed",
-        len(rows),
-        changed,
-    )
-
-
-def _mappings_settings(row: AreaRow) -> FieldMappings:
-    return FieldMappings(
-        mappings=list(mappings_of(row)),
-        version=row.version,
-        updated_at=row.updated_at,
-        updated_by=row.updated_by,
-    )
-
-
-def jira_fields(
-    source: JiraSource | None, cache: TtlCache[str, list[JiraField]]
-) -> list[JiraField]:
-    """Jira's fields for the mapping field picker, by name; cached (`AppContext.jira_fields_cache`,
-    successes only). 501 `not_implemented` without a Jira service account; 502 `upstream_error`
-    when Jira rejects it or doesn't answer."""
-    if source is None:
-        raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
-    cached = cache.get(_FIELDS_KEY)
-    if cached is not None:
-        return cached
-    try:
-        fields = source.jira_fields()
-    except JiraUnauthorized:
-        raise ApiError(502, "upstream_error", intake.UNAUTHORIZED) from None
-    except JiraError:
-        raise ApiError(502, "upstream_error", intake.UNAVAILABLE) from None
-    cache.put(_FIELDS_KEY, fields)
-    return fields
-
-
-def preview_mapping(source: JiraSource | None, body: MappingPreviewRequest) -> MappingPreview:
-    """Run the (unsaved) mapping on `values`, or on the field of `issue` read live with the
-    service account (any issue it can see). The rules are checked as on save (422). With `issue`:
-    501 without a service account, 422 for a ref that isn't a key or link to this Jira, 404
-    `ticket_not_found` when Jira can't see it, 502 `upstream_error` when Jira fails."""
-    mapping = body.mapping
-    check_mapping(mapping)
-    if body.values is not None:
-        values = body.values
-    else:
-        values = _issue_values(source, body.issue or "", mapping.field)
-    cleaned = clean_values(values)
-    mapped = apply_rules(mapping.rules, cleaned, mapping.field_name)
-    return MappingPreview(
-        values=cleaned, value=mapped.value, rule=mapped.rule, reason=mapped.reason
-    )
-
-
-def _issue_values(source: JiraSource | None, ref: str, field_id: str) -> list[str]:
-    if source is None:
-        raise ApiError(501, "not_implemented", intake.NOT_CONFIGURED)
-    key = source.parse_ref(ref)
-    if key is None:
-        raise ApiError(422, "validation_error", "issue: not a Jira issue key or link to one")
-    try:
-        return source.read_fields(key, [field_id]).get(field_id, [])
-    except JiraNotFound:
-        raise ApiError(404, "ticket_not_found", f"Jira can't see {key}") from None
-    except JiraUnauthorized:
-        raise ApiError(502, "upstream_error", intake.UNAUTHORIZED) from None
-    except JiraError:
-        raise ApiError(502, "upstream_error", intake.UNAVAILABLE) from None
-
-
 # ------------------------------------------------------------------ helpers
 
 
@@ -553,14 +562,3 @@ def _current(conn: Conn, area: Area, base_version: int) -> AreaRow:
     if base_version != row.version:
         raise ApiError(409, "stale_version", f"The {_LABELS[area]} were changed by someone else")
     return row
-
-
-def _validated(model: type[_M], data: dict[str, Any], prefix: str = "") -> _M:
-    """`model` from `data`, or 422 `validation_error` naming the first problem's field path."""
-    try:
-        return model.model_validate(data)
-    except ValidationError as exc:
-        err = exc.errors()[0]
-        path = ".".join(p for p in (prefix, *(str(x) for x in err["loc"])) if p)
-        message = err["msg"].removeprefix("Value error, ")
-        raise ApiError(422, "validation_error", f"{path}: {message}" if path else message) from None

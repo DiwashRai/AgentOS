@@ -4,7 +4,7 @@
   align-items: center;
   flex: none;
   height: 20px;
-  padding: 0 6px;
+  padding: 0 var(--sp-3);
   border-radius: 5px;
   background: var(--id-tint);
   color: var(--id-ink);
@@ -21,6 +21,6 @@
 /* the Ticket page kicker: a tag-sized chip */
 .lg {
   height: 24px;
-  padding: 0 8px;
+  padding: 0 var(--sp-4);
   font-size: 12px;
 }

@@ -9,7 +9,7 @@ import { ApiError } from "../../api/client";
 import { useDeleteFile, useFile, useFiles, useMe, useSaveFile } from "../../api/queries";
 import { age } from "../../domain/format";
 import { Button, Chip, cx, Kbd, LinkButton, linkClass, Tag } from "../../ui";
-import { useNow } from "../runs/useNow";
+import { useNow } from "../../ui/useNow";
 import { ticketPath } from "../ticket/model";
 import {
   AGENT_NAME_RULE,

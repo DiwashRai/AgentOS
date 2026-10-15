@@ -5,15 +5,16 @@ import { useMe } from "../api/queries";
 import { PendingPage } from "../features/auth/PendingPage";
 import { NewTicketHost } from "../features/newticket/NewTicketHost";
 import { PeekHost } from "../features/peek/PeekHost";
-import { Quiet } from "./Quiet";
+import { StatusLine } from "../ui";
 import { Rail } from "./Rail";
 import s from "./Shell.module.css";
 
 export function Shell() {
   const me = useMe();
   const location = useLocation();
-  if (me.isPending) return <Quiet>Loading</Quiet>;
-  if (me.isError) return <Quiet error>{`Can't reach the server · ${me.error.message}`}</Quiet>;
+  if (me.isPending) return <StatusLine inset>Loading</StatusLine>;
+  if (me.isError)
+    return <StatusLine inset error>{`Can't reach the server · ${me.error.message}`}</StatusLine>;
   if (!me.data) {
     const next = `${location.pathname}${location.search}`;
     const to = next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`;

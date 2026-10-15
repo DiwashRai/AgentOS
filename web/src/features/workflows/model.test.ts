@@ -5,7 +5,6 @@ import { newStage, type Pipeline, type Stage } from "../pipeline/model";
 import {
   createBody,
   deleteBlock,
-  makeDefaultErrorText,
   newWorkflowForm,
   NEW,
   parseSelection,
@@ -157,10 +156,6 @@ describe("errors", () => {
       "A stage prompt doesn't render · plan: {x",
     );
     expect(workflowErrorText(new Error("boom"))).toEqual({ text: "boom", reload: false });
-    expect(makeDefaultErrorText(new ApiError(409, "stale_version", "x"))).toMatch(/Space settings/);
-    expect(
-      makeDefaultErrorText(new ApiError(422, "validation_error", "default_workflow_id: no")),
-    ).toBe("No");
   });
 
   it("words a failed switch", () => {
