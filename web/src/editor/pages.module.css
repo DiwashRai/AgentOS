@@ -103,8 +103,8 @@
   font-size: var(--fs-control);
   color: var(--ink-2);
 }
-/* the banner's lead-in word ("Template", "Read-only"): it read as a caps kicker; now an ink label */
-/* the banner's lead word: pageStyles.k, or a 	ext.label span on the kit pages */
+/* the banner's lead word ("Space", "Read-only"): `.k`, or any first span. The kit pages mark theirs
+   with `text.label`, which this rule overrides, so every lead word reads as one ink-1 label. */
 .banner > .k,
 .banner > span:first-child {
   flex: none;

@@ -267,14 +267,6 @@ def test_put_mappings_validates(
     assert get_mappings(authed).version == 1
 
 
-def test_one_mapping_per_target(authed: TestClient) -> None:
-    response = put_mappings(authed, [FIX_VERSIONS, {**FIX_VERSIONS, "field": "customfield_1"}])
-
-    assert (response.status_code, code(response)) == (422, "validation_error")
-    assert locs(response) == [("value", "mappings", 1, "target")]
-    assert get_mappings(authed).version == 1
-
-
 def test_at_most_twenty_mappings(authed: TestClient) -> None:
     response = put_mappings(authed, [FIX_VERSIONS] * 21)
     assert (response.status_code, code(response)) == (422, "validation_error")

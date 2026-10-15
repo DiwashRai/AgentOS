@@ -156,8 +156,8 @@ function QueryFields({ row, label, issues, readOnly, preview, onPatch }: QueryFi
         )}
       </Field>
 
-      {rowIssues.map((msg) => (
-        <p key={msg} className={text.error} role="alert">
+      {rowIssues.map((msg, i) => (
+        <p key={`${String(i)}:${msg}`} className={text.error} role="alert">
           {msg}
         </p>
       ))}
