@@ -7,75 +7,67 @@ import { useState } from "react";
 import { Link as RouterLink, useLocation } from "react-router";
 
 import type { Schemas } from "../../api/client";
-import { clientWait } from "../../domain/clients";
-import { duration, runSeconds } from "../../domain/format";
-import { planText } from "../../domain/plan";
-import { OUTCOME_KIND, outcomeOf, resolvedBy, type Outcome } from "../../domain/outcome";
-import { statusKind } from "../../domain/status";
-import { attentionWords, onlineWords, outcomeWords } from "../../domain/words";
+import { planView } from "../../domain/plan";
+import { OUTCOME_KIND, resolvedBy } from "../../domain/outcome";
+import {
+  gate,
+  type GateView,
+  outcomeLine,
+  type OutcomeLine,
+  runLine,
+  statusLine,
+  statusMark,
+} from "../../domain/ticketView";
+import { attentionWords, onlineWords } from "../../domain/words";
 import { RunMeter, StatusMark, cx, linkClass } from "../../ui";
 import { isTasksFile } from "../context/files";
 import { useNow } from "../../ui/useNow";
-import {
-  gateMeta,
-  gatePerson,
-  parkedGate,
-  progressStep,
-  runLabel,
-  statusText,
-  stripKind,
-  thenStage,
-  ticketPath,
-  type ParkedGate,
-} from "./model";
+import { gateMeta, stripKind, thenStage, ticketPath } from "./model";
 import { PlanList } from "./PlanList";
 import { PrLink } from "./PrLink";
 import s from "./Strip.module.css";
 
 type Detail = Schemas["TicketDetail"];
 
-function Elapsed({ run }: { run: Detail["latest_run"] }) {
-  const now = useNow(1000);
-  const secs = runSeconds(run, now);
-  if (secs === null) return null;
-  return <span className={s.num}>{duration(secs)}</span>;
-}
+/** The status band's line for a ticket nobody has dispatched yet. */
+const INBOX_LINE = "Nobody on it yet · add context, then dispatch";
 
 function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
   const { search } = useLocation();
-  const step = queued ? null : progressStep(t.now.progress);
-  const plan = t.plan ?? [];
+  const now = useNow(1000);
+  const line = runLine(t, now);
+  const meter = queued ? null : line.meter;
+  const plan = planView(t.plan);
   // Past STRIP_LABEL_MAX steps the meter drops its labels anyway (bare segments).
-  const labels = step?.n === plan.length ? plan.map((p) => planText(p.text)) : undefined;
-  const nowText = planText(t.now.text);
+  const labels = plan && meter?.n === plan.total ? plan.items.map((p) => p.text) : undefined;
   // A queued client run says whose client it waits for and whether that client is online.
-  const wait = queued ? clientWait(t) : null;
-  const text = wait ? wait.text : queued ? "Waiting for a runner" : nowText;
+  const wait = queued ? line.wait : null;
+  const text = wait ? wait.text : queued ? "Waiting for a runner" : line.step;
   return (
     <div className={cx(s.band, s.quiet, s.run)}>
       <div className={s.line}>
         {queued ? (
           <StatusMark kind="queued" name={attentionWords.queued} />
         ) : (
-          <StatusMark kind="run" name={runLabel(t)} />
+          <StatusMark kind="run" name={line.label} />
         )}
         <span className={s.text} title={text}>
           {text}
         </span>
         {wait ? <span className={s.meta}>{onlineWords[wait.online]}</span> : null}
-        {step ? <span className={s.num}>{`${String(step.k)}/${String(step.n)}`}</span> : null}
-        {queued ? null : <Elapsed run={t.latest_run} />}
+        {meter ? <span className={s.num}>{meter.text}</span> : null}
+        {queued || line.elapsed === null ? null : <span className={s.num}>{line.elapsed}</span>}
         <span className={s.end}>
           <RouterLink className={linkClass} to={ticketPath(t.key, "runs", search)}>
             Log →
           </RouterLink>
         </span>
       </div>
-      {step ? (
+      {meter ? (
         <RunMeter
-          k={step.k}
-          n={step.n}
-          state="running"
+          k={meter.k}
+          n={meter.n}
+          state={meter.state}
           size="strip"
           labels={labels}
           className={s.meter}
@@ -85,20 +77,19 @@ function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
   );
 }
 
-function GateBand({ t, parked, tasksPath }: { t: Detail; parked: ParkedGate; tasksPath: string }) {
-  const { gate } = parked;
-  const mine = gate.state === "you";
+function GateBand({ t, parked, tasksPath }: { t: Detail; parked: GateView; tasksPath: string }) {
+  const mine = parked.state === "you";
   const params = new URLSearchParams({ file: tasksPath });
   const then = thenStage(t);
-  const text = planText(t.now.text);
+  const text = runLine(t, null).step;
   return (
     <>
       <div className={cx(s.band, mine ? s.you : s.quiet)} title={gateMeta(t, parked)}>
         <div className={s.line}>
           {mine ? (
-            <StatusMark kind="you" ask={gate.label} />
+            <StatusMark kind="you" ask={parked.label} />
           ) : (
-            <StatusMark kind="wait" name={gatePerson(gate)} ask={gate.label} />
+            <StatusMark kind="wait" name={parked.person} ask={parked.label} />
           )}
           {text ? (
             <span className={cx(s.text, s.instr)} title={text}>
@@ -129,15 +120,15 @@ function GateBand({ t, parked, tasksPath }: { t: Detail; parked: ParkedGate; tas
 }
 
 /** A done ticket: Complete (green) or Abandoned (red), who closed it and when, and the note. */
-function OutcomeBand({ t, outcome }: { t: Detail; outcome: Outcome }) {
+function OutcomeBand({ t, outcome }: { t: Detail; outcome: OutcomeLine }) {
   const now = useNow(30_000);
   const r = t.resolution;
   return (
     <div className={cx(s.band, s.quiet)}>
       <div className={s.line}>
-        <StatusMark kind={OUTCOME_KIND[outcome]} name={outcomeWords[outcome]} />
+        <StatusMark kind={OUTCOME_KIND[outcome.outcome]} name={outcome.word} />
         <span className={cx(s.text, s.wrap)}>
-          {r ? resolvedBy(r, now) : statusText(t)}
+          {r ? resolvedBy(r, now) : statusLine(t).reason}
           {r?.note ? (
             <>
               {" — "}
@@ -156,20 +147,16 @@ function OutcomeBand({ t, outcome }: { t: Detail; outcome: Outcome }) {
 }
 
 function StatusBand({ t }: { t: Detail }) {
-  const outcome = outcomeOf(t);
+  const outcome = outcomeLine(t);
   if (outcome) return <OutcomeBand t={t} outcome={outcome} />;
-  const kind = statusKind(t);
-  const name =
-    kind === "wait" && t.now.person ? t.now.person.display_name : attentionWords[t.attention];
-  const text = statusText(t);
+
+  const mark = statusMark(t);
+  const kind = mark.kind;
+  const text = t.attention === "inbox" ? INBOX_LINE : statusLine(t).reason;
   return (
     <div className={cx(s.band, kind === "you" ? s.you : s.quiet)}>
       <div className={s.line}>
-        {kind === "you" ? (
-          <StatusMark kind="you" ask="Your move" />
-        ) : (
-          <StatusMark kind={kind} name={name} />
-        )}
+        <StatusMark kind={kind} name={mark.name} ask={mark.ask} />
         {text ? (
           <span className={cx(s.text, s.wrap, kind === "you" && s.instr)}>{text}</span>
         ) : null}
@@ -193,7 +180,7 @@ export function Strip({ t, files }: { t: Detail; files: readonly { path: string 
     setShown(kind);
     setChanged(true);
   }
-  const parked = parkedGate(t);
+  const parked = gate(t);
   const tasksPath = files.find((f) => isTasksFile(f.path))?.path ?? "TASKS.md";
   return (
     <div key={kind} className={cx(s.slot, changed && s.enter)}>

@@ -1,42 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { firstParagraph, planView, plainText, stagesText, trapIndex } from "./model";
+import { trapIndex } from "./model";
 import { withoutParam, withParam } from "./params";
-
-describe("description", () => {
-  it("strips markdown to plain text", () => {
-    expect(plainText("Add a `--shout` flag to **greet.py** ([docs](http://x))")).toBe(
-      "Add a --shout flag to greet.py (docs)",
-    );
-    expect(plainText("## Heading\n- item *one*")).toBe("Heading item one");
-  });
-  it("takes the first non-empty paragraph", () => {
-    expect(firstParagraph("\n\nFirst line\ncontinues.\n\nSecond.")).toBe("First line continues.");
-    expect(firstParagraph("")).toBe("");
-  });
-});
-
-describe("planView", () => {
-  const plan = (n: number, done = 0) =>
-    Array.from({ length: n }, (_, i) => ({ text: `step ${String(i)}`, done: i < done }));
-  it("caps at 8 with +N more and counts done over all items", () => {
-    const v = planView(plan(12, 10));
-    expect(v.items).toHaveLength(8);
-    expect(v.more).toBe(4);
-    expect([v.done, v.total]).toEqual([10, 12]);
-  });
-  it("shows a 9th item rather than '+1 more'", () => {
-    expect(planView(plan(9)).more).toBe(0);
-    expect(planView(plan(9)).items).toHaveLength(9);
-  });
-});
-
-it("counts stages that will run", () => {
-  expect(stagesText([{ state: "done" }, { state: "skipped" }, { state: "pending" }])).toBe(
-    "3 stages · 1 skipped",
-  );
-  expect(stagesText([{ state: "done" }])).toBe("1 stage");
-});
 
 describe("trapIndex", () => {
   it("enters at the first (Tab) or last (Shift+Tab) from the panel", () => {

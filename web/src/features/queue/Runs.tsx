@@ -3,15 +3,13 @@
 import type { CSSProperties } from "react";
 
 import type { Schemas } from "../../api/client";
-import { duration, runSeconds } from "../../domain/format";
-import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { statusKind } from "../../domain/status";
+import { runLine } from "../../domain/ticketView";
 import { onlineWords } from "../../domain/words";
 import { Avatar, CountPill, cx, KeyChip, RunMeter, StageGlyph, StatusMark } from "../../ui";
-import { meterOfText } from "../../ui/meter";
 import { peekItemProps } from "../peek/usePeek";
-import { CAP, meterOf, type RackGroup, rackColumns, runName } from "./model";
+import { CAP, type RackGroup, rackColumns } from "./model";
 import s from "./Queue.module.css";
 
 type Ticket = Schemas["TicketSummary"];
@@ -25,8 +23,8 @@ export function RunTile({
   now: number;
   onOpen: (key: string) => void;
 }) {
-  const meter = meterOf(t);
-  const secs = runSeconds(t.latest_run, now);
+  const line = runLine(t, now);
+  const { meter } = line;
   return (
     <article
       className={cx(s.tile, s.lift)}
@@ -35,8 +33,8 @@ export function RunTile({
       })}
     >
       <div className={s.tileHd}>
-        <StatusMark kind="run" name={runName(t)} />
-        {secs !== null && <span className={s.tileEl}>{duration(secs)}</span>}
+        <StatusMark kind="run" name={line.label} />
+        {line.elapsed !== null && <span className={s.tileEl}>{line.elapsed}</span>}
       </div>
       <span className={s.tileTtl} title={t.title}>
         {t.title}
@@ -46,8 +44,8 @@ export function RunTile({
         <StageGlyph model={stageModel(t)} size="xs" />
       </div>
       <div className={s.tileNow}>
-        <span title={t.now.text}>{planText(t.now.text)}</span>
-        {meter && <span className={s.of}>{meterOfText(meter.k, meter.n, meter.state)}</span>}
+        <span title={t.now.text}>{line.step}</span>
+        {meter && <span className={s.of}>{meter.text}</span>}
       </div>
       {meter && <RunMeter k={meter.k} n={meter.n} state={meter.state} size="tile" />}
     </article>
@@ -76,7 +74,7 @@ export function RunTiles({
 
 function RackLine({ ticket: t, onOpen }: { ticket: Ticket; onOpen: (key: string) => void }) {
   const kind = statusKind(t) === "queued" ? "queued" : "run";
-  const meter = meterOf(t);
+  const { meter } = runLine(t, null);
   return (
     <div
       className={cx(s.rl, kind === "queued" && s.isQueued)}
@@ -97,7 +95,7 @@ function RackLine({ ticket: t, onOpen }: { ticket: Ticket; onOpen: (key: string)
       ) : (
         <span />
       )}
-      <span className={s.of}>{meter ? meterOfText(meter.k, meter.n, meter.state) : ""}</span>
+      <span className={s.of}>{meter ? meter.text : ""}</span>
       {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <span />}
     </div>
   );

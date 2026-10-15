@@ -23,15 +23,15 @@ import {
   StatusMark,
   TypeIcon,
 } from "../../ui";
-import { meterOfText } from "../../ui/meter";
+import { rowLook, type RowEdge, waitAge } from "../../domain/ticketView";
 import { ticketPath } from "../ticket/model";
 import s from "./Compact.module.css";
 import { Expanded } from "./Expanded";
-import { type Edge, edgeOf, isFlat, nowCell, sourceText, updText } from "./model";
+import { nowCell, sourceColumn } from "./model";
 
 type Ticket = Schemas["TicketSummary"];
 
-const EDGE_CLASS: Record<Edge, string | undefined> = {
+const EDGE_CLASS: Record<RowEdge, string | undefined> = {
   you: s.edgeYou,
   live: s.edgeLive,
   blocked: s.edgeBlocked,
@@ -39,22 +39,22 @@ const EDGE_CLASS: Record<Edge, string | undefined> = {
   quiet: s.edgeQuiet,
 };
 
-function NowCell({ ticket }: { ticket: Ticket }) {
-  const cell = nowCell(ticket);
+function NowCell({ ticket, now }: { ticket: Ticket; now: number }) {
+  const cell = nowCell(ticket, now);
   switch (cell.kind) {
     case "run": {
-      const { meter } = cell;
+      const { meter } = cell.run;
       return (
         <span className={cx(s.now, s.cNow)}>
           <span className={s.runline}>
-            <span className={s.agent}>{cell.actor}</span>
-            <span className={s.step} title={cell.text}>
-              {cell.text}
+            <span className={s.agent}>{cell.run.stage}</span>
+            <span className={s.step} title={cell.run.step}>
+              {cell.run.step}
             </span>
             {meter && (
               <>
                 <RunMeter k={meter.k} n={meter.n} state={meter.state} size="row" width={48} />
-                <span className={s.of}>{meterOfText(meter.k, meter.n, meter.state)}</span>
+                <span className={s.of}>{meter.text}</span>
               </>
             )}
           </span>
@@ -115,6 +115,7 @@ export function CompactRow({
   const ref = useRef<HTMLLIElement>(null);
   const navigate = useNavigate();
   const inbox = t.attention === "inbox";
+  const look = rowLook(t);
 
   // An opened row scrolls fully into view (12px top / 20px bottom margins via scroll-margin).
   useEffect(() => {
@@ -130,8 +131,8 @@ export function CompactRow({
       ref={ref}
       className={cx(
         s.crow,
-        EDGE_CLASS[edgeOf(t)],
-        isFlat(t) ? s.isFlat : s.isRaised,
+        EDGE_CLASS[look.edge],
+        look.flat ? s.isFlat : s.isRaised,
         t.attention === "needs_you" && s.isYou,
         inbox && s.isInbox,
         open && s.isOpen,
@@ -156,13 +157,13 @@ export function CompactRow({
           <PriorityIcon priority={t.priority} />
           <span title={t.title}>{t.title}</span>
         </span>
-        <NowCell ticket={t} />
-        <span className={cx(s.src, s.cSrc)}>{sourceText(t)}</span>
+        <NowCell ticket={t} now={now} />
+        <span className={cx(s.src, s.cSrc)}>{sourceColumn(t)}</span>
         <span className={cx(s.people, s.cPeople)}>
           {t.owner ? <Avatar name={t.owner.display_name} id={t.owner.id} /> : <AvatarSlot />}
         </span>
         <span className={s.upd} title={new Date(t.attention_since).toLocaleString()}>
-          <Age text={updText(t, now)} />
+          <Age text={waitAge(t, now)} />
         </span>
       </button>
       {inbox && (

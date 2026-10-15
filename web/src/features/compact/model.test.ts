@@ -7,22 +7,18 @@ import {
   collapsedByDefault,
   compactGroups,
   compactSections,
-  edgeOf,
   emptyText,
   footSummary,
   GROUP_ORDER,
   inRepo,
-  isFlat,
   moveText,
   nowCell,
   ownerLine,
   parseFilter,
   pills,
   plural,
-  runLine,
-  sourceText,
+  sourceColumn,
   talkLabel,
-  updText,
   withFilter,
 } from "./model";
 
@@ -223,28 +219,15 @@ describe("texts", () => {
     expect(plural(1, "ticket")).toBe("ticket");
     expect(plural(0, "repo")).toBe("repos");
   });
-  it("edges each row by status, and lays settled rows flat", () => {
-    expect(edgeOf(ticket({ attention: "needs_you" }))).toBe("you");
-    expect(edgeOf(ticket({ attention: "running" }))).toBe("live");
-    expect(edgeOf(ticket({ attention: "blocked" }))).toBe("blocked");
-    expect(edgeOf(ticket({ attention: "done", state: "done" }))).toBe("done");
-    expect(edgeOf(ticket({ attention: "done", state: "closed" }))).toBe("blocked");
-    for (const a of ["inbox", "queued", "waiting"] as const)
-      expect(edgeOf(ticket({ attention: a }))).toBe("quiet");
-    expect(isFlat(ticket({ attention: "done" }))).toBe(true);
-    expect(isFlat(ticket({ attention: "inbox" }))).toBe(false);
-  });
   it("says what is empty, in the repo when scoped", () => {
     expect(emptyText("needs_you", null)).toBe("Nothing needs you");
     expect(emptyText("inbox", "org/web")).toBe("Nothing in the inbox in web");
   });
-  it("labels the source column and the upd column", () => {
+  it("puts the repo after the source word in the source column", () => {
     const src = { source: "jira" as const, external_id: "PLAT-1", url: "" };
-    expect(sourceText(ticket({ source: src, repo_name: "org/web" }))).toBe("Jira · web");
-    expect(sourceText(ticket({ repo_name: "org/web" }))).toBe("web");
-    expect(sourceText(ticket())).toBe("");
-    expect(updText(ticket({ attention: "running", attention_since: at("09") }), NOON)).toBe("now");
-    expect(updText(ticket({ attention: "inbox", attention_since: at("11") }), NOON)).toBe("1h");
+    expect(sourceColumn(ticket({ source: src, repo_name: "org/web" }))).toBe("Jira PLAT-1 · web");
+    expect(sourceColumn(ticket({ repo_name: "org/web" }))).toBe("web");
+    expect(sourceColumn(ticket())).toBe("");
   });
   it("talks in messages", () => {
     expect(talkLabel(1)).toBe("Talk · 1 message");
@@ -262,12 +245,8 @@ describe("the now column", () => {
       attention: "running",
       now: now({ actor: "Build", text: "Running tests", progress: { done: 2, total: 5 } }),
     });
-    expect(nowCell(t)).toEqual({
-      kind: "run",
-      actor: "Build",
-      text: "Running tests",
-      meter: { k: 3, n: 5, state: "running" },
-    });
+    const cell = nowCell(t, NOON);
+    expect(cell.kind === "run" && [cell.run.stage, cell.run.meter?.text]).toEqual(["Build", "3/5"]);
   });
   it("shows the YOU form with the parked gate, and the wait on a person", () => {
     const you = ticket({
@@ -275,7 +254,7 @@ describe("the now column", () => {
       rail: [step("Plan", "done", { gate: gate("you", { label: "Plan sign-off" }) })],
       now: now({ text: "3 tasks" }),
     });
-    expect(nowCell(you)).toEqual({
+    expect(nowCell(you, NOON)).toEqual({
       kind: "mark",
       mark: { kind: "you", ask: "Plan sign-off" },
       text: "3 tasks",
@@ -287,7 +266,9 @@ describe("the now column", () => {
         step("Review", "done", { gate: gate("waiting", { label: "PR review", person: sam }) }),
       ],
     });
-    expect(nowCell(wait)).toMatchObject({ mark: { kind: "wait", name: "Sam", ask: "PR review" } });
+    expect(nowCell(wait, NOON)).toMatchObject({
+      mark: { kind: "wait", name: "Sam", ask: "PR review" },
+    });
   });
   it("gives blocked its reason and the inbox its note", () => {
     const blk = ticket({
@@ -295,11 +276,14 @@ describe("the now column", () => {
       now: now({ text: "Build failed" }),
       latest_run: run("failed", { error: "exit 1" }),
     });
-    expect(nowCell(blk)).toMatchObject({ mark: { kind: "blk" }, text: "Build failed · exit 1" });
+    expect(nowCell(blk, NOON)).toMatchObject({
+      mark: { kind: "blk" },
+      text: "Build failed · exit 1",
+    });
   });
   it("leaves the inbox Now cell empty at rest (Add context reveals there)", () => {
-    expect(nowCell(ticket({ attention: "inbox" }))).toEqual({ kind: "empty" });
-    expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) }))).toEqual({
+    expect(nowCell(ticket({ attention: "inbox" }), NOON)).toEqual({ kind: "empty" });
+    expect(nowCell(ticket({ attention: "inbox", now: now({ text: "Draft" }) }), NOON)).toEqual({
       kind: "empty",
     });
   });
@@ -308,7 +292,7 @@ describe("the now column", () => {
       code: "base_branch_missing" as const,
       text: "Set a base branch first",
     };
-    expect(nowCell(ticket({ attention: "inbox", dispatch_block }))).toEqual({
+    expect(nowCell(ticket({ attention: "inbox", dispatch_block }), NOON)).toEqual({
       kind: "block",
       text: "Set a base branch first",
     });
@@ -317,7 +301,7 @@ describe("the now column", () => {
       dispatch_block,
       latest_run: run("failed", { error: "cannot start from origin/x" }),
     });
-    expect(nowCell(blk)).toEqual({
+    expect(nowCell(blk, NOON)).toEqual({
       kind: "mark",
       mark: { kind: "blk", name: "Blocked" },
       text: "Set a base branch first",
@@ -330,13 +314,13 @@ describe("the now column", () => {
       state: "closed",
       resolution: { outcome: "abandoned", note: "Superseded", by: sam, at: at("10") },
     });
-    expect(nowCell(abandoned)).toEqual({
+    expect(nowCell(abandoned, NOON)).toEqual({
       kind: "outcome",
       outcome: "abandoned",
       word: "Abandoned",
       text: "Superseded",
     });
-    expect(nowCell(ticket({ attention: "done", state: "done" }))).toMatchObject({
+    expect(nowCell(ticket({ attention: "done", state: "done" }), NOON)).toMatchObject({
       kind: "outcome",
       outcome: "completed",
       word: "Complete",
@@ -384,14 +368,5 @@ describe("the expansion", () => {
       label: "Complete",
       lead: "Complete",
     });
-  });
-  it("labels the run with the parts the server sent", () => {
-    const t = ticket({
-      attention: "running",
-      now: now({ actor: "Build", run_id: 42, progress: { done: 0, total: 3 } }),
-      latest_run: run("running", { id: 42, started_at: at("11") }),
-    });
-    expect(runLine(t, Date.parse("2026-10-11T11:03:12Z"))).toBe("Build · Run #42 · 3:12 · 1/3");
-    expect(runLine(ticket({ attention: "queued" }), NOON)).toBe("Run");
   });
 });

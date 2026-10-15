@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { Schemas } from "../api/client";
-import { planSections, planText, sectionCount, showsSections, type PlanLike } from "./plan";
+import {
+  firstParagraph,
+  paragraphs,
+  plainText,
+  planSections,
+  planText,
+  planView,
+  sectionCount,
+  showsSections,
+  type PlanLike,
+} from "./plan";
 
 describe("planText", () => {
   it.each([
@@ -83,5 +93,54 @@ describe("planSections", () => {
 
   it("is empty for an empty plan", () => {
     expect(planSections([])).toEqual([]);
+  });
+});
+
+describe("planView", () => {
+  const plan = (n: number, done = 0) =>
+    Array.from({ length: n }, (_, i) => ({ text: `step ${String(i)}`, done: i < done }));
+
+  it("caps at max with +N more and counts done over all items", () => {
+    const v = planView(plan(12, 10), 8);
+    expect([v?.items.length, v?.more, v?.done, v?.total, v?.pct]).toEqual([8, 4, 10, 12, 83]);
+  });
+  it("shows the item rather than '+1 more', and everything without a max", () => {
+    expect([planView(plan(9), 8)?.items.length, planView(plan(9), 8)?.more]).toEqual([9, 0]);
+    expect(planView(plan(30))?.items).toHaveLength(30);
+  });
+  it("counts no plan and an empty plan as none", () => {
+    expect(planView([])).toBeNull();
+    expect(planView(null)).toBeNull();
+  });
+  it("gives each item plain text and keeps the raw text", () => {
+    const item = planView([{ text: "1. Add a `--shout` flag", done: true }])?.items[0];
+    expect([item?.text, item?.raw, item?.done]).toEqual([
+      "Add a --shout flag",
+      "Add a `--shout` flag",
+      true,
+    ]);
+  });
+  it("heads sections only with two or more", () => {
+    const two = planView([
+      { text: "a", done: true, section: "Plan" },
+      { text: "b", done: false, section: "Build" },
+    ]);
+    expect([two?.headed, two?.sections.length]).toEqual([true, 2]);
+    expect(planView(plan(3))?.headed).toBe(false);
+  });
+});
+
+describe("description text", () => {
+  it("strips markdown to plain text", () => {
+    expect(plainText("Add a `--shout` flag to **greet.py** ([docs](http://x))")).toBe(
+      "Add a --shout flag to greet.py (docs)",
+    );
+    expect(plainText("## Heading\n- item *one*")).toBe("Heading item one");
+  });
+  it("splits paragraphs on blank lines and takes the first as the plain lead", () => {
+    const text = "First *line*\nstill first.\r\n\r\n  Second.  \n\n\n";
+    expect(paragraphs(text)).toEqual(["First *line*\nstill first.", "Second."]);
+    expect(firstParagraph(text)).toBe("First line still first.");
+    expect(firstParagraph("   ")).toBe("");
   });
 });

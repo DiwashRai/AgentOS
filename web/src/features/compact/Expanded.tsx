@@ -8,19 +8,19 @@ import { useNavigate } from "react-router";
 import type { Schemas } from "../../api/client";
 import { useChat, useTicket } from "../../api/queries";
 import { type Action, ticketActions } from "../../domain/actions";
-import { planText } from "../../domain/plan";
+import { planView } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
+import { runLine, stageCount } from "../../domain/ticketView";
 import { words } from "../../domain/words";
 import { Avatar, Button, cx, StatusMark, Stepper, TickBadge } from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
 import { useTicketAction } from "../actions/useTicketAction";
-import { planView, plainText, stagesText } from "../peek/model";
 import { usePeek } from "../peek/usePeek";
 import { useNow } from "../../ui/useNow";
 import { clockTime, fullTime } from "../talk/thread";
 import { ticketPath } from "../ticket/model";
 import s from "./Compact.module.css";
-import { moveText, ownerLine, runLine, talkLabel } from "./model";
+import { moveText, ownerLine, talkLabel } from "./model";
 
 type Ticket = Schemas["TicketSummary"];
 type Detail = Schemas["TicketDetail"];
@@ -94,14 +94,13 @@ function Plan({
 }) {
   const now = useNow(1000);
   const live = t.attention === "running";
-  // An empty TASKS.md checklist reads as no plan, not "0 of 0 done".
-  const plan = detail?.plan?.length ? planView(detail.plan, PLAN_MAX) : null;
+  const plan = planView(detail?.plan, PLAN_MAX);
   return (
     <div className={s.col}>
       {live || t.attention === "queued" ? (
         <div className={cx(s.lab, live && s.isLive)}>
           <StatusMark kind={live ? "run" : "queued"} glyphOnly />
-          <span>{runLine(t, now)}</span>
+          <span>{runLine(t, now).line}</span>
         </div>
       ) : (
         <div className={s.lab}>
@@ -118,7 +117,7 @@ function Plan({
               ) : (
                 <span className={s.todo} role="img" aria-label="Open" />
               )}
-              <span title={planText(item.text)}>{plainText(planText(item.text))}</span>
+              <span title={item.raw}>{item.text}</span>
             </li>
           ))}
           {plan.more > 0 && <li className={s.moreItems}>{`+${String(plan.more)} more`}</li>}
@@ -178,7 +177,7 @@ export function Expanded({ id, ticket: t }: { id: string; ticket: Ticket }) {
         <div className={s.col}>
           <div className={s.lab}>{move.label}</div>
           <p className={s.lead}>{move.lead}</p>
-          <p className={s.sub}>{ownerLine(t, stagesText(t.rail))}</p>
+          <p className={s.sub}>{ownerLine(t, stageCount(t).text)}</p>
           <Actions ticket={t} />
         </div>
         <Plan ticket={t} detail={query.data} error={query.error} />

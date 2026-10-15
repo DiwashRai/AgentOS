@@ -5,9 +5,16 @@
 import type { ReactNode } from "react";
 
 import type { Schemas } from "../../api/client";
-import { age } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import type { MeRef } from "../../domain/status";
+import {
+  outcomeLine,
+  rowLook,
+  sourceWord,
+  statusLine,
+  statusMark,
+  waitAge,
+} from "../../domain/ticketView";
 import {
   Age,
   Avatar,
@@ -20,16 +27,7 @@ import {
   TypeIcon,
 } from "../../ui";
 import { peekItemProps } from "../peek/usePeek";
-import {
-  askLabel,
-  outcomeLine,
-  rowLook,
-  sourceWord,
-  stateLine,
-  statusMark,
-  subLine,
-  waitingPerson,
-} from "./model";
+import { subLine } from "./model";
 import s from "./Queue.module.css";
 import { RowActions } from "./RowActions";
 
@@ -47,7 +45,7 @@ interface RowProps {
 function RowAge({ ticket: t, now }: { ticket: Ticket; now: number }) {
   return (
     <Age
-      text={age(t.attention_since, now)}
+      text={waitAge(t, now)}
       size={t.attention === "needs_you" || t.attention === "blocked" ? "lg" : "md"}
       title={new Date(t.attention_since).toLocaleString()}
       className={s.age}
@@ -60,7 +58,7 @@ const EDGE = {
   live: s.edgeLive,
   blocked: s.edgeBlocked,
   done: s.edgeDone,
-  neutral: s.edgeNeutral,
+  quiet: s.edgeNeutral,
 } as const;
 
 /** The row shell: surface, status edge, wash, lift, and the left half every row shares (stage
@@ -111,10 +109,10 @@ function RowShell({
   );
 }
 
-/** The line under a status mark (model.stateLine): a dispatch block ("Set a base branch first")
- *  in the you hue, else the reason or status line. */
+/** The line under a status mark (`statusLine`): a dispatch block ("Set a base branch first") in
+ *  the you hue, else the reason. */
 function SecondLine({ ticket: t }: { ticket: Ticket }) {
-  const line = stateLine(t);
+  const line = statusLine(t);
   if (!line.text) return null;
   return (
     <div className={cx(s.ask2, line.flag && s.flag)} title={line.text}>
@@ -128,7 +126,7 @@ export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
     <RowShell ticket={t} sub={subLine(t, me)} onOpen={onOpen}>
       <div className={s.ask}>
         <div className={s.ask1}>
-          <StatusMark kind="you" ask={askLabel(t)} />
+          <StatusMark kind="you" ask={statusMark(t).ask} />
         </div>
         <SecondLine ticket={t} />
       </div>
@@ -142,7 +140,7 @@ export function NeedRow({ ticket: t, me, now, onOpen }: RowProps) {
 function StateCell({ ticket: t }: { ticket: Ticket }) {
   const mark = statusMark(t);
   if (mark.kind === "wait") {
-    const who = waitingPerson(t);
+    const who = mark.person;
     return (
       <div className={s.ask}>
         <div className={s.ask1}>

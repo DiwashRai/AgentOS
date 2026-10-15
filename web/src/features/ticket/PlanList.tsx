@@ -3,9 +3,8 @@
 // tick badge (done) or a 14px ring (open), no numbers. With 2+ TASKS.md sections each group gets a
 // small sentence-case heading with its own count; a headingless plan reads as one list.
 import type { Schemas } from "../../api/client";
-import { planSections, planText, sectionCount, showsSections } from "../../domain/plan";
+import { planView, sectionCount } from "../../domain/plan";
 import { TickBadge, cx } from "../../ui";
-import { planProgress } from "./model";
 import s from "./PlanList.module.css";
 
 export interface PlanListProps {
@@ -20,16 +19,13 @@ export interface PlanListProps {
 }
 
 export function PlanList({ plan, id, level = 2, empty, className }: PlanListProps) {
-  const items = plan ?? [];
-  const p = planProgress(items);
-  const sections = planSections(items);
-  const headed = showsSections(sections);
+  const p = planView(plan);
   const H = level === 2 ? "h2" : "h3";
   return (
     <section className={cx(s.plan, className)} aria-labelledby={id}>
       <H id={id} className={s.head}>
         Plan
-        {p.total > 0 ? (
+        {p ? (
           <>
             <span className={s.count}>
               <b>{p.done}</b> of <b>{p.total}</b> done
@@ -40,10 +36,10 @@ export function PlanList({ plan, id, level = 2, empty, className }: PlanListProp
           </>
         ) : null}
       </H>
-      {p.total === 0 ? <p className={s.empty}>{empty}</p> : null}
-      {sections.map((sec, j) => {
+      {p ? null : <p className={s.empty}>{empty}</p>}
+      {p?.sections.map((sec, j) => {
         const secId = `${id}-${String(j)}`;
-        const labelled = headed && sec.section !== null;
+        const labelled = p.headed && sec.section !== null;
         return (
           <div key={j} className={s.sec}>
             {labelled ? (
@@ -60,7 +56,7 @@ export function PlanList({ plan, id, level = 2, empty, className }: PlanListProp
                   ) : (
                     <span className={s.todo} role="img" aria-label="To do" title="To do" />
                   )}
-                  <span>{planText(item.text)}</span>
+                  <span title={item.raw}>{item.text}</span>
                 </li>
               ))}
             </ol>

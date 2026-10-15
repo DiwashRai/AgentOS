@@ -1,18 +1,15 @@
-// Pure display helpers for My queue and the Peek. They pick and combine server fields for
-// display (`now`, `rail[].gate`, `latest_run`, `repo_name`, `owner`); they never derive board
-// state. Selection beyond `useBoard().groups` (the team rack) is over `attention` + ownership only.
+// Pure helpers for My queue: the row sub-line, the at-work note and the team rack. The ticket's own
+// labels come from src/domain/ticketView.ts. Selection beyond `useBoard().groups` (the team rack)
+// is over `attention` + ownership only; they never derive board state.
 import type { Schemas } from "../../api/client";
 import { clientWait, type OnlineKey } from "../../domain/clients";
 import type { Counts } from "../../domain/counts";
 import { firstName } from "../../domain/format";
 import type { Groups } from "../../domain/groups";
 import { isMine, type MeRef, statusKind } from "../../domain/status";
-import { type DisplayKind, OUTCOME_KIND, outcomeOf } from "../../domain/outcome";
-import { outcomeWords, sourceNames, statusWords } from "../../domain/words";
-import type { MeterState } from "../../domain/meter";
+import { runLine, sourceWord } from "../../domain/ticketView";
 
 type Ticket = Schemas["TicketSummary"];
-type Person = Schemas["Person"];
 
 /** Caps (DESIGN §18, adapted): Needs you and Ready to start list everything, because each row is
  *  something to do; Done recently shows the newest few. */
@@ -33,176 +30,30 @@ export function listsAnything(g: Groups<unknown>, rack: readonly RackGroup<unkno
   return lists.some((list) => list.length > 0) || rack.length > 0;
 }
 
-/** The gate the server says the ticket is parked at (on you or on someone), if any. */
-export function parkedGate(t: Pick<Ticket, "rail">): Schemas["GateInfo"] | null {
-  for (const step of t.rail) {
-    if (step.gate && (step.gate.state === "you" || step.gate.state === "waiting")) return step.gate;
-  }
-  return null;
-}
-
-/** The ask on a Needs-you row: the parked gate's label ("Plan sign-off"), else "Your move". */
-export function askLabel(t: Pick<Ticket, "rail">): string {
-  const gate = parkedGate(t);
-  return gate?.state === "you" ? gate.label : "Your move";
-}
-
-/** Who a waiting ticket waits on: the parked gate's person, else `now.person`. */
-export function waitingPerson(t: Pick<Ticket, "rail" | "now">): Person | null {
-  return parkedGate(t)?.person ?? t.now.person;
-}
-
-/** The run number to show: `now.run_id`, else the latest run's id. */
-export function runNumber(t: Pick<Ticket, "now" | "latest_run">): number | null {
-  return t.now.run_id ?? t.latest_run?.id ?? null;
-}
-
-/** Where the ticket came from, in sentence case beside the key chip: `Jira PLAT-2231`; null for
- *  our own tickets (the key chip says it all). */
-export function sourceWord(t: Pick<Ticket, "source">): string | null {
-  if (!t.source) return null;
-  return `${sourceNames[t.source.source]} ${t.source.external_id}`;
-}
-
 /**
- * The item row's sub-line: `[Jira PLAT-1 ·] repo · Agent · run #N` when there is a run, else
+ * The item row's sub-line: `[Jira PLAT-1 ·] repo · Build · run #N` when there is a run, else
  * `repo · <Owner>'s ticket` (someone else's), else `repo`.
  */
 export function subLine(
-  t: Pick<Ticket, "repo_name" | "now" | "latest_run" | "owner" | "source">,
+  t: Pick<Ticket, "key" | "attention" | "repo_name" | "now" | "latest_run" | "owner" | "source">,
   me: MeRef,
 ): string {
   const parts: string[] = [];
   const src = sourceWord(t);
   if (src) parts.push(src);
   if (t.repo_name) parts.push(t.repo_name);
-  const run = runNumber(t);
-  if (run !== null) {
-    if (t.now.actor) parts.push(t.now.actor);
-    parts.push(`run #${String(run)}`);
-  } else if (t.owner && !isMine(t, me)) {
-    parts.push(`${firstName(t.owner)}'s ticket`);
-  }
+
+  const run = runLine(t, null);
+  if (run.run !== null) parts.push(run.label);
+  else if (t.owner && !isMine(t, me)) parts.push(`${firstName(t.owner)}'s ticket`);
+
   return parts.join(" · ");
-}
-
-/** The run tile / rack header name: `IMPLEMENT #42` (mono caps by CSS). */
-export function runName(t: Pick<Ticket, "now" | "latest_run">): string {
-  const n = runNumber(t);
-  const actor = t.now.actor ?? "Run";
-  return n === null ? actor : `${actor} #${String(n)}`;
-}
-
-export interface MeterModel {
-  k: number;
-  n: number;
-  state: MeterState;
-}
-
-/**
- * The run meter from `now.progress`: k = done + 1 capped at total while running (DESIGN §13.4);
- * queued = all outlined. Null when the server sends no progress (the meter is hidden).
- */
-export function meterOf(t: Pick<Ticket, "now" | "attention">): MeterModel | null {
-  const p = t.now.progress;
-  if (!p || p.total <= 0) return null;
-  if (t.attention === "queued") return { k: 0, n: p.total, state: "queued" };
-  if (t.attention === "running")
-    return { k: Math.min(p.done + 1, p.total), n: p.total, state: "running" };
-  return null;
 }
 
 /** "2 yours · 5 across the team": the Agents-at-work note, from the shared counts. */
 export function atWorkNote(c: Pick<Counts, "mine" | "running" | "queued">): string {
   const team = Math.max(0, c.running + c.queued - c.mine);
   return `${String(c.mine)} yours · ${String(team)} across the team`;
-}
-
-export interface MarkModel {
-  kind: DisplayKind;
-  name?: string | undefined;
-  ask?: string | undefined;
-}
-
-/** The status mark with its ask, as the quiet rows and the peek's Status section show it. A done
- *  ticket shows its outcome: Complete (green) or Abandoned (red). */
-export function statusMark(
-  t: Pick<Ticket, "attention" | "rail" | "now" | "state" | "resolution">,
-): MarkModel {
-  const outcome = outcomeOf(t);
-  if (outcome) return { kind: OUTCOME_KIND[outcome], name: outcomeWords[outcome] };
-  const kind = statusKind(t);
-  switch (kind) {
-    case "you":
-      return { kind, ask: askLabel(t) };
-    case "wait": {
-      const who = waitingPerson(t);
-      const gate = parkedGate(t);
-      return { kind, name: who ? firstName(who) : "Someone", ask: gate?.label };
-    }
-    case "blk":
-    case "done": // unreachable: a done ticket always has an outcome
-    case "queued":
-      return { kind, name: statusWords[kind] };
-    case "run":
-      return { kind, name: t.now.actor ?? statusWords.run };
-    case "idle":
-      return { kind, name: statusWords.idle };
-  }
-}
-
-/** The 3px status edge of a My queue row (refresh HANDOFF §4). */
-export type RowEdge = "you" | "live" | "blocked" | "done" | "neutral";
-
-/** A row's surface and edge: raised for in flight / needs action, flat for settled (done, incl.
- *  abandoned, whose edge is crimson). Over `attention` and the outcome only. */
-export function rowLook(t: Pick<Ticket, "attention" | "state" | "resolution">): {
-  flat: boolean;
-  edge: RowEdge;
-} {
-  const outcome = outcomeOf(t);
-  if (outcome) return { flat: true, edge: outcome === "abandoned" ? "blocked" : "done" };
-  switch (t.attention) {
-    case "needs_you":
-      return { flat: false, edge: "you" };
-    case "running":
-      return { flat: false, edge: "live" };
-    case "blocked":
-      return { flat: false, edge: "blocked" };
-    default:
-      return { flat: false, edge: "neutral" };
-  }
-}
-
-/** A done row's right-aligned outcome: "Complete · merged", "Abandoned · duplicate of AOS-8";
- *  the word alone without a note. Null for a ticket that isn't done. */
-export function outcomeLine(
-  t: Pick<Ticket, "attention" | "state" | "resolution">,
-): { word: string; abandoned: boolean; note: string | null } | null {
-  const outcome = outcomeOf(t);
-  if (!outcome) return null;
-  const note = t.resolution?.note?.trim();
-  return {
-    word: outcomeWords[outcome],
-    abandoned: outcome === "abandoned",
-    note: note === undefined || note === "" ? null : note,
-  };
-}
-
-/** A blocked row's reason: the server's status line, else the run's error. */
-export function blockedReason(t: Pick<Ticket, "now" | "latest_run">): string {
-  return t.now.text !== "" ? t.now.text : (t.latest_run?.error ?? "");
-}
-
-/** A row's second line under its status mark. When the server says a dispatch would be refused
- *  (`dispatch_block`, e.g. "Set a base branch first"), that comes first and is flagged as needing
- *  action; otherwise a blocked row's reason, else the status line. */
-export function stateLine(t: Pick<Ticket, "attention" | "now" | "latest_run" | "dispatch_block">): {
-  text: string;
-  flag: boolean;
-} {
-  if (t.dispatch_block) return { text: t.dispatch_block.text, flag: true };
-  return { text: t.attention === "blocked" ? blockedReason(t) : t.now.text, flag: false };
 }
 
 // ------------------------------------------------------------------ the rack

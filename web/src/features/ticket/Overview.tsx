@@ -6,10 +6,11 @@ import { useLocation, useNavigate } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket } from "../../api/queries";
+import { paragraphs } from "../../domain/plan";
 import { words } from "../../domain/words";
 import { Button, Chip, LinkButton } from "../../ui";
 import { sortFiles } from "../context/files";
-import { actionErrorText, chipName, paragraphs, stripKind, ticketPath } from "./model";
+import { actionErrorText, chipName, stripKind, ticketPath } from "./model";
 import s from "./Overview.module.css";
 import { PlanList } from "./PlanList";
 

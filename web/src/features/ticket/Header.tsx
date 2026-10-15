@@ -8,7 +8,9 @@ import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket, usePeople } from "../../api/queries";
 import { isDispatch, ticketActions, type Action } from "../../domain/actions";
 import { ago, repoShort } from "../../domain/format";
+import { firstParagraph, paragraphs } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
+import { sourceWord, stageCount } from "../../domain/ticketView";
 import {
   Avatar,
   Button,
@@ -28,15 +30,7 @@ import { BaseBranchField } from "./BaseBranchField";
 import s from "./Header.module.css";
 import { PrLink } from "./PrLink";
 import { RepoPicker } from "./RepoPicker";
-import {
-  actionErrorText,
-  firstParagraph,
-  ownerPatch,
-  ownerValue,
-  pipelineSummary,
-  runnerText,
-  sourceText,
-} from "./model";
+import { actionErrorText, ownerPatch, ownerValue, runnerText } from "./model";
 
 type Detail = Schemas["TicketDetail"];
 
@@ -125,7 +119,7 @@ function OwnerPicker({ t, readOnly }: { t: Detail; readOnly: boolean }) {
 }
 
 function Kicker({ t }: { t: Detail }) {
-  const source = sourceText(t);
+  const source = sourceWord(t);
   return (
     <div className={s.kicker}>
       <KeyChip size="lg">{t.key}</KeyChip>
@@ -174,7 +168,11 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
         <ActionGroup t={t} readOnly={readOnly} target={target} />
       </div>
       <h1 className={s.h1}>{t.title}</h1>
-      {lead ? <p className={s.lead}>{lead}</p> : null}
+      {lead ? (
+        <p className={s.lead} title={paragraphs(t.description)[0]}>
+          {lead}
+        </p>
+      ) : null}
       <dl className={s.byline}>
         <div>
           <dt>Owner</dt>
@@ -206,7 +204,7 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
         </div>
         <div>
           <dt>Pipeline</dt>
-          <dd>{pipelineSummary(model.stages)}</dd>
+          <dd>{stageCount(t).text}</dd>
         </div>
         {t.pr_url ? (
           <div>

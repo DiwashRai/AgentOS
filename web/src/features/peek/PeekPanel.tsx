@@ -6,29 +6,30 @@ import { Link as RouterLink, useNavigate } from "react-router";
 import { ApiError, type Schemas } from "../../api/client";
 import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
-import { duration, firstName, repoShort, runSeconds } from "../../domain/format";
+import { firstName, repoShort } from "../../domain/format";
 import { outcomeWord, resolvedBy } from "../../domain/outcome";
-import { planText } from "../../domain/plan";
+import { firstParagraph, paragraphs, planView } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
+import { runLine, sourceWord, stageCount, statusMark } from "../../domain/ticketView";
 import { words } from "../../domain/words";
 import { Button, cx, Kbd, linkClass, RunMeter, StageGlyph, StatusMark, Stepper } from "../../ui";
-import { meterOfText } from "../../ui/meter";
-import { meterOf, runNumber, sourceWord, statusMark } from "../queue/model";
 import { useNow } from "../../ui/useNow";
 import { Talk } from "../talk/Talk";
 import { PrLink } from "../ticket/PrLink";
-import { firstParagraph, plainText, planView, stagesText } from "./model";
 import s from "./Peek.module.css";
 
 type Summary = Schemas["TicketSummary"];
 type Detail = Schemas["TicketDetail"];
+
+/** Plan items shown before "+N more". */
+const PLAN_MAX = 8;
 
 function ticketPath(key: string): string {
   return `/t/${encodeURIComponent(key)}`;
 }
 
 function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefined }) {
-  const plan = detail?.plan ? planView(detail.plan) : null;
+  const plan = planView(detail?.plan, PLAN_MAX);
   return (
     <section className={s.sec} aria-label="Plan">
       <h3 className={s.lab}>
@@ -44,7 +45,7 @@ function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefin
               <span className={s.tick} role="img" aria-label={item.done ? "Done" : "Open"}>
                 {item.done ? "✓" : "○"}
               </span>
-              <span title={planText(item.text)}>{plainText(planText(item.text))}</span>
+              <span title={item.raw}>{item.text}</span>
             </li>
           ))}
           {plan.more > 0 && <li className={s.more}>{`+${String(plan.more)} more`}</li>}
@@ -60,25 +61,16 @@ function Plan({ ticket: t, detail }: { ticket: Summary; detail: Detail | undefin
 function Run({ ticket: t }: { ticket: Summary }) {
   const now = useNow(1000);
   const live = t.attention === "running";
-  const meter = meterOf(t);
-  const secs = runSeconds(t.latest_run, now);
-  const run = runNumber(t);
-  const line = [
-    t.now.actor ?? "Run",
-    run !== null ? `Run #${String(run)}` : null,
-    secs !== null ? duration(secs) : null,
-    meter ? meterOfText(meter.k, meter.n, meter.state) : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const line = runLine(t, now);
+  const { meter } = line;
   return (
     <section className={s.sec} aria-label="Run">
       <h3 className={cx(s.lab, live && s.isLive)}>
         <StatusMark kind={live ? "run" : "queued"} glyphOnly />
-        <span>{line}</span>
+        <span>{line.line}</span>
       </h3>
       {meter && <RunMeter k={meter.k} n={meter.n} state={meter.state} size="tile" />}
-      {t.now.text && <p className={s.meta}>{planText(t.now.text)}</p>}
+      {line.step && <p className={s.meta}>{line.step}</p>}
     </section>
   );
 }
@@ -144,17 +136,18 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
   }
 
   const desc = detail ? firstParagraph(detail.description) : "";
+  const source = sourceWord(t);
   const repo = repoShort(t.repo_name);
   const running = t.attention === "running" || t.attention === "queued";
   const runner = t.attention === "running" ? t.latest_run?.launch_ref : null;
-  const stages = stagesText(t.rail);
+  const stages = stageCount(t).text;
   const outcome = outcomeWord(t);
 
   return (
     <>
       <header className={s.head}>
         <div className={s.bar}>
-          <span className={s.src}>{sourceWord(t) ?? t.key}</span>
+          <span className={s.src}>{source ? `${source} · ${t.key}` : t.key}</span>
           {repo && <span className={s.k}>{`· ${repo}`}</span>}
           <span className={s.sp} />
           <StageGlyph model={stageModel(t)} />
@@ -169,7 +162,11 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
           <CloseButton onClose={onClose} />
         </div>
         <h2 className={s.title}>{t.title}</h2>
-        {desc && <p className={s.desc}>{desc}</p>}
+        {desc && (
+          <p className={s.desc} title={paragraphs(detail?.description ?? "")[0]}>
+            {desc}
+          </p>
+        )}
         <div className={s.facts}>
           <span>
             Owner <b>{t.owner ? firstName(t.owner) : "Nobody"}</b>

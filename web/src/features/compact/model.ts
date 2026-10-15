@@ -4,10 +4,9 @@
 // and combine `now`, `rail[].gate`, `latest_run` and `source`; they never derive board state.
 import type { Schemas } from "../../api/client";
 import { type CountKey, counts, shippedThisWeek } from "../../domain/counts";
-import { age, duration, firstName, repoShort, runSeconds } from "../../domain/format";
+import { age, repoShort } from "../../domain/format";
 import { since } from "../../domain/groups";
-import { type Outcome, outcomeOf, outcomeWord } from "../../domain/outcome";
-import { planText } from "../../domain/plan";
+import type { Outcome } from "../../domain/outcome";
 import {
   type Attention,
   isMine,
@@ -15,19 +14,18 @@ import {
   statusKind,
   type StatusKind,
 } from "../../domain/status";
-import { attentionWords, outcomeWords, sourceNames, statusWords, words } from "../../domain/words";
-import { projectPrefix } from "../../ui/identity";
-import { meterOfText } from "../../domain/meter";
 import {
+  gate,
   type MarkModel,
-  meterOf,
-  type MeterModel,
-  parkedGate,
-  runNumber,
+  outcomeLine,
+  runLine,
+  type RunLine,
+  sourceWord,
+  statusLine,
   statusMark,
-  waitingPerson,
-} from "../queue/model";
-import { statusText } from "../ticket/model";
+} from "../../domain/ticketView";
+import { attentionWords, words } from "../../domain/words";
+import { projectPrefix } from "../../ui/identity";
 
 type Ticket = Schemas["TicketSummary"];
 
@@ -327,39 +325,10 @@ export function emptyText(filter: Filter, repo: string | null): string {
 
 // ------------------------------------------------------------------ the row
 
-/** The Source column: `Jira · web`, `web` for our own tickets, "" with neither. Sentence case. */
-export function sourceText(t: Pick<Ticket, "source" | "repo_name">): string {
-  const name = t.source ? sourceNames[t.source.source] : "";
-  return [name, repoShort(t.repo_name)].filter(Boolean).join(" · ");
-}
-
-/** The 3px status edge (refresh HANDOFF §4): you blue, running vermilion, blocked and abandoned
- *  crimson, complete green; inbox, queued and waiting a quiet rule. */
-export type Edge = "you" | "live" | "blocked" | "done" | "quiet";
-
-export function edgeOf(t: Pick<Ticket, "attention" | "state" | "resolution">): Edge {
-  switch (t.attention) {
-    case "needs_you":
-      return "you";
-    case "running":
-      return "live";
-    case "blocked":
-      return "blocked";
-    case "done":
-      return outcomeOf(t) === "abandoned" ? "blocked" : "done";
-    default:
-      return "quiet";
-  }
-}
-
-/** Raised = in flight or needs action; flat = settled (done, closed). */
-export function isFlat(t: Pick<Ticket, "attention">): boolean {
-  return t.attention === "done";
-}
-
-/** The Upd column: `now` while a run is on a runner, else how long it has been in this state. */
-export function updText(t: Pick<Ticket, "attention" | "attention_since">, now: number): string {
-  return t.attention === "running" ? "now" : age(since(t), now);
+/** The Source column: the source word, then the repo: `Jira PLAT-1 · web`, `web` for our own
+ *  tickets, "" with neither. */
+export function sourceColumn(t: Pick<Ticket, "key" | "source" | "repo_name">): string {
+  return [sourceWord(t), repoShort(t.repo_name)].filter(Boolean).join(" · ");
 }
 
 type NowTicket = Pick<
@@ -368,8 +337,8 @@ type NowTicket = Pick<
 >;
 
 export type NowCell =
-  /** `BUILDER · step · meter · 3/5` */
-  | { kind: "run"; actor: string; text: string; meter: MeterModel | null }
+  /** `Build · step · meter · 3/5` */
+  | { kind: "run"; run: RunLine }
   /** `YOU Plan sign-off` + ask, `○ Sam · PR review` + text, `■ Blocked` + reason, … The text is
    *  `flag`ged when it is the server's dispatch block ("Set a base branch first"). */
   | { kind: "mark"; mark: MarkModel; text: string; flag: boolean }
@@ -383,84 +352,55 @@ export type NowCell =
    *  shows here on hover / focus / open. */
   | { kind: "empty" };
 
-/** The Now column (DESIGN §6 "Now/next"; there is no "next" in our model). */
-export function nowCell(t: NowTicket): NowCell {
-  const outcome = outcomeOf(t);
-  if (outcome) {
-    return {
-      kind: "outcome",
-      outcome,
-      word: outcomeWords[outcome],
-      text: t.resolution?.note ?? t.now.text,
-    };
-  }
+/** The Now column (DESIGN §6 "Now/next"; there is no "next" in our model). `now` is the clock. */
+export function nowCell(t: NowTicket, now: number): NowCell {
+  const out = outcomeLine(t);
+  if (out)
+    return { kind: "outcome", outcome: out.outcome, word: out.word, text: out.note ?? t.now.text };
+
   if (t.attention === "inbox") {
     return t.dispatch_block ? { kind: "block", text: t.dispatch_block.text } : { kind: "empty" };
   }
-  if (t.attention === "running") {
-    return {
-      kind: "run",
-      actor: t.now.actor ?? statusWords.run,
-      // While running, now.text is the TASKS.md item in progress: drop the agent's own number.
-      text: planText(t.now.text),
-      meter: meterOf(t),
-    };
-  }
-  const mark = statusMark(t);
-  if (t.dispatch_block) return { kind: "mark", mark, text: t.dispatch_block.text, flag: true };
-  const text = t.attention === "blocked" ? statusText(t) : t.now.text;
-  return { kind: "mark", mark, text, flag: false };
+  if (t.attention === "running") return { kind: "run", run: runLine(t, now) };
+
+  const line = statusLine(t);
+  return { kind: "mark", mark: statusMark(t), text: line.text, flag: line.flag };
 }
 
 // ------------------------------------------------------------------ the expansion
 
 /** The expansion's first column: its label and the one line that says what happens now. */
 export function moveText(t: NowTicket): { label: string; lead: string } {
-  const gate = parkedGate(t);
+  const parked = gate(t);
+  const reason = statusLine(t).reason;
   switch (t.attention) {
     case "needs_you":
       return {
         label: "Your move",
-        lead: gate
-          ? [gate.label, t.now.text].filter(Boolean).join(": ")
+        lead: parked
+          ? [parked.label, t.now.text].filter(Boolean).join(": ")
           : t.now.text || "Your move",
       };
     case "waiting": {
-      const who = waitingPerson(t);
-      const lead = [who ? firstName(who) : "Someone", gate?.label ?? t.now.text].filter(Boolean);
+      const lead = [statusMark(t).name, parked?.label ?? t.now.text].filter(Boolean);
       return { label: "Waiting on", lead: lead.join(" · ") };
     }
     case "done": {
       // "Abandoned" over the note (or the server's status line).
-      const label = outcomeWord(t) ?? attentionWords.done;
-      return { label, lead: t.resolution?.note ?? (statusText(t) || label) };
+      const label = outcomeLine(t)?.word ?? attentionWords.done;
+      return { label, lead: t.resolution?.note ?? (reason || label) };
     }
     // "Add context, then dispatch" is said once, in the Inbox group head.
     case "inbox":
       return { label: "Now", lead: t.dispatch_block?.text ?? (t.now.text || words.inboxNote) };
     default:
-      return { label: "Now", lead: statusText(t) || attentionWords[t.attention] };
+      return { label: "Now", lead: reason || attentionWords[t.attention] };
   }
 }
 
 /** "Owner Sam · 5 stages" under the lead. */
 export function ownerLine(t: Pick<Ticket, "owner">, stages: string): string {
   return `Owner ${t.owner ? t.owner.display_name : "nobody"} · ${stages}`;
-}
-
-/** The live label over the run: "Build · Run #42 · 3:12 · 3/5" (parts the server hasn't sent are dropped). */
-export function runLine(t: NowTicket, nowMs: number): string {
-  const meter = meterOf(t);
-  const secs = runSeconds(t.latest_run, nowMs);
-  const run = runNumber(t);
-  return [
-    t.now.actor ?? "Run",
-    run !== null ? `Run #${String(run)}` : null,
-    secs !== null ? duration(secs) : null,
-    meter ? meterOfText(meter.k, meter.n, meter.state) : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
 }
 
 /** "Talk · 1 message", "Talk · 5 messages". */
