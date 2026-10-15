@@ -1,7 +1,7 @@
 // New ticket (not designed: built in the same quiet language with kit controls). A dialog over any
-// view while `?new=1` is in the URL; mounted once in the Shell. Closing removes `new`; creating
-// navigates to the new ticket. It never dispatches.
-import { useEffect, useRef, useState } from "react";
+// view while `?new=1` is in the URL (a `Dialog`, centred); mounted once in the Shell. Closing
+// removes `new`; creating navigates to the new ticket. It never dispatches.
+import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import type { Schemas } from "../../api/client";
@@ -15,7 +15,8 @@ import {
 } from "../../api/queries";
 import { words } from "../../domain/words";
 import { Field, Select, fieldStyles as f } from "../../editor";
-import { Button, CloseIcon, IconButton, cx, text } from "../../ui";
+import { Button, CloseIcon, Dialog, DialogTitle, IconButton, cx, text } from "../../ui";
+import { withoutParam } from "../peek/params";
 import { WorkflowPicker } from "../workflows";
 import { defaultWorkflow, workflowIdOf } from "../workflows/model";
 import {
@@ -29,16 +30,12 @@ import {
   initialForm,
   repoOptions,
   toCreateBody,
-  trapIndex,
   validate,
   type Defaults,
   type NewTicketForm,
 } from "./form";
 import { importErrorText, offersJiraImport, toImportBody } from "./importForm";
 import s from "./NewTicket.module.css";
-
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** "Import from Jira": a key or link → the ticket (new or imported before). Its own form, so
  *  Enter in the field imports instead of creating. */
@@ -276,7 +273,7 @@ function TicketForm({
   );
 }
 
-function NewTicketDialog({ onClose }: { onClose: () => void }) {
+function NewTicketForms() {
   const navigate = useNavigate();
   const config = useConfig();
   const me = useMe();
@@ -285,17 +282,6 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
   // null = not picked: the default workflow, preselected. If the list fails to load, the picker
   // stays hidden and the server applies the default.
   const [picked, setPicked] = useState<string | null>(null);
-  const panel = useRef<HTMLDivElement>(null);
-
-  // Focus the first field on open; give focus back to the opener on close.
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const first = panel.current?.querySelector<HTMLElement>("[data-autofocus]");
-    (first ?? panel.current)?.focus();
-    return () => {
-      if (opener?.isConnected) opener.focus();
-    };
-  }, []);
 
   const ready = !config.isPending && !me.isPending && !workflows.isPending;
   const workflowList = workflows.data ?? [];
@@ -305,103 +291,64 @@ function NewTicketDialog({ onClose }: { onClose: () => void }) {
   const open = (key: string) => {
     void navigate(`/t/${encodeURIComponent(key)}`);
   };
-  useEffect(() => {
-    if (!ready) return;
-    panel.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
-  }, [ready]);
 
-  // Esc closes and Tab stays inside the panel. Captured on the document, so it wins over any
-  // view's own Esc handling while the dialog is up.
-  const close = useRef(onClose);
-  useEffect(() => {
-    close.current = onClose;
-  });
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        close.current();
-        return;
-      }
-      if (e.key !== "Tab" || !panel.current) return;
-      const items = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-      const active = document.activeElement;
-      const current = items.findIndex((el) => el === active);
-      e.preventDefault();
-      items[trapIndex(current, items.length, e.shiftKey)]?.focus();
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, []);
-
+  if (!ready) return <p className={s.note}>Loading</p>;
   return (
-    <div className={s.layer}>
-      <div className={s.scrim} aria-hidden="true" onClick={onClose} />
-      <div
-        ref={panel}
-        className={s.panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="new-ticket-title"
-        tabIndex={-1}
-      >
-        <div className={s.head}>
-          <h2 id="new-ticket-title">{words.newTicket}</h2>
-          <IconButton label="Close" bare onClick={onClose}>
-            <CloseIcon />
-          </IconButton>
-        </div>
-        {ready ? (
-          <>
-            {workflowList.length > 0 ? (
-              <WorkflowPicker
-                className={s.workflow}
-                workflows={workflowList}
-                value={workflowValue}
-                onChange={setPicked}
-              />
-            ) : null}
-            {canImport ? (
-              <>
-                <ImportRow focusFirst workflowId={workflowId} onImported={open} />
-                <p className={s.or} aria-hidden="true">
-                  or create one here
-                </p>
-              </>
-            ) : null}
-            <TicketForm
-              defaults={{
-                repo: config.data?.default_repo,
-                meId: me.data?.id,
-              }}
-              repos={config.data?.repos ?? []}
-              people={people.data ?? (me.data ? [me.data] : [])}
-              focusFirst={!canImport}
-              workflowId={workflowId}
-              onCreated={open}
-            />
-          </>
-        ) : (
-          <p className={s.note}>Loading</p>
-        )}
-      </div>
-    </div>
+    <>
+      {workflowList.length > 0 ? (
+        <WorkflowPicker
+          className={s.workflow}
+          workflows={workflowList}
+          value={workflowValue}
+          onChange={setPicked}
+        />
+      ) : null}
+      {canImport ? (
+        <>
+          <ImportRow focusFirst workflowId={workflowId} onImported={open} />
+          <p className={s.or} aria-hidden="true">
+            or create one here
+          </p>
+        </>
+      ) : null}
+      <TicketForm
+        defaults={{
+          repo: config.data?.default_repo,
+          meId: me.data?.id,
+        }}
+        repos={config.data?.repos ?? []}
+        people={people.data ?? (me.data ? [me.data] : [])}
+        focusFirst={!canImport}
+        workflowId={workflowId}
+        onCreated={open}
+      />
+    </>
   );
 }
 
+/** The dialog, labelled by its "New ticket" heading. `Dialog` focuses the first field once the
+ *  forms load (`data-autofocus`), traps Tab, closes on Esc or the scrim, and returns focus. */
 export function NewTicketHost() {
   const [params, setParams] = useSearchParams();
   if (params.get("new") !== "1") return null;
+
   return (
-    <NewTicketDialog
+    <Dialog
       onClose={() => {
-        setParams((p) => {
-          p.delete("new");
-          return p;
-        });
+        setParams((p) => withoutParam(p, "new"));
       }}
-    />
+    >
+      {(close) => (
+        <>
+          <div className={s.head}>
+            <DialogTitle className={s.title}>{words.newTicket}</DialogTitle>
+            <IconButton label="Close" bare onClick={close}>
+              <CloseIcon />
+            </IconButton>
+          </div>
+          <NewTicketForms />
+        </>
+      )}
+    </Dialog>
   );
 }

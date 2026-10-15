@@ -1,34 +1,5 @@
-/* New ticket dialog. Not designed: the peek's panel language (DESIGN §9: --surface, radius 14px,
-   --surface-shadow over --scrim) with kit controls. */
-.layer {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: start center;
-  padding: 10vh var(--sp-6) var(--sp-6);
-  overflow: auto;
-}
-
-.scrim {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  animation: fade 200ms ease both;
-}
-
-.panel {
-  position: relative;
-  width: min(560px, 100%);
-  background: var(--surface);
-  border-radius: var(--r-xl);
-  box-shadow: var(--surface-shadow), var(--float-shadow);
-  outline: none;
-  animation:
-    fade 220ms ease both,
-    rise 260ms var(--ease-out) both;
-}
-
+/* New ticket dialog. Not designed: `Dialog`'s centred panel (the peek's panel language, DESIGN §9)
+   with kit controls. */
 .head {
   display: flex;
   align-items: center;
@@ -37,14 +8,8 @@
   padding: var(--sp-8) var(--sp-8) var(--sp-6) var(--sp-10);
   border-bottom: 1px solid var(--rule-soft);
 }
-.head > h2 {
+.title {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--fs-title);
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--ink-1);
 }
 
 .form {
@@ -147,22 +112,4 @@
 }
 .err {
   color: var(--blocked);
-}
-
-@keyframes fade {
-  from {
-    opacity: 0;
-  }
-}
-@keyframes rise {
-  from {
-    transform: translateY(8px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scrim,
-  .panel {
-    animation: none;
-  }
 }

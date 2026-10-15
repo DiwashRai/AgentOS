@@ -125,10 +125,3 @@ export function toCreateBody(f: NewTicketForm, workflowId: number | null = null)
     workflow_id: workflowId,
   };
 }
-
-/** Tab inside a dialog: the index to focus next, wrapping at both ends (-1 = nothing to focus). */
-export function trapIndex(current: number, count: number, back: boolean): number {
-  if (count <= 0) return -1;
-  if (current < 0) return back ? count - 1 : 0;
-  return back ? (current - 1 + count) % count : (current + 1) % count;
-}

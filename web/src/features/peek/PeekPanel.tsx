@@ -12,7 +12,17 @@ import { firstParagraph, paragraphs, planView } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { runLine, sourceWord, stageCount, statusMark } from "../../domain/ticketView";
 import { words } from "../../domain/words";
-import { Button, cx, Kbd, linkClass, RunMeter, StageGlyph, StatusMark, Stepper } from "../../ui";
+import {
+  Button,
+  cx,
+  DialogTitle,
+  Kbd,
+  linkClass,
+  RunMeter,
+  StageGlyph,
+  StatusMark,
+  Stepper,
+} from "../../ui";
 import { useNow } from "../../ui/useNow";
 import { Talk } from "../talk/Talk";
 import { PrLink } from "../ticket/PrLink";
@@ -161,7 +171,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
           </Button>
           <CloseButton onClose={onClose} />
         </div>
-        <h2 className={s.title}>{t.title}</h2>
+        <DialogTitle className={s.title}>{t.title}</DialogTitle>
         {desc && (
           <p className={s.desc} title={paragraphs(detail?.description ?? "")[0]}>
             {desc}

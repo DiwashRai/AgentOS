@@ -1,18 +1,10 @@
-/* The Peek (DESIGN §9). Ported from kit.css `.ao-scrim`, `.ao-peek*`, `.ao-facts`, `.ao-lab`,
-   `.ao-steps`. */
-.scrim {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  z-index: 40;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  border: 0;
-  padding: 0;
-  cursor: default;
-}
-.scrim.isOpen {
-  opacity: 1;
+/* The Peek (DESIGN §9). Ported from kit.css `.ao-peek*`, `.ao-facts`, `.ao-lab`, `.ao-steps`.
+   `Dialog` draws the scrim and the panel's surface; this module gives the side-sheet geometry and
+   its slide, open on `[data-open]`. */
+
+/* Under the Rail (z 45), as the peek always was. */
+.layer {
+  --dialog-z: 40;
 }
 
 .peek {
@@ -23,27 +15,28 @@
   width: min(560px, calc(100vw - 24px));
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-radius: var(--r-xl);
-  box-shadow: var(--surface-shadow);
   overflow: hidden auto;
   scrollbar-width: thin;
-  z-index: 41;
   opacity: 0;
   transform: translateX(24px);
   transition:
     opacity 0.22s ease,
     transform var(--dur-panel) var(--ease-out);
 }
-.peek.isOpen {
+.peek[data-open] {
   opacity: 1;
   transform: none;
 }
-.peek:focus {
-  outline: none;
-}
 .peek > * {
   flex: none;
+}
+:global(html.ao-paused) .peek {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .peek {
+    transition: none;
+  }
 }
 
 /* header */
@@ -75,12 +68,6 @@
   flex: 1;
 }
 .title {
-  font-family: var(--font-display);
-  font-size: var(--fs-title);
-  line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--ink-1);
   margin: var(--sp-6) 0 var(--sp-3);
 }
 .desc {
