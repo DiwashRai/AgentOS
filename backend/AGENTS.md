@@ -6,7 +6,7 @@ Applies to `backend/**`: the FastAPI + SQLite server (`server/agentos/`), the si
 - `server/agentos/`: one package per feature (`auth`, `tickets`, `files`, `social` (chat), `runs`, `templates`, `workflows`, `worker_api`, `intake`, `settings`), each split into `routes.py` / `deps.py` / `service.py` (+ `board.py`, `dispatcher.py`, `reaper.py` where needed).
 - Shared modules: `models.py` (the API contract), `db.py`, `config.py`, `context.py`, `clock.py`, `errors.py` + `http_errors.py`, `space_store.py`, `csrf.py`, `main.py`.
 - Pure core: `models.py`, `validate.py`, `pipeline/*` (scaffold, render, segment, manifest, plan, runtime, space), `tickets/board.py`.
-- Plugins: `launchers/` (`local`, `github`; protocol in `launchers/base.py`) and `sources/` (`jira`; protocol in `sources/base.py`).
+- Plugins: `launchers/` (`local`, `github`, `mailbox`; protocol in `launchers/base.py`) and `stores/` (`artifactory`; protocol in `stores/base.py`). `sources/jira.py` is one HTTP adapter (no protocol) that login, import and intake call directly.
 - `migrations/NNNN_name.sql`; `worker/worker.py` + `worker/worker_tests/`; `server/tests/` (+ `fixtures/`); `deploy/` (container + GitHub Actions runner, see `deploy/README.md`).
 
 ## Architecture (enforced by import-linter)

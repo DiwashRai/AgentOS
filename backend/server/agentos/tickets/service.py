@@ -56,12 +56,7 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.scaffold import names
 from agentos.pipeline.segment import validate_pipeline
 from agentos.pipeline.space import ResolvedRepo, SpaceConfig
-from agentos.sources.base import (
-    SourceNotFound,
-    SourceUnauthorized,
-    SourceUnavailable,
-    TicketSource,
-)
+from agentos.sources.jira import JiraNotFound, JiraSource, JiraUnauthorized, JiraUnavailable
 from agentos.templates import service as templates
 from agentos.tickets.board import ACTIVE, RunFact, StageRunFact, TicketFacts, derive, for_viewer
 from agentos.validate import validate_base_branch, validate_key
@@ -627,17 +622,17 @@ def _insert_ticket(conn: Conn, space: SpaceConfig, user: Me, new: _NewTicket) ->
 def import_ticket(
     db: Database,
     space: SpaceConfig,
-    source: TicketSource | None,
+    source: JiraSource | None,
     user: Me,
     body: ImportRequest,
     mappings: Sequence[FieldMapping] = (),
 ) -> ImportResult:
-    """Take in a source ticket by key or link (manual take-in: the importer owns it).
+    """Take in a Jira issue by key or link (manual take-in: the importer owns it).
 
     Not configured → 501; an unparseable ref, a project outside the Space's Jira projects or a key
-    AgentOS can't use → 422; imported before → that ticket, `created: false`, without a source
-    call. The source can't see it → 404 `ticket_not_found`; the source rejects the service
-    account or is down → 502 `upstream_error`. Another ticket already has the key → 409
+    AgentOS can't use → 422; imported before → that ticket, `created: false`, without a Jira
+    call. Jira can't see it → 404 `ticket_not_found`; Jira rejects the service account or is
+    down → 502 `upstream_error`. Another ticket already has the key → 409
     `key_taken`. The fetch happens outside the write transaction; inside it the import is
     re-checked, so two concurrent imports of one issue end with one ticket.
 
@@ -657,33 +652,28 @@ def import_ticket(
         )
     external_id = source.parse_ref(body.ref)
     if external_id is None:
-        raise ApiError(
-            422, "validation_error", f"ref: not a {source.name} issue key or link to one"
-        )
-    if source.name == "jira":  # the external id is the issue key: check it before any Jira call
-        _check_import_key(space.jira_projects, external_id)
+        raise ApiError(422, "validation_error", "ref: not a jira issue key or link to one")
+    _check_import_key(space.jira_projects, external_id)  # the issue key, before any Jira call
     with db.read() as conn:
-        if (key := _imported_key(conn, source.name, external_id)) is not None:
+        if (key := _imported_key(conn, "jira", external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
         workflows.for_ticket(conn, body.workflow_id)  # 422 before the Jira call (rechecked below)
     repo = space.default_repo
     mapping = mapping_for(mappings, "base_branch")
-    if mapping is not None and (repo is None or mapping.source != source.name):
+    if repo is None:
         mapping = None  # a no-repo ticket has no base branch
     try:
         fetched = source.fetch(external_id, (mapping.field,) if mapping is not None else ())
-    except SourceNotFound:
-        raise ApiError(404, "ticket_not_found", f"{source.name} can't see {external_id}") from None
-    except SourceUnauthorized:
+    except JiraNotFound:
+        raise ApiError(404, "ticket_not_found", f"jira can't see {external_id}") from None
+    except JiraUnauthorized:
         raise ApiError(
             502,
             "upstream_error",
-            f"{source.name} rejected the service account (AGENTOS_JIRA_SERVICE_EMAIL / _TOKEN)",
+            "jira rejected the service account (AGENTOS_JIRA_SERVICE_EMAIL / _TOKEN)",
         ) from None
-    except SourceUnavailable:
-        raise ApiError(
-            502, "upstream_error", f"{source.name} didn't answer; try again shortly"
-        ) from None
+    except JiraUnavailable:
+        raise ApiError(502, "upstream_error", "jira didn't answer; try again shortly") from None
     _check_import_key(space.jira_projects, fetched.key)  # a moved issue answers with its new key
     new = _NewTicket(
         key=fetched.key,
@@ -697,7 +687,7 @@ def import_ticket(
         base_branch_source="default",
         base_branch_set_by=None,
         owner_id=user.id,
-        source=SourceLink(source=source.name, external_id=fetched.external_id, url=fetched.url),
+        source=SourceLink(source="jira", external_id=fetched.external_id, url=fetched.url),
         workflow_id=body.workflow_id,
     )
     if mapping is not None:
@@ -711,7 +701,7 @@ def import_ticket(
             base_branch_reason=mapped.reason,
         )
     with db.tx() as conn:
-        if (key := _imported_key(conn, source.name, fetched.external_id)) is not None:
+        if (key := _imported_key(conn, "jira", fetched.external_id)) is not None:
             return ImportResult(ticket=_detail(conn, space, key, user.id), created=False)
         if conn.execute("SELECT 1 FROM tickets WHERE key = ?", (new.key,)).fetchone():
             raise ApiError(409, "key_taken", f"Another ticket already has the key {new.key}")

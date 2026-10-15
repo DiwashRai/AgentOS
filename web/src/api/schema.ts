@@ -806,7 +806,7 @@ export interface components {
             /** Server Default Runtime */
             server_default_runtime: string;
             /** Sources */
-            sources: ("jira" | "github")[];
+            sources: "jira"[];
             /** Space Name */
             space_name: string;
         };
@@ -1933,9 +1933,9 @@ export interface components {
             external_id: string;
             /**
              * Source
-             * @enum {string}
+             * @constant
              */
-            source: "jira" | "github" | "todoist";
+            source: "jira";
             /** Url */
             url: string;
         };

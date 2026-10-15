@@ -104,10 +104,7 @@
           },
           "sources": {
             "items": {
-              "enum": [
-                "jira",
-                "github"
-              ],
+              "const": "jira",
               "type": "string"
             },
             "title": "Sources",
@@ -3184,11 +3181,7 @@
             "type": "string"
           },
           "source": {
-            "enum": [
-              "jira",
-              "github",
-              "todoist"
-            ],
+            "const": "jira",
             "title": "Source",
             "type": "string"
           },

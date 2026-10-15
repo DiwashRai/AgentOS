@@ -58,8 +58,6 @@ export function runNumber(t: Pick<Ticket, "now" | "latest_run">): number | null 
 
 const SOURCE_NAME: Record<Schemas["SourceLink"]["source"], string> = {
   jira: "Jira",
-  github: "GitHub",
-  todoist: "Todoist",
 };
 
 /** Where the ticket came from, in sentence case beside the key chip: `Jira PLAT-2231`; null for

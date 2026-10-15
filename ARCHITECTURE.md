@@ -15,7 +15,7 @@ flowchart LR
   W -- "claim / events / sync / complete" --> S
   W -- "argv from manifest" --> A["agent CLI (claude) / shell"]
   W -- "clone, commit, push" --> G[("git remote")]
-  S -- "import / intake" --> J["Ticket source plugin<br/>(Jira)"]
+  S -- "login / import / intake" --> J["Jira adapter<br/>sources/jira.py"]
 ```
 
 ## Process & persistence
@@ -141,7 +141,7 @@ flowchart LR
     - **Cleanup:** the run folder is deleted after replay, and an hourly sweep removes folders of runs that are no longer active.
     - **Where:** `launchers/mailbox.py`, `stores/`, `mailbox/`; the design is in `design/mailbox.md` (local).
     - **Long term** this is meant to become the only worker protocol, and the HTTP worker path will be deleted.
-- **A ticket source implements `parse_ref`, `fetch` and `post_comment`.** Jira is the only source and is used by import and intake. Where: `sources/base.py`, `sources/jira.py`.
+- **Jira is one HTTP adapter that login, import and intake call directly.** There is no ticket-source protocol; like a plugin, the adapter has no db, service or FastAPI access, and it raises its own `JiraError`s, which the services map to `ApiError`. Where: `sources/jira.py`.
   - Jira Cloud has removed `/rest/api/2/search`, so search uses `POST /rest/api/3/search/jql`, which has no total (`/search/approximate-count` estimates it). Cloud answers an unknown field, project or value with an empty result rather than a 400, so an empty answer is explained via `/rest/api/3/jql/parse`. Data Center still uses `/rest/api/2/search`.
 - **Runtimes are argv templates resolved on the server.** Placeholders (`{model}`, `{agent}`, `{prompt}`) replace whole argv elements, with no shell involved. The worker knows nothing about runtimes, so switching CLIs (e.g. Copilot) is a settings change. Where: `pipeline/runtime.py`, `pipeline/manifest.py`; edited in Settings › Runners.
 

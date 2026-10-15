@@ -227,9 +227,6 @@ describe("header text", () => {
     const jira = { source: "jira" as const, external_id: "SCRUM-6", url: "https://x/SCRUM-6" };
     expect(sourceText(detail({ key: "SCRUM-6", source: jira }))).toBe("Jira");
     expect(sourceText(detail({ key: "AOS-3", source: jira }))).toBe("Jira SCRUM-6");
-    expect(
-      sourceText(detail({ source: { source: "github", external_id: "#12", url: "https://g" } })),
-    ).toBe("GitHub #12");
     expect(sourceText(detail())).toBeNull();
   });
 

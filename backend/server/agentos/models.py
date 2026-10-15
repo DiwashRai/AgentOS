@@ -38,7 +38,7 @@ GateState = Literal["pending", "passed", "waiting", "you"]
 PhaseState = Literal["pending", "done", "current", "failed", "stale", "skipped"]
 Mode = Literal["replace", "block"]
 StageKind = Literal["agent", "shell"]
-SourceName = Literal["jira", "github", "todoist"]
+SourceName = Literal["jira"]
 WorkerFinalStatus = Literal["completed", "failed", "cancelled"]
 
 # Every error code the API can return. The UI branches on these (e.g. 409 stale_version vs
@@ -157,7 +157,7 @@ class AppConfig(ApiModel):
     server_default_runtime: str
     # Where tickets can be imported from (POST /api/tickets/import): ["jira"] when the Jira URL and
     # service account are configured, else [].
-    sources: list[Literal["jira", "github"]]
+    sources: list[Literal["jira"]]
 
 
 class Health(ApiModel):
