@@ -65,7 +65,7 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO, Any, Protocol
 
@@ -132,6 +132,12 @@ JUNK_PATTERNS = (
 PR_LOOKUP = ("gh", "pr", "view", "{branch}", "--json", "url", "--jq", ".url")
 PR_LOOKUP_TIMEOUT_S = 30.0
 MAX_PR_URL_CHARS = 500  # the server's CompleteRequest.pr_url max_length
+
+# GitHub API publication on Actions (see api_publish).
+GITHUB_RETRY_BUDGET_S = 300.0  # rate limits, network errors and 5xx are retried this long
+GITHUB_API_VERSION = "2022-11-28"
+INLINE_MAX_BYTES = 1024 * 1024  # text up to this goes inline in the tree; larger is a blob
+MAX_GITHUB_MESSAGE_CHARS = 500
 
 # Characters cmd.exe interprets; a .cmd/.bat program must not receive them in argv (SPEC §9.3).
 CMD_UNSAFE = frozenset('\r\n"&|<>^%!')
@@ -1763,6 +1769,236 @@ def write_entry(root: Path, f: ManifestFile, key: str) -> str | None:
     except OSError as exc:
         return f"cannot write: {exc.strerror or exc}"
     return None
+
+
+# ---------------------------------------------------------------- GitHub API publication
+#
+# On GitHub Actions (GITHUB_ACTIONS=true, GH_TOKEN set) the branch is published through the Git
+# Data API (blobs, trees, commits, refs) instead of `git push`, because CI may only write to GitHub
+# through the REST API there. Everywhere else the worker pushes with git.
+
+_REPO_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
+_SCP_RE = re.compile(r"(?:[^@/:]+@)?([^@/:]+):(.+)")
+_PERSON_RE = re.compile(rb"(.*) <(.*)> ([0-9]+) ([+-])([0-9]{2})([0-9]{2})")
+_DIFF_META_RE = re.compile(r":([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([AMDT])")
+_NULL_SHA_RE = re.compile(r"0+")
+_BLOB_MODES = frozenset({"100644", "100755", "120000"})
+_SUBMODULE_MODE = "160000"
+
+
+class PublishError(Exception):
+    """Publication failed; the message is the stage's failure reason."""
+
+
+def api_publish(env: Mapping[str, str]) -> bool:
+    """Publish through the GitHub API: on Actions with a job token, else `git push`."""
+    return env.get("GITHUB_ACTIONS") == "true" and bool(env.get("GH_TOKEN", "").strip())
+
+
+def _host(netloc_host: str | None, port: int | None) -> str:
+    host = (netloc_host or "").lower()
+    return f"{host}:{port}" if port is not None else host
+
+
+def github_repo(repo_url: str, server_url: str) -> tuple[str | None, str | None]:
+    """("owner/repo", None) for an https or scp-style URL on `server_url`'s host, else (None,
+    why). Userinfo, a trailing `/` and `.git` are dropped; an error never echoes userinfo."""
+    try:
+        server = urllib.parse.urlsplit(server_url)
+        server_host = _host(server.hostname, server.port)
+        if "://" in repo_url:
+            url = urllib.parse.urlsplit(repo_url)
+            if url.scheme.lower() != "https":
+                return None, "the repo URL must be https or scp-style (git@host:owner/repo)"
+            if url.query or url.fragment:
+                return None, "the repo URL has a query or fragment"
+            host, path = _host(url.hostname, url.port), url.path
+        else:
+            match = _SCP_RE.fullmatch(repo_url)
+            if match is None:
+                return None, "the repo URL must be https or scp-style (git@host:owner/repo)"
+            host, path = match[1].lower(), match[2]
+    except ValueError:
+        return None, "the repo URL or GITHUB_SERVER_URL cannot be parsed"
+
+    if not server_host or host != server_host:
+        return None, f"the repo host {host or '(none)'} is not {server_host or '(none)'}"
+
+    parts = path.strip("/").removesuffix(".git").split("/")
+    if len(parts) != 2 or not all(
+        _REPO_PART_RE.fullmatch(p) and p not in (".", "..") for p in parts
+    ):
+        return None, "the repo URL's path is not owner/repo"
+    return f"{parts[0]}/{parts[1]}", None
+
+
+@dataclass(frozen=True)
+class Person:
+    name: str
+    email: str
+    date: str  # ISO 8601 with the original offset
+
+    def body(self) -> dict[str, str]:
+        return {"name": self.name, "email": self.email, "date": self.date}
+
+
+@dataclass(frozen=True)
+class GitCommit:
+    tree: str
+    parents: tuple[str, ...]
+    author: Person
+    committer: Person
+    message: str
+
+
+def _person(sha: str, value: bytes) -> Person:
+    match = _PERSON_RE.fullmatch(value)
+    name, email = (None, None) if match is None else (_decode(match[1]), _decode(match[2]))
+    if match is None or name is None or email is None:
+        raise PublishError(f"push failed: commit {sha[:12]} has an unreadable author or committer")
+    minutes = int(match[5]) * 60 + int(match[6])
+    offset = timedelta(minutes=-minutes if match[4] == b"-" else minutes)
+    when = datetime.fromtimestamp(int(match[3]), timezone(offset))
+    return Person(name, email, when.isoformat())
+
+
+def parse_commit(sha: str, raw: bytes) -> GitCommit:
+    """`git cat-file commit` output. Continuation headers (`gpgsig`, `mergetag`) are skipped; a
+    message that isn't UTF-8 is refused, because it can't go byte-exact through JSON."""
+    head, _, body = raw.partition(b"\n\n")
+    tree = ""
+    parents: list[str] = []
+    people: dict[bytes, Person] = {}
+    for line in head.split(b"\n"):
+        if line.startswith(b" "):
+            continue
+        key, _, value = line.partition(b" ")
+        if key == b"tree":
+            tree = value.decode("ascii")
+        elif key == b"parent":
+            parents.append(value.decode("ascii"))
+        elif key in (b"author", b"committer"):
+            people[key] = _person(sha, value)
+        elif key == b"encoding" and value.lower() not in (b"utf-8", b"utf8"):
+            raise PublishError(f"push failed: commit {sha[:12]} has a non-UTF-8 message")
+
+    message = _decode(body)
+    if message is None:
+        raise PublishError(f"push failed: commit {sha[:12]} has a non-UTF-8 message")
+    if not tree or b"author" not in people or b"committer" not in people:
+        raise PublishError(f"push failed: commit {sha[:12]} cannot be read")
+    return GitCommit(tree, tuple(parents), people[b"author"], people[b"committer"], message)
+
+
+@dataclass(frozen=True)
+class DiffEntry:
+    """One `git diff-tree -r -z --no-renames` line. A missing side has mode 000000."""
+
+    old_mode: str
+    new_mode: str
+    old_sha: str
+    new_sha: str
+    status: str
+    path: str
+
+    @property
+    def deleted(self) -> bool:
+        return self.status == "D"
+
+    @property
+    def needs_content(self) -> bool:
+        """A changed file's new content must reach GitHub (inline or as a blob)."""
+        return (
+            not self.deleted and self.new_mode != _SUBMODULE_MODE and self.old_sha != self.new_sha
+        )
+
+
+def parse_diff_tree(out: bytes) -> list[DiffEntry]:
+    fields = out.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 2:
+        raise PublishError("push failed: unexpected git diff-tree output")
+    entries: list[DiffEntry] = []
+    for meta, raw_path in zip(fields[::2], fields[1::2], strict=True):
+        match = _DIFF_META_RE.fullmatch(meta.decode("ascii", "replace"))
+        path = _decode(raw_path)
+        if match is None or path is None:
+            raise PublishError("push failed: unexpected git diff-tree output (or a non-UTF-8 path)")
+        old_mode, new_mode, old_sha, new_sha, status = match.groups()
+        entries.append(DiffEntry(old_mode, new_mode, old_sha, new_sha, status, path))
+    return entries
+
+
+def inline_text(data: bytes) -> str | None:
+    """`data` as a tree entry's inline `content`: UTF-8, no NUL, at most INLINE_MAX_BYTES."""
+    if len(data) > INLINE_MAX_BYTES or b"\0" in data:
+        return None
+    return _decode(data)
+
+
+def tree_entry(d: DiffEntry, data: bytes | None) -> tuple[dict[str, Any], bytes | None]:
+    """The `POST /git/trees` entry for `d`, plus the bytes to upload as a blob first (None when
+    the entry needs no upload). `data` is the new content when `d.needs_content`."""
+    mode = d.old_mode if d.deleted else d.new_mode
+    if mode == _SUBMODULE_MODE:
+        kind = "commit"
+    elif mode in _BLOB_MODES:
+        kind = "blob"
+    else:
+        raise PublishError(f"push failed: {d.path} has an unsupported mode {mode}")
+    entry: dict[str, Any] = {"path": d.path, "mode": mode, "type": kind}
+
+    if d.deleted:
+        entry["sha"] = None
+        return entry, None
+    if not d.needs_content:
+        entry["sha"] = d.new_sha
+        return entry, None
+    if data is None:
+        raise PublishError(f"push failed: no content for {d.path}")
+    text = inline_text(data)
+    if text is not None:
+        entry["content"] = text
+        return entry, None
+    entry["sha"] = d.new_sha
+    return entry, data
+
+
+def retry_wait(headers: Mapping[str, str], now: float) -> float | None:
+    """Seconds GitHub asks us to wait (`Retry-After`, or an exhausted rate limit's reset), or
+    None when it asks for nothing."""
+    after = headers.get("retry-after", "").strip()
+    if after.isdigit():
+        return float(after)
+    reset = headers.get("x-ratelimit-reset", "").strip()
+    if headers.get("x-ratelimit-remaining", "").strip() == "0" and reset.isdigit():
+        return max(0.0, float(reset) - now)
+    return None
+
+
+def classify(status: int | None, message: str, wait: float | None, ref_write: bool) -> str:
+    """What a failed GitHub call means: "rejected" (push rejected), "retry", "check" (a ref write
+    whose outcome is unknown: read the ref back) or "failed" (push failed: GitHub's message).
+    `status` is None for a timeout or a network error."""
+    low = message.lower()
+    if status in (403, 429) and (wait is not None or status == 429):
+        return "retry"
+    if status == 422 and ("not a fast forward" in low or "reference already exists" in low):
+        return "rejected"
+    if status is None or status >= 500:
+        return "check" if ref_write else "retry"
+    if status == 422 and ref_write:
+        return "check"
+    return "failed"
+
+
+def scrub(text: str, secrets_: tuple[str, ...]) -> str:
+    """Redact the secrets first (so a cut never leaves half of one), then one line, clipped."""
+    for secret in secrets_:
+        if secret:
+            text = text.replace(secret, "***")
+    return _clip(" ".join(text.split()), MAX_GITHUB_MESSAGE_CHARS)
 
 
 # ---------------------------------------------------------------- the run
