@@ -21,6 +21,7 @@ from typing import Literal, get_args
 from agentos.models import (
     Attention,
     DispatchBlock,
+    DispatchTarget,
     GateInfo,
     GateState,
     NowInfo,
@@ -65,7 +66,8 @@ class StageRunFact:
 
 @dataclass(frozen=True, slots=True)
 class RunFact:
-    """The ticket's latest run (by id)."""
+    """The ticket's latest run (by id). `target`: who serves it; a client run waits for the
+    client of its creator (`creator_name`)."""
 
     id: int
     status: RunStatus
@@ -75,6 +77,8 @@ class RunFact:
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    target: DispatchTarget = "server"
+    creator_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,6 +485,10 @@ def _now(standing: Standing, facts: TicketFacts, nxt: str | None) -> NowInfo:
             actor=None, person=None, text="add context, then dispatch", run_id=None, progress=None
         )
     if standing == "queued":
+        if run.target == "client":
+            whose = f"{run.creator_name}'s" if run.creator_name else "a"
+            verb = "waiting for" if run.status == "queued" else "starting on"
+            return info(f"{verb} {whose} client")
         return info("queued for a runner")
     if standing == "running":
         sr = next((sr for sr in _segment(run) if sr.status == "running"), None)

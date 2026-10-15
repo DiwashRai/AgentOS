@@ -6,7 +6,9 @@ export type StatusKind = "you" | "wait" | "blk" | "run" | "queued" | "done" | "i
 export type Attention = Schemas["TicketSummary"]["attention"];
 
 type StatusTicket = Pick<Schemas["TicketSummary"], "attention">;
-type OwnedTicket = Pick<Schemas["TicketSummary"], "owner">;
+interface OwnedTicket {
+  owner: Pick<Schemas["Person"], "id"> | null;
+}
 
 /** Who "me" is for selection: only the id matters. Null = signed out (nothing is mine). */
 export type MeRef = Pick<Schemas["Me"], "id"> | null;

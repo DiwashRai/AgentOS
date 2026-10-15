@@ -53,8 +53,13 @@ export type ActionTicket = Pick<
   "attention" | "rail" | "latest_run" | "now" | "dispatch_block"
 >;
 
-/** The actions that POST runs, so the server's `dispatch_block` refuses them. */
+/** The actions that POST runs, so the server's `dispatch_block` refuses them and they carry the
+ *  dispatch target (features/actions/target.ts). */
 const DISPATCHES: ReadonlySet<ActionId> = new Set(["approve", "retry", "dispatch"]);
+
+export function isDispatch(id: ActionId): boolean {
+  return DISPATCHES.has(id);
+}
 
 /** Disable the dispatching actions of `set` while the server says dispatch would be refused. */
 function withBlock(set: ActionSet, block: Schemas["DispatchBlock"] | null): ActionSet {

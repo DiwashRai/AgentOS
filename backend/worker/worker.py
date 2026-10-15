@@ -8,6 +8,13 @@ emit the manifest's warnings -> for each stage execution: run it, sync context f
 (repo mode) commit, pre-push guard, push -> (repo mode) look up the branch's PR with `gh` -> flush
 events -> complete (with `pr_url` if found).
 
+Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
+each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
+publish_branch) as one commit: blobs, a tree (checked against HEAD's), the commit on the
+branch's remote commit, then one ref write with `force: false`. Merges and rewrites are refused.
+Setup first checks the token can write there. A GitHub failure fails the stage; it is never a
+lost run or an unreachable server.
+
 Every output line goes out as a log event. An agent stage's output is also printed on stderr as
 it arrives, as readable `[stage id] ...` lines (see Echo), so a job console or the launcher's log
 file shows the run live; AGENTOS_ECHO=0 turns that off.
@@ -31,11 +38,18 @@ Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that c
 server): no claim and no HTTP. The manifest comes from a file, and every worker API call is
 recorded as one JSONL line in the outbox (see Recorder), which the server replays later. Nothing
 answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
+
+Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
+machine): long-polls POST /api/worker/poll for the runs its user dispatched to their client and
+starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once (see
+run_client). It backs off while the server is unreachable and stops on any 4xx but a transient
+one (401/403 included).
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import ctypes
 import http.client
@@ -57,11 +71,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, Protocol
 
 PROTOCOL = 1
 
@@ -77,6 +91,17 @@ POLL_S = 0.2  # how often a running stage checks cancel / timeout / server loss
 READER_JOIN_S = 5.0  # after a stage exits, wait this long for its output readers, then abandon
 GIT_TIMEOUT_S = 1800.0
 KILL_TIMEOUT_S = 30.0
+
+# Client mode (see run_client).
+CLIENT_POLL_WAIT_S = 25  # the server holds a poll this long at most while no run is queued
+CLIENT_POLL_TIMEOUT_S = 40.0  # one poll's HTTP timeout: above the server's hold
+CLIENT_BACKOFF_CAP_S = 60.0  # failed polls back off up to this, and are retried forever
+CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this often
+CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take poll this often keeps it online
+WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
+CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
+# Poll answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
+CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
 MAX_EVENTS_PER_POST = 500
 MAX_EVENTS_PER_RUN = 100_000
@@ -115,6 +140,13 @@ JUNK_PATTERNS = (
 PR_LOOKUP = ("gh", "pr", "view", "{branch}", "--json", "url", "--jq", ".url")
 PR_LOOKUP_TIMEOUT_S = 30.0
 MAX_PR_URL_CHARS = 500  # the server's CompleteRequest.pr_url max_length
+
+# GitHub API publication on Actions (see api_publish).
+GITHUB_RETRY_BUDGET_S = 300.0  # rate limits, network errors and 5xx are retried this long
+GITHUB_MIN_WAIT_S = 1.0  # the shortest pause GitHub's rate-limit answers get
+GITHUB_API_VERSION = "2022-11-28"
+INLINE_MAX_BYTES = 1024 * 1024  # text up to this goes inline in the tree; larger is a blob
+MAX_GITHUB_MESSAGE_CHARS = 500
 
 # Characters cmd.exe interprets; a .cmd/.bat program must not receive them in argv (SPEC §9.3).
 CMD_UNSAFE = frozenset('\r\n"&|<>^%!')
@@ -863,9 +895,20 @@ class Client:
         handlers = [urllib.request.ProxyHandler({})] if host in _LOOPBACK else []
         self._opener = urllib.request.build_opener(*handlers)
 
-    def post(self, path: str, body: dict[str, Any]) -> Any:
+    def post(
+        self,
+        path: str,
+        body: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+        retry_budget_s: float | None = None,
+    ) -> Any:
+        """POST `body` and return the decoded answer. `timeout_s` (default HTTP_TIMEOUT_S) bounds
+        each attempt; failures are retried for `retry_budget_s` (default RETRY_BUDGET_S, 0 = one
+        attempt), then raise Unreachable. A 4xx raises HttpError at once."""
         data = json.dumps(body).encode("utf-8")
-        deadline = time.monotonic() + RETRY_BUDGET_S
+        timeout = HTTP_TIMEOUT_S if timeout_s is None else timeout_s
+        deadline = time.monotonic() + (RETRY_BUDGET_S if retry_budget_s is None else retry_budget_s)
         delay = BACKOFF_START_S
         while True:
             request = urllib.request.Request(  # noqa: S310 -- the scheme is checked in parse_args
@@ -878,7 +921,7 @@ class Client:
                 },
             )
             try:
-                with self._opener.open(request, timeout=HTTP_TIMEOUT_S) as resp:
+                with self._opener.open(request, timeout=timeout) as resp:
                     raw = resp.read()
                 return json.loads(raw) if raw.strip() else None
             except urllib.error.HTTPError as exc:
@@ -1735,6 +1778,433 @@ def write_entry(root: Path, f: ManifestFile, key: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------- GitHub API publication
+#
+# On GitHub Actions (GITHUB_ACTIONS=true, GH_TOKEN set) the branch is published through the Git
+# Data API (blobs, trees, commits, refs) instead of `git push`, because CI may only write to GitHub
+# through the REST API there. Everywhere else the worker pushes with git.
+
+_REPO_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
+_SCP_RE = re.compile(r"(?:[^@/:]+@)?([^@/:]+):(.+)")
+_DIFF_META_RE = re.compile(r":([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([AMDT])")
+_NULL_SHA_RE = re.compile(r"0+")
+_BLOB_MODES = frozenset({"100644", "100755", "120000"})
+_SUBMODULE_MODE = "160000"
+
+
+class PublishError(Exception):
+    """Publication failed; the message is the stage's failure reason."""
+
+
+def api_publish(env: Mapping[str, str]) -> bool:
+    """Publish through the GitHub API: on Actions with a job token, else `git push`."""
+    return env.get("GITHUB_ACTIONS") == "true" and bool(env.get("GH_TOKEN", "").strip())
+
+
+def _host(netloc_host: str | None, port: int | None) -> str:
+    host = (netloc_host or "").lower()
+    return f"{host}:{port}" if port is not None else host
+
+
+def github_repo(repo_url: str, server_url: str) -> tuple[str | None, str | None]:
+    """("owner/repo", None) for an https or scp-style URL on `server_url`'s host, else (None,
+    why). Userinfo, a trailing `/` and `.git` are dropped; an error never echoes userinfo."""
+    try:
+        server = urllib.parse.urlsplit(server_url)
+        server_host = _host(server.hostname, server.port)
+        if "://" in repo_url:
+            url = urllib.parse.urlsplit(repo_url)
+            if url.scheme.lower() != "https":
+                return None, "the repo URL must be https or scp-style (git@host:owner/repo)"
+            if url.query or url.fragment:
+                return None, "the repo URL has a query or fragment"
+            host, path = _host(url.hostname, url.port), url.path
+        else:
+            match = _SCP_RE.fullmatch(repo_url)
+            if match is None:
+                return None, "the repo URL must be https or scp-style (git@host:owner/repo)"
+            host, path = match[1].lower(), match[2]
+    except ValueError:
+        return None, "the repo URL or GITHUB_SERVER_URL cannot be parsed"
+
+    if not server_host or host != server_host:
+        return None, f"the repo host {host or '(none)'} is not {server_host or '(none)'}"
+
+    parts = path.strip("/").removesuffix(".git").split("/")
+    if len(parts) != 2 or not all(
+        _REPO_PART_RE.fullmatch(p) and p not in (".", "..") for p in parts
+    ):
+        return None, "the repo URL's path is not owner/repo"
+    return f"{parts[0]}/{parts[1]}", None
+
+
+@dataclass(frozen=True)
+class DiffEntry:
+    """One `git diff-tree -r -z --no-renames` line. A missing side has mode 000000."""
+
+    old_mode: str
+    new_mode: str
+    old_sha: str
+    new_sha: str
+    status: str
+    path: str
+
+    @property
+    def deleted(self) -> bool:
+        return self.status == "D"
+
+    @property
+    def needs_content(self) -> bool:
+        """A changed file's new content must reach GitHub (inline or as a blob)."""
+        return (
+            not self.deleted and self.new_mode != _SUBMODULE_MODE and self.old_sha != self.new_sha
+        )
+
+
+def parse_diff_tree(out: bytes) -> list[DiffEntry]:
+    fields = out.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 2:
+        raise PublishError("push failed: unexpected git diff-tree output")
+    entries: list[DiffEntry] = []
+    for meta, raw_path in zip(fields[::2], fields[1::2], strict=True):
+        match = _DIFF_META_RE.fullmatch(meta.decode("ascii", "replace"))
+        path = _decode(raw_path)
+        if match is None or path is None:
+            raise PublishError("push failed: unexpected git diff-tree output (or a non-UTF-8 path)")
+        old_mode, new_mode, old_sha, new_sha, status = match.groups()
+        entries.append(DiffEntry(old_mode, new_mode, old_sha, new_sha, status, path))
+    return entries
+
+
+def inline_text(data: bytes) -> str | None:
+    """`data` as a tree entry's inline `content`: UTF-8, no NUL, at most INLINE_MAX_BYTES."""
+    if len(data) > INLINE_MAX_BYTES or b"\0" in data:
+        return None
+    return _decode(data)
+
+
+def tree_entry(d: DiffEntry, data: bytes | None) -> tuple[dict[str, Any], bytes | None]:
+    """The `POST /git/trees` entry for `d`, plus the bytes to upload as a blob first (None when
+    the entry needs no upload). `data` is the new content when `d.needs_content`."""
+    mode = d.old_mode if d.deleted else d.new_mode
+    if mode == _SUBMODULE_MODE:
+        kind = "commit"
+    elif mode in _BLOB_MODES:
+        kind = "blob"
+    else:
+        raise PublishError(f"push failed: {d.path} has an unsupported mode {mode}")
+    entry: dict[str, Any] = {"path": d.path, "mode": mode, "type": kind}
+
+    if d.deleted:
+        entry["sha"] = None
+        return entry, None
+    if not d.needs_content:
+        entry["sha"] = d.new_sha
+        return entry, None
+    if data is None:
+        raise PublishError(f"push failed: no content for {d.path}")
+    text = inline_text(data)
+    if text is not None:
+        entry["content"] = text
+        return entry, None
+    entry["sha"] = d.new_sha
+    return entry, data
+
+
+def retry_wait(headers: Mapping[str, str], now: float) -> float | None:
+    """Seconds GitHub asks us to wait (`Retry-After`, or an exhausted rate limit's reset), at
+    least GITHUB_MIN_WAIT_S (a reset already past by our clock must not mean an instant retry),
+    or None when it asks for nothing."""
+    after = headers.get("retry-after", "").strip()
+    if after.isdigit():
+        return max(GITHUB_MIN_WAIT_S, float(after))
+    reset = headers.get("x-ratelimit-reset", "").strip()
+    if headers.get("x-ratelimit-remaining", "").strip() == "0" and reset.isdigit():
+        return max(GITHUB_MIN_WAIT_S, float(reset) - now)
+    return None
+
+
+def classify(status: int | None, message: str, wait: float | None, ref_write: bool) -> str:
+    """What a failed GitHub call means: "rejected" (push rejected), "retry", "check" (a ref write
+    whose outcome is unknown: read the ref back) or "failed" (push failed: GitHub's message).
+    `status` is None for a timeout or a network error."""
+    low = message.lower()
+    if status in (403, 429) and (wait is not None or status == 429):
+        return "retry"
+    if status == 422 and ("not a fast forward" in low or "reference already exists" in low):
+        return "rejected"
+    if status is None or status >= 500:
+        return "check" if ref_write else "retry"
+    if status == 422 and ref_write:
+        return "check"
+    return "failed"
+
+
+def scrub(text: str, secrets_: tuple[str, ...]) -> str:
+    """Redact the secrets first (so a cut never leaves half of one), then one line, clipped."""
+    for secret in secrets_:
+        if secret:
+            text = text.replace(secret, "***")
+    return _clip(" ".join(text.split()), MAX_GITHUB_MESSAGE_CHARS)
+
+
+class GitHubError(Exception):
+    """A GitHub call failed for good. `action` is classify()'s answer; the message is GitHub's,
+    scrubbed and clipped. Never a RunGone or Unreachable: it only ever fails the stage."""
+
+    def __init__(self, status: int | None, message: str, action: str) -> None:
+        super().__init__(f"HTTP {status}: {message}" if status is not None else message)
+        self.status = status
+        self.message = message
+        self.action = action
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib would forward Authorization to any host it is redirected to: follow nothing."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
+class GitHub:
+    """The Git Data API of one repo with the job's token. Separate from Client/WorkerApi on
+    purpose: a GitHub failure is a stage failure, never a lost run or an unreachable server."""
+
+    def __init__(self, api_url: str, token: str, repo: str) -> None:
+        self.repo = repo
+        self._base = f"{api_url.rstrip('/')}/repos/{repo}"
+        self._token = token
+        self._opener = urllib.request.build_opener(_NoRedirect())
+
+    def call(self, method: str, path: str, body: Any = None, *, ref_write: bool = False) -> Any:
+        """Send one request under /repos/<owner>/<repo> and return the decoded answer. What
+        classify() calls "retry" is retried within GITHUB_RETRY_BUDGET_S; anything else raises
+        GitHubError."""
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        deadline = time.monotonic() + GITHUB_RETRY_BUDGET_S
+        delay = BACKOFF_START_S
+        while True:
+            request = urllib.request.Request(  # noqa: S310 -- GITHUB_API_URL is checked to be https
+                self._base + path,
+                data=data,
+                method=method,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "agentos-worker",
+                    "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                },
+            )
+            status: int | None = None
+            wait: float | None = None
+            try:
+                with self._opener.open(request, timeout=HTTP_TIMEOUT_S) as resp:
+                    raw = resp.read()
+                return json.loads(raw) if raw.strip() else None
+            except urllib.error.HTTPError as exc:
+                status, message = exc.code, self._message(exc)
+                headers = {k.lower(): v for k, v in exc.headers.items()}
+                wait = retry_wait(headers, time.time())
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                message = f"{type(exc).__name__}: {exc}"
+            message = scrub(message, (self._token,))
+
+            action = classify(status, message, wait, ref_write)
+            remaining = deadline - time.monotonic()
+            pause = delay if wait is None else wait
+            if action != "retry" or pause > remaining:
+                raise GitHubError(status, message, action)
+            say(f"GitHub {method} {path} failed ({message}); retrying in {pause:.1f}s")
+            time.sleep(pause)
+            delay = min(delay * 2, BACKOFF_CAP_S)
+
+    @staticmethod
+    def _message(exc: urllib.error.HTTPError) -> str:
+        if 300 <= exc.code < 400:
+            return "GitHub redirected the request: fix the ticket's repo URL"
+        message = str(exc.reason)
+        try:
+            body = json.loads(exc.read() or b"null")
+            if isinstance(body, dict) and isinstance(body.get("message"), str):
+                message = body["message"]
+        except (OSError, ValueError):
+            pass
+        finally:
+            exc.close()
+        return message
+
+
+class GitRunner(Protocol):
+    """Runs git in the workspace (Run._git)."""
+
+    def __call__(self, *args: str, stdin: bytes | None = None) -> GitResult: ...
+
+
+def _git_out(git: GitRunner, *args: str, stdin: bytes | None = None) -> bytes:
+    r = git(*args, stdin=stdin)
+    if r.code:
+        raise PublishError(f"push failed: git {args[0]} failed: {r.tail()}")
+    return r.out
+
+
+def _read_blobs(git: GitRunner, shas: list[str]) -> dict[str, bytes]:
+    """Blob contents from the object DB (`git cat-file --batch`), never the working tree."""
+    if not shas:
+        return {}
+    out = _git_out(git, "cat-file", "--batch", stdin="".join(f"{s}\n" for s in shas).encode())
+    blobs: dict[str, bytes] = {}
+    pos = 0
+    for sha in shas:
+        end = out.find(b"\n", pos)
+        header = out[pos:end].split() if end >= 0 else []
+        if len(header) != 3 or header[1] != b"blob" or not header[2].isdigit():
+            raise PublishError(f"push failed: cannot read blob {sha[:12]}")
+        size = int(header[2])
+        blobs[sha] = out[end + 1 : end + 1 + size]
+        pos = end + 1 + size + 1
+    return blobs
+
+
+def _github(github: GitHub, method: str, path: str, body: Any) -> Any:
+    try:
+        return github.call(method, path, body)
+    except GitHubError as exc:
+        raise PublishError(f"push failed: {exc.message}") from None
+
+
+def _head_commit(git: GitRunner) -> tuple[str, dict[str, str]]:
+    """HEAD's message and author: what the one published commit carries."""
+    out = _git_out(git, "log", "-1", "--format=%an%x00%ae%x00%aI%x00%B")
+    parts = [p for p in (_decode(f) for f in out.split(b"\0", 3)) if p is not None]
+    if len(parts) != 4:
+        raise PublishError("push failed: HEAD's message or author is not UTF-8")
+
+    name, email, date, message = parts
+    return message.rstrip("\n") + "\n", {"name": name, "email": email, "date": date}
+
+
+def _tree_entries(git: GitRunner, github: GitHub, base: str, head: str) -> list[dict[str, Any]]:
+    """The tree entries that turn `base`'s tree into `head`'s, uploading what can't go inline."""
+    diffs = parse_diff_tree(_git_out(git, "diff-tree", "-r", "-z", "--no-renames", base, head))
+    blobs = _read_blobs(git, list(dict.fromkeys(d.new_sha for d in diffs if d.needs_content)))
+
+    entries: list[dict[str, Any]] = []
+    uploaded: set[str] = set()
+    for d in diffs:
+        entry, upload = tree_entry(d, blobs.get(d.new_sha))
+        if upload is not None and d.new_sha not in uploaded:
+            content = base64.b64encode(upload).decode("ascii")
+            blob = _github(github, "POST", "/git/blobs", {"content": content, "encoding": "base64"})
+            if blob.get("sha") != d.new_sha:
+                raise PublishError(f"publish mismatch: blob {d.path}")
+            uploaded.add(d.new_sha)
+        entries.append(entry)
+    return entries
+
+
+def _write_ref(github: GitHub, branch: str, sha: str, exists: bool) -> None:
+    """Move the branch to `sha`, never forced. An unknown outcome is settled by reading it back."""
+    quoted = urllib.parse.quote(branch, safe="/")
+    body: dict[str, Any]
+    try:
+        if exists:
+            body = {"sha": sha, "force": False}
+            github.call("PATCH", f"/git/refs/heads/{quoted}", body, ref_write=True)
+        else:
+            body = {"ref": f"refs/heads/{branch}", "sha": sha}
+            github.call("POST", "/git/refs", body, ref_write=True)
+    except GitHubError as exc:
+        failure = exc
+    else:
+        return
+
+    if failure.action == "rejected":
+        raise PublishError("push rejected")
+    if failure.action == "check":
+        try:
+            ref = github.call("GET", f"/git/ref/heads/{quoted}")
+        except GitHubError:
+            ref = None
+        if isinstance(ref, dict) and ref.get("object", {}).get("sha") == sha:
+            return
+    raise PublishError(f"push failed: {failure.message}")
+
+
+def publish_branch(
+    git: GitRunner,
+    github: GitHub,
+    branch: str,
+    pushed_head: str,
+    exists: bool,
+    before_ref: Callable[[], None] = lambda: None,
+) -> tuple[str, int]:
+    """Publish HEAD to `branch` through the Git Data API as ONE commit on `pushed_head` (the
+    branch's remote commit): the changes as a tree on its tree, with HEAD's message and author,
+    then one ref write (`exists`: PATCH, else POST). `before_ref` runs right before the ref
+    write. Merge commits are refused: squashed, a merged base would read as the branch's own
+    work. Returns (the branch's new remote sha, local commits it covers); raises PublishError."""
+    head = _git_out(git, "rev-parse", "HEAD").decode().strip()
+    r = git("merge-base", "--is-ancestor", pushed_head, head)
+    if r.code == 1:
+        raise PublishError("push rejected")
+    if r.code:
+        raise PublishError(f"push failed: git merge-base failed: {r.tail()}")
+
+    span = f"{pushed_head}..{head}"
+    if _git_out(git, "rev-list", "--merges", span).strip():
+        raise PublishError("push failed: merge commits can't be published through the GitHub API")
+    count = int(_git_out(git, "rev-list", "--count", span))
+
+    tree = _git_out(git, "rev-parse", f"{head}^{{tree}}").decode().strip()
+    entries = _tree_entries(git, github, pushed_head, head)
+    if entries:
+        base = _git_out(git, "rev-parse", f"{pushed_head}^{{tree}}").decode().strip()
+        answer = _github(github, "POST", "/git/trees", {"base_tree": base, "tree": entries})
+        if answer.get("sha") != tree:
+            raise PublishError("publish mismatch: GitHub's tree differs from HEAD's")
+
+    message, author = _head_commit(git)
+    body = {"message": message, "tree": tree, "parents": [pushed_head], "author": author}
+    sha = str(_github(github, "POST", "/git/commits", body)["sha"])
+
+    before_ref()
+    _write_ref(github, branch, sha, exists)
+    return sha, count
+
+
+def track_published(git: GitRunner, branch: str, sha: str) -> str | None:
+    """After a publish: move the local branch onto the remote commit `sha` (same tree) and make
+    git see it as pushed (remote-tracking ref, upstream). Returns why it failed, or None."""
+    head = git("rev-parse", "HEAD")
+    if head.code or head.out.decode().strip() != sha:
+        r = git("fetch", "-q", "--no-tags", "origin", sha)
+        if r.code:
+            return f"published, fetch failed: {r.tail()}"
+        r = git("reset", "-q", "--soft", sha)
+        if r.code:
+            return f"published, fetch failed: git reset: {r.tail()}"
+    for args in (
+        ("update-ref", f"refs/remotes/origin/{branch}", sha),
+        ("config", f"branch.{branch}.remote", "origin"),
+        ("config", f"branch.{branch}.merge", f"refs/heads/{branch}"),
+    ):
+        r = git(*args)
+        if r.code:
+            return f"published, fetch failed: git {args[0]}: {r.tail()}"
+    return None
+
+
 # ---------------------------------------------------------------- the run
 
 
@@ -1778,6 +2248,9 @@ class Run:
         ]
         self._protected_lower = [p.lower() for p in self.protected]
         self.echo = os.environ.get("AGENTOS_ECHO", "").strip() != "0"  # see Echo
+        self.api_mode = self.repo and api_publish(os.environ)  # publish through the GitHub API
+        self.github: GitHub | None = None  # set up by _setup_github in API mode
+        self.branch_exists = False  # the branch was on the remote at clone or has been published
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
@@ -1926,11 +2399,16 @@ class Run:
         repo_url, base_branch, branch = self.m.repo_url, self.m.base_branch, self.m.branch
         if repo_url is None or base_branch is None or branch is None:  # parse_manifest ensures
             return "repo mode needs repo_url, base_branch and branch"
+        if self.api_mode:
+            problem = self._setup_github(repo_url)
+            if problem:
+                return problem
         say(f"cloning into {self.workdir}")
         r = self._git("clone", "--filter=blob:none", "--no-tags", "--", repo_url, ".", show=True)
         if r.code:
             return f"git clone failed: {r.tail()}"
         exists = self._git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}").code == 0
+        self.branch_exists = exists
         start = f"origin/{branch}" if exists else f"origin/{base_branch}"
         r = self._git("checkout", "-q", "-B", branch, start, show=True)
         if r.code:
@@ -1945,6 +2423,36 @@ class Run:
             r = self._git("config", setting, value)
             if r.code:
                 return f"git config {setting} failed: {r.tail()}"
+        return None
+
+    def _setup_github(self, repo_url: str) -> str | None:
+        """API mode: check the env, then that the token can write to the ticket's repo by
+        posting an empty blob there (harmless: blobs are content-addressed)."""
+        api_url = os.environ.get("GITHUB_API_URL", "").strip()
+        server_url = os.environ.get("GITHUB_SERVER_URL", "").strip()
+        for name, value in (("GITHUB_API_URL", api_url), ("GITHUB_SERVER_URL", server_url)):
+            if not value:
+                return f"GitHub API publication needs {name}"
+        if urllib.parse.urlsplit(api_url).scheme != "https":
+            return "GITHUB_API_URL must be https"
+        repo, why = github_repo(repo_url, server_url)
+        if repo is None:
+            return f"cannot publish through the GitHub API: {why}"
+
+        github = GitHub(api_url, os.environ.get("GH_TOKEN", "").strip(), repo)
+        try:
+            github.call("POST", "/git/blobs", {"content": "", "encoding": "utf-8"})
+        except GitHubError as exc:
+            if exc.status in (401, 403, 404) and exc.action != "retry":
+                runs_in = os.environ.get("GITHUB_REPOSITORY") or "unknown"
+                return (
+                    f"cannot write to {repo} through the GitHub API ({exc}): the job's token "
+                    f"only writes to the repo the workflow runs in ({runs_in})"
+                )
+            return f"cannot write to {repo} through the GitHub API: {exc}"
+
+        say(f"publishing through the GitHub API to {repo}")
+        self.github = github
         return None
 
     def _write_files(self) -> None:
@@ -2290,13 +2798,38 @@ class Run:
         head = r.out.decode().strip()
         if head == self.pushed_head:
             return None
-        if isinstance(self.events.failure, RunGone):  # taken away while we were committing
-            raise self.events.failure
+        self._check_gone()
+        if self.github is not None:
+            return self._publish(stage_id, self.github)
         r = self._git("push", "-u", "origin", str(self.m.branch), show=True, stage_id=stage_id)
         if r.code:
             return "push rejected" if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
         self.pushed_head = head
         return None
+
+    def _check_gone(self) -> None:
+        if isinstance(self.events.failure, RunGone):  # taken away while we were committing
+            raise self.events.failure
+
+    def _publish(self, stage_id: str | None, github: GitHub) -> str | None:
+        """API mode's push: publish through the Git Data API, then make the local branch the
+        published one. A GitHub failure is the stage's failure reason."""
+        branch = str(self.m.branch)
+        try:
+            sha, count = publish_branch(
+                self._git, github, branch, self.pushed_head, self.branch_exists, self._check_gone
+            )
+        except PublishError as exc:
+            return str(exc)
+        self.pushed_head = sha
+        self.branch_exists = True
+
+        message = (
+            f"published {count} commit(s) to {branch} as one through the GitHub API ({sha[:12]})"
+        )
+        say(message)
+        self.events.log(stage_id, "system", message)
+        return track_published(self._git, branch, sha)
 
     def _save_offline(self) -> None:
         stage_id = self.current_stage or "setup"
@@ -2393,18 +2926,337 @@ class Run:
         return result
 
 
+# ---------------------------------------------------------------- client mode
+#
+# `--client` runs on a user's own machine: it long-polls the server for the runs its user
+# dispatched to "My client" and starts this same file as a detached worker for each, the way the
+# server's local launcher does (agentos.launchers.local).
+
+_ENV_PREFIX = "AGENTOS_"
+_ENV_BLANK_RE = re.compile(r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)")
+_ENV_ENTRY_RE = re.compile(
+    r"[ \t]*(?:export[ \t]+)?(?P<key>(?!['\"])[^=#\s]+)[ \t]*"
+    r"(?:=[ \t]*(?:'(?P<single>(?:\\'|[^'])*)'"
+    r'|"(?P<double>(?:\\"|[^"])*)"'
+    r"|(?P<bare>(?!['\"])[^\r\n]*)))?"
+    r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)"
+)
+_SINGLE_ESCAPE_RE = re.compile(r"\\([\\'])")
+_DOUBLE_ESCAPE_RE = re.compile(r"\\([\\'\"abfnrtv])")
+_ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?")  # <run_id> workspaces and <run_id>.log logs
+
+
+class EnvFileError(ValueError):
+    """An env file line outside the supported subset."""
+
+
+def parse_env(text: str) -> dict[str, str | None]:
+    """The python-dotenv subset the local launcher's env file uses: `KEY=value` lines, `#`
+    comments (whole-line, or after whitespace in an unquoted value), an optional `export `,
+    single quotes (literal but `\\'` and `\\\\`), double quotes (with `\\n`-style escapes), quoted
+    values across lines, and a bare `KEY` meaning "unset KEY" (None). `${VAR}` is not expanded."""
+    values: dict[str, str | None] = {}
+    pos, line = 0, 1
+    while pos < len(text):
+        blank = _ENV_BLANK_RE.match(text, pos)
+        if blank is not None:
+            pos, line = blank.end(), line + blank.group(0).count("\n")
+            continue
+
+        entry = _ENV_ENTRY_RE.match(text, pos)
+        if entry is None:
+            raise EnvFileError(f"line {line}: expected KEY=value, KEY or a comment")
+        single, double, bare = entry.group("single", "double", "bare")
+        if single is not None:
+            value: str | None = _SINGLE_ESCAPE_RE.sub(lambda m: m.group(1), single)
+        elif double is not None:
+            value = _DOUBLE_ESCAPE_RE.sub(lambda m: _ESCAPES.get(m.group(1), m.group(1)), double)
+        elif bare is not None:
+            value = re.sub(r"\s+#.*", "", bare).rstrip()
+        else:
+            value = None
+        values[entry.group("key")] = value
+        pos, line = entry.end(), line + entry.group(0).count("\n")
+    return values
+
+
+def read_env_file(path: Path) -> dict[str, str | None]:
+    """parse_env of a UTF-8 file (a leading BOM is ignored). Raises OSError or EnvFileError."""
+    return parse_env(path.read_text(encoding="utf-8-sig"))
+
+
+def _env_set(env: dict[str, str], key: str, value: str | None) -> None:
+    """Set (or with None, remove) `key`; Windows env names are case-insensitive."""
+    if sys.platform == "win32":
+        for existing in [k for k in env if k.upper() == key.upper()]:
+            del env[existing]
+    else:
+        env.pop(key, None)
+    if value is not None:
+        env[key] = value
+
+
+def child_env(
+    dispatch_token: str, env_file: Mapping[str, str | None], base: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """A run worker's environment: `base` (default: ours) minus every AGENTOS_* var, then the env
+    file's values (None removes the key), then unbuffered UTF-8 output and AGENTOS_TOKEN. The
+    same as the local launcher's child_env; the token is never on the command line."""
+    source = os.environ if base is None else base
+    env = {k: v for k, v in source.items() if not k.upper().startswith(_ENV_PREFIX)}
+    for key, value in env_file.items():
+        _env_set(env, key, value)
+    _env_set(env, "PYTHONUNBUFFERED", "1")  # live log
+    _env_set(env, "PYTHONIOENCODING", "utf-8")
+    _env_set(env, "AGENTOS_TOKEN", dispatch_token)
+    return env
+
+
+class Child(Protocol):
+    """A started run worker, as the client loop sees it."""
+
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+
+Spawn = Callable[[list[str], Path, dict[str, str], Path], Child]  # (argv, cwd, env, log file)
+
+
+def spawn_detached(
+    argv: list[str], cwd: Path, env: dict[str, str], log: Path
+) -> subprocess.Popen[bytes]:
+    """Start `argv` in its own process group (Windows: also without a console) with stdout and
+    stderr appended to `log`, so it outlives this process and a Ctrl+C in its console."""
+    with log.open("ab") as out:
+        # The child gets its own copy of the log handle; ours closes when this block exits.
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            return subprocess.Popen(
+                argv,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                creationflags=flags,
+            )
+        return subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def git_repo_containing(path: Path) -> Path | None:
+    """The nearest existing ancestor of `path` (itself included) that holds a `.git` entry."""
+    for candidate in (path, *path.parents):
+        if candidate.exists() and (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def clean_workdir_root(root: Path, now: float) -> list[Path]:
+    """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under the
+    client's own `root/CLIENT_RUNS_DIR`, last modified more than WORKSPACE_MAX_AGE_S before `now`
+    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it is left
+    alone. Returns what was deleted."""
+    runs = root / CLIENT_RUNS_DIR
+    try:
+        children = sorted(runs.iterdir())
+    except OSError as exc:
+        say(f"cannot list {runs} for old workspaces: {exc}")
+        return []
+
+    cutoff = now - WORKSPACE_MAX_AGE_S
+    removed: list[Path] = []
+    for child in children:
+        if not _RUN_ENTRY_RE.fullmatch(child.name):
+            continue
+        try:
+            st = child.lstat()
+            if st.st_mtime >= cutoff:
+                continue
+            if stat.S_ISDIR(st.st_mode) and not is_link(st):
+                remove_tree(child)
+            else:
+                child.unlink()
+        except OSError as exc:
+            say(f"cannot delete the old workspace {child}: {exc}")
+            continue
+        removed.append(child)
+    return removed
+
+
+def _assignment(resp: object) -> tuple[int, str] | None:
+    """(run id, dispatch token) from a poll answer, or None when it hands out no run. Raises
+    ValueError for an answer that isn't `{"run": null | {"run_id", "dispatch_token", ...}}`."""
+    if not isinstance(resp, dict) or "run" not in resp:
+        raise ValueError("the poll answer has no `run`")
+    run = resp["run"]
+    if run is None:
+        return None
+
+    run_id = run.get("run_id") if isinstance(run, dict) else None
+    token = run.get("dispatch_token") if isinstance(run, dict) else None
+    if type(run_id) is not int or run_id < 1 or not isinstance(token, str) or not token:
+        raise ValueError("the poll answer's run has no valid run_id and dispatch_token")
+    return run_id, token
+
+
+def run_client(
+    server: str,
+    token: str,
+    root: Path,
+    max_runs: int,
+    env_file: Path | None,
+    spawn: Spawn,
+) -> int:
+    """Client mode: poll for this user's runs and start a detached worker for each, at most
+    `max_runs` at once. Takes runs only while a slot is free; while every slot is busy it sends a
+    no-take poll every CLIENT_HEARTBEAT_S, so the server still sees the client online. Network
+    errors, 5xx, transient 4xx (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to
+    CLIENT_BACKOFF_CAP_S) and poll again, forever. Any other 4xx (401/403: token revoked, user
+    disabled, viewer; or a protocol the client doesn't speak) stops the client with exit code 1;
+    started workers keep running, since they hold their own per-run tokens.
+
+    Everything the client writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs
+    `worker.py --server <server> --workdir <root>/runs/<run_id>` there, logs to
+    `<root>/runs/<run_id>.log` and gets the dispatch token as AGENTOS_TOKEN (see child_env)."""
+    root = root.expanduser().resolve()
+    repo = git_repo_containing(root)
+    if repo is not None:
+        say(f"--workdir-root {root} is inside the git repo {repo}; choose a directory outside it")
+        return 2
+    try:
+        env_values = read_env_file(env_file) if env_file is not None else {}
+    except (OSError, EnvFileError) as exc:
+        say(f"cannot read the env file {env_file}: {exc}")
+        return 2
+    runs = root / CLIENT_RUNS_DIR
+    try:
+        runs.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        say(f"cannot create {runs}: {exc}")
+        return 1
+
+    removed = clean_workdir_root(root, time.time())
+    if removed:
+        say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
+
+    client = Client(server, token)
+    me = str(Path(__file__).resolve())
+    children: list[Child] = []
+    delay = BACKOFF_START_S
+    answered = time.monotonic()  # when the server last answered a poll
+    say(f"client: polling {server} for runs, at most {max_runs} at once, in {runs}")
+    try:
+        while True:
+            children = [child for child in children if child.poll() is None]
+            busy = len(children) >= max_runs
+            if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
+                time.sleep(CLIENT_REAP_S)
+                continue
+
+            take = {"wait_s": CLIENT_POLL_WAIT_S}
+            heartbeat = {"wait_s": 0, "take": False}  # last seen only; never hands out a run
+            try:
+                resp = client.post(
+                    "/api/worker/poll",
+                    heartbeat if busy else take,
+                    timeout_s=CLIENT_POLL_TIMEOUT_S,
+                    retry_budget_s=0,
+                )
+                answered = time.monotonic()
+                assignment = _assignment(resp)
+            except HttpError as exc:
+                if exc.status not in CLIENT_TRANSIENT_4XX:
+                    say(f"the server refused this client ({exc}); stopping")
+                    return 1
+                problem = str(exc)
+            except (Unreachable, ValueError) as exc:
+                problem = str(exc)
+            else:
+                delay = BACKOFF_START_S
+                if assignment is None:
+                    continue
+                run_id, dispatch_token = assignment
+                argv = [
+                    sys.executable,
+                    me,
+                    "--server",
+                    server,
+                    "--workdir",
+                    str(runs / str(run_id)),
+                ]
+                log = runs / f"{run_id}.log"
+                try:
+                    child = spawn(argv, runs, child_env(dispatch_token, env_values), log)
+                except OSError as exc:
+                    say(f"run {run_id}: cannot start its worker: {exc}")
+                    continue
+                children.append(child)
+                say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
+                continue
+
+            say(f"poll failed ({problem}); polling again in {delay:.1f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
+    except KeyboardInterrupt:
+        say("client stopped; started workers keep running")
+        return 130
+
+
 # ---------------------------------------------------------------- entry point
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    """Exactly one mode: HTTP (--server [--token]) or mailbox (--manifest --outbox --workdir)."""
+    """Exactly one mode: HTTP (--server [--token]), mailbox (--manifest --outbox --workdir) or
+    client (--client --server, the client token in $AGENTOS_CLIENT_TOKEN)."""
     parser = argparse.ArgumentParser(prog="worker.py", description=__doc__)
     parser.add_argument("--server", help="AgentOS server URL, e.g. http://127.0.0.1:8000")
     parser.add_argument("--token", help="dispatch token (default: $AGENTOS_TOKEN)")
     parser.add_argument("--workdir", help="workspace directory (default: ./agentos-run-<run_id>)")
     parser.add_argument("--manifest", help="mailbox mode: the run's manifest.json")
     parser.add_argument("--outbox", help="mailbox mode: the outbox.jsonl to create")
+    parser.add_argument(
+        "--client",
+        action="store_true",
+        help="client mode: run my runs on this machine (token: $AGENTOS_CLIENT_TOKEN)",
+    )
+    parser.add_argument("--max-runs", type=int, help="client mode: runs at once (default: 1)")
+    parser.add_argument(
+        "--workdir-root",
+        help="client mode: where run workspaces and logs go (default: ~/.agentos/workspaces)",
+    )
+    parser.add_argument(
+        "--env-file", help="client mode: KEY=value lines added to every run worker's environment"
+    )
     args = parser.parse_args(argv)
+    client_only = (args.max_runs, args.workdir_root, args.env_file)
+    if args.client:
+        used = [args.token, args.workdir, args.manifest, args.outbox]
+        if any(value is not None for value in used):
+            parser.error("--client can't be used with --token, --workdir, --manifest or --outbox")
+        if args.server is None:
+            parser.error("--client needs --server")
+        if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
+            parser.error("--server must be an http:// or https:// URL")
+        if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
+            parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
+        args.max_runs = 1 if args.max_runs is None else args.max_runs
+        if args.max_runs < 1:
+            parser.error("--max-runs must be at least 1")
+        args.workdir_root = args.workdir_root or "~/.agentos/workspaces"
+        args.mailbox = False
+        return args
+    if any(value is not None for value in client_only):
+        parser.error("--max-runs, --workdir-root and --env-file need --client")
     args.mailbox = args.manifest is not None or args.outbox is not None
     if args.mailbox:
         if args.server is not None or args.token is not None:
@@ -2425,6 +3277,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     os.environ.pop("AGENTOS_TOKEN", None)  # never handed to git or to stages
+    client_token = os.environ.pop("AGENTOS_CLIENT_TOKEN", "").strip()  # nor to run workers
+    if args.client:
+        env_file = Path(args.env_file) if args.env_file else None
+        root = Path(args.workdir_root)
+        return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
     if args.mailbox:
         return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
     worker_token = secrets.token_urlsafe(32)

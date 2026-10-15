@@ -7,11 +7,12 @@ import { useState } from "react";
 import { Link as RouterLink, useLocation } from "react-router";
 
 import type { Schemas } from "../../api/client";
+import { clientWait } from "../../domain/clients";
 import { elapsed } from "../../domain/format";
 import { planText } from "../../domain/plan";
 import { OUTCOME_KIND, outcomeOf, resolvedBy, type Outcome } from "../../domain/outcome";
 import { statusKind } from "../../domain/status";
-import { attentionWords, outcomeWords } from "../../domain/words";
+import { attentionWords, onlineWords, outcomeWords } from "../../domain/words";
 import { RunMeter, StatusMark, cx, linkClass } from "../../ui";
 import { isTasksFile } from "../context/files";
 import { useNow } from "../../ui/useNow";
@@ -47,6 +48,9 @@ function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
   // Past STRIP_LABEL_MAX steps the meter drops its labels anyway (bare segments).
   const labels = step?.n === plan.length ? plan.map((p) => planText(p.text)) : undefined;
   const nowText = planText(t.now.text);
+  // A queued client run says whose client it waits for and whether that client is online.
+  const wait = queued ? clientWait(t) : null;
+  const text = wait ? wait.text : queued ? "Waiting for a runner" : nowText;
   return (
     <div className={cx(s.band, s.quiet, s.run)}>
       <div className={s.line}>
@@ -55,9 +59,10 @@ function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
         ) : (
           <StatusMark kind="run" name={runLabel(t)} />
         )}
-        <span className={s.text} title={nowText}>
-          {queued ? "Waiting for a runner" : nowText}
+        <span className={s.text} title={text}>
+          {text}
         </span>
+        {wait ? <span className={s.meta}>{onlineWords[wait.online]}</span> : null}
         {step ? <span className={s.num}>{`${String(step.k)}/${String(step.n)}`}</span> : null}
         {queued ? null : <Elapsed startedAt={t.latest_run?.started_at ?? null} />}
         <span className={s.end}>

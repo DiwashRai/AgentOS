@@ -2,7 +2,8 @@
 
 The image (root `Containerfile`) runs **the server only**: the API plus the built web UI, on port
 8000. It holds no agent CLIs and no git credentials; workers run on runners (GitHub Actions or
-self-hosted) and dial back to the server. The image is stateless: the database (which also holds
+self-hosted), or on a user's own machine through a client (see "Running a client"), and dial
+back to the server. The image is stateless: the database (which also holds
 every setting an admin edits in the app) and logs live on the `/data` volume, and the few
 deployment facts and secrets come from an env file. There is no config file to mount.
 
@@ -58,6 +59,7 @@ once, without a restart:
   templates stages run (`claude` and `copilot` built in). The first runtime is the server
   default. Removing a runtime the template's defaults or stages use is refused. Which launcher
   runs use (`AGENTOS_LAUNCHER`) and whether the GitHub token is set are shown read-only.
+- **My client** (every user, not only admins): their own client tokens; see "Running a client".
 
 The env keeps what the server needs to start, who may sign in, and secrets. The whole
 `.env.container`: `AGENTOS_PUBLIC_URL`, `AGENTOS_WORKER_URL`, `AGENTOS_JIRA_URL`,
@@ -147,7 +149,8 @@ to the template.
 **Repo credentials = the job's `GITHUB_TOKEN`.** The workflow grants it `contents: write` and
 `pull-requests: write` on this repo only, and it expires with the job. The worker step gets it as
 `GH_TOKEN` (for `gh`: the open-pr stage, the PR lookup), and git uses it through gh's credential
-helper, set for that step only via `GIT_CONFIG_*` (nothing is written to `~/.gitconfig`). Caveat:
+helper to clone and fetch, set for that step only via `GIT_CONFIG_*` (nothing is written to
+`~/.gitconfig`). Commits are published through the API, not `git push` (below). Caveat:
 PRs opened with `GITHUB_TOKEN` don't trigger other workflows (e.g. CI). When that matters, use a
 GitHub App token or a fine-grained token (one repo; contents + pull requests) from a repo secret
 instead. Registering the runner with `--ephemeral` gives every run a fresh runner.
@@ -157,6 +160,43 @@ token is single-use: the worker's claim binds its own token. The job masks the t
 anything else and never interpolates inputs into its scripts. Its `timeout-minutes: 720` is
 only a backstop. The real limit is the run's time budget (the sum of its stages' `timeout_s`
 plus 15 min). Past it, the reaper fails the run and the worker stops on its next call.
+
+### Publication on Actions
+
+Some organisations let CI write to GitHub only through the REST API (`git push` from a runner is
+refused). So when the worker runs on GitHub Actions (`GITHUB_ACTIONS=true`) with `GH_TOKEN` set,
+it publishes each stage's work through the Git Data API instead of `git push`: one commit per
+publish with HEAD's tree, message and author on top of the branch's remote commit (blobs, a tree,
+the commit, then one ref write with `force: false`). The worker commits once per stage, so that
+is the same history; any extra local commits are squashed into it. It talks to `GITHUB_API_URL` (right on GHES too)
+and takes owner/repo from the ticket's repo URL, never from `GITHUB_REPOSITORY`. The local
+launcher, a client and a plain `worker.py` still use `git push`. There is no setting for this.
+
+- **What a workflow must give the worker:** run on GitHub Actions, set `GH_TOKEN` for the worker
+  step and grant `contents: write`. Both shipped workflows (`agentos-worker.yml`,
+  `agentos-mailbox.yml`) do; a custom workflow needs nothing else.
+- **Setup fails fast:** before the clone, the worker posts an empty blob to the ticket's repo. A
+  401/403/404 fails setup with "the job's token only writes to the repo the workflow runs in".
+- **One repo per token:** `GITHUB_TOKEN` writes only to the repo the workflow runs in, so tickets
+  on other repos fail at setup. Multi-repo setups must give the worker step a broader token as
+  `GH_TOKEN` themselves (e.g. a GitHub App installation token); AgentOS doesn't mint one.
+- **What it refuses:** an agent's amend or rebase of already-published commits ("push rejected"),
+  merge commits (squashed, a merged base would read as the branch's own work), a message that
+  isn't UTF-8, and changes to `.github/workflows/` (GitHub refuses those for `GITHUB_TOKEN`:
+  "push failed: ..."). Commits aren't signed or "Verified". GitHub's tree is checked against
+  HEAD's before the ref moves ("publish mismatch").
+- **Rate limits:** text goes inline in the tree and binary blobs are deduplicated, so a stage
+  costs a handful of calls. Rate-limit answers are waited out within a bounded budget, then the
+  stage fails with GitHub's message.
+- **Mailbox runs** publish their code branch the same way; their context and events still go
+  through the outbox to Artifactory.
+
+**Checking against the real API** (by hand, never in CI): from `backend/`, with `GH_TOKEN` set to
+a token that can write the repo's contents, run `uv run python
+worker/worker_tests/live/github_publish.py <owner/repo>` (use a scratch repo). It clones the repo, publishes added, modified, deleted,
+executable, symlinked and binary files to a new throwaway branch, checks the remote tree, then
+publishes a second batch and checks it fast-forwards. It prints PASS or FAIL and deletes the
+branch. `GITHUB_API_URL` / `GITHUB_SERVER_URL` default to github.com.
 
 **WSL2 runner and `AGENTOS_WORKER_URL`.** The container publishes host port 8080 on Windows.
 Inside WSL2, `127.0.0.1` means the WSL VM, not Windows, unless WSL uses mirrored networking:
@@ -178,7 +218,8 @@ server (`AGENTOS_WORKER_URL` would be unreachable). Nothing dials back: for each
 uploads `runs/<run>/manifest.json` (the run, with every bundle file) and `runs/<run>/worker.py` to
 an Artifactory generic folder and dispatches `github/agentos-mailbox.yml`. Its three jobs:
 **fetch** (Artifactory secret) downloads and checksums both files; **work** (no Artifactory
-secret) runs the worker, which runs the agent, pushes the branch and records its results to
+secret) runs the worker, which runs the agent, publishes the branch (through the GitHub API, see
+[Publication on Actions](#publication-on-actions)) and records its results to
 `outbox.jsonl`; **publish** (Artifactory secret) uploads `runs/<run>/outbox.jsonl`. The server
 polls the Actions run, downloads the outbox, replays it through the same checks as HTTP mode, and
 deletes the run's folder. `<run>` is `<run id>-<16 hex>`, unique per run.
@@ -255,6 +296,98 @@ look there.
   verifies both sha256s, gives curl the credentials on stdin (never in argv), and uploads the
   outbox as bytes without reading or running it. The server validates every recorded call as it
   would over HTTP.
+
+## Running a client (your tickets on your machine)
+
+A user can run their own tickets on their own machine: `worker.py --client` connects out to the
+server, takes the runs that user dispatches to **My client**, and runs each with the user's own
+agent login and git credentials. The configured launcher keeps serving every other run. The
+server needs no setup, but users' machines must reach it at `AGENTOS_PUBLIC_URL` (the URL the
+browser uses; the app shows it in the command).
+
+**Needs** on the machine: Python >= 3.11, `git`, `gh` (the open-pr stage and the PR lookup) and
+the agent CLIs your runtimes use, logged in. Agents run with a shell as you, so they can use
+everything your account can reach.
+
+**1. Get `worker.py`** (from a checkout of the server's version, `backend/worker/worker.py`, or
+from the server):
+
+```
+Invoke-WebRequest https://agentos.example.com/api/worker/worker.py -OutFile worker.py   # pwsh
+curl -fsSLo worker.py https://agentos.example.com/api/worker/worker.py                  # sh
+```
+
+The client runs this local copy and starts it for each run; it never fetches one from the
+server, and there is no version check. **Update it whenever the server is upgraded**: a stale
+copy can fail runs when the worker contract changes.
+
+**2. Create a token** in **Settings › My client** (writers): name the machine. The token is shown
+once, with the lines to paste; only its digest is stored, so a lost token is revoked and
+replaced. The list shows each token's last seen time and whether it's online (polled within the
+last minute). Revoking makes the client's next poll fail and the client exit.
+
+**3. Start the client** with the token in `AGENTOS_CLIENT_TOKEN`. It is never on the command line
+(`--client` refuses `--token`), and run workers never see it.
+
+```
+# pwsh
+$env:AGENTOS_CLIENT_TOKEN = '<token>'
+python worker.py --client --server https://agentos.example.com
+
+# sh
+export AGENTOS_CLIENT_TOKEN='<token>'
+python3 worker.py --client --server https://agentos.example.com
+```
+
+Options (client mode only):
+- `--max-runs N`: runs at once (default 1). It counts the workers this client process started;
+  after a restart, workers still running from before aren't counted.
+- `--workdir-root DIR`: default `~/.agentos/workspaces`. The client creates its own `runs/`
+  folder there and puts run workspaces (`runs/<run id>/`) and their logs (`runs/<run id>.log`) in
+  it. It must be outside any git repo (a parent `AGENTS.md` or `CLAUDE.md` would leak into
+  agents). At startup the client deletes the run workspaces and logs in `runs/` that are older
+  than 7 days; it never looks anywhere else in the root. A run that completes (gated or
+  succeeded) or is cancelled deletes its workspace itself; a failed one keeps it until that
+  cleanup.
+- `--env-file PATH`: `KEY=value` lines added to every run worker's environment.
+
+**Credentials and the env file.** Each run worker gets the client's environment minus every
+`AGENTOS_*` variable, then the env file, then its run's own dispatch token. So your usual agent
+login and git setup apply as they are; put anything else in the env file, e.g. `GH_TOKEN`, an
+agent API key, git settings via `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0`,
+or `AGENTOS_ECHO=0` / `AGENTOS_PR_LOOKUP=0` (`AGENTOS_*` reach run workers only this way). The
+format is the python-dotenv subset: `#` comments, an optional `export `, single or double quotes,
+and a bare `KEY` to unset a variable. **Values are literal**: `${VAR}` is not expanded. A line
+outside that subset stops the client from starting. The file is **read once at startup**:
+restart the client after editing it.
+
+**What it does.** It long-polls the server (each poll waits up to 25 s) and, for each run,
+starts a detached worker in its own process group (on Windows, without a console), then polls
+again while it has a free slot. With every slot busy it sends a heartbeat every 30 s that takes
+no run, so it still shows online. The run's progress shows live in the app, as for any worker,
+and the worker also logs to `<workdir-root>/runs/<run id>.log`. While the server is unreachable
+or answers 5xx (or 408/425/429), the client backs off (up to 60 s) and keeps trying.
+
+**In the app:** when you own a ticket and have a token, the Ticket page header and the Pipeline
+tab's Run from… offer **My client** or the server, defaulting to My client while one of your
+clients is online. Only tickets you own can go to your client, and only once you have a token;
+My queue and Compact rows always send runs to the server. While a run waits for your client,
+the ticket's context files, owner, title, description and type can't change (cancel the run
+first), so your machine runs what you dispatched. A run waiting for an offline client
+stays queued ("waiting for <name>'s client") and never times out; cancel it, or start the
+client. Once the client takes it, the usual claim timeout, heartbeat, budget and cancel rules
+apply.
+
+**Exit codes:**
+- 1: the server refused the client (401: unknown or revoked token, or the user is disabled or
+  not approved; 403: the user is below writer; any other 4xx, e.g. a server whose protocol this
+  `worker.py` doesn't speak: update it), or `--workdir-root` can't be created.
+- 2: bad arguments (including no `AGENTOS_CLIENT_TOKEN`), a bad env file, or a `--workdir-root`
+  inside a git repo.
+- 130: stopped with Ctrl+C.
+
+Workers it started keep running whatever ends the client: each holds its own run's token.
+Revoking the client token doesn't stop them; cancel those runs in the app.
 
 ## Not yet
 

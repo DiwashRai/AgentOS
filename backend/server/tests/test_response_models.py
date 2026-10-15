@@ -18,6 +18,7 @@ from agentos.context import AppContext
 from agentos.models import (
     AppConfig,
     ChatMessage,
+    ClientToken,
     FileContent,
     FileInfo,
     FileVersionInfo,
@@ -42,7 +43,7 @@ from agentos.models import (
     Workflow,
 )
 from agentos.sources.jira import JiraClient
-from tests.run_support import RunDriver
+from tests.run_support import RunDriver, bearer
 
 CSRF = {"X-AgentOS": "1"}
 CreateTicket = Callable[..., TicketDetail]
@@ -63,7 +64,16 @@ def test_every_get_matches_its_model(
     ctx: AppContext,
 ) -> None:
     sam = login("sam")
-    login("dev")
+    dev = login("dev")
+    # Client tokens: one seen (it polled), one never; then a client run waits for the client.
+    tokens = [
+        client.post("/api/me/clients", json={"name": n}, headers=CSRF).json()["token"]
+        for n in ("seen", "never")
+    ]
+    seen = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(tokens[0]))
+    assert seen.json() == {"run": None}
+    waiting = create_ticket("Client ticket", repo=None, owner_id=dev.id)
+    assert runs.queue(waiting.key, target="client").client_online is True
     # A repo without a default branch (request 22A), for a blank, blocked ticket.
     repos = check(client, "/api/settings/repos", RepoSettings)
     bare = {"name": "bare", "url": "https://github.com/o/bare.git", "default_branch": None}
@@ -118,6 +128,8 @@ def test_every_get_matches_its_model(
 
     check(client, "/api/config", AppConfig)
     check(client, "/api/me", Me)
+    clients = check(client, "/api/me/clients", list[ClientToken])
+    assert [c.last_seen_at is not None for c in clients] == [True, False]
     check(client, "/api/users", list[User])
     check(client, "/api/people", list[Person])
     check(client, "/api/template", Template)
@@ -166,8 +178,9 @@ def test_every_get_matches_its_model(
     assert client.put("/api/settings/runner", json=body, headers=CSRF).status_code == 200
     assert check(client, "/api/settings/runner", RunnerSettings).value.github_repo == "o/r"
     summaries = check(client, "/api/tickets?include_closed=true", list[TicketSummary])
-    assert len(summaries) == 5
+    assert len(summaries) == 6
     assert any(s.latest_run is not None for s in summaries)
+    assert any(s.latest_run is not None and s.latest_run.client_online for s in summaries)
     assert any(s.resolution is not None for s in summaries)
     assert any(s.dispatch_block is not None for s in summaries)
     infos = []
@@ -184,6 +197,8 @@ def test_every_get_matches_its_model(
         check(client, f"/api/tickets/{key}/chat", list[ChatMessage])
         for run in check(client, f"/api/tickets/{key}/runs", list[RunSummary]):
             check(client, f"/api/runs/{run.id}", RunDetail)
+            if run.status == "queued":  # the client run: no manifest or events yet
+                continue
             check(client, f"/api/runs/{run.id}/manifest", Manifest)
             assert check(client, f"/api/runs/{run.id}/events", list[RunEvent])
     deleted = check(client, f"/api/tickets/{repo.key}/versions/gone.md", list[FileVersionInfo])

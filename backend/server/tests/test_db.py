@@ -30,6 +30,7 @@ TABLES = {
     "run_events",
     "chat_messages",
     "settings",
+    "client_tokens",
 }
 NOW = "2026-10-10T12:00:00.000000+00:00"
 

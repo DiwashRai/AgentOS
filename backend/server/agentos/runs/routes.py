@@ -19,7 +19,14 @@ router = APIRouter(prefix="/api", tags=["runs"], responses=ERROR_RESPONSES)
 def dispatch(key: str, body: DispatchRequest, user: Writer, ctx: Ctx) -> RunSummary:
     snapshot = ctx.snapshot()
     return service.dispatch(
-        ctx.db, snapshot.runtimes, snapshot.space, ctx.launcher.name, key, user, body.from_stage
+        ctx.db,
+        snapshot.runtimes,
+        snapshot.space,
+        ctx.launcher.name,
+        key,
+        user,
+        body.from_stage,
+        body.target,
     )
 
 

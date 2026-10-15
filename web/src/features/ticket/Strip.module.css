@@ -77,6 +77,14 @@
   white-space: nowrap;
 }
 
+/* A word beside the status line (a waiting client's Online / Offline). */
+.meta {
+  flex: none;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
 /* The right end: Then <stage>, Edit TASKS.md, the PR, the log. */
 .end {
   display: inline-flex;

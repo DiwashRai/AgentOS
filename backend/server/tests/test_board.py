@@ -852,6 +852,27 @@ TASKS = TaskProgress(done=2, total=5)
             id="dispatched",
         ),
         pytest.param(
+            facts(
+                replace(
+                    run("queued", [("plan", "pending")]), target="client", creator_name="Sam Lee"
+                )
+            ),
+            now("waiting for Sam Lee's client"),
+            id="queued-for-a-client",
+        ),
+        pytest.param(
+            facts(replace(run("queued", [("plan", "pending")]), target="client")),
+            now("waiting for a client"),
+            id="queued-for-a-client-without-a-creator",
+        ),
+        pytest.param(
+            facts(
+                replace(run("dispatched", [("plan", "pending")]), target="client", creator_name="S")
+            ),
+            now("starting on S's client"),
+            id="handed-to-a-client",
+        ),
+        pytest.param(
             facts(GATED_PLAN, owner=ME, tasks=TASKS),
             now("review plan and continue", progress=TASKS),
             id="gated-needs-you",

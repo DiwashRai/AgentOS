@@ -218,6 +218,42 @@ class LoginRequest(ApiModel):
     token: str | None = None
 
 
+# ------------------------------------------------------------------ client tokens
+
+CLIENT_NAME_MAX = 80
+
+
+class ClientToken(ApiModel):
+    """One of the signed-in user's client tokens (Settings > My client). The token itself is
+    shown only once, when it is created. `online`: it polled within the last minute."""
+
+    id: int
+    name: str
+    created_at: AwareDatetime
+    last_seen_at: AwareDatetime | None
+    online: bool
+
+
+class ClientTokenCreate(ApiModel):
+    """POST /api/me/clients. `name` is stripped (a machine, e.g. "work laptop")."""
+
+    name: str = Field(min_length=1, max_length=CLIENT_NAME_MAX)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _stripped(value)
+
+
+class ClientTokenCreated(ApiModel):
+    """The new token, in plaintext this once (only its digest is stored), and the server URL the
+    client polls (`worker.py --client --server <server_url>`)."""
+
+    client: ClientToken
+    token: str
+    server_url: str
+
+
 # ------------------------------------------------------------------ pipeline & template
 
 
@@ -385,6 +421,7 @@ class NowInfo(ApiModel):
     e.g. running:   actor="Implement", run_id=42, text="Run API test suite"
                     → "Implement · run #42 · …"
          queued:    run_id=42, text="queued for a runner"
+                    (a client run: text="waiting for Sam Lee's client")
          blocked:   run_id=42, text="Review failed: retry or adjust"
          needs_you: person=None, text="review plan and continue" → "Waiting on you · …"
          waiting:   person=Sam, text="review plan and continue"  → "Waiting on Sam Lee · …"
@@ -401,6 +438,9 @@ class NowInfo(ApiModel):
 # AGENTOS_LAUNCHER. mailbox: runs travel through a store (design/mailbox.md).
 LauncherName = Literal["local", "github", "mailbox"]
 LogDelivery = Literal["live", "at_end"]
+# Who serves a run: the server's configured launcher, or the dispatching user's own client
+# (`worker.py --client`, which polls for it; stored as `runs.launcher = 'client'`).
+DispatchTarget = Literal["server", "client"]
 
 
 class RunSummary(ApiModel):
@@ -418,12 +458,17 @@ class RunSummary(ApiModel):
     # Set while a running run waits for its worker to acknowledge a cancel (UI: "Cancelling…").
     cancel_requested_at: AwareDatetime | None
     error: str | None
-    launch_ref: str | None  # informational: a PID (local), the Actions run URL (github)
-    # The launcher's page for this run (the GitHub Actions run); null for the local launcher.
+    # Informational: a PID (local), the Actions run URL (github), the client's name (client).
+    launch_ref: str | None
+    # The launcher's page for this run (the GitHub Actions run); null for local and client runs.
     launch_url: str | None
     # When the run's events arrive: "live" as the worker sends them, or "at_end" (a mailbox run:
     # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).
     log_delivery: LogDelivery
+    target: DispatchTarget
+    # Client runs: whether the creator has a client token that polled within the last minute.
+    # Null for server runs.
+    client_online: bool | None
 
 
 # ------------------------------------------------------------------ resolution (request 15)
@@ -1260,7 +1305,12 @@ class Manifest(ApiModel):
 
 
 class DispatchRequest(ApiModel):
+    """`target: "client"` queues the run for the caller's own client: only the ticket's owner may
+    (403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs
+    polls; cancel works as for any queued run."""
+
     from_stage: str | None = None
+    target: DispatchTarget = "server"
 
 
 Verdict = Literal["pass", "fail"]
@@ -1441,3 +1491,30 @@ class CompleteRequest(ApiModel):
     # The PR for the run's `branch`, as last reported by a worker (repo mode, when one exists).
     # The server stores it only if it passes `validate_pr_url`; an invalid one is ignored.
     pr_url: str | None = Field(default=None, max_length=500)
+
+
+CLIENT_POLL_MAX_WAIT_S = 25
+
+
+class ClientPollRequest(ApiModel):
+    """POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
+    false` is a busy client's heartbeat: it records last seen (the client stays online) and
+    answers `run: null` at once, never handing out a run."""
+
+    wait_s: int = Field(default=CLIENT_POLL_MAX_WAIT_S, ge=0, le=CLIENT_POLL_MAX_WAIT_S)
+    take: bool = True
+
+
+class ClientRunAssignment(ApiModel):
+    """A run handed to a client: its worker claims it at `server_url` with `dispatch_token`
+    (`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker."""
+
+    run_id: int
+    server_url: str
+    dispatch_token: str
+
+
+class ClientPollResponse(ApiModel):
+    """`run: null` = nothing queued for the client's user within `wait_s`."""
+
+    run: ClientRunAssignment | None

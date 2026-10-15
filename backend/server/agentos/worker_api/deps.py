@@ -1,4 +1,4 @@
-"""Worker authentication: `Authorization: Bearer <token>` (a dispatch or worker token).
+"""Worker authentication: `Authorization: Bearer <token>` (a dispatch, worker or client token).
 
 Only parses the header (401 if it is missing or malformed); the service looks the token up by
 hash. Reading the header from the Request keeps it out of the OpenAPI schema (the generated web
@@ -23,3 +23,4 @@ def bearer_token(request: Request) -> str:
 
 
 RunToken = Annotated[str, Depends(bearer_token)]
+ClientBearer = Annotated[str, Depends(bearer_token)]

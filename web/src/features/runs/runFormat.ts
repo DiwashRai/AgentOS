@@ -80,9 +80,10 @@ export function emptyLogText(o: {
 }
 
 /** Where a run was launched: the launcher's link (`launch_url`: a GitHub Actions run, or the
- *  workflow's runs page when GitHub didn't name the run), else its ref as mono text (a PID). */
+ *  workflow's runs page when GitHub didn't name the run), else its ref as mono text: a PID, or the
+ *  name of the client that took a client run. */
 export function launchRef(
-  run: Pick<Schemas["RunSummary"], "launch_ref" | "launch_url">,
+  run: Pick<Schemas["RunSummary"], "launch_ref" | "launch_url" | "target">,
 ): { href: string | null; text: string } | null {
   if (run.launch_url) {
     const one = /\/actions\/runs\/\d+\/?$/.test(run.launch_url);
@@ -90,6 +91,7 @@ export function launchRef(
   }
   const r = run.launch_ref?.trim() ?? "";
   if (r === "") return null;
+  if (run.target === "client") return { href: null, text: `client ${r}` };
   if (/^\d+$/.test(r)) return { href: null, text: `pid ${r}` };
   return { href: null, text: r };
 }

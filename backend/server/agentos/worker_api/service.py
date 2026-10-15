@@ -1,23 +1,32 @@
-"""The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, complete.
+"""The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, complete, and
+the client poll.
 
 Claim authenticates with the dispatch token, every other route with the worker token the worker
 generated and bound at claim. Tokens are looked up by their SHA-256 hash. Worker-token runs are
 `running` or terminal; a terminal run answers 410 `run_gone` (the worker aborts and never pushes),
 except `complete` repeating the run's final status (idempotent retry).
+
+The poll authenticates with a client token (`agentos.clients`) and hands the client a run its user
+dispatched to "My client", with a dispatch token; from there on the run's worker uses the routes
+above, unchanged.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from agentos.clients import service as clients
+from agentos.clients.service import Client
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError
 from agentos.files.service import current_bundle, write_version
 from agentos.models import (
+    ClientRunAssignment,
     CompleteRequest,
     Manifest,
     ManifestFile,
@@ -30,6 +39,7 @@ from agentos.pipeline.manifest import build_manifest
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status, plan_run
 from agentos.pipeline.space import SpaceConfig
+from agentos.runs import service as runs
 from agentos.runs.service import TERMINAL, finish, token_hash
 from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
@@ -367,6 +377,34 @@ def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:
             status = "cancelled"
         if finish(conn, run["id"], status, ("running",), now=now, error=error):
             _store_pr_url(conn, run, body.pr_url)
+
+
+# ------------------------------------------------------------------ client poll
+
+
+def poll_client(db: Database, client_token: str) -> Client:
+    """Authenticate a polling client (401/403: `clients.service.authenticate`) and record that it
+    was seen. Once per poll."""
+    client = clients.authenticate(db, client_token)
+    clients.touch(db, client.id, utcnow())
+    return client
+
+
+def take_client_run(db: Database, client_token: str, server_url: str) -> ClientRunAssignment | None:
+    """One take of a poll: the oldest client run queued by the token's user, with a new dispatch
+    token for its worker (in plaintext only in the answer; never logged). The token is checked
+    again on every take, so a revoke or a disabled user also stops a poll that is waiting. Only
+    reads run until a run is queued; the write transaction opens only to take it."""
+    client = clients.authenticate(db, client_token)
+    if not runs.client_run_queued(db, client.user.id):
+        return None
+
+    dispatch_token = secrets.token_urlsafe(32)
+    run_id = runs.take_client_run(db, client.user.id, token_hash(dispatch_token), client.name)
+    if run_id is None:
+        return None
+    log.info("run %s: handed to client %s of user %s", run_id, client.id, client.user.id)
+    return ClientRunAssignment(run_id=run_id, server_url=server_url, dispatch_token=dispatch_token)
 
 
 def _store_pr_url(conn: Conn, run: Row, pr_url: str | None) -> None:

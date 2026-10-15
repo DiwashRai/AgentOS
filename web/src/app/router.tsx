@@ -9,6 +9,7 @@ import { TicketPage } from "../features/ticket/TicketPage";
 import { Shell } from "./Shell";
 import { TeamsView } from "./views/placeholders";
 import {
+  ClientsView,
   IntakeSettingsView,
   MappingsView,
   RunnersView,
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
       { path: "settings/template", element: <TemplateView /> },
       { path: "settings/runners", element: <RunnersView /> },
       { path: "settings/users", element: <UsersView /> },
+      { path: "settings/client", element: <ClientsView /> },
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },

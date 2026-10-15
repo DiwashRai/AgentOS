@@ -221,6 +221,27 @@ describe("the rack", () => {
       [NO_REPO, ["B-4"]],
     ]);
   });
+  it("splits my queued runs: the server's runner first, then one group per client wait", () => {
+    const wait = now({ text: "waiting for Me's client" });
+    const client = (key: string, client_online: boolean) =>
+      ticket({
+        key,
+        attention: "queued",
+        owner: mine,
+        now: wait,
+        latest_run: run("queued", { target: "client", client_online }),
+      });
+    const all = [...tickets, client("A-3", false), client("A-4", false)];
+    const rack = rackGroups(all, groups(all, me).atWork, me);
+    expect(rack.slice(0, 2).map((x) => [x.id, x.online, x.items.map((t) => t.key)])).toEqual([
+      ["mine-queued", undefined, ["A-2"]],
+      [`mine-client:${wait.text}`, "offline", ["A-3", "A-4"]],
+    ]);
+
+    const live = [client("A-5", true)];
+    const only = rackGroups(live, groups(live, me).atWork, me);
+    expect(only.map((x) => [x.id, x.online])).toEqual([[`mine-client:${wait.text}`, "online"]]);
+  });
   it("tiles only my running runs", () => {
     expect(myRunning(g.atWork).map((t) => t.key)).toEqual(["A-1"]);
   });

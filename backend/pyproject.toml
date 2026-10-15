@@ -60,6 +60,8 @@ pythonpath = ["worker"]
 # package. Worker tests live in worker/worker_tests so both suites can have a conftest.py without
 # mypy seeing two packages named `tests`. Keep test file basenames unique across suites.
 addopts = "-q"
+# live/ holds checks against real services, run by hand (backend/AGENTS.md › Testing): never collected.
+norecursedirs = [".*", "*.egg", "build", "dist", "node_modules", "venv", "live"]
 
 # ---------------------------------------------------------------- import-linter
 [tool.importlinter]
@@ -79,7 +81,7 @@ type = "layers"
 containers = [
     "agentos.auth", "agentos.tickets", "agentos.files", "agentos.runs",
     "agentos.social", "agentos.templates", "agentos.worker_api", "agentos.intake",
-    "agentos.settings", "agentos.mailbox", "agentos.workflows",
+    "agentos.settings", "agentos.mailbox", "agentos.workflows", "agentos.clients",
 ]
 layers = [
     "(routes)",
@@ -128,7 +130,7 @@ broken_contract_guidance = "Plugins receive what they need as arguments (the dis
 name = "No import cycles between agentos subpackages"
 type = "acyclic_siblings"
 ancestors = ["agentos"]
-broken_contract_guidance = "Direction: worker_api -> runs -> social -> tickets -> workflows -> templates | files -> auth. To read another feature's tables, query them in your own service instead of importing upwards."
+broken_contract_guidance = "Direction: worker_api -> runs -> social -> tickets -> workflows -> templates | files | clients -> auth (clients is a leaf: its tokens, and who is online). To read another feature's tables, query them in your own service instead of importing upwards."
 
 [dependency-groups]
 dev = [
