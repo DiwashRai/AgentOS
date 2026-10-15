@@ -107,6 +107,9 @@ src/styles/    tokens.css, base.css, fonts.css
 - Most logic tests are plain unit tests over `domain/` and feature `model.ts` files. Markup checks can use `renderToStaticMarkup` from `react-dom/server` in node. There is no DOM testing library.
 - Tests sit beside the code as `*.test.ts(x)`.
 - Test logic, not wording: assert behaviour (values, branches, which state or code is chosen), not full UI sentences, which only break on intended rewording. The exception is the error-code → text functions, where the text is the point; tsc against the generated schema and browser checks cover the rest of the UI.
+- Test behaviour, requirements or tricky algorithms only. An error test checks the code plus at most one crucial word, never a sentence.
+- UI tests find elements by role and accessible name, not by sentences of copy.
+- Comments describe what the code does now, never which ticket or request added it.
 - Browser checks with the Playwright MCP share one browser between agents. Open your own tab, put `page.route` fakes only on that tab, and never call `unrouteAll`. Switch themes with `document.documentElement.dataset.theme`, not the theme menu, which writes `localStorage` for every tab. Never save real settings or change real tickets from a check; fake the writes with `page.route`.
 
 ## People

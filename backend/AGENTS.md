@@ -9,6 +9,11 @@ Applies to `backend/**`: the FastAPI + SQLite server (`server/agentos/`), the si
 - Plugins: `launchers/` (`local`, `github`, `mailbox`; protocol in `launchers/base.py`) and `stores/` (`artifactory`; protocol in `stores/base.py`). `sources/jira.py` is one HTTP adapter (no protocol) that login, import and intake call directly.
 - `migrations/NNNN_name.sql`; `worker/worker.py` + `worker/worker_tests/`; `server/tests/` (+ `fixtures/`); `deploy/` (container + GitHub Actions runner, see `deploy/README.md`).
 
+## Code rules
+- Blank lines separate the semantic steps inside a function (load, check, write, return), not every statement.
+- Docstrings and comments describe what the code does now, never which ticket or request added it.
+- try/except only at real boundaries: network, subprocess, filesystem, git, database, untrusted input. Everywhere else errors propagate; services raise `ApiError`.
+
 ## Architecture (enforced by import-linter)
 The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidance when broken. In plain words:
 - The pure core imports no web framework, `httpx`, `sqlite3`, `agentos.db` or `agentos.config`: it takes plain values, so it can be tested without I/O.
@@ -74,6 +79,8 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 - Every agent call's output is also echoed on the worker's stderr as it arrives (`Echo`: readable `[stage id] ...` lines from Claude stream-json and Copilot JSONL, anything else as plain text cut short), so a job console or the launcher's log shows the run live; the log events are unchanged. `AGENTOS_ECHO=0` turns it off. Every printed line carries the prefix (control characters are stripped), so agent output can't start a workflow command.
 
 ## Testing
+- Test behaviour, requirements or tricky algorithms only, at the highest seam that shows it: the HTTP API for features, a table for a pure function.
+- An error test asserts the status and `error.code`, plus at most one crucial word of the message, never a sentence.
 - `just check-backend` runs `pytest -n auto` (pytest-xdist, one worker per CPU thread). A plain `uv run pytest [file]` stays serial. The suite runs in random order (pytest-randomly) on every run; the seed is printed at the end (`random order: --randomly-seed=N`, from `server/tests/conftest.py`). Reproduce a failing order with `--randomly-seed=<seed>` (or `=last`), serially or with the same `-n`; `-p no:randomly` runs in file order. For the inner loop, `-m 'not e2e'` skips the end-to-end tests. `gc.freeze()` and a raised GC threshold were measured under xdist and saved nothing, so the test session leaves the GC alone.
 - One app per session (per xdist worker): the session fixture `session_server` writes the test Space into a fresh db (`seed_test_settings`), creates the app (`run_loops=False`) on it, enters one `TestClient` (base URL `127.0.0.1`, because dev auth needs a loopback host), so the real lifespan runs its checks and seeds the template and the Standard workflow once, and keeps that db as `template.db`. Each test's `ctx` copies the template to its own `settings.db_path`, builds an `AppContext` from that test's `settings` and `launcher` (`build_context`) and sets `app.state.ctx`; teardown deletes `app.state.ctx`. `client` depends on `ctx` (not the other way round) and is the session client with its cookies cleared.
 - Tests never modify the shared app (teardown asserts `dependency_overrides` is empty). A module overrides `settings` or `launcher` and the per-test `ctx` picks it up (`test_jira_login.py` swaps in Jira login that way). A test that needs other startup behaviour (startup checks, the fresh-start defaults, loops, an https base URL, the SPA dir) builds its own app with `create_app` and its own `TestClient` on a fresh db, as `test_auth.py`'s `started()` does; never seed those from the template.
