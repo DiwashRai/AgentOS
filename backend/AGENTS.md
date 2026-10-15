@@ -26,6 +26,11 @@ The contracts are in `pyproject.toml` `[tool.importlinter]`; each prints guidanc
 
 **Fix the code, never the contract.** Don't loosen a contract to make an import work.
 
+## Interfaces and inheritance
+- An interface is a `typing.Protocol` (`launchers/base.py` `Launcher`, `stores/base.py` `Store`, `worker.py` `GitRunner`), never an ABC. Implementations and test fakes don't inherit from it.
+- Pin each implementation to its Protocol with a typed assignment in a test (`_: Store = ArtifactoryStore(...)`): mypy only checks conformance where an object is assigned to the Protocol type. No `@runtime_checkable` (its `isinstance` checks method names only).
+- Inherit only for pydantic models (`ApiModel`, `PatchModel`) and exception hierarchies. Share code by composition or plain functions, not by subclassing a concrete class.
+
 ## Request pattern
 - A route takes `ctx: Ctx` (`http_deps.py`) plus the narrowest auth dep, calls ONE service function with plain values (`ctx.db`, `ctx.space`, ids, models) and returns its result. `tickets/routes.py` is the model to copy.
 - Routers declare `responses=ERROR_RESPONSES` so the generated client knows the error shape.
