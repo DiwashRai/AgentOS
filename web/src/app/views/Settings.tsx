@@ -1,13 +1,20 @@
-// Settings: Space, Intake, Field mappings, Workflows, Space defaults, Runners, Users; one top bar
-// with the section pills (kit .ao-pills, as links). Everything but Workflows and Space defaults is
-// admin-only (those pages say so to others; Workflows and Space defaults are read-only to them).
-// Sign out lives here until the avatar gets a menu.
+// Settings: Space, Intake, Field mappings, Workflows, Space defaults, Runners, Users, My client;
+// one top bar with the section pills (kit .ao-pills, as links). Everything but Workflows, Space
+// defaults and My client is admin-only (those pages say so to others; Workflows and Space defaults
+// are read-only to them; My client is each user's own tokens). Sign out lives here until the
+// avatar gets a menu.
 import type { ReactNode } from "react";
 import { Navigate, NavLink } from "react-router";
 
 import { useLogout, useMe } from "../../api/queries";
 import { TemplatePage } from "../../features/pipeline";
-import { IntakeSettingsPage, MappingsPage, RunnersPage, SpacePage } from "../../features/settings";
+import {
+  ClientsPage,
+  IntakeSettingsPage,
+  MappingsPage,
+  RunnersPage,
+  SpacePage,
+} from "../../features/settings";
 import { UsersPage } from "../../features/users";
 import { WorkflowsPage } from "../../features/workflows";
 import { cx } from "../../ui";
@@ -25,6 +32,7 @@ const SECTIONS = [
   { to: "/settings/template", label: "Space defaults" },
   { to: "/settings/runners", label: "Runners" },
   { to: "/settings/users", label: "Users" },
+  { to: "/settings/client", label: "My client" },
 ] as const;
 
 /** /settings: admins land on Space, everyone else on Workflows (a page they can read). */
@@ -140,6 +148,15 @@ export function UsersView() {
   return (
     <SettingsView>
       <UsersPage />
+    </SettingsView>
+  );
+}
+
+/** Settings › My client: your own client tokens for running your tickets on your machine. */
+export function ClientsView() {
+  return (
+    <SettingsView>
+      <ClientsPage />
     </SettingsView>
   );
 }

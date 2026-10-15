@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import secrets
 import stat
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import pytest
@@ -12,12 +14,13 @@ from fastapi.testclient import TestClient
 
 from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
-from agentos.models import TicketDetail
+from agentos.models import ClientPollResponse, Manifest, Me, TicketDetail
 from agentos.runs.reaper import Reaper
-from tests.run_support import CSRF, RunDriver, Worker
+from tests.run_support import CSRF, RunDriver, Worker, bearer
 from tests.settings_support import set_space
 
 CreateTicket = Callable[..., TicketDetail]
+LoginFn = Callable[..., Me]
 
 
 @pytest.fixture
@@ -174,6 +177,131 @@ def test_terminal_runs_are_never_touched(
     runs.set_run(worker.run_id, last_seen_at=to_db(now - timedelta(days=1)))
     assert armed(reaper, now).tick(now) == []
     assert runs.db_run(worker.run_id)["status"] == "gated"
+
+
+# ------------------------------------------------------------------ client runs
+
+
+@dataclass
+class ClientSide:
+    """User `me` with a client token, queueing runs for that client and taking them."""
+
+    client: TestClient
+    create_ticket: CreateTicket
+    runs: RunDriver
+    me: Me
+    token: str
+
+    def queue(self, title: str = "T") -> int:
+        key = self.create_ticket(title, repo=None, owner_id=self.me.id).key
+        return self.runs.queue(key, target="client").id
+
+    def take(self) -> tuple[int, str]:
+        r = self.client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(self.token))
+        run = ClientPollResponse.model_validate(r.json()).run
+        assert run is not None, r.text
+        return run.run_id, run.dispatch_token
+
+    def start(self, title: str = "T") -> Worker:
+        """Queue, take and claim: the client run is `running`."""
+        run_id = self.queue(title)
+        taken, dispatch_token = self.take()
+        assert taken == run_id
+        worker_token = secrets.token_urlsafe(32)
+        r = self.client.post(
+            "/api/worker/claim",
+            json={"worker_token": worker_token},
+            headers=bearer(dispatch_token),
+        )
+        assert r.status_code == 200, r.text
+        manifest = Manifest.model_validate(r.json()["manifest"])
+        return Worker(self.client, run_id, worker_token, manifest)
+
+
+@pytest.fixture
+def mine(
+    client: TestClient, login: LoginFn, create_ticket: CreateTicket, runs: RunDriver
+) -> ClientSide:
+    me = login("dev")
+    r = client.post("/api/me/clients", json={"name": "laptop"}, headers=CSRF)
+    assert r.status_code == 201, r.text
+    return ClientSide(client, create_ticket, runs, me, r.json()["token"])
+
+
+def test_a_queued_client_run_waits_through_every_rule(
+    mine: ClientSide, runs: RunDriver, reaper: Reaper
+) -> None:
+    set_space(runs.ctx, claim_timeout_s=60)
+    run_id = mine.queue()
+    now = utcnow()
+    runs.set_run(run_id, created_at=to_db(now - timedelta(days=3)))
+    armed(reaper, now)
+    for minutes in (0, 0.25, 0.5):  # normal ticks, days after the run was queued
+        assert reaper.tick(now + timedelta(minutes=minutes)) == []
+    assert runs.db_run(run_id)["status"] == "queued"
+    assert mine.take()[0] == run_id  # the client came online
+
+
+def test_a_taken_client_run_must_be_claimed_in_time(
+    mine: ClientSide, runs: RunDriver, reaper: Reaper
+) -> None:
+    run_id = mine.queue()
+    mine.take()
+    now = utcnow()
+    timeout = runs.ctx.space.claim_timeout_s
+    runs.set_run(run_id, dispatched_at=to_db(now - timedelta(seconds=timeout + 1)))
+    reaped = armed(reaper, now).tick(now)
+    assert [(r.run_id, r.status, r.reason) for r in reaped] == [
+        (run_id, "failed", "worker never connected")
+    ]
+
+
+@pytest.mark.parametrize("configured", ["local", "github", "mailbox"])
+def test_a_silent_client_run_is_lost_whatever_the_launcher(
+    mine: ClientSide, runs: RunDriver, reaper: Reaper, configured: str
+) -> None:
+    """Only rows of the mailbox launcher skip the heartbeat, and only with that launcher on."""
+    client_worker = mine.start("client")
+    mailbox_worker = runs.start(mine.create_ticket("mailbox", repo=None).key)
+    runs.set_run(mailbox_worker.run_id, launcher="mailbox")
+    runs.launcher.name = configured
+    now = utcnow()
+    armed(reaper, now)
+    for w in (client_worker, mailbox_worker):
+        runs.set_run(w.run_id, last_seen_at=to_db(now - timedelta(seconds=91)))
+    lost = {r.run_id for r in reaper.tick(now) if r.reason == "worker lost"}
+    expected = {client_worker.run_id}
+    if configured != "mailbox":
+        expected.add(mailbox_worker.run_id)
+    assert lost == expected
+
+
+def test_budget_and_cancel_rules_apply_to_client_runs(
+    mine: ClientSide, runs: RunDriver, reaper: Reaper
+) -> None:
+    over = mine.start("over")
+    stuck = mine.start("stuck")
+    assert mine.client.post(f"/api/runs/{stuck.run_id}/cancel", headers=CSRF).status_code == 200
+    now = utcnow()
+    armed(reaper, now)
+    budget = timedelta(seconds=3600, minutes=15)
+    runs.set_run(over.run_id, started_at=to_db(now - budget - timedelta(seconds=1)))
+    runs.set_run(stuck.run_id, cancel_requested_at=to_db(now - timedelta(minutes=2, seconds=1)))
+    reaped = reaper.tick(now)
+    assert sorted((r.run_id, r.status, r.reason) for r in reaped) == sorted(
+        [
+            (over.run_id, "failed", "time budget exceeded"),
+            (stuck.run_id, "cancelled", "cancel not acknowledged"),
+        ]
+    )
+
+
+def test_a_queued_client_run_is_cancelled_at_once(mine: ClientSide, runs: RunDriver) -> None:
+    run_id = mine.queue()
+    r = mine.client.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
+    assert (r.status_code, r.json()["status"]) == (200, "cancelled")
+    poll = mine.client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(mine.token))
+    assert poll.json()["run"] is None
 
 
 # ------------------------------------------------------------------ rule 6: workspaces

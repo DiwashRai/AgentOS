@@ -8,6 +8,7 @@ import { useFiles, useRuns, useTicket } from "../../api/queries";
 import { Quiet } from "../../app/Quiet";
 import { TopBar } from "../../app/TopBar";
 import { CloseIcon, IconButton, Tabs, linkClass, type TabItem } from "../../ui";
+import { useDispatchTarget } from "../actions/useDispatchTarget";
 import { ContextTab } from "../context/ContextTab";
 import { PipelineTab } from "../pipeline";
 import { RunsTab } from "../runs/RunsTab";
@@ -24,6 +25,8 @@ function TicketBody({ ticketKey, tab }: { ticketKey: string; tab: TicketTab }) {
   const ticket = useTicket(ticketKey);
   const files = useFiles(ticketKey);
   const runs = useRuns(ticketKey);
+  // One dispatch target pick for the page: the header's actions and the Pipeline tab's Run from….
+  const target = useDispatchTarget({ owner: ticket.data?.owner ?? null });
 
   if (ticket.isPending) return <Quiet>{`Loading ${ticketKey}`}</Quiet>;
   if (ticket.isError) {
@@ -54,7 +57,7 @@ function TicketBody({ ticketKey, tab }: { ticketKey: string; tab: TicketTab }) {
   return (
     <div className={s.page}>
       <div className={s.col}>
-        <Header t={t} />
+        <Header t={t} target={target} />
         <Strip t={t} files={fileList} />
         <div className={s.doc}>
           <Tabs
@@ -77,7 +80,7 @@ function TicketBody({ ticketKey, tab }: { ticketKey: string; tab: TicketTab }) {
             {tab === "context" ? (
               <ContextTab ticketKey={t.key} runActive={t.active_run_id !== null} />
             ) : null}
-            {tab === "pipeline" ? <PipelineTab ticketKey={t.key} /> : null}
+            {tab === "pipeline" ? <PipelineTab ticketKey={t.key} target={target} /> : null}
           </div>
         </div>
       </div>

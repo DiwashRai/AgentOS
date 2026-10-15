@@ -2,7 +2,8 @@
 
 The image (root `Containerfile`) runs **the server only**: the API plus the built web UI, on port
 8000. It holds no agent CLIs and no git credentials; workers run on runners (GitHub Actions or
-self-hosted) and dial back to the server. The image is stateless: the database (which also holds
+self-hosted), or on a user's own machine through a client (see "Running a client"), and dial
+back to the server. The image is stateless: the database (which also holds
 every setting an admin edits in the app) and logs live on the `/data` volume, and the few
 deployment facts and secrets come from an env file. There is no config file to mount.
 
@@ -58,6 +59,7 @@ once, without a restart:
   templates stages run (`claude` and `copilot` built in). The first runtime is the server
   default. Removing a runtime the template's defaults or stages use is refused. Which launcher
   runs use (`AGENTOS_LAUNCHER`) and whether the GitHub token is set are shown read-only.
+- **My client** (every user, not only admins): their own client tokens; see "Running a client".
 
 The env keeps what the server needs to start, who may sign in, and secrets. The whole
 `.env.container`: `AGENTOS_PUBLIC_URL`, `AGENTOS_WORKER_URL`, `AGENTOS_JIRA_URL`,
@@ -263,6 +265,98 @@ look there.
   verifies both sha256s, gives curl the credentials on stdin (never in argv), and uploads the
   outbox as bytes without reading or running it. The server validates every recorded call as it
   would over HTTP.
+
+## Running a client (your tickets on your machine)
+
+A user can run their own tickets on their own machine: `worker.py --client` connects out to the
+server, takes the runs that user dispatches to **My client**, and runs each with the user's own
+agent login and git credentials. The configured launcher keeps serving every other run. The
+server needs no setup, but users' machines must reach it at `AGENTOS_PUBLIC_URL` (the URL the
+browser uses; the app shows it in the command).
+
+**Needs** on the machine: Python >= 3.11, `git`, `gh` (the open-pr stage and the PR lookup) and
+the agent CLIs your runtimes use, logged in. Agents run with a shell as you, so they can use
+everything your account can reach.
+
+**1. Get `worker.py`** (from a checkout of the server's version, `backend/worker/worker.py`, or
+from the server):
+
+```
+Invoke-WebRequest https://agentos.example.com/api/worker/worker.py -OutFile worker.py   # pwsh
+curl -fsSLo worker.py https://agentos.example.com/api/worker/worker.py                  # sh
+```
+
+The client runs this local copy and starts it for each run; it never fetches one from the
+server, and there is no version check. **Update it whenever the server is upgraded**: a stale
+copy can fail runs when the worker contract changes.
+
+**2. Create a token** in **Settings › My client** (writers): name the machine. The token is shown
+once, with the lines to paste; only its digest is stored, so a lost token is revoked and
+replaced. The list shows each token's last seen time and whether it's online (polled within the
+last minute). Revoking makes the client's next poll fail and the client exit.
+
+**3. Start the client** with the token in `AGENTOS_CLIENT_TOKEN`. It is never on the command line
+(`--client` refuses `--token`), and run workers never see it.
+
+```
+# pwsh
+$env:AGENTOS_CLIENT_TOKEN = '<token>'
+python worker.py --client --server https://agentos.example.com
+
+# sh
+export AGENTOS_CLIENT_TOKEN='<token>'
+python3 worker.py --client --server https://agentos.example.com
+```
+
+Options (client mode only):
+- `--max-runs N`: runs at once (default 1). It counts the workers this client process started;
+  after a restart, workers still running from before aren't counted.
+- `--workdir-root DIR`: default `~/.agentos/workspaces`. The client creates its own `runs/`
+  folder there and puts run workspaces (`runs/<run id>/`) and their logs (`runs/<run id>.log`) in
+  it. It must be outside any git repo (a parent `AGENTS.md` or `CLAUDE.md` would leak into
+  agents). At startup the client deletes the run workspaces and logs in `runs/` that are older
+  than 7 days; it never looks anywhere else in the root. A run that completes (gated or
+  succeeded) or is cancelled deletes its workspace itself; a failed one keeps it until that
+  cleanup.
+- `--env-file PATH`: `KEY=value` lines added to every run worker's environment.
+
+**Credentials and the env file.** Each run worker gets the client's environment minus every
+`AGENTOS_*` variable, then the env file, then its run's own dispatch token. So your usual agent
+login and git setup apply as they are; put anything else in the env file, e.g. `GH_TOKEN`, an
+agent API key, git settings via `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0`,
+or `AGENTOS_ECHO=0` / `AGENTOS_PR_LOOKUP=0` (`AGENTOS_*` reach run workers only this way). The
+format is the python-dotenv subset: `#` comments, an optional `export `, single or double quotes,
+and a bare `KEY` to unset a variable. **Values are literal**: `${VAR}` is not expanded. A line
+outside that subset stops the client from starting. The file is **read once at startup**:
+restart the client after editing it.
+
+**What it does.** It long-polls the server (each poll waits up to 25 s) and, for each run,
+starts a detached worker in its own process group (on Windows, without a console), then polls
+again while it has a free slot. With every slot busy it sends a heartbeat every 30 s that takes
+no run, so it still shows online. The run's progress shows live in the app, as for any worker,
+and the worker also logs to `<workdir-root>/runs/<run id>.log`. While the server is unreachable
+or answers 5xx (or 408/425/429), the client backs off (up to 60 s) and keeps trying.
+
+**In the app:** when you own a ticket and have a token, the Ticket page header and the Pipeline
+tab's Run from… offer **My client** or the server, defaulting to My client while one of your
+clients is online. Only tickets you own can go to your client, and only once you have a token;
+My queue and Compact rows always send runs to the server. While a run waits for your client,
+the ticket's context files, owner, title, description and type can't change (cancel the run
+first), so your machine runs what you dispatched. A run waiting for an offline client
+stays queued ("waiting for <name>'s client") and never times out; cancel it, or start the
+client. Once the client takes it, the usual claim timeout, heartbeat, budget and cancel rules
+apply.
+
+**Exit codes:**
+- 1: the server refused the client (401: unknown or revoked token, or the user is disabled or
+  not approved; 403: the user is below writer; any other 4xx, e.g. a server whose protocol this
+  `worker.py` doesn't speak: update it), or `--workdir-root` can't be created.
+- 2: bad arguments (including no `AGENTOS_CLIENT_TOKEN`), a bad env file, or a `--workdir-root`
+  inside a git repo.
+- 130: stopped with Ctrl+C.
+
+Workers it started keep running whatever ends the client: each holds its own run's token.
+Revoking the client token doesn't stop them; cancel those runs in the app.
 
 ## Not yet
 

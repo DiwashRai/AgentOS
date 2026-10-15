@@ -116,6 +116,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Clients */
+        get: operations["list_clients_api_me_clients_get"];
+        put?: never;
+        /**
+         * Create Client
+         * @description The token is in this answer only; store it on the client machine.
+         */
+        post: operations["create_client_api_me_clients_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/clients/{client_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Client
+         * @description Its next poll gets 401. Runs it already started end through their own tokens.
+         */
+        delete: operations["revoke_client_api_me_clients__client_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/people": {
         parameters: {
             query?: never;
@@ -709,6 +750,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/worker/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll
+         * @description A client's long poll: the oldest run its user dispatched to "My client", waiting up to
+         *     `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.
+         *     401/403 at once for a bad token. Async, and each db step runs in a thread
+         *     only while it runs, so idle polls hold no threadpool thread while they wait.
+         */
+        post: operations["poll_api_worker_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/worker/sync": {
         parameters: {
             query?: never;
@@ -882,6 +946,84 @@ export interface components {
         ClaimResponse: {
             manifest: components["schemas"]["Manifest"];
         };
+        /**
+         * ClientPollRequest
+         * @description POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
+         *     false` is a busy client's heartbeat: it records last seen (the client stays online) and
+         *     answers `run: null` at once, never handing out a run.
+         */
+        ClientPollRequest: {
+            /**
+             * Take
+             * @default true
+             */
+            take: boolean;
+            /**
+             * Wait S
+             * @default 25
+             */
+            wait_s: number;
+        };
+        /**
+         * ClientPollResponse
+         * @description `run: null` = nothing queued for the client's user within `wait_s`.
+         */
+        ClientPollResponse: {
+            run: components["schemas"]["ClientRunAssignment"] | null;
+        };
+        /**
+         * ClientRunAssignment
+         * @description A run handed to a client: its worker claims it at `server_url` with `dispatch_token`
+         *     (`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker.
+         */
+        ClientRunAssignment: {
+            /** Dispatch Token */
+            dispatch_token: string;
+            /** Run Id */
+            run_id: number;
+            /** Server Url */
+            server_url: string;
+        };
+        /**
+         * ClientToken
+         * @description One of the signed-in user's client tokens (Settings > My client). The token itself is
+         *     shown only once, when it is created. `online`: it polled within the last minute.
+         */
+        ClientToken: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+        };
+        /**
+         * ClientTokenCreate
+         * @description POST /api/me/clients. `name` is stripped (a machine, e.g. "work laptop").
+         */
+        ClientTokenCreate: {
+            /** Name */
+            name: string;
+        };
+        /**
+         * ClientTokenCreated
+         * @description The new token, in plaintext this once (only its digest is stored), and the server URL the
+         *     client polls (`worker.py --client --server <server_url>`).
+         */
+        ClientTokenCreated: {
+            client: components["schemas"]["ClientToken"];
+            /** Server Url */
+            server_url: string;
+            /** Token */
+            token: string;
+        };
         /** CompleteRequest */
         CompleteRequest: {
             /** Error */
@@ -910,10 +1052,21 @@ export interface components {
             /** Text */
             text: string;
         };
-        /** DispatchRequest */
+        /**
+         * DispatchRequest
+         * @description `target: "client"` queues the run for the caller's own client: only the ticket's owner may
+         *     (403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs
+         *     polls; cancel works as for any queued run.
+         */
         DispatchRequest: {
             /** From Stage */
             from_stage?: string | null;
+            /**
+             * Target
+             * @default server
+             * @enum {string}
+             */
+            target: "server" | "client";
         };
         /** ErrorBody */
         ErrorBody: {
@@ -1551,6 +1704,7 @@ export interface components {
          *     e.g. running:   actor="Implement", run_id=42, text="Run API test suite"
          *                     → "Implement · run #42 · …"
          *          queued:    run_id=42, text="queued for a runner"
+         *                     (a client run: text="waiting for Sam Lee's client")
          *          blocked:   run_id=42, text="Review failed: retry or adjust"
          *          needs_you: person=None, text="review plan and continue" → "Waiting on you · …"
          *          waiting:   person=Sam, text="review plan and continue"  → "Waiting on Sam Lee · …"
@@ -1747,6 +1901,8 @@ export interface components {
         RunDetail: {
             /** Cancel Requested At */
             cancel_requested_at: string | null;
+            /** Client Online */
+            client_online: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -1781,6 +1937,11 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "dispatched" | "running" | "succeeded" | "gated" | "failed" | "cancelled";
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "server" | "client";
             /** Ticket Key */
             ticket_key: string;
         };
@@ -1788,6 +1949,8 @@ export interface components {
         RunSummary: {
             /** Cancel Requested At */
             cancel_requested_at: string | null;
+            /** Client Online */
+            client_online: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -1820,6 +1983,11 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "dispatched" | "running" | "succeeded" | "gated" | "failed" | "cancelled";
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "server" | "client";
             /** Ticket Key */
             ticket_key: string;
         };
@@ -2915,6 +3083,124 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Me"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_clients_api_me_clients_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientToken"][];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_client_api_me_clients_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientTokenCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientTokenCreated"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_client_api_me_clients__client_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {
@@ -4756,6 +5042,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventsResponse"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    poll_api_worker_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientPollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientPollResponse"];
                 };
             };
             /** @description Client error */

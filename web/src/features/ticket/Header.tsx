@@ -6,7 +6,7 @@ import { useMemo } from "react";
 
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket, usePeople } from "../../api/queries";
-import { ticketActions, type Action } from "../../domain/actions";
+import { isDispatch, ticketActions, type Action } from "../../domain/actions";
 import { repoShort } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import {
@@ -20,6 +20,8 @@ import {
   TypeIcon,
 } from "../../ui";
 import { ActionConfirm } from "../actions/ActionConfirm";
+import { TargetPicker } from "../actions/TargetPicker";
+import type { DispatchTargetState } from "../actions/useDispatchTarget";
 import { useTicketAction } from "../actions/useTicketAction";
 import { useNow } from "../runs/useNow";
 import { BaseBranchField } from "./BaseBranchField";
@@ -39,9 +41,21 @@ import {
 
 type Detail = Schemas["TicketDetail"];
 
-function ActionGroup({ t, readOnly }: { t: Detail; readOnly: boolean }) {
+function ActionGroup({
+  t,
+  readOnly,
+  target,
+}: {
+  t: Detail;
+  readOnly: boolean;
+  target: DispatchTargetState;
+}) {
   const set = ticketActions(t, "header");
-  const action = useTicketAction(t);
+  const action = useTicketAction(t, target);
+  // The target choice sits beside a button that dispatches (Dispatch run, Approve, Retry).
+  const dispatching = [...set.secondary, set.primary].some(
+    (a) => a !== null && isDispatch(a.id) && a.disabled !== true,
+  );
   const button = (a: Action) => (
     <Button
       key={a.id}
@@ -59,6 +73,9 @@ function ActionGroup({ t, readOnly }: { t: Detail; readOnly: boolean }) {
   return (
     <div className={s.actsCol}>
       <div className={s.acts}>
+        {dispatching && !readOnly ? (
+          <TargetPicker target={target} disabled={action.pending} />
+        ) : null}
         {set.secondary.map(button)}
         {set.primary ? button(set.primary) : null}
       </div>
@@ -144,7 +161,8 @@ function Kicker({ t }: { t: Detail }) {
   );
 }
 
-export function Header({ t }: { t: Detail }) {
+/** `target`: the page's dispatch target, shared with the Pipeline tab's Run from…. */
+export function Header({ t, target }: { t: Detail; target: DispatchTargetState }) {
   const me = useMe();
   const now = useNow(30_000);
   const readOnly = me.data?.role === "viewer";
@@ -154,7 +172,7 @@ export function Header({ t }: { t: Detail }) {
     <header className={s.head}>
       <div className={s.top}>
         <Kicker t={t} />
-        <ActionGroup t={t} readOnly={readOnly} />
+        <ActionGroup t={t} readOnly={readOnly} target={target} />
       </div>
       <h1 className={s.h1}>{t.title}</h1>
       {lead ? <p className={s.lead}>{lead}</p> : null}

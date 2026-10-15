@@ -31,6 +31,12 @@ Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that c
 server): no claim and no HTTP. The manifest comes from a file, and every worker API call is
 recorded as one JSONL line in the outbox (see Recorder), which the server replays later. Nothing
 answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
+
+Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
+machine): long-polls POST /api/worker/poll for the runs its user dispatched to their client and
+starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once (see
+run_client). It backs off while the server is unreachable and stops on any 4xx but a transient
+one (401/403 included).
 """
 
 from __future__ import annotations
@@ -57,11 +63,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, Protocol
 
 PROTOCOL = 1
 
@@ -77,6 +83,17 @@ POLL_S = 0.2  # how often a running stage checks cancel / timeout / server loss
 READER_JOIN_S = 5.0  # after a stage exits, wait this long for its output readers, then abandon
 GIT_TIMEOUT_S = 1800.0
 KILL_TIMEOUT_S = 30.0
+
+# Client mode (see run_client).
+CLIENT_POLL_WAIT_S = 25  # the server holds a poll this long at most while no run is queued
+CLIENT_POLL_TIMEOUT_S = 40.0  # one poll's HTTP timeout: above the server's hold
+CLIENT_BACKOFF_CAP_S = 60.0  # failed polls back off up to this, and are retried forever
+CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this often
+CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take poll this often keeps it online
+WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
+CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
+# Poll answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
+CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
 MAX_EVENTS_PER_POST = 500
 MAX_EVENTS_PER_RUN = 100_000
@@ -865,9 +882,20 @@ class Client:
         handlers = [urllib.request.ProxyHandler({})] if host in _LOOPBACK else []
         self._opener = urllib.request.build_opener(*handlers)
 
-    def post(self, path: str, body: dict[str, Any]) -> Any:
+    def post(
+        self,
+        path: str,
+        body: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+        retry_budget_s: float | None = None,
+    ) -> Any:
+        """POST `body` and return the decoded answer. `timeout_s` (default HTTP_TIMEOUT_S) bounds
+        each attempt; failures are retried for `retry_budget_s` (default RETRY_BUDGET_S, 0 = one
+        attempt), then raise Unreachable. A 4xx raises HttpError at once."""
         data = json.dumps(body).encode("utf-8")
-        deadline = time.monotonic() + RETRY_BUDGET_S
+        timeout = HTTP_TIMEOUT_S if timeout_s is None else timeout_s
+        deadline = time.monotonic() + (RETRY_BUDGET_S if retry_budget_s is None else retry_budget_s)
         delay = BACKOFF_START_S
         while True:
             request = urllib.request.Request(  # noqa: S310 -- the scheme is checked in parse_args
@@ -880,7 +908,7 @@ class Client:
                 },
             )
             try:
-                with self._opener.open(request, timeout=HTTP_TIMEOUT_S) as resp:
+                with self._opener.open(request, timeout=timeout) as resp:
                     raw = resp.read()
                 return json.loads(raw) if raw.strip() else None
             except urllib.error.HTTPError as exc:
@@ -2395,18 +2423,337 @@ class Run:
         return result
 
 
+# ---------------------------------------------------------------- client mode
+#
+# `--client` runs on a user's own machine: it long-polls the server for the runs its user
+# dispatched to "My client" and starts this same file as a detached worker for each, the way the
+# server's local launcher does (agentos.launchers.local).
+
+_ENV_PREFIX = "AGENTOS_"
+_ENV_BLANK_RE = re.compile(r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)")
+_ENV_ENTRY_RE = re.compile(
+    r"[ \t]*(?:export[ \t]+)?(?P<key>(?!['\"])[^=#\s]+)[ \t]*"
+    r"(?:=[ \t]*(?:'(?P<single>(?:\\'|[^'])*)'"
+    r'|"(?P<double>(?:\\"|[^"])*)"'
+    r"|(?P<bare>(?!['\"])[^\r\n]*)))?"
+    r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)"
+)
+_SINGLE_ESCAPE_RE = re.compile(r"\\([\\'])")
+_DOUBLE_ESCAPE_RE = re.compile(r"\\([\\'\"abfnrtv])")
+_ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?")  # <run_id> workspaces and <run_id>.log logs
+
+
+class EnvFileError(ValueError):
+    """An env file line outside the supported subset."""
+
+
+def parse_env(text: str) -> dict[str, str | None]:
+    """The python-dotenv subset the local launcher's env file uses: `KEY=value` lines, `#`
+    comments (whole-line, or after whitespace in an unquoted value), an optional `export `,
+    single quotes (literal but `\\'` and `\\\\`), double quotes (with `\\n`-style escapes), quoted
+    values across lines, and a bare `KEY` meaning "unset KEY" (None). `${VAR}` is not expanded."""
+    values: dict[str, str | None] = {}
+    pos, line = 0, 1
+    while pos < len(text):
+        blank = _ENV_BLANK_RE.match(text, pos)
+        if blank is not None:
+            pos, line = blank.end(), line + blank.group(0).count("\n")
+            continue
+
+        entry = _ENV_ENTRY_RE.match(text, pos)
+        if entry is None:
+            raise EnvFileError(f"line {line}: expected KEY=value, KEY or a comment")
+        single, double, bare = entry.group("single", "double", "bare")
+        if single is not None:
+            value: str | None = _SINGLE_ESCAPE_RE.sub(lambda m: m.group(1), single)
+        elif double is not None:
+            value = _DOUBLE_ESCAPE_RE.sub(lambda m: _ESCAPES.get(m.group(1), m.group(1)), double)
+        elif bare is not None:
+            value = re.sub(r"\s+#.*", "", bare).rstrip()
+        else:
+            value = None
+        values[entry.group("key")] = value
+        pos, line = entry.end(), line + entry.group(0).count("\n")
+    return values
+
+
+def read_env_file(path: Path) -> dict[str, str | None]:
+    """parse_env of a UTF-8 file (a leading BOM is ignored). Raises OSError or EnvFileError."""
+    return parse_env(path.read_text(encoding="utf-8-sig"))
+
+
+def _env_set(env: dict[str, str], key: str, value: str | None) -> None:
+    """Set (or with None, remove) `key`; Windows env names are case-insensitive."""
+    if sys.platform == "win32":
+        for existing in [k for k in env if k.upper() == key.upper()]:
+            del env[existing]
+    else:
+        env.pop(key, None)
+    if value is not None:
+        env[key] = value
+
+
+def child_env(
+    dispatch_token: str, env_file: Mapping[str, str | None], base: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """A run worker's environment: `base` (default: ours) minus every AGENTOS_* var, then the env
+    file's values (None removes the key), then unbuffered UTF-8 output and AGENTOS_TOKEN. The
+    same as the local launcher's child_env; the token is never on the command line."""
+    source = os.environ if base is None else base
+    env = {k: v for k, v in source.items() if not k.upper().startswith(_ENV_PREFIX)}
+    for key, value in env_file.items():
+        _env_set(env, key, value)
+    _env_set(env, "PYTHONUNBUFFERED", "1")  # live log
+    _env_set(env, "PYTHONIOENCODING", "utf-8")
+    _env_set(env, "AGENTOS_TOKEN", dispatch_token)
+    return env
+
+
+class Child(Protocol):
+    """A started run worker, as the client loop sees it."""
+
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+
+Spawn = Callable[[list[str], Path, dict[str, str], Path], Child]  # (argv, cwd, env, log file)
+
+
+def spawn_detached(
+    argv: list[str], cwd: Path, env: dict[str, str], log: Path
+) -> subprocess.Popen[bytes]:
+    """Start `argv` in its own process group (Windows: also without a console) with stdout and
+    stderr appended to `log`, so it outlives this process and a Ctrl+C in its console."""
+    with log.open("ab") as out:
+        # The child gets its own copy of the log handle; ours closes when this block exits.
+        if sys.platform == "win32":
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            return subprocess.Popen(
+                argv,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                creationflags=flags,
+            )
+        return subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def git_repo_containing(path: Path) -> Path | None:
+    """The nearest existing ancestor of `path` (itself included) that holds a `.git` entry."""
+    for candidate in (path, *path.parents):
+        if candidate.exists() and (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def clean_workdir_root(root: Path, now: float) -> list[Path]:
+    """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under the
+    client's own `root/CLIENT_RUNS_DIR`, last modified more than WORKSPACE_MAX_AGE_S before `now`
+    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it is left
+    alone. Returns what was deleted."""
+    runs = root / CLIENT_RUNS_DIR
+    try:
+        children = sorted(runs.iterdir())
+    except OSError as exc:
+        say(f"cannot list {runs} for old workspaces: {exc}")
+        return []
+
+    cutoff = now - WORKSPACE_MAX_AGE_S
+    removed: list[Path] = []
+    for child in children:
+        if not _RUN_ENTRY_RE.fullmatch(child.name):
+            continue
+        try:
+            st = child.lstat()
+            if st.st_mtime >= cutoff:
+                continue
+            if stat.S_ISDIR(st.st_mode) and not is_link(st):
+                remove_tree(child)
+            else:
+                child.unlink()
+        except OSError as exc:
+            say(f"cannot delete the old workspace {child}: {exc}")
+            continue
+        removed.append(child)
+    return removed
+
+
+def _assignment(resp: object) -> tuple[int, str] | None:
+    """(run id, dispatch token) from a poll answer, or None when it hands out no run. Raises
+    ValueError for an answer that isn't `{"run": null | {"run_id", "dispatch_token", ...}}`."""
+    if not isinstance(resp, dict) or "run" not in resp:
+        raise ValueError("the poll answer has no `run`")
+    run = resp["run"]
+    if run is None:
+        return None
+
+    run_id = run.get("run_id") if isinstance(run, dict) else None
+    token = run.get("dispatch_token") if isinstance(run, dict) else None
+    if type(run_id) is not int or run_id < 1 or not isinstance(token, str) or not token:
+        raise ValueError("the poll answer's run has no valid run_id and dispatch_token")
+    return run_id, token
+
+
+def run_client(
+    server: str,
+    token: str,
+    root: Path,
+    max_runs: int,
+    env_file: Path | None,
+    spawn: Spawn,
+) -> int:
+    """Client mode: poll for this user's runs and start a detached worker for each, at most
+    `max_runs` at once. Takes runs only while a slot is free; while every slot is busy it sends a
+    no-take poll every CLIENT_HEARTBEAT_S, so the server still sees the client online. Network
+    errors, 5xx, transient 4xx (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to
+    CLIENT_BACKOFF_CAP_S) and poll again, forever. Any other 4xx (401/403: token revoked, user
+    disabled, viewer; or a protocol the client doesn't speak) stops the client with exit code 1;
+    started workers keep running, since they hold their own per-run tokens.
+
+    Everything the client writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs
+    `worker.py --server <server> --workdir <root>/runs/<run_id>` there, logs to
+    `<root>/runs/<run_id>.log` and gets the dispatch token as AGENTOS_TOKEN (see child_env)."""
+    root = root.expanduser().resolve()
+    repo = git_repo_containing(root)
+    if repo is not None:
+        say(f"--workdir-root {root} is inside the git repo {repo}; choose a directory outside it")
+        return 2
+    try:
+        env_values = read_env_file(env_file) if env_file is not None else {}
+    except (OSError, EnvFileError) as exc:
+        say(f"cannot read the env file {env_file}: {exc}")
+        return 2
+    runs = root / CLIENT_RUNS_DIR
+    try:
+        runs.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        say(f"cannot create {runs}: {exc}")
+        return 1
+
+    removed = clean_workdir_root(root, time.time())
+    if removed:
+        say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
+
+    client = Client(server, token)
+    me = str(Path(__file__).resolve())
+    children: list[Child] = []
+    delay = BACKOFF_START_S
+    answered = time.monotonic()  # when the server last answered a poll
+    say(f"client: polling {server} for runs, at most {max_runs} at once, in {runs}")
+    try:
+        while True:
+            children = [child for child in children if child.poll() is None]
+            busy = len(children) >= max_runs
+            if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
+                time.sleep(CLIENT_REAP_S)
+                continue
+
+            take = {"wait_s": CLIENT_POLL_WAIT_S}
+            heartbeat = {"wait_s": 0, "take": False}  # last seen only; never hands out a run
+            try:
+                resp = client.post(
+                    "/api/worker/poll",
+                    heartbeat if busy else take,
+                    timeout_s=CLIENT_POLL_TIMEOUT_S,
+                    retry_budget_s=0,
+                )
+                answered = time.monotonic()
+                assignment = _assignment(resp)
+            except HttpError as exc:
+                if exc.status not in CLIENT_TRANSIENT_4XX:
+                    say(f"the server refused this client ({exc}); stopping")
+                    return 1
+                problem = str(exc)
+            except (Unreachable, ValueError) as exc:
+                problem = str(exc)
+            else:
+                delay = BACKOFF_START_S
+                if assignment is None:
+                    continue
+                run_id, dispatch_token = assignment
+                argv = [
+                    sys.executable,
+                    me,
+                    "--server",
+                    server,
+                    "--workdir",
+                    str(runs / str(run_id)),
+                ]
+                log = runs / f"{run_id}.log"
+                try:
+                    child = spawn(argv, runs, child_env(dispatch_token, env_values), log)
+                except OSError as exc:
+                    say(f"run {run_id}: cannot start its worker: {exc}")
+                    continue
+                children.append(child)
+                say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
+                continue
+
+            say(f"poll failed ({problem}); polling again in {delay:.1f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
+    except KeyboardInterrupt:
+        say("client stopped; started workers keep running")
+        return 130
+
+
 # ---------------------------------------------------------------- entry point
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    """Exactly one mode: HTTP (--server [--token]) or mailbox (--manifest --outbox --workdir)."""
+    """Exactly one mode: HTTP (--server [--token]), mailbox (--manifest --outbox --workdir) or
+    client (--client --server, the client token in $AGENTOS_CLIENT_TOKEN)."""
     parser = argparse.ArgumentParser(prog="worker.py", description=__doc__)
     parser.add_argument("--server", help="AgentOS server URL, e.g. http://127.0.0.1:8000")
     parser.add_argument("--token", help="dispatch token (default: $AGENTOS_TOKEN)")
     parser.add_argument("--workdir", help="workspace directory (default: ./agentos-run-<run_id>)")
     parser.add_argument("--manifest", help="mailbox mode: the run's manifest.json")
     parser.add_argument("--outbox", help="mailbox mode: the outbox.jsonl to create")
+    parser.add_argument(
+        "--client",
+        action="store_true",
+        help="client mode: run my runs on this machine (token: $AGENTOS_CLIENT_TOKEN)",
+    )
+    parser.add_argument("--max-runs", type=int, help="client mode: runs at once (default: 1)")
+    parser.add_argument(
+        "--workdir-root",
+        help="client mode: where run workspaces and logs go (default: ~/.agentos/workspaces)",
+    )
+    parser.add_argument(
+        "--env-file", help="client mode: KEY=value lines added to every run worker's environment"
+    )
     args = parser.parse_args(argv)
+    client_only = (args.max_runs, args.workdir_root, args.env_file)
+    if args.client:
+        used = [args.token, args.workdir, args.manifest, args.outbox]
+        if any(value is not None for value in used):
+            parser.error("--client can't be used with --token, --workdir, --manifest or --outbox")
+        if args.server is None:
+            parser.error("--client needs --server")
+        if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
+            parser.error("--server must be an http:// or https:// URL")
+        if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
+            parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
+        args.max_runs = 1 if args.max_runs is None else args.max_runs
+        if args.max_runs < 1:
+            parser.error("--max-runs must be at least 1")
+        args.workdir_root = args.workdir_root or "~/.agentos/workspaces"
+        args.mailbox = False
+        return args
+    if any(value is not None for value in client_only):
+        parser.error("--max-runs, --workdir-root and --env-file need --client")
     args.mailbox = args.manifest is not None or args.outbox is not None
     if args.mailbox:
         if args.server is not None or args.token is not None:
@@ -2427,6 +2774,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     os.environ.pop("AGENTOS_TOKEN", None)  # never handed to git or to stages
+    client_token = os.environ.pop("AGENTOS_CLIENT_TOKEN", "").strip()  # nor to run workers
+    if args.client:
+        env_file = Path(args.env_file) if args.env_file else None
+        root = Path(args.workdir_root)
+        return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
     if args.mailbox:
         return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
     worker_token = secrets.token_urlsafe(32)

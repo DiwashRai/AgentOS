@@ -7,6 +7,7 @@ import { elapsed } from "../../domain/format";
 import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { statusKind } from "../../domain/status";
+import { onlineWords } from "../../domain/words";
 import { Avatar, CountPill, cx, KeyChip, RunMeter, StageGlyph, StatusMark } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import { peekItemProps } from "../peek/usePeek";
@@ -118,6 +119,7 @@ export function Rack({
             <section key={g.id} className={s.rackGroup} aria-label={g.name}>
               <div className={s.gh}>
                 <span>{g.name}</span>
+                {g.online ? <span className={s.ghNote}>{onlineWords[g.online]}</span> : null}
                 <CountPill count={g.items.length} />
                 <span className={s.ghRule} aria-hidden="true" />
               </div>

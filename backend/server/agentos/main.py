@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from agentos.auth.routes import router as auth_router
+from agentos.clients.routes import router as clients_router
 from agentos.clock import utcnow
 from agentos.config import ConfigError, Settings, load_settings
 from agentos.context import AppContext, build_context
@@ -142,6 +143,7 @@ def create_app(
     for router in (
         meta_router,
         auth_router,
+        clients_router,
         tickets_router,
         intake_router,
         files_router,

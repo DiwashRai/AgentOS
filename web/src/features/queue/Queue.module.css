@@ -404,6 +404,13 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* a client group's state ("Offline"), quiet beside the head */
+.ghNote {
+  flex: none;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-3);
+}
 .ghRule {
   flex: 1;
   height: 1px;

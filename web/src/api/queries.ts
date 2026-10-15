@@ -28,6 +28,8 @@ export const keys = {
   settings: (area: SettingsArea) => [...keys.all, "settings", area] as const,
   /** Jira's fields for the Field mappings picker (not a Settings document). */
   jiraFields: () => [...keys.all, "jira-fields"] as const,
+  /** The signed-in user's client tokens (Settings › My client, the dispatch target). */
+  clients: () => [...keys.all, "clients"] as const,
 };
 
 /** The admin Settings documents (GET/PUT /api/settings/{area}). */
@@ -97,6 +99,8 @@ export function useTickets() {
 
 const POLL_MS = 3000;
 const RUN_POLL_MS = 1000;
+/** A client counts as online for a minute after its last poll, so 15 s keeps that word fresh. */
+const CLIENTS_POLL_MS = 15_000;
 /** Keep at most this many log events per run in memory (SPEC §13: last 5,000 lines). */
 const MAX_EVENTS = 5000;
 
@@ -404,6 +408,45 @@ export function usePatchUser() {
   });
 }
 
+// ------------------------------------------------------------------ my clients
+// Personal access tokens for `worker.py --client`, which runs the user's own runs on their machine.
+// Each user sees and revokes only their own; creating one needs writer.
+
+/** My client tokens with last seen and `online` (polled within the last minute). Read by Settings
+ *  › My client and by the Ticket page's target choice, so it polls while either shows it. */
+export function useClients() {
+  return useQuery({
+    queryKey: keys.clients(),
+    queryFn: () => unwrap(api.GET("/api/me/clients")),
+    refetchInterval: CLIENTS_POLL_MS,
+    // Every surface with ticket actions mounts this; the poll keeps it fresh, not each mount.
+    staleTime: CLIENTS_POLL_MS,
+  });
+}
+
+/** POST a new token (writer). The answer carries the plaintext token once; nothing else does. */
+export function useCreateClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["ClientTokenCreate"]) =>
+      unwrap(api.POST("/api/me/clients", { body })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.clients() }),
+    // The answer holds the plaintext token: drop the mutation from the cache as soon as no
+    // observer holds it (after reset() or an unmount), not after the default 5 minutes.
+    gcTime: 0,
+  });
+}
+
+/** DELETE one of my tokens: its client's next poll gets 401. 404 `not_found` if it's gone. */
+export function useRevokeClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      unwrap(api.DELETE("/api/me/clients/{client_id}", { params: { path: { client_id: id } } })),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: keys.clients() }),
+  });
+}
+
 // ------------------------------------------------------------------ tickets
 
 /** One ticket's detail (pipeline, next_stage, active_run_id…). Polled while open, like the board. */
@@ -445,15 +488,19 @@ export function useSavePipeline(key: string) {
 
 // ------------------------------------------------------------------ runs
 
-/** Dispatch / Continue / Retry: `from_stage` omitted = the server's `next_stage`. */
+/** Who serves a dispatched run: the server's launcher, or the dispatching owner's own client. */
+export type DispatchTarget = Schemas["DispatchRequest"]["target"];
+
+/** Dispatch / Continue / Retry: `fromStage` omitted = the server's `next_stage`. `target: "client"`
+ *  is for the ticket's owner only (403 `forbidden`). */
 export function useDispatch(key: string) {
   const invalidate = useInvalidateTicket();
   return useMutation({
-    mutationFn: (fromStage?: string) =>
+    mutationFn: ({ fromStage, target }: { fromStage?: string; target: DispatchTarget }) =>
       unwrap(
         api.POST("/api/tickets/{key}/runs", {
           params: { path: { key } },
-          body: { from_stage: fromStage ?? null },
+          body: { from_stage: fromStage ?? null, target },
         }),
       ),
     onSuccess: () => invalidate(key),

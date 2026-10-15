@@ -107,13 +107,19 @@ class RunDriver:
     ctx: AppContext
     launcher: FakeLauncher
 
-    def dispatch(self, key: str, from_stage: str | None = None) -> Response:
+    def dispatch(
+        self, key: str, from_stage: str | None = None, target: str | None = None
+    ) -> Response:
         body = {} if from_stage is None else {"from_stage": from_stage}
+        if target is not None:
+            body["target"] = target
         r: Response = self.client.post(f"/api/tickets/{key}/runs", json=body, headers=CSRF)
         return r
 
-    def queue(self, key: str, from_stage: str | None = None) -> RunSummary:
-        r = self.dispatch(key, from_stage)
+    def queue(
+        self, key: str, from_stage: str | None = None, target: str | None = None
+    ) -> RunSummary:
+        r = self.dispatch(key, from_stage, target)
         assert r.status_code == 201, r.text
         return RunSummary.model_validate(r.json())
 

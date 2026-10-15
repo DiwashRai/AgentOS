@@ -1,0 +1,165 @@
+/* Settings › My client, in the Users page's quiet language: the create form, the shown-once token
+   card and the token table (kit .ao-card values, hairline rows). */
+.create {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 560px;
+}
+.create > button {
+  margin-top: 22px;
+}
+.name {
+  flex: 1;
+}
+
+/* the new token, shown once: a raised card with one block per shell */
+.once {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 760px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+.onceHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.onceTitle {
+  margin: 0;
+  font-size: var(--fs-control);
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.onceNote {
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.shellHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.code {
+  margin: 0;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  background: var(--field);
+  color: var(--ink-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  user-select: all;
+}
+.hint {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+/* the token table */
+.frame {
+  overflow-x: auto;
+  max-width: 760px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sheet);
+  box-shadow: var(--row-edge);
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-control);
+  color: var(--ink-2);
+}
+.table thead th {
+  height: 34px;
+  padding: 0 14px;
+  text-align: left;
+  white-space: nowrap;
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--rule);
+}
+.client td,
+.client th {
+  padding: 9px 14px;
+  vertical-align: middle;
+  text-align: left;
+  font-weight: inherit;
+}
+.client + .client > tr:first-child > * {
+  border-top: 1px solid var(--rule-soft);
+}
+.client[aria-busy="true"] {
+  opacity: 0.6;
+}
+.client .clientName {
+  color: var(--ink-1);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* online / offline / never connected: words only, online in ink */
+.state {
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+.state[data-state="online"] {
+  color: var(--ink-1);
+  font-weight: 500;
+}
+
+.time {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.client .end {
+  text-align: right;
+}
+
+/* the confirm / error line under a row */
+.note > td {
+  padding: 0 14px 10px;
+}
+.confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  color: var(--ink-1);
+}
+.error {
+  font-size: var(--fs-meta);
+  color: var(--blocked);
+}
+
+/* a column head read by screen readers only */
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

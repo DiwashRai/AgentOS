@@ -1,10 +1,13 @@
 // The ticket page's Pipeline tab: this ticket's copy of a workflow's pipeline. Toggle stages and
-// sign-offs, tweak prompts, Save (PUT pipeline with base_version), then "Run from…" a stage. The
-// workflow strip (features/workflows) switches workflow or saves this pipeline as a new one.
+// sign-offs, tweak prompts, Save (PUT pipeline with base_version), then "Run from…" a stage, on the
+// dispatch target rule's target (features/actions/target.ts). The workflow strip
+// (features/workflows) switches workflow or saves this pipeline as a new one.
 import { useState } from "react";
 
 import { useConfig, useDispatch, useMe, useSavePipeline, useTicket } from "../../api/queries";
 import { Button } from "../../ui";
+import { TargetPicker } from "../actions/TargetPicker";
+import type { DispatchTargetState } from "../actions/useDispatchTarget";
 import { WorkflowStrip } from "../workflows";
 import { Select } from "./fields";
 import {
@@ -19,7 +22,14 @@ import { PipelineEditor } from "./PipelineEditor";
 import { SaveBar } from "./SaveBar";
 import { usePipelineDraft } from "./useDraft";
 
-export function PipelineTab({ ticketKey }: { ticketKey: string }) {
+/** `target`: the Ticket page's dispatch target, shared with its header. */
+export function PipelineTab({
+  ticketKey,
+  target,
+}: {
+  ticketKey: string;
+  target: DispatchTargetState;
+}) {
   const ticket = useTicket(ticketKey);
   const config = useConfig();
   const me = useMe();
@@ -113,12 +123,17 @@ export function PipelineTab({ ticketKey }: { ticketKey: string }) {
                 options={runnable.map((st) => ({ value: st.id, label: st.name }))}
                 onChange={setFrom}
               />
+              <TargetPicker
+                target={target}
+                size="sm"
+                disabled={runBlocked !== undefined || dispatch.isPending}
+              />
               <Button
                 size="sm"
                 disabled={runBlocked !== undefined || dispatch.isPending || fromStage === ""}
                 title={runBlocked ?? `Dispatch a run starting at this stage`}
                 onClick={() => {
-                  dispatch.mutate(fromStage);
+                  dispatch.mutate({ fromStage, target: target.value });
                 }}
               >
                 {dispatch.isPending ? "Starting…" : "Run from"}

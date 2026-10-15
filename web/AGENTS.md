@@ -46,7 +46,7 @@ src/styles/    tokens.css, base.css, fonts.css
 - Login sets `me` and invalidates `keys.all`. Logout removes the ticket cache and sets `me` to `null`.
 
 ## Polling
-- The server has an SSE stream, but the client doesn't subscribe to it yet, so reads poll with `refetchInterval`. The intervals are constants in `queries.ts`: 3 s for the board and ticket reads, 1 s for an active run and its events, 60 s for Intake. The pending page polls `me` every 15 s. TanStack pauses polling in background tabs.
+- The server has an SSE stream, but the client doesn't subscribe to it yet, so reads poll with `refetchInterval`. The intervals are constants in `queries.ts`: 3 s for the board and ticket reads, 1 s for an active run and its events, 60 s for Intake, 15 s for my client tokens (`CLIENTS_POLL_MS`; one shared query for Settings › My client and the Ticket page's target choice). The pending page polls `me` every 15 s. TanStack pauses polling in background tabs.
 - When SSE is wired, event → invalidation mapping belongs in `src/api/` next to `keys`, in one place.
 - Run events are fetched incrementally (after the last `seq`) and capped at 5,000 per run in memory (`MAX_EVENTS`).
 
@@ -66,6 +66,11 @@ src/styles/    tokens.css, base.css, fonts.css
 - `domain/actions.ts` (`ticketActions(ticket, "row" | "header")`) is the one model of which buttons a ticket shows. Queue rows, Compact rows and the Ticket page header all use it. `features/actions/useTicketAction.ts` runs them against the API, so every surface does the same thing for the same button.
 - Gate primacy: at most one strong button per group. `you` (blue) for Approve and Complete, `ink` for Retry and a row's Open, `accent` only for Dispatch run on the Ticket page header. The accent never appears on a row.
 - "Run from…" lives only in the Pipeline tab.
+- **Dispatch target:** Dispatch run, Approve, Retry and Run from… send `target` from one pure rule, `targetChoice` in `features/actions/target.ts` (through `useDispatchTarget`). The choice is offered only when you own the ticket and have at least one client token, and defaults to "My client" while one of your clients is online, else to the server. Everyone else sends `server` and sees no change. `TargetPicker` shows the choice only on the Ticket page header and beside Run from…, which share one pick (`TicketBody` holds it) and pass it to `useTicketAction`. Every surface without the picker (My queue rows, Compact rows) always sends `server` (`sentTarget`), so a run reaches a client only from a click beside the visible choice. Until the tokens load, the rule says server with no choice.
+
+## My client
+- Settings › My client (`features/settings/clients/`, route `/settings/client`): every approved user lists and revokes their own client tokens; creating one is offered to writers (`canCreate`). A new token is shown once, with the lines to paste for pwsh and sh (`setupLines`: set `AGENTOS_CLIENT_TOKEN`, then `python worker.py --client --server <server_url>`; the token is never on the command line). It lives only in the page's state: leaving or pressing Done drops it for good.
+- A client run not started yet (queued, or taken and not claimed) shows the server's `now.text` ("waiting for <name>'s client") plus online or offline from `latest_run.client_online`, through `clientWait` in `domain/clients.ts`; the Ticket strip and the Runs view's queued groups (`features/queue/model.ts`) use it instead of the runner wording. The Runs tab shows a client run's `launch_ref` as the client's name (`launchRef` in `features/runs/runFormat.ts`).
 
 ## Routes and URL state
 - Routes are defined in `src/app/router.tsx`. `/login` and `/kit` sit outside the shell and auth guard. Unknown paths redirect to `/`.
@@ -114,6 +119,6 @@ src/styles/    tokens.css, base.css, fonts.css
 - People are `Person` objects from the API, never bare names or ids. `now.person` / a gate's `person` is a human; `now.actor` is a non-human label (the running stage), so never render an actor as a face.
 
 ## Not built on purpose
-- Never: presence, online dots or typing indicators.
+- Never: presence, online dots or typing indicators. One carve-out: a client's online state describes a machine, not a person. It is shown as a word (`onlineWords`), never a dot, and only in Settings › My client, the dispatch choice, and a client run that hasn't started yet. Likewise a client's name is the one runner name drawn.
 - Not in our model, so not drawn even where the design pack shows them: watchers and a "Watching" rack, reviewers, reactions, a runner pool gauge, queue positions, runner names, acceptance criteria (the TASKS.md plan stands in for them).
 - Not yet: the SSE client (see Polling), the Activity tab, Context diff, the Manifest view, row glides.

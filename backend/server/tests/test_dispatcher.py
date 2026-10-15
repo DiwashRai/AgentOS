@@ -18,11 +18,12 @@ from agentos.clock import to_db, utcnow
 from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.main import _every, create_app
-from agentos.models import RunDetail, TicketDetail
+from agentos.models import Me, RunDetail, TicketDetail
 from agentos.runs import dispatcher
 from tests.run_support import CSRF, FakeLauncher, RunDriver
 
 CreateTicket = Callable[..., TicketDetail]
+LoginFn = Callable[..., Me]
 
 
 def queue_three(create_ticket: CreateTicket, runs: RunDriver) -> list[int]:
@@ -118,6 +119,27 @@ def test_other_launchers_runs_are_left_alone(
     run_id = runs.queue(create_ticket(repo=None).key).id
     runs.set_run(run_id, launcher="github")
     assert runs.tick() == []
+
+
+def test_client_runs_are_neither_launched_nor_counted(
+    client: TestClient,
+    login: LoginFn,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    launcher: FakeLauncher,
+) -> None:
+    me = login("dev")
+    client.post("/api/me/clients", json={"name": "laptop"}, headers=CSRF)
+    launcher.max_concurrency = 1
+    busy, waiting = (
+        runs.queue(create_ticket(title, repo=None, owner_id=me.id).key, target="client").id
+        for title in ("busy", "waiting")
+    )
+    runs.set_run(busy, status="running")  # a client is working on it
+    server = runs.queue(create_ticket("server", repo=None).key).id
+    assert runs.tick() == [server]
+    assert [r for r, _, _ in launcher.launched] == [server]
+    assert status(runs, waiting) == "queued"
 
 
 # ------------------------------------------------------------------ the loops

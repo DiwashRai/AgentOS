@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from agentos.broker import Broker
+from agentos.clients.service import waiting_client_run_id
 from agentos.clock import from_db, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -228,7 +229,8 @@ def put_file(
     db: Database, broker: Broker, key: str, path: str, body: FileWrite, user: Me
 ) -> FileInfo:
     """Human write: `base_version` 0 creates (409 `stale_version` if the file exists), otherwise it
-    must be the current version. 409 `bundle_locked` while the ticket's run is `running`.
+    must be the current version. 409 `bundle_locked` while the ticket's run is `running`, or a
+    client run of it waits (queued or dispatched).
     Unchanged content + mode appends nothing and returns the current info."""
     with db.tx() as conn:
         ticket_id = _ticket_id(conn, key)
@@ -302,14 +304,21 @@ def _ticket_id(conn: Conn, key: str) -> int:
 
 
 def _check_unlocked(conn: Conn, ticket_id: int) -> None:
-    """SPEC §6: the bundle is read-only while a run is claimed (`running`); queued and
-    dispatched runs don't lock it, because their manifest is built at claim."""
+    """SPEC §6: the bundle is read-only while a run is claimed (`running`). A queued or
+    dispatched server run doesn't lock it (its manifest is built at claim), but a waiting client
+    run does: it runs on its owner's machine, so only what the owner dispatched may reach it."""
     row = conn.execute(
         "SELECT id FROM runs WHERE ticket_id = ? AND status = 'running'", (ticket_id,)
     ).fetchone()
     if row is not None:
         raise ApiError(
             409, "bundle_locked", f"Context is read-only while run #{row['id']} is running"
+        )
+
+    waiting = waiting_client_run_id(conn, ticket_id)
+    if waiting is not None:
+        raise ApiError(
+            409, "bundle_locked", f"Context is read-only while run #{waiting} waits for a client"
         )
 
 
