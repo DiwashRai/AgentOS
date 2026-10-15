@@ -2,16 +2,19 @@
 
 Pure: no web, db or http imports (enforced by import-linter). Every validator raises
 `ApiError(422, "validation_error", "<field>: <why>")` (size limits: 413 `too_large`) and returns
-the value to store.
+the value to store. `pydantic_issues` turns pydantic's errors into `ValidationIssue`s.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from urllib.parse import urlsplit
 
+from pydantic_core import ErrorDetails
+
 from agentos.errors import ApiError
+from agentos.models import ValidationIssue
 
 # ------------------------------------------------------------------ limits (SPEC §6)
 
@@ -39,6 +42,31 @@ def block_markers(key: str) -> tuple[str, str]:
 
 def _invalid(field: str, why: str) -> ApiError:
     return ApiError(422, "validation_error", f"{field}: {why}")
+
+
+# ------------------------------------------------------------------ pydantic errors → issues
+
+
+def pydantic_issues(
+    errors: Iterable[ErrorDetails],
+    prefix: Sequence[str | int] = (),
+    *,
+    strip_body: bool = False,
+) -> list[ValidationIssue]:
+    """One issue per pydantic error, its `loc` behind `prefix` (a leading `body` dropped first
+    with `strip_body`). A validator's ValueError gives its own text, without pydantic's
+    `Value error, ` prefix."""
+    issues: list[ValidationIssue] = []
+    for error in errors:
+        loc = list(error["loc"])
+        if strip_body and loc[:1] == ["body"]:
+            loc = loc[1:]
+
+        raised = error.get("ctx", {}).get("error")
+        message = str(raised) if isinstance(raised, Exception) else error["msg"]
+
+        issues.append(ValidationIssue(loc=[*prefix, *loc], message=message))
+    return issues
 
 
 # ------------------------------------------------------------------ file paths

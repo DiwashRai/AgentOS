@@ -1,9 +1,9 @@
-"""The single error envelope: {"error": {"code", "message"}} for every non-2xx response."""
+"""The single error envelope: {"error": {"code", "message", "issues"}} for every non-2xx response."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from agentos.errors import ApiError
-from agentos.models import ErrorBody, ErrorCode, ErrorDetail
+from agentos.models import ErrorBody, ErrorCode, ErrorDetail, ValidationIssue
+from agentos.validate import pydantic_issues
 
 log = logging.getLogger(__name__)
 
@@ -24,16 +25,24 @@ _HTTP_CODES: dict[int, ErrorCode] = {
 
 
 def error_response(
-    status: int, code: ErrorCode, message: str, headers: Mapping[str, str] | None = None
+    status: int,
+    code: ErrorCode,
+    message: str,
+    headers: Mapping[str, str] | None = None,
+    issues: Sequence[ValidationIssue] = (),
 ) -> JSONResponse:
-    body = ErrorBody(error=ErrorDetail(code=code, message=message))
+    """A 422 always lists at least one issue: one without any gets its message at the root."""
+    if status == 422 and not issues:
+        issues = [ValidationIssue(loc=[], message=message)]
+
+    body = ErrorBody(error=ErrorDetail(code=code, message=message, issues=list(issues)))
     return JSONResponse(status_code=status, content=body.model_dump(), headers=headers)
 
 
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
-        return error_response(exc.status, exc.code, exc.message)
+        return error_response(exc.status, exc.code, exc.message, issues=exc.issues)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -42,9 +51,12 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-        first = exc.errors()[0] if exc.errors() else {}
+        errors = exc.errors()
+        first = errors[0] if errors else {}
         where = ".".join(str(p) for p in first.get("loc", ()))
-        return error_response(422, "validation_error", f"{where}: {first.get('msg', 'invalid')}")
+        message = f"{where}: {first.get('msg', 'invalid')}"
+        issues = pydantic_issues(errors, strip_body=True)
+        return error_response(422, "validation_error", message, issues=issues)
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

@@ -109,9 +109,20 @@ class PatchModel(ApiModel):
 # ------------------------------------------------------------------ errors
 
 
+class ValidationIssue(ApiModel):
+    """One problem with a request. `loc` is the path to the field, like pydantic's, relative to
+    the request body (no leading `body`); an empty `loc` is the request as a whole."""
+
+    loc: list[str | int]
+    message: str
+
+
 class ErrorDetail(ApiModel):
     code: ErrorCode
+    # The first problem as `loc: message` for a validation error, otherwise a sentence.
     message: str
+    # Every problem of a 422 (at least one); [] on other errors.
+    issues: list[ValidationIssue]
 
 
 class ErrorBody(ApiModel):
