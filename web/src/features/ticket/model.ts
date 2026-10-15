@@ -2,8 +2,9 @@
 // (`attention`, `rail[].gate`, `now`, `latest_run`, `plan`, `next_stage`, `pipeline`); they never
 // derive board state.
 import { ApiError, type Schemas } from "../../api/client";
-import { age, firstName } from "../../domain/format";
+import { firstName } from "../../domain/format";
 import type { GlyphStage } from "../../domain/stage";
+import { sourceNames } from "../../domain/words";
 
 type Detail = Schemas["TicketDetail"];
 type Gate = Schemas["GateInfo"];
@@ -59,13 +60,6 @@ export function progressStep(p: Schemas["TaskProgress"] | null): { k: number; n:
   return { k: Math.min(p.done + 1, p.total), n: p.total };
 }
 
-/** Seconds since the run started (0 before it has). */
-export function runSeconds(startedAt: string | null | undefined, nowMs: number): number {
-  if (!startedAt) return 0;
-  const ms = Date.parse(startedAt);
-  return Number.isFinite(ms) ? Math.max(0, Math.floor((nowMs - ms) / 1000)) : 0;
-}
-
 /** "Plan · run #12 passed" under the gate mark. */
 export function gateMeta(t: Pick<Detail, "latest_run">, parked: ParkedGate): string {
   const run = t.latest_run ? ` · run #${String(t.latest_run.id)} passed` : "";
@@ -118,15 +112,11 @@ export function pipelineSummary(stages: readonly Pick<GlyphStage, "state" | "gat
     .join(" · ");
 }
 
-const SOURCE_WORD: Record<Schemas["SourceLink"]["source"], string> = {
-  jira: "Jira",
-};
-
 /** The kicker's source tag: "Jira", plus the external id only when it differs from our key
  *  (an imported Jira ticket keeps its Jira key, so the key chip already says it). */
 export function sourceText(t: Pick<Detail, "key" | "source">): string | null {
   if (!t.source) return null;
-  const word = SOURCE_WORD[t.source.source];
+  const word = sourceNames[t.source.source];
   return t.source.external_id === t.key ? word : `${word} ${t.source.external_id}`;
 }
 
@@ -134,11 +124,6 @@ export function sourceText(t: Pick<Detail, "key" | "source">): string | null {
 export function runnerText(t: Pick<Detail, "attention" | "latest_run">): string {
   const ref = t.attention === "running" ? t.latest_run?.launch_ref : null;
   return ref ?? "none";
-}
-
-export function openedText(t: Pick<Detail, "created_at">, nowMs: number): string {
-  const a = age(t.created_at, nowMs);
-  return a === "now" ? "just now" : `${a} ago`;
 }
 
 /** The quiet line under the header when an action fails. */

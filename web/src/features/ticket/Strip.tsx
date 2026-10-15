@@ -8,7 +8,7 @@ import { Link as RouterLink, useLocation } from "react-router";
 
 import type { Schemas } from "../../api/client";
 import { clientWait } from "../../domain/clients";
-import { elapsed } from "../../domain/format";
+import { duration, runSeconds } from "../../domain/format";
 import { planText } from "../../domain/plan";
 import { OUTCOME_KIND, outcomeOf, resolvedBy, type Outcome } from "../../domain/outcome";
 import { statusKind } from "../../domain/status";
@@ -22,7 +22,6 @@ import {
   parkedGate,
   progressStep,
   runLabel,
-  runSeconds,
   statusText,
   stripKind,
   thenStage,
@@ -35,10 +34,11 @@ import s from "./Strip.module.css";
 
 type Detail = Schemas["TicketDetail"];
 
-function Elapsed({ startedAt }: { startedAt: string | null }) {
+function Elapsed({ run }: { run: Detail["latest_run"] }) {
   const now = useNow(1000);
-  if (!startedAt) return null;
-  return <span className={s.num}>{elapsed(runSeconds(startedAt, now))}</span>;
+  const secs = runSeconds(run, now);
+  if (secs === null) return null;
+  return <span className={s.num}>{duration(secs)}</span>;
 }
 
 function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
@@ -64,7 +64,7 @@ function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
         </span>
         {wait ? <span className={s.meta}>{onlineWords[wait.online]}</span> : null}
         {step ? <span className={s.num}>{`${String(step.k)}/${String(step.n)}`}</span> : null}
-        {queued ? null : <Elapsed startedAt={t.latest_run?.started_at ?? null} />}
+        {queued ? null : <Elapsed run={t.latest_run} />}
         <span className={s.end}>
           <RouterLink className={linkClass} to={ticketPath(t.key, "runs", search)}>
             Log →

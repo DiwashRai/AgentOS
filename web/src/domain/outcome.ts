@@ -2,7 +2,7 @@
 // `resolution.outcome`, falling back to `state` (closed → abandoned, done → complete) for tickets
 // marked done before resolutions existed. Only tickets the server says are `done` have an outcome.
 import type { Schemas } from "../api/client";
-import { age, firstName } from "./format";
+import { ago, firstName } from "./format";
 import { statusKind, type StatusKind } from "./status";
 import { outcomeWords } from "./words";
 
@@ -39,6 +39,5 @@ export function outcomeWord(t: OutcomeTicket): string | null {
 
 /** "Diwash · 2h ago" / "Diwash · just now": who resolved it and when. */
 export function resolvedBy(r: Pick<Schemas["Resolution"], "by" | "at">, nowMs: number): string {
-  const a = age(r.at, nowMs);
-  return `${firstName(r.by)} · ${a === "now" ? "just now" : `${a} ago`}`;
+  return `${firstName(r.by)} · ${ago(r.at, nowMs)}`;
 }

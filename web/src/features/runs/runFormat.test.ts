@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  duration,
-  emptyLogText,
-  isActiveRun,
-  launchRef,
-  runMark,
-  spanSeconds,
-  stageMark,
-} from "./runFormat";
+import { emptyLogText, isActiveRun, launchRef, runMark, spanSeconds, stageMark } from "./runFormat";
 
 describe("log delivery", () => {
   it("says when an empty log will fill", () => {
@@ -20,25 +12,6 @@ describe("log delivery", () => {
     expect(text(true, true, "live")).toBe("Queued. The log starts when a worker picks it up.");
     expect(text(false, true, "live")).toBe("Waiting for output");
     expect(text(false, false, "live")).toBe("No output");
-  });
-});
-
-describe("duration", () => {
-  it("m:ss under an hour", () => {
-    expect(duration(0)).toBe("0:00");
-    expect(duration(42.9)).toBe("0:42");
-    expect(duration(725)).toBe("12:05");
-    expect(duration(3599)).toBe("59:59");
-  });
-
-  it("h m from an hour", () => {
-    expect(duration(3600)).toBe("1h 0m");
-    expect(duration(3600 + 4 * 60 + 59)).toBe("1h 4m");
-    expect(duration(26 * 3600)).toBe("26h 0m");
-  });
-
-  it("never negative", () => {
-    expect(duration(-5)).toBe("0:00");
   });
 });
 

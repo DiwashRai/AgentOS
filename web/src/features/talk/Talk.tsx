@@ -12,6 +12,7 @@ import {
 
 import type { Schemas } from "../../api/client";
 import { useChat, useMe, usePostChat } from "../../api/queries";
+import { words } from "../../domain/words";
 import { Avatar, Button, Faces, cx } from "../../ui";
 import { linkify } from "./linkify";
 import s from "./Talk.module.css";
@@ -25,7 +26,7 @@ export interface TalkProps {
 }
 
 const NOTE = {
-  ticket: "Just people here. Agents don't read this.",
+  ticket: words.talkNote,
   peek: "Just people here",
 } as const;
 

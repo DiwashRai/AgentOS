@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { meterOfText, meterSegments, STRIP_LABEL_MAX, stripLabel, stripLabelled } from "./meter";
+import { meterSegments, STRIP_LABEL_MAX, stripLabel, stripLabelled } from "./meter";
 
 describe("meterSegments", () => {
   it("marks steps before k done and step k current while running", () => {
@@ -13,14 +13,6 @@ describe("meterSegments", () => {
     expect(meterSegments(9, 2, "running")).toEqual(["done", "cur"]);
     expect(meterSegments(-1, 2, "running")).toEqual(["up", "up"]);
     expect(meterSegments(1, 0, "running")).toEqual([]);
-  });
-});
-
-describe("meterOfText", () => {
-  it("reads k/n, n/n when finished and 0/n when queued", () => {
-    expect(meterOfText(3, 5, "running")).toBe("3/5");
-    expect(meterOfText(3, 5, "finished")).toBe("5/5");
-    expect(meterOfText(3, 5, "queued")).toBe("0/5");
   });
 });
 

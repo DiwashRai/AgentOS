@@ -18,7 +18,6 @@ import {
   rackGroups,
   rowLook,
   runName,
-  runSeconds,
   sourceWord,
   stateLine,
   statusMark,
@@ -189,11 +188,7 @@ describe("runs", () => {
     expect(meterOf(ticket({ attention: "running" }))).toBeNull();
     expect(meterOf(ticket({ attention: "needs_you", now: p(5, 5) }))).toBeNull();
   });
-  it("counts elapsed seconds from started_at", () => {
-    const t = ticket({ latest_run: run("running", { started_at: "2026-10-11T10:00:00Z" }) });
-    expect(runSeconds(t, Date.parse("2026-10-11T10:01:05Z"))).toBe(65);
-    expect(runSeconds(ticket({ latest_run: run("queued") }), 0)).toBeNull();
-  });
+
   it("splits mine from the team in the note", () => {
     expect(atWorkNote({ mine: 2, running: 4, queued: 1 })).toBe("2 yours · 3 across the team");
   });

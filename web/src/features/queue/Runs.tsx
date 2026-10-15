@@ -3,7 +3,7 @@
 import type { CSSProperties } from "react";
 
 import type { Schemas } from "../../api/client";
-import { elapsed } from "../../domain/format";
+import { duration, runSeconds } from "../../domain/format";
 import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { statusKind } from "../../domain/status";
@@ -11,7 +11,7 @@ import { onlineWords } from "../../domain/words";
 import { Avatar, CountPill, cx, KeyChip, RunMeter, StageGlyph, StatusMark } from "../../ui";
 import { meterOfText } from "../../ui/meter";
 import { peekItemProps } from "../peek/usePeek";
-import { CAP, meterOf, type RackGroup, rackColumns, runName, runSeconds } from "./model";
+import { CAP, meterOf, type RackGroup, rackColumns, runName } from "./model";
 import s from "./Queue.module.css";
 
 type Ticket = Schemas["TicketSummary"];
@@ -26,7 +26,7 @@ export function RunTile({
   onOpen: (key: string) => void;
 }) {
   const meter = meterOf(t);
-  const secs = runSeconds(t, now);
+  const secs = runSeconds(t.latest_run, now);
   return (
     <article
       className={cx(s.tile, s.lift)}
@@ -36,7 +36,7 @@ export function RunTile({
     >
       <div className={s.tileHd}>
         <StatusMark kind="run" name={runName(t)} />
-        {secs !== null && <span className={s.tileEl}>{elapsed(secs)}</span>}
+        {secs !== null && <span className={s.tileEl}>{duration(secs)}</span>}
       </div>
       <span className={s.tileTtl} title={t.title}>
         {t.title}

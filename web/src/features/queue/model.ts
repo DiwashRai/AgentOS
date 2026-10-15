@@ -8,8 +8,8 @@ import { firstName } from "../../domain/format";
 import type { Groups } from "../../domain/groups";
 import { isMine, type MeRef, statusKind } from "../../domain/status";
 import { type DisplayKind, OUTCOME_KIND, outcomeOf } from "../../domain/outcome";
-import { outcomeWords, statusWords } from "../../domain/words";
-import type { MeterState } from "../../ui";
+import { outcomeWords, sourceNames, statusWords } from "../../domain/words";
+import type { MeterState } from "../../domain/meter";
 
 type Ticket = Schemas["TicketSummary"];
 type Person = Schemas["Person"];
@@ -57,15 +57,11 @@ export function runNumber(t: Pick<Ticket, "now" | "latest_run">): number | null 
   return t.now.run_id ?? t.latest_run?.id ?? null;
 }
 
-const SOURCE_NAME: Record<Schemas["SourceLink"]["source"], string> = {
-  jira: "Jira",
-};
-
 /** Where the ticket came from, in sentence case beside the key chip: `Jira PLAT-2231`; null for
  *  our own tickets (the key chip says it all). */
 export function sourceWord(t: Pick<Ticket, "source">): string | null {
   if (!t.source) return null;
-  return `${SOURCE_NAME[t.source.source]} ${t.source.external_id}`;
+  return `${sourceNames[t.source.source]} ${t.source.external_id}`;
 }
 
 /**
@@ -114,14 +110,6 @@ export function meterOf(t: Pick<Ticket, "now" | "attention">): MeterModel | null
   if (t.attention === "running")
     return { k: Math.min(p.done + 1, p.total), n: p.total, state: "running" };
   return null;
-}
-
-/** Elapsed seconds since the run started (null before it has started). */
-export function runSeconds(t: Pick<Ticket, "latest_run">, now: number): number | null {
-  const started = t.latest_run?.started_at;
-  if (!started) return null;
-  const ms = Date.parse(started);
-  return Number.isNaN(ms) ? null : Math.max(0, (now - ms) / 1000);
 }
 
 /** "2 yours · 5 across the team": the Agents-at-work note, from the shared counts. */

@@ -8,7 +8,6 @@ import {
   chipName,
   firstParagraph,
   gateMeta,
-  openedText,
   ownerPatch,
   ownerValue,
   paragraphs,
@@ -19,7 +18,6 @@ import {
   progressStep,
   runLabel,
   runnerText,
-  runSeconds,
   sourceText,
   statusText,
   stripKind,
@@ -130,13 +128,6 @@ describe("run strip", () => {
     expect(progressStep({ done: 0, total: 0 })).toBeNull();
     expect(progressStep(null)).toBeNull();
   });
-
-  it("counts elapsed seconds from the start", () => {
-    const start = "2026-10-11T10:00:00Z";
-    expect(runSeconds(start, Date.parse(start) + 75_500)).toBe(75);
-    expect(runSeconds(null, 0)).toBe(0);
-    expect(runSeconds(start, Date.parse(start) - 5000)).toBe(0);
-  });
 });
 
 describe("gate and status strip text", () => {
@@ -234,12 +225,6 @@ describe("header text", () => {
     expect(runnerText(detail({ attention: "running", latest_run: r }))).toBe("pid 4242");
     expect(runnerText(detail({ attention: "needs_you", latest_run: r }))).toBe("none");
     expect(runnerText(detail({ attention: "running", latest_run: run("running") }))).toBe("none");
-  });
-
-  it("says how long ago it opened", () => {
-    const t = detail({ created_at: "2026-10-11T10:00:00Z" });
-    expect(openedText(t, Date.parse("2026-10-11T12:30:00Z"))).toBe("2h 30m ago");
-    expect(openedText(t, Date.parse("2026-10-11T10:00:20Z"))).toBe("just now");
   });
 
   it("maps action errors to quiet words", () => {

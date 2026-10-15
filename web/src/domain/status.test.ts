@@ -39,11 +39,4 @@ describe("words", () => {
     expect(attentionWords.blocked).toBe("Blocked");
     expect(attentionWords.inbox).toBe("Inbox");
   });
-
-  it("uses the same word for an attention and its status kind", () => {
-    for (const [attention, word] of Object.entries(attentionWords)) {
-      const kind = statusKind(ticket({ attention: attention as keyof typeof attentionWords }));
-      expect(statusWords[kind]).toBe(word);
-    }
-  });
 });

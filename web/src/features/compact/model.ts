@@ -4,7 +4,7 @@
 // and combine `now`, `rail[].gate`, `latest_run` and `source`; they never derive board state.
 import type { Schemas } from "../../api/client";
 import { type CountKey, counts, shippedThisWeek } from "../../domain/counts";
-import { age, elapsed, firstName, repoShort } from "../../domain/format";
+import { age, duration, firstName, repoShort, runSeconds } from "../../domain/format";
 import { since } from "../../domain/groups";
 import { type Outcome, outcomeOf, outcomeWord } from "../../domain/outcome";
 import { planText } from "../../domain/plan";
@@ -15,16 +15,15 @@ import {
   statusKind,
   type StatusKind,
 } from "../../domain/status";
-import { attentionWords, outcomeWords, statusWords, words } from "../../domain/words";
+import { attentionWords, outcomeWords, sourceNames, statusWords, words } from "../../domain/words";
 import { projectPrefix } from "../../ui/identity";
-import { meterOfText } from "../../ui/meter";
+import { meterOfText } from "../../domain/meter";
 import {
   type MarkModel,
   meterOf,
   type MeterModel,
   parkedGate,
   runNumber,
-  runSeconds,
   statusMark,
   waitingPerson,
 } from "../queue/model";
@@ -330,8 +329,7 @@ export function emptyText(filter: Filter, repo: string | null): string {
 
 /** The Source column: `Jira · web`, `web` for our own tickets, "" with neither. Sentence case. */
 export function sourceText(t: Pick<Ticket, "source" | "repo_name">): string {
-  const src = t.source?.source;
-  const name = src ? src.charAt(0).toUpperCase() + src.slice(1) : "";
+  const name = t.source ? sourceNames[t.source.source] : "";
   return [name, repoShort(t.repo_name)].filter(Boolean).join(" · ");
 }
 
@@ -453,12 +451,12 @@ export function ownerLine(t: Pick<Ticket, "owner">, stages: string): string {
 /** The live label over the run: "Build · Run #42 · 3:12 · 3/5" (parts the server hasn't sent are dropped). */
 export function runLine(t: NowTicket, nowMs: number): string {
   const meter = meterOf(t);
-  const secs = runSeconds(t, nowMs);
+  const secs = runSeconds(t.latest_run, nowMs);
   const run = runNumber(t);
   return [
     t.now.actor ?? "Run",
     run !== null ? `Run #${String(run)}` : null,
-    secs !== null ? elapsed(secs) : null,
+    secs !== null ? duration(secs) : null,
     meter ? meterOfText(meter.k, meter.n, meter.state) : null,
   ]
     .filter(Boolean)

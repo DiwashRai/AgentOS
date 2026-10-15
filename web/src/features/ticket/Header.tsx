@@ -7,7 +7,7 @@ import { useMemo } from "react";
 import type { Schemas } from "../../api/client";
 import { useMe, usePatchTicket, usePeople } from "../../api/queries";
 import { isDispatch, ticketActions, type Action } from "../../domain/actions";
-import { repoShort } from "../../domain/format";
+import { ago, repoShort } from "../../domain/format";
 import { stageModel } from "../../domain/stage";
 import {
   Avatar,
@@ -31,7 +31,6 @@ import { RepoPicker } from "./RepoPicker";
 import {
   actionErrorText,
   firstParagraph,
-  openedText,
   ownerPatch,
   ownerValue,
   pipelineSummary,
@@ -203,7 +202,7 @@ export function Header({ t, target }: { t: Detail; target: DispatchTargetState }
         </div>
         <div>
           <dt>Opened</dt>
-          <dd title={new Date(t.created_at).toLocaleString()}>{openedText(t, now)}</dd>
+          <dd title={new Date(t.created_at).toLocaleString()}>{ago(t.created_at, now)}</dd>
         </div>
         <div>
           <dt>Pipeline</dt>

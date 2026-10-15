@@ -1,20 +1,12 @@
+import { displayWords } from "../domain/words";
 import { cx } from "./cx";
 import s from "./StatusMark.module.css";
 import { TickBadge } from "./TickBadge";
 
 export type MarkKind = "run" | "wait" | "you" | "blk" | "done" | "abandoned" | "queued" | "idle";
 
-/** Fallback accessible names for a glyph-only mark (DESIGN §16 vocabulary). */
-export const MARK_WORD: Record<MarkKind, string> = {
-  run: "Running",
-  wait: "Waiting on someone",
-  you: "Needs you",
-  blk: "Blocked",
-  done: "Done",
-  abandoned: "Abandoned",
-  queued: "Queued",
-  idle: "Inbox",
-};
+/** Fallback accessible names for a glyph-only mark: the domain's status words. */
+export const MARK_WORD: Record<MarkKind, string> = displayWords;
 
 export interface StatusMarkProps {
   kind: MarkKind;

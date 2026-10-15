@@ -44,15 +44,32 @@ export function isOld(from: Instant, now: Instant): boolean {
   return minutesBetween(from, now) >= 90;
 }
 
-/** Run elapsed time as `m:ss`. */
-export function elapsed(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, "0")}`;
+/** "just now" under a minute, else the age plus "ago": "5m ago", "3h 10m ago", "2d ago". */
+export function ago(from: Instant, now: Instant): string {
+  const a = age(from, now);
+  return a === "now" ? "just now" : `${a} ago`;
 }
 
-/** `JIRA PLAT-2231` when the ticket came from a source, else our own key (`AOS-42`). */
-export function srcLabel(t: Pick<Schemas["TicketSummary"], "key" | "source">): string {
-  return t.source ? `${t.source.source.toUpperCase()} ${t.source.external_id}` : t.key;
+/** Every duration on screen: `0:42`, `12:05` under an hour; `1h 4m` from there. Negative or
+ *  non-finite input (a clock skewed past the start) reads `0:00`. Callers with no start yet draw
+ *  nothing rather than `0:00` (`runSeconds` returns null then). */
+export function duration(seconds: number): string {
+  const s = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  if (s < 3600) return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, "0")}`;
+  return `${String(Math.floor(s / 3600))}h ${String(Math.floor((s % 3600) / 60))}m`;
+}
+
+/** Whole seconds a run has been going, from its `started_at` to `now` (never negative); null
+ *  before it has started (no run, queued, or an unreadable time). */
+export function runSeconds(
+  run: Pick<Schemas["RunSummary"], "started_at"> | null | undefined,
+  now: number,
+): number | null {
+  const started = run?.started_at;
+  if (!started) return null;
+
+  const ms = Date.parse(started);
+  return Number.isFinite(ms) ? Math.max(0, Math.floor((now - ms) / 1000)) : null;
 }
 
 /** `constellation/web` → `web`; also strips a trailing `.git` and slash from URLs. */

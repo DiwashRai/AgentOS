@@ -6,7 +6,7 @@ import { useSearchParams } from "react-router";
 
 import { ApiError, type Schemas } from "../../api/client";
 import { useCancelRun, useRun, useRunEvents, useRuns } from "../../api/queries";
-import { age } from "../../domain/format";
+import { ago, duration } from "../../domain/format";
 import { Button, ChevronIcon, cx, StatusMark } from "../../ui";
 import {
   checkFold,
@@ -21,7 +21,7 @@ import {
   type StageRun,
 } from "./rounds";
 import { RunLog } from "./RunLog";
-import { duration, isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
+import { isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
 import s from "./RunsTab.module.css";
 import { StageCalls } from "./StageCalls";
 import { useNow } from "../../ui/useNow";
@@ -46,9 +46,7 @@ function RunMark({ id, mark }: { id: number; mark: MarkInfo }) {
 }
 
 function startedText(run: RunSummary, now: number): string {
-  const at = run.started_at ?? run.created_at;
-  const a = age(at, now);
-  return a === "now" ? "just now" : `${a} ago`;
+  return ago(run.started_at ?? run.created_at, now);
 }
 
 function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary }) {

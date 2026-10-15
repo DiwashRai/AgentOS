@@ -2,7 +2,6 @@
 // only, over server fields (`key`, `title`, `source`); views filter through here and never match
 // for themselves.
 import type { Schemas } from "../api/client";
-import { srcLabel } from "./format";
 
 type SearchTicket = Pick<Schemas["TicketSummary"], "key" | "title" | "source">;
 
@@ -16,10 +15,15 @@ export function parseQuery(q: string | null | undefined): Query {
   return (q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
 }
 
+/** The source as searched: its id and external id (`jira PLAT-2231`), or "" for our own tickets. */
+function sourceHay(t: SearchTicket): string {
+  return t.source ? `${t.source.source} ${t.source.external_id}` : "";
+}
+
 /** Every term is a case-insensitive substring of the key, the title or the source label. */
 export function matchesQuery(t: SearchTicket, query: Query): boolean {
   if (query.length === 0) return true;
-  const hay = [t.key, t.title, srcLabel(t)].join("\n").toLowerCase();
+  const hay = [t.key, t.title, sourceHay(t)].join("\n").toLowerCase();
   return query.every((term) => hay.includes(term));
 }
 

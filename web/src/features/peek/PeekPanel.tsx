@@ -6,14 +6,14 @@ import { Link as RouterLink, useNavigate } from "react-router";
 import { ApiError, type Schemas } from "../../api/client";
 import { useTicket } from "../../api/queries";
 import { useBoard } from "../../app/useBoard";
-import { elapsed, firstName, repoShort, srcLabel } from "../../domain/format";
+import { duration, firstName, repoShort, runSeconds } from "../../domain/format";
 import { outcomeWord, resolvedBy } from "../../domain/outcome";
 import { planText } from "../../domain/plan";
 import { stageModel } from "../../domain/stage";
 import { words } from "../../domain/words";
 import { Button, cx, Kbd, linkClass, RunMeter, StageGlyph, StatusMark, Stepper } from "../../ui";
 import { meterOfText } from "../../ui/meter";
-import { meterOf, runNumber, runSeconds, statusMark } from "../queue/model";
+import { meterOf, runNumber, sourceWord, statusMark } from "../queue/model";
 import { useNow } from "../../ui/useNow";
 import { Talk } from "../talk/Talk";
 import { PrLink } from "../ticket/PrLink";
@@ -61,12 +61,12 @@ function Run({ ticket: t }: { ticket: Summary }) {
   const now = useNow(1000);
   const live = t.attention === "running";
   const meter = meterOf(t);
-  const secs = runSeconds(t, now);
+  const secs = runSeconds(t.latest_run, now);
   const run = runNumber(t);
   const line = [
     t.now.actor ?? "Run",
     run !== null ? `Run #${String(run)}` : null,
-    secs !== null ? elapsed(secs) : null,
+    secs !== null ? duration(secs) : null,
     meter ? meterOfText(meter.k, meter.n, meter.state) : null,
   ]
     .filter(Boolean)
@@ -154,7 +154,7 @@ export function PeekPanel({ ticketKey, onClose }: { ticketKey: string; onClose: 
     <>
       <header className={s.head}>
         <div className={s.bar}>
-          <span className={s.src}>{srcLabel(t)}</span>
+          <span className={s.src}>{sourceWord(t) ?? t.key}</span>
           {repo && <span className={s.k}>{`· ${repo}`}</span>}
           <span className={s.sp} />
           <StageGlyph model={stageModel(t)} />
