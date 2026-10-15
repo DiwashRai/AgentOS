@@ -1,35 +1,9 @@
 /* Runs tab. Not designed beyond the run-history rows (ticket.css `.tv-runs`: 44px rows,
-   `200px 1fr 64px`); the stage list and log are built in the same quiet language. */
-
-/* labels and quiet lines: sentence case, 12 --ink-3 (refresh §3.4, §6) */
-.k,
-.quiet {
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  line-height: 1.3;
-  color: var(--ink-3);
-}
-
-.quiet {
-  margin: var(--sp-6) 0 0;
-  font-weight: 400;
-}
-
-.quiet[data-error] {
-  color: var(--blocked);
-}
-
-/* ticket.css .tv-empty */
-.empty {
-  margin: var(--sp-9) 0 0;
-  font-size: var(--fs-ui);
-  color: var(--ink-3);
-}
+   `200px 1fr 64px`); the stage list and log are built in the same quiet language. Lists, folds,
+   badges and status lines are the kit's; this module keeps the grids, the command line and the log. */
 
 .tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-10);
+  padding-top: var(--sp-6);
 }
 
 .mono {
@@ -40,25 +14,15 @@
   white-space: nowrap;
 }
 
-.ellip {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ellip b {
-  font-weight: 500;
-  color: var(--ink-2);
+/* the quiet note box: tool results, a check's notes and warnings, in the log and the manifest */
+.box {
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink-1);
 }
 
 /* ---------------------------------------------------------------- run history */
-
-.runs {
-  list-style: none;
-  margin: var(--sp-6) 0 0;
-  padding: 0;
-}
 
 /* mark · inline run | Cancel run (active runs only; empty otherwise) | launch ref */
 .row {
@@ -67,7 +31,6 @@
   gap: var(--sp-8);
   align-items: center;
   height: 44px;
-  border-bottom: 1px solid var(--rule-soft);
 }
 
 /* The whole row (minus the launch ref) is one button: mark · inline run. */
@@ -97,29 +60,16 @@
   box-shadow: var(--row-hover-halo);
 }
 
-.rowMain:focus-visible {
-  border-radius: var(--r-row);
-}
-
 .selected > .rowMain {
   border-color: var(--row-selected-edge);
 }
 
-.rowMeta {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--sp-6);
-  min-width: 0;
-  font-size: var(--fs-meta);
-  color: var(--ink-3);
+.from b {
+  font-weight: 500;
+  color: var(--ink-2);
 }
 
 .ref {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   text-align: right;
 }
 
@@ -133,27 +83,13 @@
   text-underline-offset: 3px;
 }
 
-.refLink:hover,
-.textLink:hover {
+.refLink:hover {
   text-decoration-color: var(--ink-1);
-}
-
-/* a link inside a sentence (the empty log's "Watch it live on GitHub") */
-.textLink {
-  color: var(--ink-1);
-  font-weight: 500;
-  text-decoration: underline;
-  text-decoration-color: var(--rule-strong);
-  text-underline-offset: 3px;
 }
 
 /* gated: the "you" glyph, the run's name and the word in blue text (no YOU pill: a run doesn't
    know who) */
 .gated {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  min-width: 0;
   white-space: nowrap;
   font-size: var(--fs-control);
   line-height: 1.25;
@@ -169,44 +105,7 @@
   font-weight: 600;
 }
 
-/* ---------------------------------------------------------------- selected run */
-
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-6);
-  min-width: 0;
-}
-
-.cancel {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-5);
-  flex: none;
-}
-
-.err {
-  font-size: var(--fs-meta);
-  color: var(--blocked);
-}
-
-.runError {
-  margin: 0;
-  font-size: var(--fs-meta);
-  color: var(--blocked);
-}
-
-/* the selected run's stages: a firmer rule on top sets them apart from the run history */
-.stages {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--rule);
-}
-
-.stageItem {
-  border-bottom: 1px solid var(--rule-soft);
-}
+/* ---------------------------------------------------------------- selected run's stages */
 
 .stage {
   display: grid;
@@ -217,41 +116,22 @@
   font-size: var(--fs-meta);
 }
 
-.noteCell {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-4);
-  min-width: 0;
+.stage > .mono {
+  text-align: right;
 }
 
-/* a check's verdict: green = done (pass), crimson = blocked (fail), per the hue rules */
-.verdict {
-  flex: none;
-  padding: 1px var(--sp-3);
-  border-radius: 999px;
-  font-size: var(--fs-mono);
-  font-weight: 600;
-  line-height: 1.45;
+.stageName {
+  color: var(--ink-1);
+  font-weight: 500;
 }
 
-.vPass {
-  color: var(--done);
-  background: var(--done-tint);
-}
-
-.vFail {
-  color: var(--blocked);
-  background: color-mix(in srgb, var(--blocked) 12%, transparent);
+.stageNote {
+  color: var(--ink-3);
 }
 
 /* the fold under a check's row, indented to the stage name */
 .checkFold {
   margin: calc(-1 * var(--sp-2)) 0 var(--sp-4) var(--sp-10);
-}
-
-.foldMeta {
-  font-weight: 400;
-  color: var(--ink-3);
 }
 
 .repairs {
@@ -271,13 +151,9 @@
 /* one round of a loop block: a quiet head, then its rows behind a bracket */
 .round {
   padding: var(--sp-4) 0 var(--sp-1);
-  border-bottom: 1px solid var(--rule-soft);
 }
 
 .roundHead {
-  display: flex;
-  align-items: baseline;
-  gap: var(--sp-4);
   font-size: var(--fs-meta);
   font-weight: 500;
   color: var(--ink-2);
@@ -289,166 +165,25 @@
 }
 
 .roundRows {
-  list-style: none;
   margin: var(--sp-2) 0 0 var(--sp-2);
   padding: 0 0 0 var(--sp-5);
   border-left: 2px solid var(--rule);
 }
 
-.roundRows > .stageItem:last-child {
-  border-bottom: 0;
-}
-
-.stageName {
-  color: var(--ink-1);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stageNote {
-  color: var(--ink-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stageNote.bad {
-  color: var(--blocked);
-}
-
-/* a passed stage: green = done */
-.stageNote.ok {
-  color: var(--done);
-}
-
-.stage > .mono {
-  text-align: right;
-}
-
 /* ---------------------------------------------------------------- how each stage was called */
 
-/* a fold-out: chevron + sentence-case label; the chevron points right while closed */
-.fold > summary {
-  list-style: none;
-}
-
-.fold > summary::-webkit-details-marker {
-  display: none;
-}
-
-.foldHead {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-1) 0;
-  border-radius: var(--r-xs);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-
-.foldHead:hover {
-  color: var(--ink-1);
-}
-
-.chev {
-  display: inline-grid;
-  place-items: center;
-  width: 14px;
-  color: var(--ink-3);
-  transform: rotate(-90deg);
-  transition: transform var(--t-fast) ease;
-}
-
-.fold[open] > summary > .chev {
-  transform: none;
-}
-
-/* the section itself: a heading-sized summary over the stages */
-.section > summary {
-  font-size: var(--fs-ui);
-  color: var(--ink-1);
-}
-
 .calls {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-6);
   margin-top: var(--sp-4);
 }
 
-.callWarning {
-  margin: 0;
-  padding: var(--sp-1) var(--sp-4);
-  border-radius: 6px;
-  border-left: 2px solid var(--rule-strong);
-  background: var(--field);
-  font-size: var(--fs-meta);
-  color: var(--ink-1);
-}
-
-.later {
-  list-style: none;
-  margin: var(--sp-3) 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-5);
-}
-
-.laterItem {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  min-width: 0;
-}
-
-.laterItem > .pre {
-  margin: 0;
-  max-height: 200px;
-}
-
-.callList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--rule);
-}
-
 .call {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  min-width: 0;
   padding: var(--sp-5) 0 var(--sp-6);
-  border-bottom: 1px solid var(--rule-soft);
-}
-
-.callHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--sp-6);
-  min-width: 0;
 }
 
 .callName {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: var(--fs-ui);
   font-weight: 500;
   color: var(--ink-1);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
 }
 
 .chipK {
@@ -459,6 +194,12 @@
   font-family: var(--font-mono);
   font-size: var(--fs-mono);
   color: var(--ink-1);
+}
+
+.later {
+  list-style: none;
+  margin: var(--sp-3) 0 0;
+  padding: 0;
 }
 
 /* the command line: wraps, never scrolls sideways (phones) */
@@ -492,8 +233,7 @@
   font-style: italic;
 }
 
-.pre,
-.paths {
+.pre {
   margin: var(--sp-3) 0 0;
   max-height: 320px;
   overflow: auto;
@@ -508,6 +248,11 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   scrollbar-width: thin;
+}
+
+.laterPre {
+  margin: 0;
+  max-height: 200px;
 }
 
 .paths {
@@ -540,12 +285,15 @@
   color: var(--ink-2);
 }
 
-.stderr {
+.stderr,
+.toolError {
   color: var(--blocked);
 }
 
 .system,
-.session {
+.session,
+.tool,
+.trunc {
   color: var(--ink-3);
 }
 
@@ -558,38 +306,32 @@
   color: var(--ink-1);
 }
 
-.tool {
-  color: var(--ink-3);
-}
-
 .tool::before {
   content: "→ ";
 }
 
-.toolError {
-  color: var(--blocked);
-}
-
-.result,
-.resultError {
+.result {
+  composes: box;
   margin: var(--sp-3) 0;
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: 6px;
-  background: var(--field);
-  color: var(--ink-1);
 }
 
 .resultError {
+  composes: result;
   color: var(--blocked);
 }
 
 .warning {
+  composes: box;
   margin: var(--sp-2) 0;
-  padding: var(--sp-1) var(--sp-4);
-  border-radius: 6px;
+  padding-block: var(--sp-1);
   border-left: 2px solid var(--rule-strong);
-  background: var(--field);
-  color: var(--ink-1);
+}
+
+/* the manifest's warnings: the log's warning box at the meta size (after it, so it wins) */
+.callWarning {
+  composes: warning;
+  margin: 0;
+  font-size: var(--fs-meta);
 }
 
 /* a check's verdict and its notes */
@@ -610,11 +352,8 @@
 }
 
 .notes {
+  composes: box;
   margin: var(--sp-1) 0 var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: 6px;
-  background: var(--field);
-  color: var(--ink-1);
 }
 
 /* stage separators: a sentence-case label over a hairline; ended green, failed crimson; a check
@@ -646,13 +385,8 @@
   padding-top: 0;
 }
 
-.trunc {
-  color: var(--ink-3);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .rowMain,
-  .chev {
+  .rowMain {
     transition: none;
   }
 }

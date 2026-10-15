@@ -29,11 +29,6 @@ export const ALLOWED: readonly Allowed[] = [
   },
   {
     file: "src/features/talk/Talk.module.css",
-    declaration: "margin: -1px",
-    reason: "the visually hidden (screen reader only) pattern",
-  },
-  {
-    file: "src/features/talk/Talk.module.css",
     declaration: "margin-bottom: 1px",
     reason: "lines the Send button up with the textarea's bottom edge",
   },
@@ -81,11 +76,6 @@ export const ALLOWED: readonly Allowed[] = [
     file: "src/features/context/ContextTab.module.css",
     declaration: "padding: 1px var(--sp-2)",
     reason: "a 1px vertical pad keeps the tag one text line tall",
-  },
-  {
-    file: "src/features/runs/RunsTab.module.css",
-    declaration: "padding: 1px var(--sp-3)",
-    reason: "a 1px vertical pad keeps the verdict pill one text line tall",
   },
 ];
 

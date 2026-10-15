@@ -1,10 +1,10 @@
 // Runs tab · "How each stage was called": the selected run's manifest, exactly what the worker
 // received. Closed by default; the manifest (which carries every context file) is fetched only once
 // the section is opened. Logic lives in `manifest.ts`.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useManifest } from "../../api/queries";
-import { ChevronIcon, cx, Tag } from "../../ui";
+import { cx, EmptyState, Fold, FramedList, Inline, Stack, StatusLine, Tag, text } from "../../ui";
 import {
   filePaths,
   laterLabel,
@@ -15,6 +15,7 @@ import {
   type LaterCall,
   type Manifest,
   type StageCall,
+  type CommandToken,
   type TokenKind,
 } from "./manifest";
 import s from "./RunsTab.module.css";
@@ -27,22 +28,31 @@ const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
   prompt: s.tPrompt,
 };
 
-function Summary({ children }: { children: ReactNode }) {
+/** A command line, each token in its kind's style; it wraps, never scrolls sideways. */
+function Command({
+  tokens,
+  label,
+}: {
+  tokens: readonly CommandToken[];
+  label?: string | undefined;
+}) {
   return (
-    <summary className={s.foldHead}>
-      <span className={s.chev}>
-        <ChevronIcon />
-      </span>
-      {children}
-    </summary>
+    <code className={s.cmd} aria-label={label}>
+      {tokens.map((t, i) => (
+        <span key={i}>
+          {i > 0 ? " " : ""}
+          <span className={TOKEN_CLASS[t.kind]}>{t.text}</span>
+        </span>
+      ))}
+    </code>
   );
 }
 
 function CallItem({ call }: { call: StageCall }) {
   return (
-    <li className={s.call}>
-      <div className={s.callHead}>
-        <span className={s.callName}>{call.name}</span>
+    <Stack as="li" gap={4} className={s.call}>
+      <Inline gap={6} align="baseline" justify="between">
+        <span className={cx(s.callName, text.ellipsis)}>{call.name}</span>
         <span className={s.mono}>
           {[
             call.kind === "shell" ? "shell" : "",
@@ -52,68 +62,52 @@ function CallItem({ call }: { call: StageCall }) {
             .filter(Boolean)
             .join(" · ")}
         </span>
-      </div>
+      </Inline>
       {call.chips.length > 0 ? (
-        <div className={s.chips}>
+        <Inline gap={3} wrap>
           {call.chips.map((c) => (
             <Tag key={c.label} quiet>
               <span className={s.chipK}>{c.label}</span>
               <span className={s.chipV}>{c.value}</span>
             </Tag>
           ))}
-        </div>
+        </Inline>
       ) : null}
       {call.tokens ? (
-        <code className={s.cmd} aria-label={`${call.name} command`}>
-          {call.tokens.map((t, i) => (
-            <span key={i}>
-              {i > 0 ? " " : ""}
-              <span className={TOKEN_CLASS[t.kind]}>{t.text}</span>
-            </span>
-          ))}
-        </code>
+        <Command tokens={call.tokens} label={`${call.name} command`} />
       ) : (
         <code className={s.cmd} aria-label={`${call.name} command`}>
           {call.command}
         </code>
       )}
       {call.prompt ? (
-        <details className={s.fold}>
-          <Summary>{promptLabel(call.prompt.via)}</Summary>
+        <Fold summary={promptLabel(call.prompt.via)}>
           <pre className={s.pre}>{call.prompt.text}</pre>
-        </details>
+        </Fold>
       ) : null}
       {call.later.length > 0 ? <LaterCalls calls={call.later} /> : null}
-    </li>
+    </Stack>
   );
 }
 
 /** A loop stage's later-round and repair calls, folded: each its command and prompt. */
 function LaterCalls({ calls }: { calls: LaterCall[] }) {
   return (
-    <details className={s.fold}>
-      <Summary>{laterLabel(calls)}</Summary>
-      <ol className={s.later}>
+    <Fold summary={laterLabel(calls)}>
+      <Stack as="ol" gap={5} className={s.later}>
         {calls.map((c) => (
-          <li key={c.key} className={s.laterItem}>
-            <span className={s.k}>
+          <Stack as="li" gap={2} key={c.key}>
+            <span className={text.label}>
               {c.kind === "round"
                 ? `Round ${String(c.round)}`
                 : `Repair in round ${String(c.round)}`}
             </span>
-            <code className={s.cmd}>
-              {c.tokens.map((t, i) => (
-                <span key={i}>
-                  {i > 0 ? " " : ""}
-                  <span className={TOKEN_CLASS[t.kind]}>{t.text}</span>
-                </span>
-              ))}
-            </code>
-            <pre className={s.pre}>{c.prompt}</pre>
-          </li>
+            <Command tokens={c.tokens} />
+            <pre className={cx(s.pre, s.laterPre)}>{c.prompt}</pre>
+          </Stack>
         ))}
-      </ol>
-    </details>
+      </Stack>
+    </Fold>
   );
 }
 
@@ -121,30 +115,29 @@ function LaterCalls({ calls }: { calls: LaterCall[] }) {
 export function ManifestBody({ manifest }: { manifest: Manifest }) {
   const paths = filePaths(manifest);
   return (
-    <div className={s.calls}>
+    <Stack gap={6}>
       {(manifest.warnings ?? []).map((w, i) => (
         <p key={i} className={s.callWarning} role="note">
           {w}
         </p>
       ))}
-      <ol className={s.callList} aria-label="Stage calls">
+      <FramedList framed={false} rules="under" topRule as="ol" aria-label="Stage calls">
         {manifest.stages.map((st) => (
           <CallItem key={st.id} call={stageCall(st)} />
         ))}
-      </ol>
+      </FramedList>
       {paths.length > 0 ? (
-        <details className={s.fold}>
-          <Summary>Files given to the agent ({paths.length})</Summary>
-          <ul className={s.paths}>
+        <Fold summary={`Files given to the agent (${String(paths.length)})`}>
+          <ul className={cx(s.pre, s.paths)}>
             {paths.map((p) => (
               <li key={p}>{p}</li>
             ))}
           </ul>
-        </details>
+        </Fold>
       ) : (
-        <p className={s.quiet}>No files given to the agent</p>
+        <EmptyState form="note">No files given to the agent</EmptyState>
       )}
-    </div>
+    </Stack>
   );
 }
 
@@ -159,14 +152,10 @@ function ManifestLoader({ runId, status }: { runId: number; status: RunStatus })
     if (isError) void refetch();
   }, [status, isError, refetch]);
 
-  if (q.isPending) return <p className={s.quiet}>Loading</p>;
+  if (q.isPending) return <StatusLine>Loading</StatusLine>;
   if (q.isError) {
     const e = manifestErrorText(q.error);
-    return (
-      <p className={s.quiet} data-error={e.quiet ? undefined : ""}>
-        {e.text}
-      </p>
-    );
+    return <StatusLine error={!e.quiet}>{e.text}</StatusLine>;
   }
   return <ManifestBody manifest={q.data} />;
 }
@@ -175,14 +164,12 @@ function ManifestLoader({ runId, status }: { runId: number; status: RunStatus })
 export function StageCalls({ runId, status }: { runId: number; status: RunStatus }) {
   const [open, setOpen] = useState(false);
   return (
-    <details
-      className={cx(s.fold, s.section)}
-      onToggle={(e) => {
-        setOpen(e.currentTarget.open);
-      }}
-    >
-      <Summary>How each stage was called</Summary>
-      {open ? <ManifestLoader runId={runId} status={status} /> : null}
-    </details>
+    <Fold summary="How each stage was called" size="section" onToggle={setOpen}>
+      {open ? (
+        <div className={s.calls}>
+          <ManifestLoader runId={runId} status={status} />
+        </div>
+      ) : null}
+    </Fold>
   );
 }
