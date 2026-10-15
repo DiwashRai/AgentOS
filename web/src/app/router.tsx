@@ -1,4 +1,4 @@
-// Routes (web/AGENTS.md "IA / routes"). Peek, filter and tab state live in the URL.
+// Routes (web/AGENTS.md "Routes and URL state"). Peek, filter and tab state live in the URL.
 import { createBrowserRouter, Navigate } from "react-router";
 
 import { LoginPage } from "../features/auth/LoginPage";

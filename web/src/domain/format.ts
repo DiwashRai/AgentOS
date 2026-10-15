@@ -72,17 +72,3 @@ export function prLabel(url: string): string {
 export function firstName(p: Pick<Schemas["Person"], "display_name">): string {
   return p.display_name.trim().split(/\s+/)[0] ?? p.display_name;
 }
-
-/** Avatar initials: `Diwash Rai` → `DR`, `dev` → `DE`. */
-export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  const first = parts[0] ?? "";
-  const last = parts.length > 1 ? (parts[parts.length - 1] ?? "") : "";
-  const out = last ? `${first.charAt(0)}${last.charAt(0)}` : first.slice(0, 2);
-  return out.toUpperCase() || "?";
-}
-
-/** One of the four avatar fills (`--av-1..4`), stable per person. */
-export function avatarTone(id: number): 1 | 2 | 3 | 4 {
-  return ((((id % 4) + 4) % 4) + 1) as 1 | 2 | 3 | 4;
-}
