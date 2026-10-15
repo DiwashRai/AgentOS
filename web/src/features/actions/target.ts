@@ -4,11 +4,12 @@
 // sends `server` and sees no choice. The server is the authority: a client dispatch by anyone but
 // the owner is a 403 `forbidden`.
 import type { Schemas } from "../../api/client";
+import type { DispatchTarget } from "../../api/queries";
 import { onlineKey } from "../../domain/clients";
 import { isMine, type MeRef } from "../../domain/status";
 import { onlineWords, targetWords } from "../../domain/words";
 
-export type DispatchTarget = Schemas["DispatchRequest"]["target"];
+export type { DispatchTarget };
 
 export interface TargetChoice {
   /** Show the Server / My client choice. */

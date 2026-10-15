@@ -24,8 +24,9 @@ export const SHELLS: readonly { id: Shell; label: string }[] = [
   { id: "sh", label: "sh" },
 ];
 
-/** Characters a shell word may hold without quotes (a URL's usual ones). */
-const BARE = /^[\w@%+=:,./-]+$/;
+/** Characters a shell word may hold without quotes in sh and in pwsh's argument mode (a URL's
+ *  usual ones; `,` and `@` are special in pwsh, so they get quotes). */
+const BARE = /^[\w%+=:./-]+$/;
 
 /** `s` as one shell word: bare when it is safe, else single-quoted for that shell. */
 export function shellWord(shell: Shell, s: string): string {

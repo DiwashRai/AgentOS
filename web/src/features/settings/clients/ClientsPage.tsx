@@ -2,7 +2,7 @@
 // it once, with the lines that start `worker.py --client` in PowerShell and in sh; everyone
 // approved lists their own tokens (state and last seen, as words) and revokes them. Renders a
 // content column; the route wraps it in the shell's TopBar + Surface.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useClients, useCreateClient, useMe, useRevokeClient } from "../../../api/queries";
 import { Button } from "../../../ui";
@@ -28,6 +28,8 @@ import {
 } from "./model";
 
 const COLUMNS = 5;
+/** How long a Copy button says "Copied" before it reads "Copy" again. */
+const COPIED_MS = 2_000;
 
 function Line({ children, error }: { children: string; error?: boolean }) {
   return (
@@ -45,6 +47,17 @@ function Line({ children, error }: { children: string; error?: boolean }) {
  *  for a manual copy instead. */
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+
+  useEffect(() => {
+    if (state !== "copied") return;
+    const timer = setTimeout(() => {
+      setState("idle");
+    }, COPIED_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [state]);
+
   return (
     <Button
       size="sm"
@@ -122,6 +135,8 @@ function CreateForm({ onCreated }: { onCreated: (c: ClientTokenCreated) => void 
               setName("");
               setTouched(false);
               onCreated(c);
+              // The token lives only in the page's state, never in the mutation cache.
+              create.reset();
             },
           },
         );
@@ -138,6 +153,7 @@ function CreateForm({ onCreated }: { onCreated: (c: ClientTokenCreated) => void 
             id={id}
             className={f.input}
             value={name}
+            // Headroom over NAME_MAX for surrounding spaces the server strips; nameIssue checks the rest.
             maxLength={NAME_MAX + 20}
             placeholder="work laptop"
             readOnly={create.isPending}
@@ -238,10 +254,14 @@ export function ClientsPage() {
   const [created, setCreated] = useState<ClientTokenCreated | null>(null);
 
   if (me.isPending || clients.isPending) return <Line>Loading clients</Line>;
-  if (clients.isError) return <Line error>{`Can't load clients · ${clients.error.message}`}</Line>;
+  // A failed refetch keeps the last list (and a token shown once); only a first load fails here.
+  if (clients.data === undefined) {
+    return <Line error>{`Can't load clients · ${clients.error.message}`}</Line>;
+  }
 
   const list = clients.data;
   const writer = canCreate(me.data?.role);
+
   return (
     <div className={pages.page}>
       <header className={pages.bar}>
@@ -272,6 +292,10 @@ export function ClientsPage() {
             setCreated(null);
           }}
         />
+      ) : null}
+
+      {clients.isError ? (
+        <Line error>{`Can't refresh clients · ${clients.error.message}`}</Line>
       ) : null}
 
       {list.length === 0 ? (

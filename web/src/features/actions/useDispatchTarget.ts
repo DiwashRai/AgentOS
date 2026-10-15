@@ -1,5 +1,6 @@
 // The dispatch target for one ticket (features/actions/target.ts) plus the user's pick, which
-// lasts while the surface is mounted. Shared by useTicketAction and the Pipeline tab's Run from….
+// lasts while the surface is mounted. The Ticket page holds one for its header and its Pipeline
+// tab's Run from…, so both show the same pick; a row's useTicketAction holds its own.
 import { useState } from "react";
 
 import { useClients, useMe } from "../../api/queries";

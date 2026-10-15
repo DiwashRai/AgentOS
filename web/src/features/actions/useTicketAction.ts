@@ -5,8 +5,8 @@
 //   cancel · complete / abandon = open the inline confirm (ResolveConfirm); its confirm POSTs
 //   resolve · reopen = PATCH state=open · request_changes = the Context tab (edit TASKS.md, then
 //   Approve) · open = the peek (rows) — the header never offers it.
-// The target is the dispatch target rule's (features/actions/target.ts); only the header shows
-// the choice, so rows send its default.
+// The target is the dispatch target rule's (features/actions/target.ts); only the Ticket page shows
+// the choice (one pick shared by its header and Pipeline tab, passed in), so rows send its default.
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -14,7 +14,7 @@ import type { ApiError } from "../../api/client";
 import { useCancelRun, useDispatch, usePatchTicket, useResolveTicket } from "../../api/queries";
 import type { Action, ActionId } from "../../domain/actions";
 import type { Outcome } from "../../domain/outcome";
-import { useDispatchTarget } from "./useDispatchTarget";
+import { type DispatchTargetState, useDispatchTarget } from "./useDispatchTarget";
 
 interface ActionTarget {
   key: string;
@@ -22,10 +22,12 @@ interface ActionTarget {
   latest_run: { id: number } | null;
 }
 
-export function useTicketAction(t: ActionTarget) {
+/** `shared`: the page's target state, when the page shows the choice elsewhere too. */
+export function useTicketAction(t: ActionTarget, shared?: DispatchTargetState) {
   const navigate = useNavigate();
   const [, setParams] = useSearchParams();
-  const target = useDispatchTarget(t);
+  const own = useDispatchTarget(t);
+  const target = shared ?? own;
   const dispatch = useDispatch(t.key);
   const cancel = useCancelRun(t.key);
   const patch = usePatchTicket(t.key);

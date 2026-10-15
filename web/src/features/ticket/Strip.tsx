@@ -62,7 +62,7 @@ function RunBand({ t, queued }: { t: Detail; queued: boolean }) {
         <span className={s.text} title={text}>
           {text}
         </span>
-        {wait ? <span className={s.num}>{onlineWords[wait.online]}</span> : null}
+        {wait ? <span className={s.meta}>{onlineWords[wait.online]}</span> : null}
         {step ? <span className={s.num}>{`${String(step.k)}/${String(step.n)}`}</span> : null}
         {queued ? null : <Elapsed startedAt={t.latest_run?.started_at ?? null} />}
         <span className={s.end}>

@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useConfig, useDispatch, useMe, useSavePipeline, useTicket } from "../../api/queries";
 import { Button } from "../../ui";
 import { TargetPicker } from "../actions/TargetPicker";
-import { useDispatchTarget } from "../actions/useDispatchTarget";
+import type { DispatchTargetState } from "../actions/useDispatchTarget";
 import { WorkflowStrip } from "../workflows";
 import { Select } from "./fields";
 import {
@@ -22,14 +22,20 @@ import { PipelineEditor } from "./PipelineEditor";
 import { SaveBar } from "./SaveBar";
 import { usePipelineDraft } from "./useDraft";
 
-export function PipelineTab({ ticketKey }: { ticketKey: string }) {
+/** `target`: the Ticket page's dispatch target, shared with its header. */
+export function PipelineTab({
+  ticketKey,
+  target,
+}: {
+  ticketKey: string;
+  target: DispatchTargetState;
+}) {
   const ticket = useTicket(ticketKey);
   const config = useConfig();
   const me = useMe();
   const save = useSavePipeline(ticketKey);
   const dispatch = useDispatch(ticketKey);
   const t = ticket.data;
-  const target = useDispatchTarget({ owner: t?.owner ?? null });
   const draft = usePipelineDraft(t?.pipeline, t?.pipeline_version);
   const [from, setFrom] = useState<string | null>(null);
 

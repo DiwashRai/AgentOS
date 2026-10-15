@@ -43,6 +43,8 @@ describe("the command shown once", () => {
     expect(shellWord("sh", "it's")).toBe(`'it'\\''s'`);
     expect(shellWord("pwsh", "it's")).toBe("'it''s'");
     expect(shellWord("pwsh", "http://h/a-b_c.d")).toBe("http://h/a-b_c.d");
+    expect(shellWord("pwsh", "@h")).toBe("'@h'");
+    expect(shellWord("pwsh", "a,b")).toBe("'a,b'");
   });
 });
 

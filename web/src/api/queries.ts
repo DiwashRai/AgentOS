@@ -419,6 +419,8 @@ export function useClients() {
     queryKey: keys.clients(),
     queryFn: () => unwrap(api.GET("/api/me/clients")),
     refetchInterval: CLIENTS_POLL_MS,
+    // Every surface with ticket actions mounts this; the poll keeps it fresh, not each mount.
+    staleTime: CLIENTS_POLL_MS,
   });
 }
 
