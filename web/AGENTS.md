@@ -82,7 +82,7 @@ src/styles/    tokens.css, base.css, fonts.css
 - A client run not started yet (queued, or taken and not claimed) shows the server's `now.text` ("waiting for <name>'s client") plus online or offline from `latest_run.client_online`, through `clientWait` in `domain/clients.ts`; the Ticket strip (through `runLine`'s `wait`) and My queue's rack groups of your client runs (`features/queue/model.ts`) use it instead of the runner wording. The Runs tab shows a client run's `launch_ref` as the client's name (`launchRef` in `features/runs/runFormat.ts`).
 
 ## Routes and URL state
-- Routes are defined in `src/app/router.tsx`. `/login` and `/kit` sit outside the shell and auth guard. Unknown paths redirect to `/`.
+- Routes are defined in `src/app/router.tsx`. `/login` sits outside the shell and auth guard. Unknown paths redirect to `/`.
 - Filter, peek and tab state live in the URL, so views survive a reload and links can be shared:
   - The peek is `?peek=KEY` over any view (`features/peek/usePeek.ts`).
   - Compact's filters are `FILTER_PARAM` (`f`) and `REPO_PARAM` (`repo`) in `features/compact/model.ts`.
@@ -136,7 +136,6 @@ What every editable page shares. `editor/index.ts` lists it; check there before 
 
 ## Kit primitives
 - `src/ui/index.ts` is the list of primitives. Import from `../ui` (or the right relative path), and check there before writing a new one.
-- `/kit` (`ui/KitSheet.tsx`) renders every primitive in both themes. Update it when you add or change a primitive.
 - Text utilities: `text` (`ui/text.module.css`) has `heading`, `label`, `meta`, `error` and `ellipsis` on the type tokens. Compose them with `cx` (`cx(text.meta, text.ellipsis)`) instead of a module's own heading, label, note or error class.
 - `StatusLine` is the one loading, permission and error line: a sentence in `--ink-3` (`error`: `--blocked`, announced as an alert), `inset` when it stands alone in a view. No spinners, no toasts.
 - `Dialog` / `DialogTitle`: every modal (the peek, New ticket). Scrim, `role="dialog"` panel, focus in on open and back to the opener on close, Tab wrapping, Escape and the scrim closing it; dialogs stack and only the top one acts. A feature never writes its own scrim, focus trap or focus return.
