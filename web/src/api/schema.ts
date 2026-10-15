@@ -1576,8 +1576,6 @@ export interface components {
         };
         /** Pipeline */
         Pipeline: {
-            /** Library Sets */
-            library_sets?: number[];
             /** Loops */
             loops?: components["schemas"]["Loop"][];
             /** Stages */

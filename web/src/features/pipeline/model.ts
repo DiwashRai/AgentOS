@@ -66,8 +66,7 @@ export interface Draft {
    *  move keeps each block's positions, a remove shrinks the block, a rename follows the stage. */
   loops: Loop[];
   nextUid: number;
-  /** The pipeline the draft came from: fields the editor doesn't touch (library_sets) are carried
-   *  through from it unchanged. */
+  /** The pipeline the draft came from: `toPipeline` builds the PUT body on top of it. */
   base: Pipeline;
 }
 
@@ -590,7 +589,6 @@ export function samePipeline(a: Pipeline, b: Pipeline): boolean {
 
 function canonical(p: Pipeline): string {
   return JSON.stringify({
-    library_sets: p.library_sets ?? [],
     loops: (p.loops ?? []).map((l) => [l.start, l.end, l.max_rounds]),
     stages: p.stages.map((st) => [
       st.id,

@@ -264,7 +264,6 @@ class Loop(ApiModel):
 class Pipeline(ApiModel):
     stages: list[Stage] = Field(min_length=1, max_length=20)
     loops: list[Loop] = Field(default_factory=list, max_length=10)
-    library_sets: list[int] = Field(default_factory=list)
 
 
 class TemplateDefaults(ApiModel):

@@ -237,30 +237,6 @@ def test_build_manifest_default_ticket() -> None:
     }
 
 
-def test_build_manifest_library_files_are_not_synced_and_bundle_wins() -> None:
-    library = [
-        FileEntry(path=".claude/skills/review-checklist/SKILL.md", content="lib"),
-        FileEntry(path="agents.md", content="library copy", mode="block"),
-    ]
-    m = build_manifest(
-        1,
-        TICKET,
-        plan_run(default_pipeline(), "plan"),
-        _bundle(),
-        RUNTIMES,
-        defaults=NONE,
-        library=library,
-    )
-    assert m.files[0].model_dump() == {
-        "path": ".claude/skills/review-checklist/SKILL.md",
-        "content": "lib",
-        "mode": "replace",
-        "sync": False,
-    }
-    assert [f.path for f in m.files if f.path.lower() == "agents.md"] == ["AGENTS.md"]
-    assert all(f.sync for f in m.files[1:])
-
-
 def test_build_manifest_no_repo_nulls_workspace() -> None:
     t = replace(TICKET, workspace_mode="none")
     m = build_manifest(

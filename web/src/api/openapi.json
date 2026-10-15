@@ -2194,13 +2194,6 @@
       "Pipeline": {
         "additionalProperties": false,
         "properties": {
-          "library_sets": {
-            "items": {
-              "type": "integer"
-            },
-            "title": "Library Sets",
-            "type": "array"
-          },
           "loops": {
             "items": {
               "$ref": "#/components/schemas/Loop"

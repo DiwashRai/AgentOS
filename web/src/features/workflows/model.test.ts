@@ -38,7 +38,7 @@ function pipeline(n: number): Pipeline {
       ),
     );
   }
-  return { stages, library_sets: [] };
+  return { stages };
 }
 
 function wf(id: number, name: string, extra: Partial<Workflow> = {}): Workflow {
