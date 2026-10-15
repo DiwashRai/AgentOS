@@ -11,7 +11,6 @@ tickets (of the ticket, for the detail), chat counts). Ticket id lists are bound
 from __future__ import annotations
 
 import json
-import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -61,8 +60,6 @@ from agentos.templates import service as templates
 from agentos.tickets.board import ACTIVE, RunFact, StageRunFact, TicketFacts, derive, for_viewer
 from agentos.validate import validate_base_branch, validate_key
 from agentos.workflows import service as workflows
-
-log = logging.getLogger(__name__)
 
 MAX_LABELS = 20
 MAX_LABEL_CHARS = 50
