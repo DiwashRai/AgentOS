@@ -1,6 +1,6 @@
 """App factory. Run with: uvicorn --factory agentos.main:create_app
 
-`create_app()` is cheap and side-effect free (the OpenAPI export needs no .env or agentos.toml).
+`create_app()` is cheap and side-effect free (the OpenAPI export needs no .env).
 Config checks, migrations and background loops run in the lifespan.
 """
 

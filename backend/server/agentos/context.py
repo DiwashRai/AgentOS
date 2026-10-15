@@ -10,17 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentos.config import (
-    MOVED_AREA,
-    MOVED_ENV,
-    ConfigError,
-    FileConfig,
-    Settings,
-    load_config,
-    seed_runner,
-    seed_space,
-    startup_checks,
-)
+from agentos.config import ConfigError, Settings, startup_checks
 from agentos.db import Database
 from agentos.launchers.base import Launcher
 from agentos.launchers.github import GitHubActionsLauncher, GitHubTarget
@@ -55,10 +45,6 @@ JIRA_FIELDS_CACHE_TTL_S = 600.0  # request 22B: how long Jira's field list is re
 IntakeCache = TtlCache[str, JiraSearch | str]
 # Jira's field list (the mapping field picker), under one key; only successes are cached.
 JiraFieldsCache = TtlCache[str, list[JiraField]]
-
-# The settings areas agentos.toml can seed.
-_SPACE_AREAS: tuple[Area, ...] = ("space", "repos", "intake")
-_FILE_AREAS: frozenset[Area] = frozenset({*_SPACE_AREAS, "runtimes"})
 
 
 def _login_limiter() -> RateLimiter:
@@ -132,7 +118,7 @@ def build_context(settings: Settings, launcher: Launcher | None = None) -> AppCo
     startup_checks(settings)
     db = Database(settings.db_path)
     db.migrate()
-    seed_settings(db, settings)
+    seed_settings(db)
     for name in add_builtin_effort_args(db):
         log.info("Settings: runtime %r gained the built-in effort_args (request 23A)", name)
     store = SpaceStore(db)
@@ -142,87 +128,24 @@ def build_context(settings: Settings, launcher: Launcher | None = None) -> AppCo
     return AppContext(settings=settings, db=db, launcher=launcher, space_store=store, jira=jira)
 
 
-def seed_settings(db: Database, settings: Settings) -> list[Area]:
-    """Seed each settings area that has no db row yet (one transaction; idempotent), then warn
-    about every moved var and a seed file that is now ignored. Returns the seeded areas.
+def seed_settings(db: Database) -> list[Area]:
+    """Insert the built-in defaults for each settings area that has no db row yet (version 1, by
+    nobody; one transaction; idempotent). Returns the seeded areas.
 
-    Sources: `space`/`repos`/`intake` from agentos.toml (AGENTOS_CONFIG, if the file exists) plus
-    the moved Space vars, else the defaults; `runtimes` from the file's `[runtimes.*]` (its
-    `default_runtime` first), else the built-in claude + copilot; `runner` from the moved
-    AGENTOS_GITHUB_* vars, else no repo; `mappings` empty. The file is only read when an area it
-    can seed is missing. An invalid file or moved var → ConfigError, but only when it is about to
-    seed."""
-    moved = settings.moved_env
+    The defaults: the default Space with no repos or intake queries, the built-in runtimes
+    (claude + copilot), the default runner (no repo) and no field mappings."""
+    defaults: dict[Area, dict[str, Any]] = {
+        **space_values(SpaceConfig()),
+        "runtimes": runtimes_value(list(BUILTIN_RUNTIMES)),
+        "runner": runner_value(RunnerSection()),
+        "mappings": mappings_value([]),
+    }
     missing = missing_areas(db)
-    path = settings.config
-    file: FileConfig | None = None
-    if path.is_file() and _FILE_AREAS.intersection(missing):
-        file = load_config(path)
-    values: dict[Area, dict[str, Any]] = {}
-    if any(area in missing for area in _SPACE_AREAS):
-        space = file.space if file is not None else SpaceConfig()
-        if "space" in missing:
-            space = seed_space(space, moved)
-        values |= {a: v for a, v in space_values(space).items() if a in missing}
-    file_runtimes = file.runtimes if file is not None else None
-    runtimes_from_file = file_runtimes is not None
-    if "runtimes" in missing:
-        runtimes = file_runtimes or RuntimesConfig.from_entries(BUILTIN_RUNTIMES)
-        values["runtimes"] = runtimes_value(runtimes.entries())
-    if "runner" in missing:
-        values["runner"] = runner_value(seed_runner(moved))
-    if "mappings" in missing:
-        values["mappings"] = mappings_value([])
-    seeded = seed(db, values) if values else []
+    seeded = seed(db, {area: defaults[area] for area in missing}) if missing else []
 
-    from_file = [
-        a
-        for a in seeded
-        if file is not None and a in _FILE_AREAS and (a != "runtimes" or runtimes_from_file)
-    ]
     for area in seeded:
-        source = f"{path.name} and env" if area in from_file else "env and defaults"
-        log.info("Settings: seeded %s from %s (first start)", area, source)
-    for name, tab in MOVED_ENV.items():
-        if name not in moved:
-            continue
-        if MOVED_AREA[name] in seeded:
-            log.warning(
-                "%s seeded %s on this first start and is ignored from now on: edit it in %s "
-                "and remove the variable",
-                name,
-                tab,
-                tab,
-            )
-        else:
-            log.warning("%s is ignored: edit it in %s (and remove the variable)", name, tab)
-    _warn_about_the_seed_file(settings, from_file)
+        log.info("Settings: seeded %s with the defaults (first start)", area)
     return seeded
-
-
-def _warn_about_the_seed_file(settings: Settings, from_file: list[Area]) -> None:
-    path = settings.config
-    var = " (and AGENTOS_CONFIG)" if settings.config_set else ""
-    if from_file:
-        log.warning(
-            "%s seeded %s on this first start and is ignored from now on: settings are edited "
-            "in the app (Settings). You can delete the file%s",
-            path,
-            ", ".join(from_file),
-            var,
-        )
-    elif path.is_file():
-        log.warning(
-            "%s is ignored: settings live in the db and are edited in the app (Settings); it is "
-            "only read once, to seed them on the first start. Delete the file%s",
-            path,
-            var,
-        )
-    elif settings.config_set:
-        log.warning(
-            "AGENTOS_CONFIG is no longer needed: agentos.toml is only read once, to seed settings "
-            "on the first start (remove the variable)"
-        )
 
 
 def runner_target(store: SpaceStore) -> Callable[[], GitHubTarget]:

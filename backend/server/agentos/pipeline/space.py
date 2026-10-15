@@ -2,9 +2,7 @@
 and where its runs are dispatched (the runner).
 
 They are edited in the app (Settings > Space, Intake, Runners) and stored in the db `settings`
-table (`agentos.space_store`); on first start each area is seeded from an `agentos.toml` if one
-exists (`[space]` name/default_repo, `[[repos]]`, `[[intake.queries]]`) and the moved env vars
-(config.py), else from the defaults here.
+table (`agentos.space_store`); a fresh db starts with the defaults here.
 Tickets store a repo *name*; its URL and default branch are resolved from the catalog when they
 are read or dispatched, so moving a repo is a settings change.
 
@@ -60,8 +58,6 @@ DEFAULT_BRANCH = "main"
 DEFAULT_KEY_PREFIX = "AOS"
 DEFAULT_CLAIM_TIMEOUT_S = 900
 DEFAULT_WORKFLOW = "agentos-worker.yml"
-# The keys agentos.toml's `[space]` may hold (the first-start seed); the rest come from env.
-SPACE_TOML_KEYS = ("name", "default_repo")
 DEFAULT_QUERY_ID = "query"
 _QUERY_ID_MAX = 64
 
@@ -75,14 +71,14 @@ def _checked(check: Callable[[str], str], value: str) -> str:
 
 
 class RepoSpec(BaseModel):
-    """One `[[repos]]` entry."""
+    """One repo catalog entry."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(pattern=REPO_NAME_PATTERN)
     url: str
-    # None = no default branch: each ticket on the repo needs its own (request 22A). Omitted in
-    # agentos.toml → "main"; `default_branch = ""` there (or null/blank in the API) → None.
+    # None = no default branch: each ticket on the repo needs its own. Omitted → "main"; null or
+    # blank → None.
     default_branch: str | None = DEFAULT_BRANCH
 
     @field_validator("url")
@@ -105,7 +101,7 @@ class RepoSpec(BaseModel):
 
 class SpaceSection(BaseModel):
     """The Space's own settings (Settings > Space; the db `space` area). Every rule that needs no
-    other area lives here, so the API and the first-start seed check the same things."""
+    other area lives here."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

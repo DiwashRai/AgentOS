@@ -24,7 +24,7 @@ flowchart LR
 - **SQLite runs in WAL mode with `foreign_keys`, `busy_timeout=5000` and `synchronous=NORMAL`.** Writes use `db.tx()` (BEGIN IMMEDIATE, commit or roll back) and reads use `db.read()` (one query-only snapshot). BEGIN IMMEDIATE serialises writers, so guarded updates never race. Where: `db.py` `_PRAGMAS`, `Database.tx()`, `Database.read()`.
 - **Only `db.py` imports `sqlite3`.** A move to Postgres then touches one module. Enforced by import-linter.
 - **Migrations are numbered `NNNN_name.sql` files, tracked with `PRAGMA user_version`, and never edited once applied.** Gaps are rejected, a database newer than the code is refused, and an existing database is backed up to `{DATA_DIR}/backups/` (the 5 newest are kept) before migrating. This makes upgrades forward-only with a rollback path. Where: `db.py` `migrations()`, `migrate()`, `backup()`; `migrations/`.
-- **Admin-editable settings (Space, repos, intake queries, runtimes, runner) live in the `settings` table, one JSON document per area, with a `version` for 409 `stale_version`.** Env vars keep only URLs, secrets, startup/dev config and who may sign in. `agentos.toml` and the moved env vars only seed a fresh database. Changing a setting needs no redeploy, and a cached snapshot is dropped on every save. Where: `migrations/0006_settings.sql`, `space_store.py`, `settings/`.
+- **Admin-editable settings (Space, repos, intake queries, runtimes, runner) live in the `settings` table, one JSON document per area, with a `version` for 409 `stale_version`.** Env vars keep only URLs, secrets, startup/dev config and who may sign in. A fresh database gets every area's built-in defaults at version 1 (`context.seed_settings`). Changing a setting needs no redeploy, and a cached snapshot is dropped on every save. Where: `migrations/0006_settings.sql`, `space_store.py`, `settings/`.
 - **What stays in env, and why.** Each of these is a deliberate exception to "settings live in the db"; don't move one into Settings without revisiting its reason:
   - `AGENTOS_JIRA_URL`: everyone's Jira token is typed into the login form and sent there. If it were editable in the app, one admin (or one stolen admin session) could point it at their own server and collect every token. It's also needed before anyone can sign in.
   - Secrets (`AGENTOS_JIRA_SERVICE_EMAIL`/`_TOKEN`, `AGENTOS_GITHUB_TOKEN`): in the db they'd be plaintext in the db file and in every automatic backup. Env is how container platforms and secret managers deliver secrets.
@@ -32,7 +32,7 @@ flowchart LR
   - `AGENTOS_PUBLIC_URL`: decides whether the session cookie is Secure and which origin passes the login checks. Set wrong in the app, it locks everyone out or quietly weakens those checks.
   - `AGENTOS_WORKER_URL`, `AGENTOS_LAUNCHER`, `AGENTOS_TRUST_PROXY`: facts about the deployment. A wrong `TRUST_PROXY` lets anyone fake their IP past the login rate limit.
 
-  Where: `config.py` `Settings`; the vars that moved into the app are `config.MOVED_ENV`.
+  Where: `config.py` `Settings`.
 - **The native key prefix is never one of the Space's Jira projects** (checked both ways on every save). Otherwise native tickets would take keys like `SCRUM-6` that importing the real Jira issue later needs (409 `key_taken`). Where: `pipeline/space.py`, `settings/service.py`.
 - **Config is validated at startup, and startup fails fast.** `Settings` uses `extra="forbid"`, so a typo in an `AGENTOS_*` var stops the server. Where: `config.py` `startup_checks()`.
 

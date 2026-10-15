@@ -1,15 +1,10 @@
-"""Settings in the app (Settings > Space, Repos, Intake): the endpoints and their rules, the
-first-start seed from agentos.toml + env, the moved-var warnings, and changes applying without a
-restart."""
+"""Settings in the app (Settings > Space, Repos, Intake): the endpoints and their rules, and
+changes applying without a restart."""
 
 from __future__ import annotations
 
 import json
-import logging
-import shutil
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -17,11 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from agentos.config import ConfigError, Settings
+from agentos.config import Settings
 from agentos.context import AppContext
-from agentos.db import MIGRATIONS_DIR, Database, migrations
 from agentos.intake import service as intake
-from agentos.main import create_app
 from agentos.models import (
     AppConfig,
     IntakeSettings,
@@ -30,15 +23,10 @@ from agentos.models import (
     SpaceSettings,
     TicketDetail,
 )
-from agentos.pipeline.scaffold import default_pipeline
 from agentos.pipeline.space import query_id
 from agentos.sources.jira import JiraClient
-from tests.run_support import FakeLauncher
 
 CSRF = {"X-AgentOS": "1"}
-BASE_URL = "http://127.0.0.1:8000"
-FIXTURES = Path(__file__).parent / "fixtures"
-RUNTIMES_TOML = FIXTURES / "runtimes_test.toml"
 JIRA = "https://jira.example.com"
 SERVICE_EMAIL = "bot@example.com"
 SERVICE_TOKEN = "svc-token-0123456789"  # noqa: S105 - a fake token for the mock
@@ -521,195 +509,3 @@ def test_config_names_the_server_default_runtime(authed: TestClient) -> None:
         "claude",
         "fake",
     )
-
-
-# ------------------------------------------------------------------ the first-start seed
-
-
-SEED_TOML = (
-    'default_runtime = "fake"\n'
-    '[space]\nname = "Work"\ndefault_repo = "agentos"\n'
-    '[[repos]]\nname = "agentos"\nurl = "https://github.com/o/agentos.git"\n'
-    '[[repos]]\nname = "agentos-scratch"\nurl = "https://github.com/o/scratch.git"\n'
-    '[[intake.queries]]\nid = "todo"\nname = "To do"\njql = "project = SCRUM"\n'
-    '[[intake.queries]]\nid = "bugs"\nname = "Bugs"\njql = "type = Bug"\n'
-    '[runtimes.fake]\nargv = ["python", "fake_agent.py"]\n'
-)
-SEED_ENV = {
-    "AGENTOS_KEY_PREFIX": "AOS",
-    "AGENTOS_JIRA_PROJECTS": "SCRUM, OPS",
-    "AGENTOS_CLAIM_TIMEOUT_S": "600",
-}
-
-
-@pytest.fixture
-def seed_toml(tmp_path: Path) -> Path:
-    path = tmp_path / "seed.toml"
-    path.write_text(SEED_TOML, encoding="utf-8")
-    return path
-
-
-def make(tmp_path: Path, config: Path, **overrides: Any) -> Settings:
-    return Settings(
-        _env_file=None,
-        data_dir=tmp_path / "data",
-        workspaces_dir=tmp_path / "workspaces",
-        dev_auth=True,
-        config=config,
-        **overrides,
-    )
-
-
-@contextmanager
-def started(settings: Settings) -> Iterator[TestClient]:
-    app = create_app(settings, launcher=FakeLauncher(), run_loops=False)
-    with TestClient(app, base_url=BASE_URL) as c:
-        assert c.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
-        yield c
-
-
-def set_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
-    for name, value in env.items():
-        monkeypatch.setenv(name, value)
-
-
-def test_first_start_seeds_from_toml_and_env(
-    tmp_path: Path, seed_toml: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    set_env(monkeypatch, SEED_ENV)
-    with started(make(tmp_path, seed_toml)) as c:
-        got = space(c)
-        assert (got.name, got.default_repo, got.key_prefix) == ("Work", "agentos", "AOS")
-        assert (got.jira_projects, got.claim_timeout_s) == (["SCRUM", "OPS"], 600)
-        assert (got.version, got.updated_by) == (1, None)
-        assert [r.name for r in repos(c).repos] == ["agentos", "agentos-scratch"]
-        assert [(q.id, q.jql) for q in queries(c).queries] == [
-            ("todo", "project = SCRUM"),
-            ("bugs", "type = Bug"),
-        ]
-        assert config(c).space_name == "Work"
-
-
-def test_the_seed_is_idempotent_and_later_sources_are_ignored_with_warnings(
-    tmp_path: Path,
-    seed_toml: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    set_env(monkeypatch, SEED_ENV)
-    with started(make(tmp_path, seed_toml)) as c:
-        assert put_space(c, name="Edited in the app").status_code == 200
-    # Restart with other values (an invalid one too: ignored, so no crash).
-    seed_toml.write_text(SEED_TOML.replace('name = "Work"', 'name = "Toml"'), encoding="utf-8")
-    set_env(monkeypatch, {"AGENTOS_KEY_PREFIX": "bad", "AGENTOS_CLAIM_TIMEOUT_S": "5"})
-    caplog.clear()
-    with caplog.at_level(logging.WARNING), started(make(tmp_path, seed_toml)) as c:
-        got = space(c)
-        assert (got.name, got.key_prefix, got.claim_timeout_s, got.version) == (
-            "Edited in the app",
-            "AOS",
-            600,
-            2,
-        )
-        assert len(repos(c).repos) == 2
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    for name in SEED_ENV:
-        assert any(f"{name} is ignored: edit it in Settings > Space" in w for w in warnings), name
-    assert any(f"{seed_toml} is ignored" in w for w in warnings), warnings
-
-
-def test_the_first_start_says_which_vars_seeded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    monkeypatch.setenv("AGENTOS_KEY_PREFIX", "XY")
-    with caplog.at_level(logging.WARNING), started(make(tmp_path, RUNTIMES_TOML)) as c:
-        assert space(c).key_prefix == "XY"
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("AGENTOS_KEY_PREFIX seeded Settings > Space" in w for w in warnings), warnings
-    assert not any("agentos.toml" in w for w in warnings)  # used for the seed: not ignored
-
-
-def test_a_moved_var_in_the_env_file_does_not_stop_startup(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text("AGENTOS_PORT=9001\nAGENTOS_JIRA_PROJECTS=SCRUM\n", encoding="utf-8")
-    settings = Settings(_env_file=env_file)  # extra="forbid" would refuse an unknown key
-    assert (settings.port, settings.moved_env) == (9001, {"AGENTOS_JIRA_PROJECTS": "SCRUM"})
-
-
-def test_env_wins_over_the_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text("AGENTOS_KEY_PREFIX=FILE\n", encoding="utf-8")
-    monkeypatch.setenv("AGENTOS_KEY_PREFIX", "ENV")
-    assert Settings(_env_file=env_file).moved_env == {"AGENTOS_KEY_PREFIX": "ENV"}
-
-
-@pytest.mark.parametrize(
-    ("env", "named"),
-    [
-        pytest.param({"AGENTOS_KEY_PREFIX": "aos"}, "AGENTOS_KEY_PREFIX", id="prefix"),
-        pytest.param({"AGENTOS_KEY_PREFIX": "A-B"}, "AGENTOS_KEY_PREFIX", id="prefix-dash"),
-        pytest.param({"AGENTOS_JIRA_PROJECTS": "scrum"}, "AGENTOS_JIRA_PROJECTS", id="project"),
-        pytest.param({"AGENTOS_JIRA_PROJECTS": "OK,S"}, "AGENTOS_JIRA_PROJECTS", id="short"),
-        pytest.param({"AGENTOS_CLAIM_TIMEOUT_S": "30"}, "AGENTOS_CLAIM_TIMEOUT_S", id="timeout"),
-        pytest.param(
-            {"AGENTOS_KEY_PREFIX": "SCRUM", "AGENTOS_JIRA_PROJECTS": "SCRUM"},
-            "key_prefix",
-            id="prefix-is-a-project",
-        ),
-    ],
-)
-def test_an_invalid_seed_value_fails_the_first_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: dict[str, str], named: str
-) -> None:
-    set_env(monkeypatch, env)
-    app = create_app(make(tmp_path, RUNTIMES_TOML), launcher=FakeLauncher(), run_loops=False)
-    with pytest.raises(ConfigError, match=named), TestClient(app):
-        pass
-
-
-def test_space_keys_other_than_name_and_default_repo_are_refused_in_toml(tmp_path: Path) -> None:
-    path = tmp_path / "c.toml"
-    path.write_text(
-        SEED_TOML.replace('name = "Work"\n', 'name = "Work"\nkey_prefix = "X"\n'), encoding="utf-8"
-    )
-    app = create_app(make(tmp_path, path), launcher=FakeLauncher(), run_loops=False)
-    with pytest.raises(ConfigError, match=r"space\.key_prefix"), TestClient(app):
-        pass
-
-
-def test_an_upgraded_instance_keeps_its_config(
-    tmp_path: Path, seed_toml: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A db from before migration 0006 (the owner's container): the seed reproduces what toml +
-    env said, and its tickets keep resolving their repo."""
-    old = tmp_path / "migrations-0005"
-    old.mkdir()
-    for path in sorted(MIGRATIONS_DIR.glob("000[1-5]_*.sql")):
-        shutil.copy(path, old / path.name)
-    set_env(monkeypatch, SEED_ENV)  # as the container's env file sets them today
-    settings = make(tmp_path, seed_toml)
-    settings.data_dir.mkdir(parents=True)
-    db = Database(settings.db_path, migrations_dir=old)
-    assert db.migrate() == 5
-    with db.tx() as conn:
-        conn.execute(
-            "INSERT INTO tickets(key, slug, title, workspace_mode, repo, pipeline, created_at, "
-            "updated_at) VALUES ('SCRUM-6', '', 'Imported', 'repo', 'agentos-scratch', ?, "
-            "'2026-10-11T12:00:00.000000+00:00', '2026-10-11T12:00:00.000000+00:00')",
-            (default_pipeline().model_dump_json(),),
-        )
-    with started(settings) as c:
-        old_ticket = TicketDetail.model_validate(c.get("/api/tickets/SCRUM-6").json())
-        assert old_ticket.repo_url == "https://github.com/o/scratch.git"
-        assert repos(c).repos[1].open_ticket_count == 1
-        ticket = TicketDetail.model_validate(
-            c.post("/api/tickets", json={"title": "T"}, headers=CSRF).json()
-        )
-        assert (ticket.key, ticket.repo_name) == ("AOS-1", "agentos")
-        assert ticket.repo_url == "https://github.com/o/agentos.git"
-        cfg = config(c)
-        assert (cfg.space_name, cfg.default_repo, cfg.key_prefix) == ("Work", "agentos", "AOS")
-        assert [r.name for r in cfg.repos] == ["agentos", "agentos-scratch"]
-        assert space(c).jira_projects == ["SCRUM", "OPS"]
-        assert len(queries(c).queries) == 2
-    assert Database(settings.db_path).user_version() == len(migrations())

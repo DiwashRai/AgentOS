@@ -1,28 +1,23 @@
 """Settings > Runners (S2): the runtimes and runner endpoints and their rules, runtimes and the
-runner applying without a restart (config, manifests, the github launcher), and their first-start
-seed (agentos.toml / built-ins / the moved AGENTOS_GITHUB_* vars)."""
+runner applying without a restart (config, manifests, the github launcher)."""
 
 from __future__ import annotations
 
 import json
-import logging
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
-from agentos.config import ConfigError, Settings
+from agentos.config import Settings
 from agentos.context import AppContext, runner_target
-from agentos.db import Database, migrations
 from agentos.launchers.github import NO_REPO, GitHubActionsLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, Manifest, RunnerSettings, RuntimeSettings, TicketDetail
-from agentos.pipeline.runtime import BUILTIN_RUNTIMES
-from tests.run_support import FakeLauncher, RunDriver
+from tests.run_support import RunDriver
 from tests.test_runs import put_pipeline, stage_of
 
 CSRF = {"X-AgentOS": "1"}
@@ -330,164 +325,10 @@ def test_github_launcher_reads_the_runner_at_each_launch(
     )
 
 
-def test_runner_get_reports_the_env_launcher_and_token(tmp_path: Path) -> None:
-    settings = make(tmp_path, launcher="github", github_token=GH_TOKEN)
-    with started(settings, launcher=None) as c:
+def test_runner_get_reports_the_env_launcher_and_token(settings: Settings) -> None:
+    github = settings.model_copy(update={"launcher": "github", "github_token": SecretStr(GH_TOKEN)})
+    with TestClient(create_app(github, run_loops=False), base_url=BASE_URL) as c:
+        assert c.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
         got = runner(c)
         assert (got.launcher, got.token_set, got.github_repo) == ("github", True, None)
         assert GH_TOKEN not in c.get("/api/settings/runner").text
-
-
-# ------------------------------------------------------------------ the first-start seed
-
-
-RUNTIMES_TOML = Path(__file__).parent / "fixtures" / "runtimes_test.toml"
-
-
-def make(tmp_path: Path, config: Path | None = None, **overrides: Any) -> Settings:
-    return Settings(
-        _env_file=None,
-        data_dir=tmp_path / "data",
-        workspaces_dir=tmp_path / "workspaces",
-        dev_auth=True,
-        config=config or tmp_path / "absent.toml",
-        **overrides,
-    )
-
-
-@contextmanager
-def started(settings: Settings, *, launcher: Any = "fake") -> Iterator[TestClient]:
-    app = create_app(
-        settings, launcher=FakeLauncher() if launcher == "fake" else launcher, run_loops=False
-    )
-    with TestClient(app, base_url=BASE_URL) as c:
-        assert c.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
-        yield c
-
-
-def warnings_of(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-
-
-def test_without_a_toml_the_built_ins_seed(tmp_path: Path) -> None:
-    with started(make(tmp_path)) as c:
-        got = runtimes(c)
-        assert [r.model_dump() for r in got.runtimes] == [
-            r.model_dump(mode="json") | {"name": r.name} for r in BUILTIN_RUNTIMES
-        ]
-        assert [r.name for r in got.runtimes] == ["claude", "copilot"]
-        assert got.runtimes[1].prompt_args == ["-p", "{prompt}"]
-        assert config(c).server_default_runtime == "claude"
-
-
-def test_the_runner_seeds_from_the_moved_env_vars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    monkeypatch.setenv("AGENTOS_GITHUB_REPO", "DiwashRai/AgentOS")
-    monkeypatch.setenv("AGENTOS_GITHUB_REF", "trunk")
-    settings = make(tmp_path)
-    assert "AGENTOS_GITHUB_REPO" in settings.moved_env  # no longer a Settings field
-    with caplog.at_level(logging.WARNING), started(settings) as c:
-        got = runner(c)
-        assert (got.github_repo, got.workflow, got.ref) == (
-            "DiwashRai/AgentOS",
-            "agentos-worker.yml",
-            "trunk",
-        )
-    assert any("AGENTOS_GITHUB_REPO seeded Settings > Runners" in w for w in warnings_of(caplog)), (
-        warnings_of(caplog)
-    )
-    # Later starts ignore them, with a warning.
-    monkeypatch.setenv("AGENTOS_GITHUB_REPO", "other/repo")
-    caplog.clear()
-    with caplog.at_level(logging.WARNING), started(make(tmp_path)) as c:
-        assert runner(c).github_repo == "DiwashRai/AgentOS"
-    assert any(
-        "AGENTOS_GITHUB_REPO is ignored: edit it in Settings > Runners" in w
-        for w in warnings_of(caplog)
-    )
-
-
-@pytest.mark.parametrize(
-    ("name", "value"),
-    [
-        ("AGENTOS_GITHUB_REPO", "not-a-repo"),
-        ("AGENTOS_GITHUB_WORKFLOW", "worker"),
-        ("AGENTOS_GITHUB_REF", "r" * 300),
-    ],
-)
-def test_an_invalid_runner_var_fails_the_first_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
-) -> None:
-    monkeypatch.setenv(name, value)
-    app = create_app(make(tmp_path), launcher=FakeLauncher(), run_loops=False)
-    with pytest.raises(ConfigError, match=name), TestClient(app):
-        pass
-
-
-def test_a_present_toml_is_ignored_after_seeding_with_a_warning(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    toml = tmp_path / "agentos.toml"
-    toml.write_bytes(RUNTIMES_TOML.read_bytes())
-    with caplog.at_level(logging.WARNING), started(make(tmp_path, toml)) as c:
-        assert [r.name for r in runtimes(c).runtimes] == ["fake", "claude"]
-    assert any(
-        "is ignored from now on" in w and "delete the file" in w for w in warnings_of(caplog)
-    )
-    # Broken now: it isn't read any more, so it can't stop the server.
-    toml.write_text("this is = = not toml", encoding="utf-8")
-    caplog.clear()
-    with caplog.at_level(logging.WARNING), started(make(tmp_path, toml)) as c:
-        assert [r.name for r in runtimes(c).runtimes] == ["fake", "claude"]
-    assert any(f"{toml} is ignored" in w for w in warnings_of(caplog)), warnings_of(caplog)
-
-
-def test_agentos_config_without_a_file_warns_it_is_not_needed(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    with caplog.at_level(logging.WARNING), started(make(tmp_path)):
-        pass
-    assert any("AGENTOS_CONFIG is no longer needed" in w for w in warnings_of(caplog))
-
-
-UPGRADE_TOML = (
-    'default_runtime = "claude"\n'
-    '[space]\nname = "From toml"\n'
-    '[runtimes.copilot]\nargv = ["copilot"]\nprompt_via = "arg"\nprompt_args = ["-p", "{prompt}"]\n'
-    '[runtimes.claude]\nargv = ["claude", "-p"]\n'
-)
-
-
-def test_the_container_upgrade_from_s1(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A v6 db that S1 seeded (Space/Repos/Intake rows, no runtimes or runner) + the old toml with
-    runtimes + AGENTOS_GITHUB_REPO in the env file: the new areas seed from them; the Space as
-    saved in the app is kept."""
-    toml = tmp_path / "agentos.toml"
-    toml.write_text(UPGRADE_TOML, encoding="utf-8")
-    settings = make(tmp_path, toml)
-    with started(settings) as c:
-        space = c.get("/api/settings/space").json()
-        body = {k: space[k] for k in ("default_repo", "key_prefix", "jira_projects")}
-        body |= {"name": "Saved", "claim_timeout_s": 900, "base_version": space["version"]}
-        assert c.put("/api/settings/space", json=body, headers=CSRF).status_code == 200
-    db = Database(settings.db_path)  # rewind to what S1 left: no runtimes or runner rows
-    assert db.user_version() == len(migrations())
-    with db.tx() as conn:
-        conn.execute("DELETE FROM settings WHERE area IN ('runtimes', 'runner')")
-
-    monkeypatch.setenv("AGENTOS_GITHUB_REPO", "DiwashRai/AgentOS")
-    caplog.clear()
-    with caplog.at_level(logging.WARNING), started(make(tmp_path, toml)) as c:
-        got = runtimes(c)
-        assert [r.name for r in got.runtimes] == ["claude", "copilot"]
-        assert got.runtimes[0].argv == ["claude", "-p"]
-        assert (got.version, got.updated_by) == (1, None)
-        assert runner(c).github_repo == "DiwashRai/AgentOS"
-        cfg = config(c)
-        assert (cfg.space_name, cfg.server_default_runtime) == ("Saved", "claude")
-    warnings = warnings_of(caplog)
-    assert any("AGENTOS_GITHUB_REPO seeded Settings > Runners" in w for w in warnings), warnings
-    assert any("seeded runtimes on this first start" in w for w in warnings), warnings

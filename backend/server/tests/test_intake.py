@@ -1,5 +1,5 @@
-"""Intake candidates (contract request 14) against a mocked Jira: config, the JQL search and its
-mapping, the already-imported filter, cap and total, per-query errors, the cache and auth."""
+"""Intake candidates (contract request 14) against a mocked Jira: the JQL search and its mapping,
+the already-imported filter, cap and total, per-query errors, the cache and auth."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -15,11 +14,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr, TypeAdapter
 
-from agentos.config import ConfigError, Settings, load_config
+from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.intake import service
 from agentos.models import IntakeQuery, Me
-from agentos.pipeline.space import IntakeQuerySpec, IntakeSection
+from agentos.pipeline.space import IntakeQuerySpec
 from agentos.sources.jira import JiraBadQuery, JiraClient, JiraCredentials, JiraSource
 from agentos.ttlcache import TtlCache
 from tests.settings_support import set_queries, set_space
@@ -151,76 +150,6 @@ def get_intake(client: TestClient, *, fresh: bool = False) -> list[IntakeQuery]:
     assert response.status_code == 200, response.text
     assert SERVICE_TOKEN not in response.text
     return TypeAdapter(list[IntakeQuery]).validate_python(response.json())
-
-
-# ------------------------------------------------------------------ config
-
-
-RUNTIME = '[runtimes.y]\nargv = ["y"]\n'
-
-
-def test_intake_queries_parse(tmp_path: Path) -> None:
-    path = tmp_path / "c.toml"
-    path.write_text(
-        'default_runtime = "y"\n'
-        '[[intake.queries]]\nid = "todo"\nname = " To do "\njql = "project = SCRUM"\n'
-        '[[intake.queries]]\nid = "bugs_2"\nname = "Bugs"\njql = \'type = Bug\'\n' + RUNTIME,
-        encoding="utf-8",
-    )
-    queries = load_config(path).space.intake.queries
-    assert [(q.id, q.name, q.jql) for q in queries] == [
-        ("todo", "To do", "project = SCRUM"),
-        ("bugs_2", "Bugs", "type = Bug"),
-    ]
-
-
-def test_intake_is_optional() -> None:
-    assert load_config(Path(__file__).parent / "fixtures" / "runtimes_test.toml").space.intake == (
-        IntakeSection()
-    )
-
-
-def test_bad_intake_queries_report_every_problem(tmp_path: Path) -> None:
-    path = tmp_path / "bad.toml"
-    path.write_text(
-        'default_runtime = "y"\n'
-        '[[intake.queries]]\nid = "Bad Id"\nname = "x"\njql = "a"\n'
-        '[[intake.queries]]\nid = "ok"\nname = "  "\njql = ""\n'
-        '[[intake.queries]]\nid = "ok2"\nname = "x"\njql = "a"\nauto = true\n'
-        '[[intake.queries]]\nid = "ok3"\nname = "x"\n' + RUNTIME,
-        encoding="utf-8",
-    )
-    with pytest.raises(ConfigError) as caught:
-        load_config(path)
-    found = caught.value.problems
-    for where in (
-        "intake.queries.0.id",
-        "intake.queries.1.name",
-        "intake.queries.1.jql",
-        "intake.queries.2.auto",
-        "intake.queries.3.jql",
-    ):
-        assert any(where in p for p in found), (where, found)
-
-
-def test_duplicate_intake_ids(tmp_path: Path) -> None:
-    path = tmp_path / "bad.toml"
-    query = '[[intake.queries]]\nid = "a"\nname = "x"\njql = "j"\n'
-    path.write_text('default_runtime = "y"\n' + query + query + RUNTIME, encoding="utf-8")
-    with pytest.raises(ConfigError, match="duplicate id 'a'"):
-        load_config(path)
-
-
-def test_example_config_parses_with_its_intake_block(tmp_path: Path) -> None:
-    """The commented-out example, uncommented, is valid."""
-    example = Path(__file__).parents[2] / "agentos.toml.example"
-    text = example.read_text(encoding="utf-8")
-    block = text[text.index("# [[intake.queries]]") :].split("\n\n", 1)[0]
-    uncommented = "\n".join(line.removeprefix("# ") for line in block.splitlines())
-    path = tmp_path / "c.toml"
-    path.write_text('default_runtime = "y"\n' + uncommented + "\n" + RUNTIME, encoding="utf-8")
-    (query,) = load_config(path).space.intake.queries
-    assert query.id == "scrum-todo"
 
 
 # ------------------------------------------------------------------ the endpoint
