@@ -65,13 +65,13 @@ def test_every_get_matches_its_model(
 ) -> None:
     sam = login("sam")
     dev = login("dev")
-    # Client tokens: one seen (it polled), one never; then a client run waits for the client.
+    # Client tokens: one seen (it leased), one never; then a client run waits for the client.
     tokens = [
         client.post("/api/me/clients", json={"name": n}, headers=CSRF).json()["token"]
         for n in ("seen", "never")
     ]
-    seen = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(tokens[0]))
-    assert seen.json() == {"run": None}
+    seen = client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(tokens[0]))
+    assert seen.json()["job"] is None
     waiting = create_ticket("Client ticket", repo=None, owner_id=dev.id)
     assert runs.queue(waiting.key, target="client").client_online is True
     # A repo without a default branch (request 22A), for a blank, blocked ticket.

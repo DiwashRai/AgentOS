@@ -899,7 +899,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/worker/poll": {
+    "/api/worker/lease": {
         parameters: {
             query?: never;
             header?: never;
@@ -909,13 +909,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Poll
-         * @description A client's long poll: the oldest run its user dispatched to "My client", waiting up to
-         *     `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.
-         *     401/403 at once for a bad token. Async, and each db step runs in a thread
-         *     only while it runs, so idle polls hold no threadpool thread while they wait.
+         * Lease
+         * @description A client's long poll: the job of the oldest run its user dispatched to "My client",
+         *     waiting up to `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it
+         *     and its `alive` jobs were seen. 401/403 at once for a bad token. Async, and each db step runs
+         *     in a thread only while it runs, so idle leases hold no threadpool thread while they wait.
          */
-        post: operations["poll_api_worker_poll_post"];
+        post: operations["lease_api_worker_lease_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1133,45 +1133,6 @@ export interface components {
         /** ClaimResponse */
         ClaimResponse: {
             manifest: components["schemas"]["JobPackage"];
-        };
-        /**
-         * ClientPollRequest
-         * @description POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
-         *     false` is a busy client's heartbeat: it records last seen (the client stays online) and
-         *     answers `run: null` at once, never handing out a run.
-         */
-        ClientPollRequest: {
-            /**
-             * Take
-             * @default true
-             */
-            take: boolean;
-            /**
-             * Wait S
-             * @default 25
-             */
-            wait_s: number;
-        };
-        /**
-         * ClientPollResponse
-         * @description `run: null` = nothing queued for the client's user within `wait_s`.
-         */
-        ClientPollResponse: {
-            run: components["schemas"]["ClientRunAssignment"] | null;
-        };
-        /**
-         * ClientRunAssignment
-         * @description A run handed to a client: its worker claims it at `server_url` with `dispatch_token` (the
-         *     job token; `worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched
-         *     worker.
-         */
-        ClientRunAssignment: {
-            /** Dispatch Token */
-            dispatch_token: string;
-            /** Run Id */
-            run_id: number;
-            /** Server Url */
-            server_url: string;
         };
         /**
          * ClientToken
@@ -1678,6 +1639,54 @@ export interface components {
             cancel: boolean;
             /** Rejected */
             rejected: number[];
+        };
+        /**
+         * LeaseRequest
+         * @description POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:
+         *     false` (a busy client's heartbeat) answers `job: null` at once. Every lease records the
+         *     client as seen and stamps `alive`, the jobs its workers still run (its user's only).
+         */
+        LeaseRequest: {
+            /** Alive */
+            alive?: string[];
+            /**
+             * Take
+             * @default true
+             */
+            take: boolean;
+            /**
+             * Wait S
+             * @default 25
+             */
+            wait_s: number;
+        };
+        /**
+         * LeaseResponse
+         * @description `job: null` = nothing queued within `wait_s`. `protocol`, `worker_sha256`: the server's.
+         */
+        LeaseResponse: {
+            job: components["schemas"]["LeasedJob"] | null;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: 2;
+            /** Worker Sha256 */
+            worker_sha256: string;
+        };
+        /**
+         * LeasedJob
+         * @description A job handed to a client: its worker runs at `server_url`, `job_token` in AGENTOS_TOKEN.
+         */
+        LeasedJob: {
+            /** Job Id */
+            job_id: string;
+            /** Job Token */
+            job_token: string;
+            /** Run Id */
+            run_id: number;
+            /** Server Url */
+            server_url: string;
         };
         /** LogData */
         LogData: {
@@ -5720,7 +5729,7 @@ export interface operations {
             };
         };
     };
-    poll_api_worker_poll_post: {
+    lease_api_worker_lease_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -5729,7 +5738,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ClientPollRequest"];
+                "application/json": components["schemas"]["LeaseRequest"];
             };
         };
         responses: {
@@ -5739,7 +5748,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClientPollResponse"];
+                    "application/json": components["schemas"]["LeaseResponse"];
                 };
             };
             /** @description Client error */

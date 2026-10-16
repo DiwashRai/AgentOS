@@ -43,10 +43,10 @@ one JSONL line each, in the outbox (see Recorder), which the server replays late
 answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
 
 Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
-machine): long-polls POST /api/worker/poll for the runs its user dispatched to their client and
-starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once (see
-run_client). It backs off while the server is unreachable and stops on any 4xx but a transient
-one (401/403 included).
+machine): long-polls POST /api/worker/lease for the jobs of the runs its user dispatched to their
+client and starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once
+(see run_client). It backs off while the server is unreachable and stops on any 4xx but a
+transient one (401/403 included) and on another protocol.
 """
 
 from __future__ import annotations
@@ -100,14 +100,14 @@ GIT_TIMEOUT_S = 1800.0
 KILL_TIMEOUT_S = 30.0
 
 # Client mode (see run_client).
-CLIENT_POLL_WAIT_S = 25  # the server holds a poll this long at most while no run is queued
-CLIENT_POLL_TIMEOUT_S = 40.0  # one poll's HTTP timeout: above the server's hold
-CLIENT_BACKOFF_CAP_S = 60.0  # failed polls back off up to this, and are retried forever
+CLIENT_POLL_WAIT_S = 25  # the server holds a lease this long at most while no run is queued
+CLIENT_POLL_TIMEOUT_S = 40.0  # one lease's HTTP timeout: above the server's hold
+CLIENT_BACKOFF_CAP_S = 60.0  # failed leases back off up to this, and are retried forever
 CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this often
-CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take poll this often keeps it online
+CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take lease this often keeps it online
 WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
 CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
-# Poll answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
+# Lease answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
 CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
 MAX_EVENTS_PER_POST = 500
@@ -2997,7 +2997,7 @@ def _env_set(env: dict[str, str], key: str, value: str | None) -> None:
 
 
 def child_env(
-    dispatch_token: str, env_file: Mapping[str, str | None], base: Mapping[str, str] | None = None
+    job_token: str, env_file: Mapping[str, str | None], base: Mapping[str, str] | None = None
 ) -> dict[str, str]:
     """A run worker's environment: `base` (default: ours) minus every AGENTOS_* var, then the env
     file's values (None removes the key), then unbuffered UTF-8 output and AGENTOS_TOKEN. The
@@ -3008,7 +3008,7 @@ def child_env(
         _env_set(env, key, value)
     _env_set(env, "PYTHONUNBUFFERED", "1")  # live log
     _env_set(env, "PYTHONIOENCODING", "utf-8")
-    _env_set(env, "AGENTOS_TOKEN", dispatch_token)
+    _env_set(env, "AGENTOS_TOKEN", job_token)
     return env
 
 
@@ -3092,22 +3092,6 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
     return removed
 
 
-def _assignment(resp: object) -> tuple[int, str] | None:
-    """(run id, dispatch token) from a poll answer, or None when it hands out no run. Raises
-    ValueError for an answer that isn't `{"run": null | {"run_id", "dispatch_token", ...}}`."""
-    if not isinstance(resp, dict) or "run" not in resp:
-        raise ValueError("the poll answer has no `run`")
-    run = resp["run"]
-    if run is None:
-        return None
-
-    run_id = run.get("run_id") if isinstance(run, dict) else None
-    token = run.get("dispatch_token") if isinstance(run, dict) else None
-    if type(run_id) is not int or run_id < 1 or not isinstance(token, str) or not token:
-        raise ValueError("the poll answer's run has no valid run_id and dispatch_token")
-    return run_id, token
-
-
 def run_client(
     server: str,
     token: str,
@@ -3116,17 +3100,18 @@ def run_client(
     env_file: Path | None,
     spawn: Spawn,
 ) -> int:
-    """Client mode: poll for this user's runs and start a detached worker for each, at most
-    `max_runs` at once. Takes runs only while a slot is free; while every slot is busy it sends a
-    no-take poll every CLIENT_HEARTBEAT_S, so the server still sees the client online. Network
-    errors, 5xx, transient 4xx (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to
-    CLIENT_BACKOFF_CAP_S) and poll again, forever. Any other 4xx (401/403: token revoked, user
-    disabled, viewer; or a protocol the client doesn't speak) stops the client with exit code 1;
-    started workers keep running, since they hold their own per-run tokens.
+    """Client mode: lease this user's jobs and start a detached worker for each, at most
+    `max_runs` at once, listing the running ones as `alive` on every lease. Takes jobs only while
+    a slot is free; while every slot is busy it sends a no-take lease every CLIENT_HEARTBEAT_S, so
+    the server still sees the client online. Network errors, 5xx, transient 4xx
+    (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to CLIENT_BACKOFF_CAP_S) and lease
+    again, forever. Any other 4xx (401/403: token revoked, user disabled, viewer) or another
+    protocol stops the client with exit code 1; started workers keep running on their own job
+    tokens. A server whose worker.py differs is mentioned once.
 
     Everything the client writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs
     `worker.py --server <server> --workdir <root>/runs/<run_id>` there, logs to
-    `<root>/runs/<run_id>.log` and gets the dispatch token as AGENTOS_TOKEN (see child_env)."""
+    `<root>/runs/<run_id>.log` and gets its job token as AGENTOS_TOKEN (see child_env)."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -3149,30 +3134,32 @@ def run_client(
         say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
 
     client = Client(server, token)
-    me = str(Path(__file__).resolve())
-    children: list[Child] = []
+    me = Path(__file__).resolve()
+    sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
+    children: dict[str, Child] = {}  # by job id
     delay = BACKOFF_START_S
-    answered = time.monotonic()  # when the server last answered a poll
-    say(f"client: polling {server} for runs, at most {max_runs} at once, in {runs}")
+    answered = time.monotonic()  # when the server last answered a lease
+    say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
     try:
         while True:
-            children = [child for child in children if child.poll() is None]
+            children = {job: child for job, child in children.items() if child.poll() is None}
             busy = len(children) >= max_runs
             if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
                 time.sleep(CLIENT_REAP_S)
                 continue
 
-            take = {"wait_s": CLIENT_POLL_WAIT_S}
-            heartbeat = {"wait_s": 0, "take": False}  # last seen only; never hands out a run
+            wait_s = 0 if busy else CLIENT_POLL_WAIT_S
+            body = {"wait_s": wait_s, "take": not busy, "alive": list(children)}
             try:
                 resp = client.post(
-                    "/api/worker/poll",
-                    heartbeat if busy else take,
-                    timeout_s=CLIENT_POLL_TIMEOUT_S,
-                    retry_budget_s=0,
+                    "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
                 )
                 answered = time.monotonic()
-                assignment = _assignment(resp)
+                if resp["protocol"] != PROTOCOL:
+                    say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
+                    return 1
+                job = resp["job"]
+                leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
             except HttpError as exc:
                 if exc.status not in CLIENT_TRANSIENT_4XX:
                     say(f"the server refused this client ({exc}); stopping")
@@ -3180,14 +3167,19 @@ def run_client(
                 problem = str(exc)
             except (Unreachable, ValueError) as exc:
                 problem = str(exc)
+            except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
+                problem = f"a malformed answer ({exc!r})"
             else:
                 delay = BACKOFF_START_S
-                if assignment is None:
+                if sha256 is not None and resp.get("worker_sha256") != sha256:
+                    say(f"this worker.py differs from the server's ({server}/api/worker/worker.py)")
+                    sha256 = None
+                if not leased:
                     continue
-                run_id, dispatch_token = assignment
+                job_id, run_id, job_token = leased
                 argv = [
                     sys.executable,
-                    me,
+                    str(me),
                     "--server",
                     server,
                     "--workdir",
@@ -3195,15 +3187,15 @@ def run_client(
                 ]
                 log = runs / f"{run_id}.log"
                 try:
-                    child = spawn(argv, runs, child_env(dispatch_token, env_values), log)
+                    child = spawn(argv, runs, child_env(job_token, env_values), log)
                 except OSError as exc:
                     say(f"run {run_id}: cannot start its worker: {exc}")
                     continue
-                children.append(child)
+                children[job_id] = child
                 say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
                 continue
 
-            say(f"poll failed ({problem}); polling again in {delay:.1f}s")
+            say(f"lease failed ({problem}); leasing again in {delay:.1f}s")
             time.sleep(delay)
             delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
     except KeyboardInterrupt:
@@ -3249,8 +3241,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
             parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
         args.max_runs = 1 if args.max_runs is None else args.max_runs
-        if args.max_runs < 1:
-            parser.error("--max-runs must be at least 1")
+        if not 1 <= args.max_runs <= 100:  # a lease lists at most 100 `alive` jobs
+            parser.error("--max-runs must be between 1 and 100")
         args.workdir_root = args.workdir_root or "~/.agentos/workspaces"
         args.mailbox = False
         return args

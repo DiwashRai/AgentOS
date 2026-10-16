@@ -1,5 +1,5 @@
 """The worker protocol (SPEC §8 claim table, §10 worker API): the job and its journal, the
-sync_back upload, the client poll, and the older claim, events, sync and complete routes.
+sync_back upload, the client lease, and the older claim, events, sync and complete routes.
 
 A job token (one per job, built at dispatch) fetches the job's package (`job_package`) and binds
 the job to the worker instance whose `started` record comes first (`post_journal`); every later
@@ -9,8 +9,8 @@ order. Tokens and instance ids are looked up by their SHA-256 hash. A terminal r
 
 The older routes take the worker token bound at claim and apply the same effects as ingest.
 
-The poll authenticates with a client token (`agentos.clients`) and hands the client a run its user
-dispatched to "My client", with its job token.
+The lease authenticates with a client token (`agentos.clients`) and hands the client the job of a
+run its user dispatched to "My client", with its job token.
 """
 
 from __future__ import annotations
@@ -24,17 +24,18 @@ from datetime import datetime
 from pydantic import ValidationError
 
 from agentos.clients import service as clients
-from agentos.clients.service import Client
+from agentos.clients.service import CLIENT_LAUNCHER
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError, field_error, validation_error
 from agentos.files.service import write_version
 from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
-    ClientRunAssignment,
     JobPackage,
     JournalRecord,
     JournalResponse,
+    LeasedJob,
+    LeaseResponse,
     Mode,
     PushedData,
     ResultData,
@@ -564,35 +565,36 @@ def _finish(conn: Conn, run: Row, body: ResultData, now: datetime) -> None:
         _store_pr_url(conn, run, body.pr_url)
 
 
-# ------------------------------------------------------------------ client poll
+# ------------------------------------------------------------------ client lease
 
 
-def poll_client(db: Database, client_token: str) -> Client:
-    """Authenticate a polling client (401/403: `clients.service.authenticate`) and record that it
-    was seen. Once per poll."""
+def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResponse:
+    """Authenticate a leasing client (401/403: `clients.service.authenticate`), record that it
+    was seen and stamp `jobs.alive_at` on the jobs in `alive` that are its user's client runs
+    (other ids are ignored). Once per lease. Returns the answer without a job."""
     client = clients.authenticate(db, client_token)
-    clients.touch(db, client.id, utcnow())
-    return client
+    now = utcnow()
+    clients.touch(db, client.id, now)
+    with db.tx() as conn:
+        conn.execute(
+            "UPDATE jobs SET alive_at = ? WHERE id IN (SELECT value FROM json_each(?)) "
+            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND launcher = ?)",
+            (to_db(now), json.dumps(alive), client.user.id, CLIENT_LAUNCHER),
+        )
+
+    sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()
+    return LeaseResponse(job=None, protocol=2, worker_sha256=sha256)
 
 
-def take_client_run(db: Database, client_token: str, server_url: str) -> ClientRunAssignment | None:
-    """One take of a poll: the oldest client run queued by the token's user, whose job is built
-    now, with the job token for its worker (in plaintext only in the answer; never logged). The
-    token is checked again on every take, so a revoke or a disabled user also stops a poll that
-    is waiting. Only reads run until a run is queued; the write transaction opens only to take
-    it. A run whose job can't be built is failed, and the poll goes on waiting."""
+def take_client_run(db: Database, client_token: str, server_url: str) -> LeasedJob | None:
+    """One take of a lease (`runs.take_client_run`): the job token is in plaintext only in the
+    answer, never logged. The client token is checked on every take, so a revoke or a disabled
+    user also stops a waiting lease. A run whose job can't be built is failed; the lease waits."""
     client = clients.authenticate(db, client_token)
-    if not runs.client_run_queued(db, client.user.id):
-        return None
-
-    taken = runs.take_client_run(db, client.user.id, client.name, server_url)
-    if taken is None:
-        return None
-    run_id, job_token = taken
-    if job_token is None:
-        return None
-    log.info("run %s: handed to client %s of user %s", run_id, client.id, client.user.id)
-    return ClientRunAssignment(run_id=run_id, server_url=server_url, dispatch_token=job_token)
+    job = runs.take_client_run(db, client.user.id, client.name, server_url)
+    if job is not None:
+        log.info("job %s: handed to client %s of user %s", job.job_id, client.id, client.user.id)
+    return job
 
 
 def _store_pr_url(conn: Conn, run: Row, pr_url: str | None) -> None:

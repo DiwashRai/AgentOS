@@ -1620,29 +1620,31 @@ class PushedData(ApiModel):
     method: Literal["git", "api"]
 
 
-CLIENT_POLL_MAX_WAIT_S = 25
+CLIENT_LEASE_MAX_WAIT_S = 25
 
 
-class ClientPollRequest(ApiModel):
-    """POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
-    false` is a busy client's heartbeat: it records last seen (the client stays online) and
-    answers `run: null` at once, never handing out a run."""
+class LeaseRequest(ApiModel):
+    """POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:
+    false` (a busy client's heartbeat) answers `job: null` at once. Every lease records the
+    client as seen and stamps `alive`, the jobs its workers still run (its user's only)."""
 
-    wait_s: int = Field(default=CLIENT_POLL_MAX_WAIT_S, ge=0, le=CLIENT_POLL_MAX_WAIT_S)
+    wait_s: int = Field(default=CLIENT_LEASE_MAX_WAIT_S, ge=0, le=CLIENT_LEASE_MAX_WAIT_S)
     take: bool = True
+    alive: list[str] = Field(default_factory=list, max_length=100)
 
 
-class ClientRunAssignment(ApiModel):
-    """A run handed to a client: its worker claims it at `server_url` with `dispatch_token` (the
-    job token; `worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched
-    worker."""
+class LeasedJob(ApiModel):
+    """A job handed to a client: its worker runs at `server_url`, `job_token` in AGENTOS_TOKEN."""
 
+    job_id: str
     run_id: int
     server_url: str
-    dispatch_token: str
+    job_token: str
 
 
-class ClientPollResponse(ApiModel):
-    """`run: null` = nothing queued for the client's user within `wait_s`."""
+class LeaseResponse(ApiModel):
+    """`job: null` = nothing queued within `wait_s`. `protocol`, `worker_sha256`: the server's."""
 
-    run: ClientRunAssignment | None
+    job: LeasedJob | None
+    protocol: Literal[2]
+    worker_sha256: str

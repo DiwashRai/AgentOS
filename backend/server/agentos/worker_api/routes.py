@@ -1,4 +1,4 @@
-"""Worker protocol routes (SPEC §8, §10). Authenticated by job or worker tokens (the poll: by a
+"""Worker protocol routes (SPEC §8, §10). Authenticated by job or worker tokens (the lease: by a
 client token), not cookies."""
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
     ClaimRequest,
     ClaimResponse,
-    ClientPollRequest,
-    ClientPollResponse,
     EventsRequest,
     EventsResponse,
     JobPackage,
     JournalRequest,
     JournalResponse,
+    LeaseRequest,
+    LeaseResponse,
     ResultData,
     SyncRequest,
     SyncResponse,
@@ -31,7 +31,7 @@ from agentos.worker_api.deps import ClientBearer, Instance, RunToken
 
 router = APIRouter(tags=["worker"], responses=ERROR_RESPONSES)
 
-POLL_RETRY_S = 1.0  # how often a waiting poll looks for a run
+LEASE_RETRY_S = 1.0  # how often a waiting lease looks for a run
 
 
 @router.get("/api/worker/worker.py", response_class=PlainTextResponse)
@@ -115,34 +115,34 @@ def complete(body: ResultData, token: RunToken, ctx: Ctx) -> None:
     service.complete(ctx.db, token, body)
 
 
-@router.post("/api/worker/poll")
-async def poll(
-    body: ClientPollRequest, token: ClientBearer, ctx: Ctx, request: Request
-) -> ClientPollResponse:
-    """A client's long poll: the oldest run its user dispatched to "My client", waiting up to
-    `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.
-    401/403 at once for a bad token. Async, and each db step runs in a thread
-    only while it runs, so idle polls hold no threadpool thread while they wait."""
-    await asyncio.to_thread(service.poll_client, ctx.db, token)
+@router.post("/api/worker/lease")
+async def lease(
+    body: LeaseRequest, token: ClientBearer, ctx: Ctx, request: Request
+) -> LeaseResponse:
+    """A client's long poll: the job of the oldest run its user dispatched to "My client",
+    waiting up to `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it
+    and its `alive` jobs were seen. 401/403 at once for a bad token. Async, and each db step runs
+    in a thread only while it runs, so idle leases hold no threadpool thread while they wait."""
+    answer = await asyncio.to_thread(service.lease_client, ctx.db, token, body.alive)
     if not body.take:
-        return ClientPollResponse(run=None)
+        return answer
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + body.wait_s
-    # A client that goes away ends its poll at once, so a run queued afterwards isn't handed to
+    # A client that goes away ends its lease at once, so a run queued afterwards isn't handed to
     # nobody. The body is read, so the next ASGI message is the disconnect; waiting for it sees
     # it (`Request.is_disconnected()` never does behind the CSRF `BaseHTTPMiddleware`).
     gone = asyncio.ensure_future(request.receive())
     try:
         while True:
-            run = await asyncio.to_thread(
+            job = await asyncio.to_thread(
                 service.take_client_run, ctx.db, token, ctx.settings.public_url
             )
             remaining = deadline - loop.time()
-            if run is not None or remaining <= 0:
-                return ClientPollResponse(run=run)
-            await asyncio.wait({gone}, timeout=min(POLL_RETRY_S, remaining))
+            if job is not None or remaining <= 0:
+                return answer.model_copy(update={"job": job})
+            await asyncio.wait({gone}, timeout=min(LEASE_RETRY_S, remaining))
             if gone.done():
-                return ClientPollResponse(run=None)
+                return answer
     finally:
         gone.cancel()

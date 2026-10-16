@@ -3,7 +3,7 @@
 Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means the run
 was elsewhere already (a no-op or a conflict, the caller decides). Terminal side effects
 (`finish`): unfinished stage_runs → `cancelled`, `finished_at` set, the ticket's `updated_at`
-bumped. The dispatcher and the reaper (loops) and the worker API (the client poll included) call
+bumped. The dispatcher and the reaper (loops) and the worker API (the client lease included) call
 the primitives here.
 
 A run's job (`jobs`, one per run) is built when the run is dispatched (`build_job`): its package
@@ -31,6 +31,7 @@ from agentos.files.service import current_bundle
 from agentos.models import (
     DispatchTarget,
     JobPackage,
+    LeasedJob,
     ManifestJob,
     ManifestJournal,
     ManifestReport,
@@ -466,21 +467,18 @@ def mark_next_dispatched(
         return run_id, build_job(conn, run_row(conn, run_id), report, now)
 
 
-def client_run_queued(db: Database, user_id: int) -> bool:
-    """Whether the user has a `queued` client run: a read, so a waiting poll looks for one
-    without taking the write lock."""
-    with db.read() as conn:
-        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
-    return row is not None
-
-
 def take_client_run(
     db: Database, user_id: int, launch_ref: str, server_url: str
-) -> tuple[int, str | None] | None:
-    """Hand the user's oldest `queued` client run to their polling client: → `dispatched`, storing
-    `launch_ref` (the client's name), and build its job (live, reporting to `server_url`). From
-    here the claim timeout applies, as for a launched worker. Returns the run id and its job
-    token (None: the build failed and the run is failed), or None if none is queued."""
+) -> LeasedJob | None:
+    """Hand the user's oldest `queued` client run to their leasing client: → `dispatched`,
+    storing `launch_ref` (the client's name), and build its job (live, reporting to `server_url`).
+    From here the claim timeout applies, as for a launched worker. Returns the job with its token,
+    or None if none is queued or the build failed (the run is failed then). It reads first and
+    takes the write lock only when a run is queued, so a waiting lease never holds it."""
+    with db.read() as conn:
+        if conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone() is None:
+            return None
+
     now = utcnow()
     with db.tx() as conn:
         row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
@@ -495,7 +493,11 @@ def take_client_run(
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
         report = ManifestReport(mode="live", url=server_url)
-        return run_id, build_job(conn, run_row(conn, run_id), report, now)
+        token = build_job(conn, run_row(conn, run_id), report, now)
+        if token is None:
+            return None
+        job_id = conn.execute("SELECT id FROM jobs WHERE run_id = ?", (run_id,)).fetchone()[0]
+    return LeasedJob(job_id=job_id, run_id=run_id, server_url=server_url, job_token=token)
 
 
 def start(db: Database, run_id: int) -> tuple[str, str] | None:

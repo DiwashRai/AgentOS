@@ -319,8 +319,8 @@ def test_a_waiting_client_run_keeps_what_its_owner_dispatched(
     assert error(patch({"description": "theirs"})) == (409, "run_active")
     assert patch({"priority": "high"}).status_code == 200  # nothing a run renders
 
-    taken = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(token))
-    assert taken.json()["run"]["run_id"] == run.id  # dispatched, not claimed yet
+    taken = client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(token))
+    assert taken.json()["job"]["run_id"] == run.id  # dispatched, not bound yet
     assert error(put()) == (409, "bundle_locked")
     assert error(patch({"owner_id": bob.id})) == (409, "run_active")
 
@@ -343,8 +343,8 @@ def test_a_client_run_whose_package_cannot_be_built_fails_at_the_take(
     with ctx.db.tx() as conn:  # as if the catalog lost the repo while the run waited
         conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (t.key,))
 
-    taken = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(token))
-    assert taken.json()["run"] is None
+    taken = client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(token))
+    assert taken.json()["job"] is None
     assert runs.get(run.id).status == "failed"
 
 

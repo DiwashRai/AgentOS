@@ -286,72 +286,6 @@
         "title": "ClaimResponse",
         "type": "object"
       },
-      "ClientPollRequest": {
-        "additionalProperties": false,
-        "description": "POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:\nfalse` is a busy client's heartbeat: it records last seen (the client stays online) and\nanswers `run: null` at once, never handing out a run.",
-        "properties": {
-          "take": {
-            "default": true,
-            "title": "Take",
-            "type": "boolean"
-          },
-          "wait_s": {
-            "default": 25,
-            "maximum": 25.0,
-            "minimum": 0.0,
-            "title": "Wait S",
-            "type": "integer"
-          }
-        },
-        "title": "ClientPollRequest",
-        "type": "object"
-      },
-      "ClientPollResponse": {
-        "additionalProperties": false,
-        "description": "`run: null` = nothing queued for the client's user within `wait_s`.",
-        "properties": {
-          "run": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ClientRunAssignment"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "run"
-        ],
-        "title": "ClientPollResponse",
-        "type": "object"
-      },
-      "ClientRunAssignment": {
-        "additionalProperties": false,
-        "description": "A run handed to a client: its worker claims it at `server_url` with `dispatch_token` (the\njob token; `worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched\nworker.",
-        "properties": {
-          "dispatch_token": {
-            "title": "Dispatch Token",
-            "type": "string"
-          },
-          "run_id": {
-            "title": "Run Id",
-            "type": "integer"
-          },
-          "server_url": {
-            "title": "Server Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "run_id",
-          "server_url",
-          "dispatch_token"
-        ],
-        "title": "ClientRunAssignment",
-        "type": "object"
-      },
       "ClientToken": {
         "additionalProperties": false,
         "description": "One of the signed-in user's client tokens (Settings > My client). The token itself is\nshown only once, when it is created. `online`: it polled within the last minute.",
@@ -1650,6 +1584,96 @@
           "rejected"
         ],
         "title": "JournalResponse",
+        "type": "object"
+      },
+      "LeaseRequest": {
+        "additionalProperties": false,
+        "description": "POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:\nfalse` (a busy client's heartbeat) answers `job: null` at once. Every lease records the\nclient as seen and stamps `alive`, the jobs its workers still run (its user's only).",
+        "properties": {
+          "alive": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Alive",
+            "type": "array"
+          },
+          "take": {
+            "default": true,
+            "title": "Take",
+            "type": "boolean"
+          },
+          "wait_s": {
+            "default": 25,
+            "maximum": 25.0,
+            "minimum": 0.0,
+            "title": "Wait S",
+            "type": "integer"
+          }
+        },
+        "title": "LeaseRequest",
+        "type": "object"
+      },
+      "LeaseResponse": {
+        "additionalProperties": false,
+        "description": "`job: null` = nothing queued within `wait_s`. `protocol`, `worker_sha256`: the server's.",
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeasedJob"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protocol": {
+            "const": 2,
+            "title": "Protocol",
+            "type": "integer"
+          },
+          "worker_sha256": {
+            "title": "Worker Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job",
+          "protocol",
+          "worker_sha256"
+        ],
+        "title": "LeaseResponse",
+        "type": "object"
+      },
+      "LeasedJob": {
+        "additionalProperties": false,
+        "description": "A job handed to a client: its worker runs at `server_url`, `job_token` in AGENTOS_TOKEN.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_token": {
+            "title": "Job Token",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "server_url": {
+            "title": "Server Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "run_id",
+          "server_url",
+          "job_token"
+        ],
+        "title": "LeasedJob",
         "type": "object"
       },
       "LogData": {
@@ -9028,15 +9052,15 @@
         ]
       }
     },
-    "/api/worker/poll": {
+    "/api/worker/lease": {
       "post": {
-        "description": "A client's long poll: the oldest run its user dispatched to \"My client\", waiting up to\n`wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.\n401/403 at once for a bad token. Async, and each db step runs in a thread\nonly while it runs, so idle polls hold no threadpool thread while they wait.",
-        "operationId": "poll_api_worker_poll_post",
+        "description": "A client's long poll: the job of the oldest run its user dispatched to \"My client\",\nwaiting up to `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it\nand its `alive` jobs were seen. 401/403 at once for a bad token. Async, and each db step runs\nin a thread only while it runs, so idle leases hold no threadpool thread while they wait.",
+        "operationId": "lease_api_worker_lease_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClientPollRequest"
+                "$ref": "#/components/schemas/LeaseRequest"
               }
             }
           },
@@ -9047,7 +9071,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClientPollResponse"
+                  "$ref": "#/components/schemas/LeaseResponse"
                 }
               }
             },
@@ -9074,7 +9098,7 @@
             "description": "Server error"
           }
         },
-        "summary": "Poll",
+        "summary": "Lease",
         "tags": [
           "worker"
         ]
