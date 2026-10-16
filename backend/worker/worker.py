@@ -2138,6 +2138,11 @@ class Run:
         problem = self._setup_workspace()
         if problem:
             return self._finish("failed", None, problem)
+        clash = [
+            f.path for f in self.m.files if f.kind == "agent" and (self.workdir / f.path).exists()
+        ]
+        if clash:
+            return self._finish("failed", None, f"the repo already has agent {', '.join(clash)}")
         self._write_files()
         sync_back, problem = resolve_inside(self.workdir, self.m.sync_back["dir"])
         try:

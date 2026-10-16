@@ -379,6 +379,66 @@ def test_clone_failure_fails_the_run(server: FakeServer, tmp_path: Path) -> None
     assert stage_events(server, "stage_started") == []
 
 
+AGENT = ".claude/agents/x.md"
+
+
+def ship_agent(origin: Origin) -> dict[str, Any]:
+    package = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
+    package["context"].append(
+        {
+            "path": AGENT,
+            "kind": "agent",
+            "name": "x",
+            "mode": "replace",
+            "block": None,
+            "access": "write",
+            "content": "# shipped\n",
+        }
+    )
+    return package
+
+
+def test_a_shipped_agent_the_repo_already_has_fails_setup(
+    server: FakeServer, origin: Origin, tmp_path: Path
+) -> None:
+    seed = tmp_path / "seed"
+    git(tmp_path, "clone", "-q", origin.url, str(seed))
+    (seed / ".claude" / "agents").mkdir(parents=True)
+    (seed / AGENT).write_bytes(b"# theirs\n")
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "agent")
+    git(seed, "push", "-q", "origin", "main")
+    server.manifest = ship_agent(origin)
+
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    done = server.complete()
+    assert done is not None
+    assert (done["status"], done["failed_stage"]) == ("failed", None)
+    assert AGENT in done["error"]
+    assert git(tmp_path / "ws", "status", "--porcelain", "--untracked-files=all") == ""
+    assert not origin.has_branch(BRANCH)
+
+
+def test_a_shipped_agent_is_written_and_never_committed(
+    server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    python_shell(monkeypatch)
+    seen = tmp_path / "seen.md"
+    server.manifest = ship_agent(origin)
+    copy = f"import shutil; shutil.copy({AGENT!r}, {str(seen)!r})"
+    server.manifest["stages"].append(shell_stage("look", copy))
+
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    done = server.complete()
+    assert done is not None
+    assert done["status"] == "completed"
+    assert seen.read_bytes() == b"# shipped\n"
+    assert origin.has_branch(BRANCH)
+    assert AGENT not in origin.tree(BRANCH)
+
+
 @pytest.mark.parametrize("protocol", [1, 3, None])
 def test_another_protocol_fails_the_run_without_touching_git(
     server: FakeServer, origin: Origin, tmp_path: Path, protocol: int | None
