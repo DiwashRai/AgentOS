@@ -50,7 +50,8 @@ What an admin may change lives in the database and is edited in **Settings**; ch
 once, without a restart:
 - **Space:** the Space's name, the default repo, the key prefix for new native tickets, the Jira
   projects (signing in needs browse access to one of them; `AGENTOS_ADMINS` people excepted, so a
-  bad save can't lock the admins out) and the claim timeout. Plus the **repo catalog** (separate
+  bad save can't lock the admins out) and the start timeout (how long a server job may wait for
+  a runner before it fails as "never started"; 1 hour by default). Plus the **repo catalog** (separate
   Save): tickets reference a repo by name, so changing a URL is safe; removing a repo that open
   tickets or the default repo use is refused.
 - **Intake:** the Jira queries the Intake tab lists, with a "Test query" preview.
@@ -58,7 +59,8 @@ once, without a restart:
   dispatched to (read at every launch), plus the **agent runtimes** (separate Save): the argv
   templates stages run (`claude` and `copilot` built in). The first runtime is the server
   default. Removing a runtime the template's defaults or stages use is refused. Which launcher
-  runs use (`AGENTOS_LAUNCHER`) and whether the GitHub token is set are shown read-only.
+  server runs use (`AGENTOS_LAUNCHER`, "Clients only" when unset) and whether the GitHub token
+  is set are shown read-only.
 - **My client** (every user, not only admins): their own client tokens; see "Running a client".
 
 The env keeps what the server needs to start, who may sign in, and secrets. The whole
@@ -106,9 +108,18 @@ database that is newer than it knows).
 
 ## GitHub Actions runner
 
-From the container, runs go to a GitHub Actions runner: the local launcher would try to run
-workers inside the container, which has no agent CLIs. For each run, the server dispatches the
-workflow `github/agentos-worker.yml`. The runner downloads `GET /api/worker/worker.py` from the
+The server never starts worker processes itself. `AGENTOS_LAUNCHER` picks where runs sent to
+the server go, and each run stores that route when it is dispatched (a later change doesn't move
+it):
+- `github`: a GitHub Actions runner, reporting live to the server (this section);
+- `mailbox`: a GitHub Actions runner that can't reach the server, reporting through a store
+  (see "Mailbox mode");
+- unset: no server runner. Runs can only go to a user's client (see "Running a client"); a
+  dispatch to the server is refused.
+
+Local work is a personal client: run `worker.py --client` on the machine with the agent CLIs.
+
+For each `github` run, the server dispatches the workflow `github/agentos-worker.yml`. The runner downloads `GET /api/worker/worker.py` from the
 server and runs it, and the worker dials back to `AGENTOS_WORKER_URL`.
 
 **Env** (in `.env.container`):
@@ -160,8 +171,11 @@ token input is the run's job token, and the first worker to report with it binds
 itself. The job masks the token before
 anything else and never interpolates inputs into its scripts. Its `timeout-minutes: 720` is
 only a backstop. The real limit is the run's time budget (the sum of its stages' `timeout_s`
-plus 15 min). Past it, the reaper fails the run and the worker stops on its next call (and publishes nothing past the job's
-`not_after`).
+plus 15 min). Past it, the server asks the worker to stop: the worker stops the stage, still
+publishes what it has, and the run fails "over budget". The worker also enforces the budget
+itself and never publishes past the job's `not_after`. A job that hasn't started within the
+start timeout is cancelled at GitHub and fails "never started". The next run of the same ticket
+waits ("waiting for run #N's worker to stop") until GitHub reports the previous job ended.
 
 ### Publication on Actions
 
@@ -171,8 +185,8 @@ it publishes each stage's work through the Git Data API instead of `git push`: o
 publish with HEAD's tree, message and author on top of the branch's remote commit (blobs, a tree,
 the commit, then one ref write with `force: false`). The worker commits once per stage, so that
 is the same history; any extra local commits are squashed into it. It talks to `GITHUB_API_URL` (right on GHES too)
-and takes owner/repo from the ticket's repo URL, never from `GITHUB_REPOSITORY`. The local
-launcher, a client and a plain `worker.py` still use `git push`. There is no setting for this.
+and takes owner/repo from the ticket's repo URL, never from `GITHUB_REPOSITORY`. A client
+and a plain `worker.py` still use `git push`. There is no setting for this.
 
 - **What a workflow must give the worker:** run on GitHub Actions, set `GH_TOKEN` for the worker
   step and grant `contents: write`. Both shipped workflows (`agentos-worker.yml`,
@@ -277,7 +291,9 @@ whose `python3` is 3.6), uncomment `container:`, install python3.11 in the image
 progress and logs arrive **when the GitHub job ends** (the stage rail stays pending until then;
 that's expected): watch it live through the Actions link, where the "Run the worker" step prints
 each agent stage's output as it arrives (`[stage id] ...` lines: the agent's text, tool calls and
-results; set `AGENTOS_ECHO: "0"` in that step's `env:` to turn it off). A cancel in the app
+results; set `AGENTOS_ECHO: "0"` in that step's `env:` to turn it off). Runs keep this route once
+dispatched: the mailbox loops run whenever the Artifactory store is configured, so switching
+`AGENTOS_LAUNCHER` away doesn't fail a running mailbox run. A cancel in the app
 cancels the Actions run; whatever the worker recorded before that is still published and
 replayed. A run whose job ends without an outbox fails with an error pointing to the GitHub run:
 look there.
@@ -378,8 +394,9 @@ My queue and Compact rows always send runs to the server. While a run waits for 
 the ticket's context files, owner, title, description and type can't change (cancel the run
 first), so your machine runs what you dispatched. A run waiting for an offline client
 stays queued ("waiting for <name>'s client") and never times out; cancel it, or start the
-client. Once the client takes it, the usual claim timeout (until its worker binds the job), heartbeat, budget and cancel rules
-apply.
+client. Once the client takes it, its worker must start within 2 minutes, and the usual
+heartbeat, budget and cancel rules apply. The ticket's next run waits until your client stops
+listing the previous run's worker (or has been offline for 90 s after its result).
 
 **Exit codes:**
 - 1: the server refused the client (401: unknown or revoked token, or the user is disabled or
