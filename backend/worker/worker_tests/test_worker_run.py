@@ -400,6 +400,20 @@ def test_no_repo_mode(server: FakeServer, tmp_path: Path) -> None:
     assert not workdir.exists()
 
 
+def test_a_rejected_result_is_a_failure_to_complete(server: FakeServer, tmp_path: Path) -> None:
+    """The run hasn't ended, so the worker must not act as if it had: exit 1, workdir kept."""
+    server.reject = {"result"}
+    server.manifest = make_package([agent_stage("plan", "edit")])
+    workdir = tmp_path / "ws"
+
+    assert run_worker(server, workdir) == 1
+
+    assert server.complete() is None
+    assert workdir.exists()
+    last = [r for r in server.requests if r.path == JOURNAL][-1]
+    assert last.body["records"][-1]["type"] == "result"  # nothing reported after it
+
+
 def test_deleted_files_go_as_null_and_rewritten_notes_warn_once(
     server: FakeServer, tmp_path: Path
 ) -> None:

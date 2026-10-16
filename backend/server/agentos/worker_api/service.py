@@ -106,20 +106,23 @@ def post_journal(
 
     An unbound job binds to `instance` when the batch's first new record is a valid `started` of
     this job (else 422 `validation_error`, nothing bound; another protocol is refused the same
-    way). A terminal run answers 410, except a batch whose only new record repeats the final
-    `result` (or that holds only records applied already): 200, and only `journal_seq` may move.
+    way). A terminal run answers 410, except a batch that ends in a `result` matching the run's
+    final status, with nothing new before it: 200, and only `journal_seq` may move. So a worker
+    whose last answer was lost exits cleanly, while an older batch resent without its `result`
+    learns the run has ended before it commits or pushes anything more.
     """
     now = utcnow()
     with db.tx() as conn:
         job, run = _job_run(conn, job_token, instance)
         new = [r for r in records if r.seq > run["journal_seq"]]
         if run["status"] in TERMINAL:
-            repeats = [
-                r
-                for r in new
-                if r.type == "result" and run["status"] in _FINAL.get(str(r.data.get("status")), ())
-            ]
-            if not records or len(new) > 1 or repeats != new:
+            last = records[-1] if records else None
+            final = (
+                last is not None
+                and last.type == "result"
+                and run["status"] in _FINAL.get(str(last.data.get("status")), ())
+            )
+            if not final or any(r is not last for r in new):
                 raise _gone(run["id"], run["status"])
 
         elif job["instance_hash"] is None:

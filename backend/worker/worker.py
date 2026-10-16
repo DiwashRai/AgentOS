@@ -37,6 +37,8 @@ with the workdir untouched. Failure paths after it:
   stage tree, no commit, no push, exit 1.
 - server unreachable (network errors / 5xx for RETRY_BUDGET_S, or any other 4xx on the journal):
   kill the stage tree, commit and push what exists, exit 1 (the reaper fails the run).
+- result rejected (its seq in a journal answer's `rejected`): the run didn't end, so nothing more
+  is published and the workdir is kept; exit 1 (the reaper fails the run).
 
 Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
 server): no HTTP. The package comes from a file, and the journal is recorded as worker API calls,
@@ -738,6 +740,11 @@ class AlreadyClaimed(RunGone):
     """409 from the journal: the job is bound to another worker instance."""
 
 
+class ResultRejected(RunGone):
+    """The server consumed the `result` record without applying it: the run didn't end, so the
+    job failed to complete. Like a gone run: nothing more is published, the workdir is kept."""
+
+
 class Unreachable(Exception):
     """Network errors or 5xx for RETRY_BUDGET_S (or the journal can't be written any more)."""
 
@@ -1027,6 +1034,12 @@ class EventSink:
             if batch and ack.seq < batch[0]["seq"]:  # nothing applied: a resend would loop
                 self.failure = Unreachable(f"record {batch[0]['seq']} is never acked ({ack})")
                 return
+
+            refused = [r for r in batch if r["type"] == "result" and r["seq"] in ack.rejected]
+            if refused:
+                self.failure = ResultRejected(f"the server rejected result {refused[0]['seq']}")
+                return
+
             with self._cond:
                 self._buf = [r for r in self._buf if r["seq"] > ack.seq]
 
@@ -2185,6 +2198,9 @@ class Run:
     def execute(self) -> int:
         try:
             return self._execute()
+        except ResultRejected as exc:
+            say(f"could not complete ({exc}): the workdir is kept, the reaper ends the run")
+            return 1
         except RunGone as exc:
             say(f"the run was taken away ({exc}): no commit, no push")
             return 1

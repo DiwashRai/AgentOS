@@ -507,6 +507,41 @@ def test_every_worker_route_is_gone_after_terminal(
     assert error(r) == (410, "run_gone")
 
 
+def test_after_the_run_ends_only_a_repeat_of_the_final_result_is_answered(
+    ticket: TicketDetail, runs: RunDriver
+) -> None:
+    """A worker whose answers were lost resends what it sent: an older batch is told the run is
+    gone, so it stops before committing or pushing; the batch holding its result is not."""
+    worker = runs.start(ticket.key)
+    stage = [
+        worker.record("stage_started", "plan"),
+        worker.record("log", "plan", stream="stdout", text="x", truncated=False),
+    ]
+    assert worker.journal(*stage).status_code == 200
+    tail = [
+        worker.record("warning", None, message="last words"),
+        worker.record("result", status="completed"),
+    ]
+    assert worker.journal(*tail).status_code == 200
+    assert runs.get(worker.run_id).status == "gated"
+
+    assert error(worker.journal(*stage)) == (410, "run_gone")
+    assert error(worker.journal(tail[0])) == (410, "run_gone")
+    assert error(worker.journal()) == (410, "run_gone")
+    assert worker.journal(*tail).status_code == 200
+    assert worker.journal(tail[-1]).status_code == 200
+    assert worker.journal(*stage, *tail).status_code == 200
+
+
+def test_a_reaped_run_refuses_a_resent_batch(ticket: TicketDetail, runs: RunDriver) -> None:
+    worker = runs.start(ticket.key)
+    batch = [worker.record("stage_started", "plan")]
+    assert worker.journal(*batch).status_code == 200
+    runs.set_run(worker.run_id, status="failed")
+
+    assert error(worker.journal(*batch)) == (410, "run_gone")
+
+
 def test_unknown_job_token_is_401(ticket: TicketDetail, runs: RunDriver) -> None:
     worker = runs.start(ticket.key)
     stranger = Worker(runs.client, worker.run_id, "z" * 43, worker.manifest)

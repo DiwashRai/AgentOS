@@ -92,7 +92,7 @@ flowchart LR
   | dispatched, unbound | 200, the stored package | the first new record must be a valid `started` at `journal_seq + 1` (else 422 `validation_error`, nothing bound; no instance header: 401), then it binds |
   | bound to this instance | 200 | 200, ingested |
   | bound to another instance, or started by the server (mailbox) | 409 `already_claimed` | 409 `already_claimed` |
-  | terminal run | 410 `run_gone` | 410, except a batch whose only new record repeats the final `result` (or holds only applied records): 200 |
+  | terminal run | 410 `run_gone` | 410, except a batch that ends in a `result` matching the run's final status with nothing new before it (a worker whose last answer was lost): 200. An older batch resent without its `result` gets 410, so its worker stops before committing or pushing |
 
   The sync_back upload checks the same before reading its body, plus 404 for another job's id and 410 unless running. A `started` from another `worker_sha256` still binds, with a warning. Where: `worker_api/service.py` `_job_run()`, `job_package()`, `post_journal()`, `check_upload()`, `_FINAL`.
 - **The journal is the only way results reach the server:** one ordered list of records per run, `{seq, ts, job, type, stage_id, data}`, numbered by the worker from the job's `journal.first_seq` (its `started`) across every type. `POST /api/worker/journal {records}` (at most 500) answers `{ack, cancel, rejected}`: `ack` is the run's highest applied seq, `cancel` mirrors `cancel_requested_at`, `rejected` lists the batch's records that were consumed without applying. An empty batch is the heartbeat (at least every 10 s); every post refreshes `last_seen_at`. Record types:
@@ -124,8 +124,9 @@ flowchart LR
   - 401/409/410 on any post → kill the stage process tree, no commit, no push, exit 1. A reaped run's worker must not race its retry on the branch.
   - Server unreachable (network errors or 5xx for 300 s, or any other 4xx on the journal, since the server would wait forever at the gap a dropped batch leaves) → kill the stage tree, commit and push what exists, exit 1. The reaper then fails the run.
   - Cancel → kill the stage tree, still sync, commit and push, then a `cancelled` result.
+  - Result rejected (its seq in an answer's `rejected`: the server consumed it without ending the run) → a failure to complete: nothing more is published, the workdir is kept, exit 1. The reaper then fails the run.
 
-  Where: `backend/worker/worker.py` module docstring, `HttpReporter`, `EventSink`, `RunGone`, `AlreadyClaimed`, `Unreachable`, `RETRY_BUDGET_S`.
+  Where: `backend/worker/worker.py` module docstring, `HttpReporter`, `EventSink`, `RunGone`, `AlreadyClaimed`, `ResultRejected`, `Unreachable`, `RETRY_BUDGET_S`.
 - **`worker.py` is one stdlib-only file (Python ≥ 3.11), served publicly at `GET /api/worker/worker.py`.** Runners install nothing, and the worker always matches the server's version. The exception is a client: it runs its own local copy (and starts that copy for each run), never one fetched from the server, so its user updates it along with the server; there is no version check. Worker routes skip CSRF because they use bearer tokens, not cookies. Where: `worker_api/routes.py`, `csrf.py`, `backend/worker/worker_tests/test_worker_stdlib.py`.
 
 ## Context files & git safety

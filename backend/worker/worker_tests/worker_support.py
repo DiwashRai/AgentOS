@@ -56,6 +56,7 @@ class FakeServer:
     requests: list[Request] = field(default_factory=list)
     applied: list[dict[str, Any]] = field(default_factory=list)
     acks: dict[str, int] = field(default_factory=dict)  # job id -> the highest seq applied
+    reject: set[str] = field(default_factory=set)  # record types consumed as invalid
     lock: threading.Lock = field(default_factory=threading.Lock)
     url: str = ""
 
@@ -74,18 +75,23 @@ class FakeServer:
 
     def ingest(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         """Apply records as the server does for the manifest's job: in strict seq order from its
-        `journal.first_seq`; a seq held already is skipped, and a gap stops the batch."""
+        `journal.first_seq`; a seq held already is skipped, and a gap stops the batch. A record
+        of a type in `reject` is consumed and listed in `rejected`, never applied."""
         job = self.manifest["job"]["id"]
+        rejected: list[int] = []
         with self.lock:
             ack = self.acks.get(job, self.manifest["journal"]["first_seq"] - 1)
             for record in records:
                 if record["seq"] > ack + 1:
                     break
                 if record["seq"] == ack + 1:
-                    self.applied.append(record)
+                    if record["type"] in self.reject:
+                        rejected.append(record["seq"])
+                    else:
+                        self.applied.append(record)
                     ack += 1
             self.acks[job] = ack
-        return {"ack": ack, "cancel": self.cancel, "rejected": []}
+        return {"ack": ack, "cancel": self.cancel, "rejected": rejected}
 
     # ------------------------------------------------------------ views for assertions
 
