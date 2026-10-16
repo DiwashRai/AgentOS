@@ -192,6 +192,23 @@ def test_a_push_job_the_provider_runs_is_not_failed_and_its_status_is_polled_eve
     assert reaped(reaper, now + timedelta(seconds=60)) == [(run_id, "failed", NEVER_STARTED)]
 
 
+def test_a_push_job_the_provider_runs_fails_past_its_not_after(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reaper: Reaper
+) -> None:
+    """A workflow stuck before `started` would otherwise hold the run until GitHub's timeout."""
+    run_id = runs.queue(create_ticket(repo=None).key).id
+    runs.tick()
+    runs.provider.statuses[ref(run_id)] = JobStatus("running")
+    with runs.ctx.db.read() as conn:
+        row = conn.execute("SELECT not_after FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+    not_after = from_db(row["not_after"])
+
+    assert armed(reaper, not_after).tick(not_after) == []
+    later = not_after + timedelta(seconds=15)
+    assert reaped(reaper, later) == [(run_id, "failed", NEVER_STARTED)]
+    assert runs.provider.cancelled == [ref(run_id)]
+
+
 def test_a_failing_check_does_not_stop_the_next_job(
     authed: TestClient,
     create_ticket: CreateTicket,

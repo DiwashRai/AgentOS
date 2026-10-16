@@ -6,8 +6,9 @@ Each tick (every INTERVAL_S), job by job, the first rule that applies wins:
    every running run counts as just seen, and the tick does nothing else.
 1. Start interrupted: a push job dispatched START_GRACE ago still has no ref → failed.
 2. Never started: no `started` within the start timeout (push: the Space's `claim_timeout_s`,
-   unless the provider says running; pull: PULL_START_TIMEOUT after the lease) → failed "never
-   started"; push: stopped `never_started` and cancelled at the provider.
+   unless the provider says running; pull: PULL_START_TIMEOUT after the lease), or by the job's
+   `not_after` whatever the provider says → failed "never started"; push: stopped
+   `never_started` and cancelled at the provider.
 3. Lost: no post for HEARTBEAT_TIMEOUT → failed "worker lost"; push: cancelled at the provider.
 4. Over budget: past `started_at + budget_s + BUDGET_GRACE` → stopped `budget`, so the worker
    sees `cancel: true` and publishes before it stops.
@@ -100,7 +101,8 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool)
 
     if job.status == "dispatched":
         running = status is not None and status.state == "running"
-        if running or now <= job.dispatched_at + job.start_timeout:
+        waiting = running or now <= job.dispatched_at + job.start_timeout
+        if waiting and now <= job.not_after:  # past it, its worker may no longer publish
             return None
         return Action("failed", NEVER_STARTED, "never_started" if push else None, cancel=push)
 
