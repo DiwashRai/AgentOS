@@ -143,9 +143,10 @@ function actionsFor(t: ActionTicket, ctx: ActionContext): ActionSet {
       return set(act("retry", words.retry, "ink"), header ? [abandon] : [abandon, open]);
     case "running":
     case "queued": {
-      const cancelling = t.latest_run?.stop_requested_at != null;
+      const run = t.latest_run;
+      const cancelling = run?.stop_requested_at != null;
       const cancel = cancelling
-        ? act("cancel", words.cancelling, "default", { disabled: true })
+        ? act("cancel", words.stopping[run.stop_reason ?? "cancel"], "default", { disabled: true })
         : act("cancel", words.cancel, "default");
       return set(null, [cancel], cancelling);
     }

@@ -4,7 +4,6 @@ import {
   addRuntime,
   argsToLines,
   commandPreview,
-  dispatchesWorkflow,
   effortArgs,
   hasSessions,
   launcherLabel,
@@ -95,13 +94,10 @@ describe("runner form", () => {
     expect(sameRunner(form, { ...form, ref: "main " })).toBe(false);
   });
 
-  it("names each launcher; the repo, workflow and ref apply to both GitHub launchers", () => {
-    expect(launcherLabel(null)).toBe("Local process");
+  it("names each launcher; none set means clients only", () => {
+    expect(launcherLabel(null)).toBe("Clients only");
     expect(launcherLabel("github")).toBe("GitHub Actions");
     expect(launcherLabel("mailbox")).toBe("GitHub Actions via Artifactory");
-    expect(dispatchesWorkflow("github")).toBe(true);
-    expect(dispatchesWorkflow("mailbox")).toBe(true);
-    expect(dispatchesWorkflow(null)).toBe(false);
   });
 });
 

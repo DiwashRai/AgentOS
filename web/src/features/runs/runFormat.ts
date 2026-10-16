@@ -35,8 +35,10 @@ const STAGE_MARK: Record<StageRunStatus, MarkInfo> = {
   cancelled: { kind: "blk", word: "Cancelled" },
 };
 
-export function runMark(status: RunStatus): MarkInfo {
-  return RUN_MARK[status];
+/** A run's mark; its word carries the server's `queue_reason` while a queued run has one. */
+export function runMark(run: Pick<Schemas["RunSummary"], "status" | "queue_reason">): MarkInfo {
+  const mark = RUN_MARK[run.status];
+  return run.queue_reason ? { ...mark, word: `${mark.word} · ${run.queue_reason}` } : mark;
 }
 
 export function stageMark(status: StageRunStatus): MarkInfo {

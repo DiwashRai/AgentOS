@@ -94,14 +94,9 @@ const LAUNCHER_LABEL: Record<NonNullable<Launcher>, string> = {
   mailbox: "GitHub Actions via Artifactory",
 };
 
-/** Null: AGENTOS_LAUNCHER is unset, so the server starts local worker processes. */
+/** Null: AGENTOS_LAUNCHER is unset, so the server starts no workers and only clients run. */
 export function launcherLabel(launcher: Launcher): string {
-  return launcher === null ? "Local process" : LAUNCHER_LABEL[launcher];
-}
-
-/** The launchers that dispatch a GitHub workflow, so the repo, workflow and ref apply. */
-export function dispatchesWorkflow(launcher: Launcher): boolean {
-  return launcher === "github" || launcher === "mailbox";
+  return launcher === null ? "Clients only" : LAUNCHER_LABEL[launcher];
 }
 
 // ------------------------------------------------------------------ runtimes: draft

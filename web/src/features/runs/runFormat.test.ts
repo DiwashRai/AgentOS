@@ -8,6 +8,7 @@ import {
   spanSeconds,
   stageMark,
   syncBackLink,
+  type RunStatus,
 } from "./runFormat";
 
 describe("log delivery", () => {
@@ -38,14 +39,22 @@ describe("spanSeconds", () => {
 
 describe("marks", () => {
   it("map run statuses to kit marks", () => {
-    expect(runMark("running")).toEqual({ kind: "run", word: "Running" });
-    expect(runMark("queued").kind).toBe("queued");
-    expect(runMark("dispatched").kind).toBe("queued");
-    expect(runMark("succeeded")).toEqual({ kind: "done", word: "Passed" });
-    expect(runMark("gated")).toEqual({ kind: "you", word: "Gated" });
-    expect(runMark("failed").kind).toBe("blk");
-    expect(runMark("cancelled").kind).toBe("blk");
+    const mark = (status: RunStatus) => runMark({ status, queue_reason: null });
+    expect(mark("running")).toEqual({ kind: "run", word: "Running" });
+    expect(mark("queued").kind).toBe("queued");
+    expect(mark("dispatched").kind).toBe("queued");
+    expect(mark("succeeded")).toEqual({ kind: "done", word: "Passed" });
+    expect(mark("gated")).toEqual({ kind: "you", word: "Gated" });
+    expect(mark("failed").kind).toBe("blk");
+    expect(mark("cancelled").kind).toBe("blk");
     expect(stageMark("pending").kind).toBe("idle");
+  });
+
+  it("a queued run's mark carries the server's queue reason", () => {
+    const reason = "waiting for run #3's worker to stop";
+    const m = runMark({ status: "queued", queue_reason: reason });
+    expect(m.kind).toBe("queued");
+    expect(m.word).toContain(reason);
   });
 
   it("active = queued, dispatched, running", () => {
