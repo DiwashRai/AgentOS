@@ -93,12 +93,7 @@ def is_running(db: Database, run_id: int) -> bool:
 # ------------------------------------------------------------------ end
 
 
-def end(
-    db: Database,
-    run_id: int,
-    status: RunStatus,
-    error: str | None,
-) -> bool:
+def end(db: Database, run_id: int, status: RunStatus, error: str | None) -> bool:
     """running → `status` (failed|cancelled) through `finish()` (guarded). Returns whether it
     ended the run (False: it was terminal already)."""
     with db.tx() as conn:

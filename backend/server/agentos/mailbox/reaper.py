@@ -40,6 +40,7 @@ from agentos.launchers.mailbox import (
     run_folder,
 )
 from agentos.mailbox import service
+from agentos.models import RunStatus
 from agentos.runs.reaper import START_GRACE, START_INTERRUPTED
 from agentos.runs.service import NEVER_STARTED, OVER_BUDGET
 
@@ -90,14 +91,13 @@ class MailboxReaper:
         if cancel_requested:
             self._cancel(run.id, ref)
         # 2. GitHub's view (read before the outbox: publish uploads before the run completes)
-        status: JobStatus | None = None
+        status: JobStatus | None = None  # None: unknown
         if ref is not None:
             try:
                 status = self.mailbox.status(ref)
             except MailboxError as exc:
                 log.warning("mailbox reaper: run %s: no GitHub status: %s", run.id, exc)
-        if status is not None and status.state == "unknown":
-            status = None
+            status = None if status is None or status.state == "unknown" else status
         # 3. results
         with tempfile.TemporaryDirectory(prefix="agentos-outbox-") as tmp:
             outbox = Path(tmp) / "outbox.jsonl"
@@ -116,13 +116,9 @@ class MailboxReaper:
             if status.state == "ended":
                 if cancel_requested:
                     return self._end(run.id, folder, "cancelled", None)
-                return self._end(
-                    run.id,
-                    folder,
-                    "failed",
-                    f"GitHub job ended ({status.detail or 'no conclusion'}) without sending "
-                    "results; see the GitHub run",
-                )
+                ended = status.detail or "no conclusion"
+                error = f"GitHub job ended ({ended}) without sending results; see the GitHub run"
+                return self._end(run.id, folder, "failed", error)
             # 5. never picked up (a finished work job whose publish job waits is running)
             if status.state == "pending" and now > run.started_at + start_timeout:
                 self._cancel(run.id, ref)
@@ -152,13 +148,7 @@ class MailboxReaper:
         self._delete(run_id, folder)
         return "gone" if result == "gone" else ("replayed" if result == "completed" else "ended")
 
-    def _end(
-        self,
-        run_id: int,
-        folder: str,
-        status: Literal["failed", "cancelled"],
-        error: str | None,
-    ) -> Outcome:
+    def _end(self, run_id: int, folder: str, status: RunStatus, error: str | None) -> Outcome:
         ended = service.end(self.ctx.db, run_id, status, error)
         self._delete(run_id, folder)
         return "ended" if ended else "gone"
