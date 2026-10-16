@@ -122,10 +122,19 @@ def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+@pytest.fixture(scope="session")
+def empty_git_config(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("git") / "config"
+    path.write_bytes(b"")
+    return path
+
+
 @pytest.fixture(autouse=True)
-def fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Shrink every worker timing constant so the suite runs in seconds, and keep the worker
-    off GitHub API publication even when the suite runs inside an Actions job."""
+def fast(monkeypatch: pytest.MonkeyPatch, empty_git_config: Path) -> None:
+    """Shrink every worker timing constant so the suite runs in seconds, keep the worker off
+    GitHub API publication even when the suite runs inside an Actions job, and hide the
+    developer's global git config (identity, signing) from the workers' commits."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_git_config))
     for name, value in {
         "HTTP_TIMEOUT_S": 5.0,
         "RETRY_BUDGET_S": 1.0,

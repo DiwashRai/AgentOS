@@ -2419,10 +2419,20 @@ class Run:
         if r.code:
             return f"git rev-parse HEAD failed: {r.tail()}"
         self.start_head = self.pushed_head = r.out.decode().strip()
-        name = os.environ.get("AGENTOS_GIT_NAME") or "AgentOS"
-        email = os.environ.get("AGENTOS_GIT_EMAIL") or "agentos@localhost"
-        for setting, value in (("user.name", name), ("user.email", email)):
-            r = self._git("config", setting, value)
+        return self._set_identity()
+
+    def _set_identity(self) -> str | None:
+        """Commit as AGENTOS_GIT_NAME / _EMAIL if set, else as the user's own git config (a
+        local or client worker is the user), else as AgentOS (a bare runner has no identity).
+        Signing and the rest of the user's git config apply unchanged."""
+        for setting, var, default in (
+            ("user.name", "AGENTOS_GIT_NAME", "AgentOS"),
+            ("user.email", "AGENTOS_GIT_EMAIL", "agentos@localhost"),
+        ):
+            value = os.environ.get(var, "").strip()
+            if not value and self._git("config", "--get", setting).code == 0:
+                continue  # the user's own
+            r = self._git("config", setting, value or default)
             if r.code:
                 return f"git config {setting} failed: {r.tail()}"
         return None
@@ -2772,9 +2782,9 @@ class Run:
         if not staged:
             return None
         message = f"{self.m.key} [{stage_id}] wip"
-        r = self._git(
-            "-c", "commit.gpgsign=false", "commit", "--no-verify", "-q", "-m", message, show=True
-        )
+        # --no-verify: a repo's own hooks (enabled by a setup step) would block wip commits; the
+        # pipeline's check stages run those gates.
+        r = self._git("commit", "--no-verify", "-q", "-m", message, show=True)
         return f"git commit failed: {r.tail()}" if r.code else None
 
     def _guard(self) -> str | None:

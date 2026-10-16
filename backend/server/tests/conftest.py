@@ -60,12 +60,21 @@ def _strip_agentos_env(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(name)
 
 
+@pytest.fixture(scope="session")
+def _empty_git_config(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("git") / "config"
+    path.write_bytes(b"")
+    return path
+
+
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clean_env(monkeypatch: pytest.MonkeyPatch, _empty_git_config: Path) -> None:
     """Tests see only the settings they pass: drop AGENTOS_* from the developer's shell. The
     workers the e2e tests spawn inherit the env, so GITHUB_ACTIONS and GH_TOKEN go too: inside
-    an Actions job they would switch those workers to GitHub API publication."""
+    an Actions job they would switch those workers to GitHub API publication. Those workers
+    commit with the user's git config, so the developer's global one is hidden."""
     _strip_agentos_env(monkeypatch)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(_empty_git_config))
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
 
