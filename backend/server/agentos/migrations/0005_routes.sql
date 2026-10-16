@@ -17,3 +17,5 @@ ALTER TABLE jobs ADD COLUMN client_id INTEGER;  -- pull: the client that leased 
 
 -- Each user's client queue: their queued pull runs, oldest first.
 CREATE INDEX runs_client_queue ON runs(created_by, id) WHERE start = 'pull' AND status = 'queued';
+-- The jobs whose worker may still publish (the reaper watches them; the fence waits on them).
+CREATE INDEX jobs_open ON jobs(run_id) WHERE ended_at IS NULL;

@@ -866,6 +866,11 @@ TASKS = TaskProgress(done=2, total=5)
             id="queued-for-a-client-without-a-creator",
         ),
         pytest.param(
+            facts(replace(run("queued", [("plan", "pending")]), queue_reason="held for a reason")),
+            now("held for a reason"),
+            id="queued-with-a-reason",
+        ),
+        pytest.param(
             facts(
                 replace(run("dispatched", [("plan", "pending")]), target="client", creator_name="S")
             ),

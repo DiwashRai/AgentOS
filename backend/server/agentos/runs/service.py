@@ -63,8 +63,11 @@ from agentos.tickets.service import (
 ACTIVE: tuple[RunStatus, ...] = ("queued", "dispatched", "running")
 TERMINAL: tuple[RunStatus, ...] = ("succeeded", "gated", "failed", "cancelled")
 
-# A job's allowance past its time budget (clone, publish).
+# A job's allowance past its time budget (clone, publish), plus the publish job's for a file
+# report; a pull job's allowance to start after the lease.
 BUDGET_GRACE = timedelta(minutes=15)
+FILE_GRACE = timedelta(minutes=30)
+PULL_START_TIMEOUT = timedelta(minutes=2)
 NEVER_STARTED = "never started"
 OVER_BUDGET = "time budget exceeded"
 
@@ -93,11 +96,15 @@ _SQL_STAGE_RUNS = (
     "SELECT idx, stage_id, round, status, verdict, exit_code, reason, started_at, finished_at "
     "FROM stage_runs WHERE run_id = ? ORDER BY idx"
 )
-# A user's oldest queued client run (param: the user id).
-_SQL_QUEUED_CLIENT_RUN = (
-    "SELECT id FROM runs WHERE start = 'pull' AND status = 'queued' AND created_by = ? "
-    "ORDER BY id LIMIT 1"
+# Queued runs, oldest first, each with `fence`: the latest earlier run of its ticket whose job may
+# still publish (params: now, then those of the WHERE part appended).
+_SQL_QUEUED = (
+    "SELECT r.id, r.provider, r.queue_reason, (SELECT MAX(p.id) FROM runs p JOIN jobs j "
+    "ON j.run_id = p.id WHERE p.ticket_id = r.ticket_id AND p.id < r.id AND j.ended_at IS NULL "
+    "AND j.not_after > ?) AS fence FROM runs r WHERE r.status = 'queued' AND "
 )
+_SQL_QUEUED_PUSH = _SQL_QUEUED + "r.start = 'push' AND r.report = ? ORDER BY r.id"
+_SQL_QUEUED_PULL = _SQL_QUEUED + "r.start = 'pull' AND r.created_by = ? ORDER BY r.id"
 
 
 # ------------------------------------------------------------------ row → model helpers
@@ -383,23 +390,32 @@ def finish(
 # ------------------------------------------------------------------ dispatcher primitives
 
 
+def not_after(route: Route, dispatched: datetime, budget_s: int, start_timeout: int) -> datetime:
+    """When a job's worker may no longer publish: its dispatch + the start allowance (push: the
+    start timeout; pull: PULL_START_TIMEOUT) + its budget + BUDGET_GRACE (+ FILE_GRACE)."""
+    start = timedelta(seconds=start_timeout) if route.start == "push" else PULL_START_TIMEOUT
+    overhead = BUDGET_GRACE + (FILE_GRACE if route.report == "file" else timedelta())
+    return dispatched + start + timedelta(seconds=budget_s) + overhead
+
+
 def build_job(
-    conn: Conn, run: Row, report: ManifestReport, now: datetime
+    conn: Conn, run: Row, report: ManifestReport, now: datetime, client_id: int | None = None
 ) -> tuple[str, str] | None:
-    """Build and store the job of a run just dispatched, in the caller's transaction, from the
-    ticket, its bundle and the Space as they are now. Returns the job id and its token (in
-    plaintext only here; never logged). A build failure (a repo gone from the catalog, a changed
-    pipeline) fails the run through `finish()` and returns None, so the run is never launched."""
+    """Build and store the job of a run just dispatched (by `client_id`, for pull), in the
+    caller's transaction, from the ticket, its bundle and the Space as they are now. Returns the
+    job id and its token (in plaintext only here; never logged). A build failure (a repo gone
+    from the catalog, a changed pipeline) fails the run through `finish()` and returns None."""
     snapshot = load_snapshot(conn)
     ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
     budget_s: int = run["time_budget_s"]
+    route = Route(run["start"], run["provider"], run["report"])
     job = ManifestJob(
         id=f"{run['id']}-1-{secrets.token_hex(8)}",
         run_id=run["id"],
         segment=1,
         segments=1,
         budget_s=budget_s,
-        not_after=now + timedelta(seconds=snapshot.space.claim_timeout_s + budget_s) + BUDGET_GRACE,
+        not_after=not_after(route, now, budget_s, snapshot.space.claim_timeout_s),
     )
     journal = ManifestJournal(first_seq=run["journal_seq"] + 1)
 
@@ -428,7 +444,7 @@ def build_job(
     token = secrets.token_urlsafe(32)
     conn.execute(
         "INSERT INTO jobs(id, run_id, segment, token_hash, package, first_seq, budget_s, "
-        "not_after, created_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
+        "not_after, created_at, client_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
         (
             job.id,
             run["id"],
@@ -438,33 +454,41 @@ def build_job(
             budget_s,
             to_db(job.not_after),
             to_db(now),
+            client_id,
         ),
     )
     return job.id, token
 
 
+def _next_queued(
+    conn: Conn, sql: str, param: str | int, now: datetime, providers: Collection[str] | None
+) -> tuple[Row | None, list[tuple[str, int]]]:
+    """The oldest queued run `sql` selects that may start now, and `(queue_reason, id)` for each
+    older one that waits for a new reason: the fence (its ticket's earlier job may still
+    publish) or, for push (`providers` given), a provider that isn't configured."""
+    held: list[tuple[str, int]] = []
+    for row in conn.execute(sql, (to_db(now), param)).fetchall():
+        if row["fence"] is not None:
+            reason = f"waiting for run #{row['fence']}'s worker to stop"
+        elif providers is not None and row["provider"] not in providers:
+            reason = f"its runner ({row['provider']}) is not configured on this server"
+        else:
+            return row, held
+        if reason != row["queue_reason"]:
+            held.append((reason, row["id"]))
+    return None, held
+
+
 def mark_next_dispatched(
     db: Database, providers: Collection[str], report: ManifestReport
 ) -> tuple[int, str, tuple[str, str] | None] | None:
-    """Move the oldest `queued` push run reporting `report.mode` whose stored provider is one of
-    `providers` to `dispatched` (clearing its `queue_reason`) and build its job. Queued push runs
-    of that report mode whose provider isn't configured stay queued with a `queue_reason`.
-    Returns the run id, its provider and `build_job`'s answer."""
+    """Move the oldest `queued` push run reporting `report.mode` that may start (`_next_queued`)
+    to `dispatched` (clearing its `queue_reason`) and build its job. Returns the run id, its
+    provider and `build_job`'s answer."""
     now = utcnow()
-    params = (report.mode, json.dumps(list(providers)))
     with db.tx() as conn:
-        conn.execute(
-            "UPDATE runs SET queue_reason = 'its runner (' || provider || ') is not configured "
-            "on this server' WHERE start = 'push' AND report = ? AND status = 'queued' "
-            "AND provider NOT IN (SELECT value FROM json_each(?))",
-            params,
-        )
-        row = conn.execute(
-            "SELECT id, provider FROM runs WHERE start = 'push' AND report = ? "
-            "AND status = 'queued' AND provider IN (SELECT value FROM json_each(?)) "
-            "ORDER BY id LIMIT 1",
-            params,
-        ).fetchone()
+        row, held = _next_queued(conn, _SQL_QUEUED_PUSH, report.mode, now, providers)
+        conn.executemany("UPDATE runs SET queue_reason = ? WHERE id = ?", held)
         if row is None:
             return None
         run_id: int = row["id"]
@@ -479,31 +503,33 @@ def mark_next_dispatched(
 
 
 def take_client_run(
-    db: Database, user_id: int, launch_ref: str, server_url: str
+    db: Database, user_id: int, client_id: int, launch_ref: str, server_url: str
 ) -> LeasedJob | None:
-    """Hand the user's oldest `queued` client run to their leasing client: → `dispatched`,
-    storing `launch_ref` (the client's name), and build its job (reporting to `server_url`).
-    Returns it, or None if none is queued or the build failed. It reads first and takes the
-    write lock only when a run is queued, so a waiting lease never holds it."""
-    with db.read() as conn:
-        if conn.execute(_SQL_QUEUED_CLIENT_RUN, (user_id,)).fetchone() is None:
-            return None
-
+    """Hand the user's oldest client run that may start (`_next_queued`) to their leasing client
+    `client_id`: → `dispatched`, storing `launch_ref` (its name), and build its job (reporting to
+    `server_url`). Returns it, or None. It takes the write lock only when a run may start or a
+    `queue_reason` changes, so a waiting lease never holds it."""
     now = utcnow()
+    with db.read() as conn:
+        row, held = _next_queued(conn, _SQL_QUEUED_PULL, user_id, now, None)
+    if row is None and not held:
+        return None
+
     with db.tx() as conn:
-        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (user_id,)).fetchone()
+        row, held = _next_queued(conn, _SQL_QUEUED_PULL, user_id, now, None)
+        conn.executemany("UPDATE runs SET queue_reason = ? WHERE id = ?", held)
         if row is None:
             return None
         run_id: int = row["id"]
         cursor = conn.execute(
-            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, launch_ref = ? "
-            "WHERE id = ? AND status = 'queued'",
+            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, launch_ref = ?, "
+            "queue_reason = NULL WHERE id = ? AND status = 'queued'",
             (to_db(now), launch_ref, run_id),
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
         report = ManifestReport(mode="live", url=server_url)
-        built = build_job(conn, run_row(conn, run_id), report, now)
+        built = build_job(conn, run_row(conn, run_id), report, now, client_id)
     if built is None:
         return None
     return LeasedJob(job_id=built[0], run_id=run_id, server_url=server_url, job_token=built[1])
@@ -552,15 +578,23 @@ def touch_running(db: Database, now: datetime) -> int:
 
 
 def active_jobs(db: Database) -> list[Row]:
-    """The job of every dispatched or running run, with its run's route and clocks."""
+    """Every job that hasn't ended (those of dispatched and running runs, and of ended runs whose
+    worker may still publish), with its run's route and clocks and its client's last lease."""
     with db.read() as conn:
         rows: list[Row] = conn.execute(
             "SELECT r.id AS run_id, r.status, r.start, r.provider, r.report, r.launch_ref, "
-            "r.dispatched_at, r.started_at, r.last_seen_at, r.stop_requested_at, r.stop_reason, "
-            "j.id AS job_id, j.budget_s FROM runs r JOIN jobs j ON j.run_id = r.id "
-            "WHERE r.status IN ('dispatched', 'running') ORDER BY r.id"
+            "r.dispatched_at, r.started_at, r.last_seen_at, r.finished_at, r.stop_requested_at, "
+            "r.stop_reason, j.id AS job_id, j.budget_s, j.not_after, j.alive_at, "
+            "c.last_seen_at AS client_seen_at FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "LEFT JOIN client_tokens c ON c.id = j.client_id WHERE j.ended_at IS NULL ORDER BY r.id"
         ).fetchall()
     return rows
+
+
+def end_job(db: Database, job_id: str, now: datetime) -> None:
+    """The job's worker can no longer publish: the fence lifts for its ticket's next run."""
+    with db.tx() as conn:
+        conn.execute("UPDATE jobs SET ended_at = ? WHERE id = ?", (to_db(now), job_id))
 
 
 def reap(

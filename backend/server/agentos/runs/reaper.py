@@ -18,6 +18,9 @@ once per job per process, best effort. File-report jobs get rule 1 only (the mai
 watches them), and queued runs are never touched. A push job's status is polled at most every
 STATUS_EVERY.
 
+An ended run's job gets `ended_at` once `job_ended` (lifting the fence for its ticket's next
+run); a cancelled push job is cancelled at its provider first.
+
 `judge` is pure; `Reaper(ctx).tick(now)` is synchronous with an injected clock, and the lifespan
 runs it in a thread. A job whose check raises is logged and the next job is checked.
 """
@@ -34,15 +37,14 @@ from agentos.db import Row
 from agentos.launchers.base import JobStatus, ProviderError
 from agentos.models import ReportMode, RunStatus, StartMode, StopReason
 from agentos.runs import service
-from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, STOPPED
+from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, PULL_START_TIMEOUT, STOPPED, TERMINAL
 
 log = logging.getLogger(__name__)
 
 INTERVAL_S = 15.0
 SLEEP_GRACE = timedelta(seconds=60)
 START_GRACE = timedelta(minutes=15)
-PULL_START_TIMEOUT = timedelta(minutes=2)
-HEARTBEAT_TIMEOUT = timedelta(seconds=90)
+HEARTBEAT_TIMEOUT = timedelta(seconds=90)  # also how long a pull job's client may be offline
 STOP_GRACE = timedelta(minutes=2)
 STATUS_EVERY = timedelta(seconds=60)
 START_INTERRUPTED = "start interrupted"
@@ -51,7 +53,8 @@ WORKER_LOST = "worker lost"
 
 @dataclass(frozen=True, slots=True)
 class JobFacts:
-    """An active run's job as the reaper sees it. `seen_at`: its last post (else its start)."""
+    """A job as the reaper sees it. `seen_at`: its last post (else its start); pull: `alive_at`,
+    the last lease that listed it, and `client_seen_at`, its client's last lease."""
 
     run_id: int
     job_id: str
@@ -67,6 +70,10 @@ class JobFacts:
     stop_requested_at: datetime | None
     stop_reason: StopReason | None
     start_timeout: timedelta
+    not_after: datetime
+    finished_at: datetime | None
+    alive_at: datetime | None
+    client_seen_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +121,20 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None) -> Action | No
     return Action(cancel=True) if push and job.stop_reason == "cancel" else None
 
 
+def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:
+    """Whether an ended run's job can no longer publish: past its `not_after` (any route); push:
+    its provider says `ended` (`status`); pull: a later lease by its client didn't list it, or
+    that client has been offline HEARTBEAT_TIMEOUT since the result."""
+    if now > job.not_after:
+        return True
+    if job.start == "push":
+        return status is not None and status.state == "ended"
+    seen, finished = job.client_seen_at, job.finished_at or job.dispatched_at
+    if seen is not None and seen > (job.alive_at or job.dispatched_at):
+        return True
+    return now > max(seen or finished, finished) + HEARTBEAT_TIMEOUT
+
+
 def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
     """`service.active_jobs` row → facts; a pull job's start timeout is PULL_START_TIMEOUT."""
     dispatched = from_db(row["dispatched_at"])
@@ -133,6 +154,10 @@ def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
         stop_requested_at=from_db_opt(row["stop_requested_at"]),
         stop_reason=row["stop_reason"],
         start_timeout=start_timeout if row["start"] == "push" else PULL_START_TIMEOUT,
+        not_after=from_db(row["not_after"]),
+        finished_at=from_db_opt(row["finished_at"]),
+        alive_at=from_db_opt(row["alive_at"]),
+        client_seen_at=from_db_opt(row["client_seen_at"]),
     )
 
 
@@ -160,6 +185,12 @@ class Reaper:
         reaped: list[Reaped] = []
         for job in jobs:
             try:
+                if job.status in TERMINAL:
+                    if job.status == "cancelled" and job.start == "push":
+                        self._cancel(job)
+                    if job_ended(job, now, self._status(job, now)):
+                        service.end_job(self.ctx.db, job.job_id, now)
+                    continue
                 action = judge(job, now, self._status(job, now))
                 if action is not None and (ended := self._apply(job, action, now)):
                     reaped.append(ended)
@@ -168,9 +199,10 @@ class Reaper:
         return reaped
 
     def _status(self, job: JobFacts, now: datetime) -> JobStatus | None:
-        """The provider's status of a live push job, asked at most every STATUS_EVERY."""
+        """A push job's provider status (file: once ended), asked at most every STATUS_EVERY."""
         provider = self.ctx.providers.get(job.provider or "")
-        if job.report == "file" or job.ref is None or provider is None:
+        live = job.report == "live" or job.status in TERMINAL
+        if not live or job.ref is None or provider is None:
             return None
         polled = self.polled.get(job.job_id)
         if polled is None or now - polled[0] >= STATUS_EVERY:
@@ -193,12 +225,17 @@ class Reaper:
         elif action.stop is not None:
             log.info("reaper: run %s stopped: %s", job.run_id, action.stop)
 
+        if action.cancel:
+            self._cancel(job)
+        return ended
+
+    def _cancel(self, job: JobFacts) -> None:
+        """Ask the job's provider to cancel it, once per job (best effort)."""
         provider = self.ctx.providers.get(job.provider or "")
-        if action.cancel and job.ref and provider and job.job_id not in self.cancelled:
+        if job.ref and provider and job.job_id not in self.cancelled:
             try:
                 provider.cancel(job.ref)
             except ProviderError as exc:
                 log.warning("reaper: run %s: provider cancel failed: %s", job.run_id, exc)
             else:
                 self.cancelled.add(job.job_id)
-        return ended

@@ -306,6 +306,7 @@ def run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
         finished_at=from_db_opt(run["finished_at"]),
         target=run_target(run["start"]),
         creator_name=run["creator_name"],
+        queue_reason=run["queue_reason"],
     )
 
 

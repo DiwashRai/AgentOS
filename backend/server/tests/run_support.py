@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from agentos.clock import to_db, utcnow
 from agentos.config import WORKER_PATH
 from agentos.context import AppContext
 from agentos.launchers.base import JobStart, JobStatus
@@ -186,7 +187,9 @@ class RunDriver:
         return self.launch_and_bind(self.queue(key, from_stage).id)
 
     def launch_and_bind(self, run_id: int) -> Worker:
-        """Tick the dispatcher (it must launch `run_id`) and bind its job as a new worker."""
+        """End the earlier runs' jobs (`end_jobs`), tick the dispatcher (it must launch `run_id`)
+        and bind its job as a new worker."""
+        self.end_jobs()
         assert run_id in self.tick()
         return self.bind(run_id, self.provider.token(run_id))
 
@@ -199,6 +202,16 @@ class RunDriver:
         r = worker.journal(worker.record("started", **started_data()))
         assert r.json()["ack"] == worker.seq, r.text
         return worker
+
+    def end_jobs(self) -> None:
+        """Every ended run's job has ended (its worker exited), as the reaper would stamp it:
+        the fence lets each ticket's next run start."""
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE jobs SET ended_at = ? WHERE ended_at IS NULL AND run_id IN "
+                "(SELECT id FROM runs WHERE status NOT IN ('queued', 'dispatched', 'running'))",
+                (to_db(utcnow()),),
+            )
 
     def get(self, run_id: int) -> RunDetail:
         r = self.client.get(f"/api/runs/{run_id}")

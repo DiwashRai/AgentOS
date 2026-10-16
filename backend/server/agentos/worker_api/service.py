@@ -466,7 +466,7 @@ def take_client_run(db: Database, client_token: str, server_url: str) -> LeasedJ
     answer, never logged. The client token is checked on every take, so a revoke or a disabled
     user also stops a waiting lease. A run whose job can't be built is failed; the lease waits."""
     client = clients.authenticate(db, client_token)
-    job = runs.take_client_run(db, client.user.id, client.name, server_url)
+    job = runs.take_client_run(db, client.user.id, client.id, client.name, server_url)
     if job is not None:
         log.info("job %s: handed to client %s of user %s", job.job_id, client.id, client.user.id)
     return job
