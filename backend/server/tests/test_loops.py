@@ -541,7 +541,7 @@ def test_each_round_gets_its_own_stage_runs_in_execution_order(
     ]
     events = runs.client.get(f"/api/runs/{w.run_id}/events").json()
     assert events[3] == {
-        "seq": 4,
+        "seq": 5,  # after the `started` record's
         "ts": events[3]["ts"],
         "stage_id": "review",
         "type": "verdict",
@@ -579,7 +579,7 @@ def test_a_lost_loop_blocks_the_ticket_at_its_failing_check(
         batch += [finished(w, "review", n, "succeeded" if n < 3 else "failed")]
     assert w.events(*batch).status_code == 200
     error = "Checks still failing after 3 rounds"
-    assert w.complete("failed", failed_stage="review", error=error).status_code == 204
+    assert w.complete("failed", failed_stage="review", error=error).status_code == 200
     run = runs.get(w.run_id)
     assert (run.status, run.error) == ("failed", error)
     assert [(s.round, s.status) for s in run.stage_runs if s.stage_id == "review"] == [

@@ -1,4 +1,5 @@
-"""Helpers for run tests: dispatch through the API, drive the dispatcher, act as a worker.
+"""Helpers for run tests: dispatch through the API, drive the dispatcher, act as a worker (on
+the journal; `RunDriver.claim` is the older claim route).
 
 `RunDriver` is provided by the `runs` fixture (conftest.py); the app runs with a FakeLauncher and
 no background loops, so every transition happens when a test asks for it.
@@ -13,6 +14,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agentos.context import AppContext
+from agentos.launchers.local import WORKER_PATH
 from agentos.models import JobPackage, RunDetail, RunSummary
 from agentos.runs import dispatcher
 
@@ -65,22 +67,39 @@ def finished(seq: int, stage_id: str, status: str = "succeeded", code: int | Non
     return event(seq, "stage_finished", stage_id, status=status, exit_code=code, reason=None)
 
 
+def started_data() -> dict[str, Any]:
+    """A `started` record's data, from this server's own worker.py."""
+    return {"protocol": 2, "worker_sha256": hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()}
+
+
 @dataclass
 class Worker:
-    """A claimed run, seen from the worker's side."""
+    """A started job, seen from the worker's side: it posts journal records with its job token
+    and instance id. `seq` is the last seq it used (its `started` record's after the start)."""
 
     client: TestClient
     run_id: int
     token: str
     manifest: JobPackage
     seq: int = field(default=0)
+    instance: str = field(default_factory=lambda: secrets.token_hex(16))
 
-    def post(self, path: str, body: dict[str, Any]) -> Response:
-        r: Response = self.client.post(f"/api/worker/{path}", json=body, headers=bearer(self.token))
+    @property
+    def headers(self) -> dict[str, str]:
+        return bearer(self.token) | {"X-AgentOS-Instance": self.instance}
+
+    def journal(self, *records: dict[str, Any]) -> Response:
+        """Post records as they are; events without a `job` get this job's id."""
+        body = {"records": [{"job": self.manifest.job.id} | r for r in records]}
+        r: Response = self.client.post("/api/worker/journal", json=body, headers=self.headers)
         return r
 
+    def record(self, type_: str, stage_id: str | None = None, **data: Any) -> dict[str, Any]:
+        """The next record (next seq) of this job."""
+        return event(self.next_seq(), type_, stage_id, **data)
+
     def events(self, *events: dict[str, Any]) -> Response:
-        return self.post("events", {"events": list(events)})
+        return self.journal(*events)
 
     def next_seq(self) -> int:
         self.seq += 1
@@ -96,20 +115,26 @@ class Worker:
         assert r.status_code == 200, r.text
 
     def sync(self, stage_id: str, files: list[dict[str, Any]]) -> Response:
-        return self.post("sync", {"stage_id": stage_id, "files": files})
+        return self.journal(self.record("sync", stage_id, files=files))
 
     def sync_back(self, data: bytes, files: int = 1, sha256: str | None = None) -> Response:
-        """Upload `data` as the run's sync_back zip; `sha256` defaults to the data's own."""
+        """Upload `data` as the job's sync_back zip (`sha256` defaults to the data's own) and,
+        once stored, post the `sync_back` record that describes it. Returns the upload's answer."""
         digest = sha256 or hashlib.sha256(data).hexdigest()
         r: Response = self.client.put(
-            f"/api/worker/sync-back?sha256={digest}&files={files}",
+            f"/api/worker/jobs/{self.manifest.job.id}/sync-back?sha256={digest}&files={files}",
             content=data,
-            headers=bearer(self.token),
+            headers=self.headers,
         )
+        if r.status_code == 204:
+            sent = self.journal(
+                self.record("sync_back", sha256=digest, bytes=len(data), files=files)
+            )
+            assert sent.json()["rejected"] == [], sent.text
         return r
 
     def complete(self, status: str = "completed", **extra: Any) -> Response:
-        return self.post("complete", {"status": status, **extra})
+        return self.journal(self.record("result", status=status, **extra))
 
 
 @dataclass
@@ -146,18 +171,23 @@ class RunDriver:
         return r
 
     def start(self, key: str, from_stage: str | None = None) -> Worker:
-        """Dispatch, launch and claim: the run is `running` and its worker is returned."""
+        """Dispatch, launch and start: the run is `running` and its worker is returned."""
         return self.launch_and_claim(self.queue(key, from_stage).id)
 
     def launch_and_claim(self, run_id: int) -> Worker:
-        """Tick the dispatcher (it must launch `run_id`) and claim the run as a new worker."""
+        """Tick the dispatcher (it must launch `run_id`) and bind its job as a new worker."""
         assert run_id in self.tick()
-        worker_token = secrets.token_urlsafe(32)
-        r = self.claim(run_id, worker_token)
+        return self.bind(run_id, self.launcher.token(run_id))
+
+    def bind(self, run_id: int, token: str) -> Worker:
+        """Fetch the job of a job token and bind it as a new worker instance (`started`)."""
+        r = self.client.get("/api/worker/job", headers=bearer(token))
         assert r.status_code == 200, r.text
-        return Worker(
-            self.client, run_id, worker_token, JobPackage.model_validate(r.json()["manifest"])
-        )
+        worker = Worker(self.client, run_id, token, JobPackage.model_validate(r.json()))
+        worker.seq = worker.manifest.journal.first_seq - 1
+        r = worker.journal(worker.record("started", **started_data()))
+        assert r.json()["ack"] == worker.seq, r.text
+        return worker
 
     def get(self, run_id: int) -> RunDetail:
         r = self.client.get(f"/api/runs/{run_id}")

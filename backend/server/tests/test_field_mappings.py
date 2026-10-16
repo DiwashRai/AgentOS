@@ -445,7 +445,7 @@ def test_saving_re_applies_to_unlocked_mapped_tickets_only(
         take_in(authed, key)
     worker = runs.start("SCRUM-3")
     worker.run_stage("plan")
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     patched = authed.patch("/api/tickets/SCRUM-4", json={"base_branch": "hand"}, headers=CSRF)
     assert patched.status_code == 200, patched.text
     runs.queue("SCRUM-5")

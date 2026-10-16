@@ -110,11 +110,11 @@ def test_every_get_matches_its_model(
     worker = runs.start(repo.key)
     worker.run_stage("plan")
     assert worker.sync_back(b"zip").status_code == 204
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     worker = runs.start(repo.key)
     worker.events(
         {
-            "seq": 1,
+            "seq": worker.next_seq(),
             "ts": "2026-10-10T12:00:00Z",
             "stage_id": "implement",
             "type": "stage_started",
@@ -122,10 +122,12 @@ def test_every_get_matches_its_model(
         }
     )
     assert client.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF).status_code == 200
-    assert worker.complete("cancelled", failed_stage="implement").status_code == 204
+    job = client.get("/api/worker/job", headers=worker.headers)  # the worker's own GET
+    JobPackage.model_validate(job.json())
+    assert worker.complete("cancelled", failed_stage="implement").status_code == 200
     worker = runs.start(no_repo.key)
     worker.run_stage("plan", "failed")
-    assert worker.complete("failed", failed_stage="plan").status_code == 204
+    assert worker.complete("failed", failed_stage="plan").status_code == 200
 
     check(client, "/api/config", AppConfig)
     check(client, "/api/me", Me)

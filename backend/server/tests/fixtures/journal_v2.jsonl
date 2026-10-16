@@ -1,0 +1,13 @@
+{"seq": 1, "ts": "2026-10-15T12:00:00.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "started", "stage_id": null, "data": {"protocol": 2, "worker_sha256": "0000000000000000000000000000000000000000000000000000000000000000"}}
+{"seq": 2, "ts": "2026-10-15T12:00:05.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "stage_started", "stage_id": "implement", "data": {"round": 1}}
+{"seq": 3, "ts": "2026-10-15T12:00:06.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "log", "stage_id": "implement", "data": {"stream": "stdout", "text": "Working on it", "truncated": false}}
+{"seq": 4, "ts": "2026-10-15T12:00:07.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "warning", "stage_id": "implement", "data": {"message": "1 file under .claude/skills/context-aos-42 is not kept"}}
+{"seq": 5, "ts": "2026-10-15T12:01:00.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "sync", "stage_id": "implement", "data": {"files": [{"path": "AGENTS.md", "content": "Edited by the agent.", "mode": "block"}]}}
+{"seq": 6, "ts": "2026-10-15T12:01:01.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "stage_finished", "stage_id": "implement", "data": {"status": "succeeded", "exit_code": 0, "reason": null, "round": 1}}
+{"seq": 7, "ts": "2026-10-15T12:01:02.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "stage_started", "stage_id": "review", "data": {"round": 1}}
+{"seq": 8, "ts": "2026-10-15T12:02:00.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "verdict_repair", "stage_id": "review", "data": {"round": 1, "attempt": 1, "error": "notes: missing"}}
+{"seq": 9, "ts": "2026-10-15T12:03:00.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "verdict", "stage_id": "review", "data": {"round": 1, "verdict": "pass", "notes": "Looks good.", "source": "file", "repairs": 1}}
+{"seq": 10, "ts": "2026-10-15T12:03:01.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "stage_finished", "stage_id": "review", "data": {"status": "succeeded", "exit_code": 0, "reason": null, "round": 1}}
+{"seq": 11, "ts": "2026-10-15T12:03:02.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "sync_back", "stage_id": null, "data": {"sha256": "4a70fe9aa6436e02c2dea340fbd1e352e4ef2d8ce6ca52ad25d4b95471fc8bf2", "bytes": 3, "files": 1}}
+{"seq": 12, "ts": "2026-10-15T12:03:05.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "pushed", "stage_id": null, "data": {"branch": "agent/AOS-42", "head": "0123456789abcdef0123456789abcdef01234567", "commits": 2, "method": "git"}}
+{"seq": 13, "ts": "2026-10-15T12:03:06.000Z", "job": "42-1-3f9c0a1be47d2c55", "type": "result", "stage_id": null, "data": {"status": "completed", "failed_stage": null, "error": null, "pr_url": "https://github.com/example/app/pull/7"}}

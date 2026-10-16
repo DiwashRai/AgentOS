@@ -1,4 +1,5 @@
-"""Worker authentication: `Authorization: Bearer <token>` (a dispatch, worker or client token).
+"""Worker authentication: `Authorization: Bearer <token>` (a job, worker or client token), plus
+the job's instance header.
 
 Only parses the header (401 if it is missing or malformed); the service looks the token up by
 hash. Reading the header from the Request keeps it out of the OpenAPI schema (the generated web
@@ -22,5 +23,11 @@ def bearer_token(request: Request) -> str:
     return token
 
 
+def instance_id(request: Request) -> str:
+    """`X-AgentOS-Instance`: the worker instance a job is bound to ("" when missing)."""
+    return request.headers.get("x-agentos-instance", "").strip()
+
+
 RunToken = Annotated[str, Depends(bearer_token)]
 ClientBearer = Annotated[str, Depends(bearer_token)]
+Instance = Annotated[str, Depends(instance_id)]

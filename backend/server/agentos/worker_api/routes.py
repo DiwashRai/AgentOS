@@ -1,12 +1,12 @@
-"""Worker protocol routes (SPEC §8, §10). Authenticated by run tokens (the poll: by a client
-token), not cookies."""
+"""Worker protocol routes (SPEC §8, §10). Authenticated by job or worker tokens (the poll: by a
+client token), not cookies."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from agentos.errors import ERROR_RESPONSES, ApiError
@@ -17,14 +17,17 @@ from agentos.models import (
     ClaimResponse,
     ClientPollRequest,
     ClientPollResponse,
-    CompleteRequest,
     EventsRequest,
     EventsResponse,
+    JobPackage,
+    JournalRequest,
+    JournalResponse,
+    ResultData,
     SyncRequest,
     SyncResponse,
 )
 from agentos.worker_api import service
-from agentos.worker_api.deps import ClientBearer, RunToken
+from agentos.worker_api.deps import ClientBearer, Instance, RunToken
 
 router = APIRouter(tags=["worker"], responses=ERROR_RESPONSES)
 
@@ -56,12 +59,16 @@ def sync(body: SyncRequest, token: RunToken, ctx: Ctx) -> SyncResponse:
 async def sync_back(
     sha256: str, files: Annotated[int, Query(ge=1)], token: RunToken, ctx: Ctx, request: Request
 ) -> None:
-    """The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload
-    is refused (413) without being held whole; the store runs in a thread."""
-    # The token is checked before anything is read, and a declared length over the cap is
-    # refused unread.
-    await asyncio.to_thread(service.check_live_run, ctx.db, token)
+    run_id = await asyncio.to_thread(service.check_live_run, ctx.db, token)
+    await _store_sync_back(ctx, request, run_id, sha256, files)
 
+
+async def _store_sync_back(
+    ctx: Ctx, request: Request, run_id: int, sha256: str, files: int
+) -> None:
+    """The run's sync_back zip as the raw body, once the caller checked the credentials. A
+    declared length over the cap is refused unread, and reading stops past the cap, so an
+    oversize upload is refused (413) without being held whole; the store runs in a thread."""
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > service.MAX_SYNC_BACK_BYTES:
         raise ApiError(413, "too_large", f"sync_back: over {service.MAX_SYNC_BACK_BYTES} bytes")
@@ -71,11 +78,40 @@ async def sync_back(
         data += chunk
         if len(data) > service.MAX_SYNC_BACK_BYTES:
             break
-    await asyncio.to_thread(service.store_sync_back, ctx.db, token, bytes(data), sha256, files)
+    await asyncio.to_thread(service.store_sync_back, ctx.db, run_id, bytes(data), sha256, files)
+
+
+# Bearer: the job token; once the job is bound, X-AgentOS-Instance too.
+@router.get("/api/worker/job", response_model=JobPackage)
+def job(token: RunToken, instance: Instance, ctx: Ctx) -> Response:
+    """The job's package, exactly as stored when the run was dispatched."""
+    package = service.job_package(ctx.db, token, instance)
+    return Response(package, media_type="application/json")
+
+
+@router.post("/api/worker/journal")
+def journal(body: JournalRequest, token: RunToken, instance: Instance, ctx: Ctx) -> JournalResponse:
+    return service.post_journal(ctx.db, token, instance, body.records)
+
+
+@router.put("/api/worker/jobs/{job_id}/sync-back", status_code=204)
+async def job_sync_back(
+    job_id: str,
+    sha256: str,
+    files: Annotated[int, Query(ge=1)],
+    token: RunToken,
+    instance: Instance,
+    ctx: Ctx,
+    request: Request,
+) -> None:
+    """The job's sync_back zip as the raw body; a `sync_back` record describing it follows. The
+    token and instance are checked before anything is read."""
+    run_id = await asyncio.to_thread(service.check_upload, ctx.db, token, instance, job_id)
+    await _store_sync_back(ctx, request, run_id, sha256, files)
 
 
 @router.post("/api/worker/complete", status_code=204)
-def complete(body: CompleteRequest, token: RunToken, ctx: Ctx) -> None:
+def complete(body: ResultData, token: RunToken, ctx: Ctx) -> None:
     service.complete(ctx.db, token, body)
 
 

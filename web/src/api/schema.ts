@@ -841,6 +841,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/worker/job": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Job
+         * @description The job's package, exactly as stored when the run was dispatched.
+         */
+        get: operations["job_api_worker_job_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/jobs/{job_id}/sync-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Job Sync Back
+         * @description The job's sync_back zip as the raw body; a `sync_back` record describing it follows. The
+         *     token and instance are checked before anything is read.
+         */
+        put: operations["job_sync_back_api_worker_jobs__job_id__sync_back_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Journal */
+        post: operations["journal_api_worker_journal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/worker/poll": {
         parameters: {
             query?: never;
@@ -889,11 +947,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /**
-         * Sync Back
-         * @description The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload
-         *     is refused (413) without being held whole; the store runs in a thread.
-         */
+        /** Sync Back */
         put: operations["sync_back_api_worker_sync_back_put"];
         post?: never;
         delete?: never;
@@ -1158,20 +1212,6 @@ export interface components {
             server_url: string;
             /** Token */
             token: string;
-        };
-        /** CompleteRequest */
-        CompleteRequest: {
-            /** Error */
-            error?: string | null;
-            /** Failed Stage */
-            failed_stage?: string | null;
-            /** Pr Url */
-            pr_url?: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "completed" | "failed" | "cancelled";
         };
         /**
          * ContextEntry
@@ -1595,6 +1635,49 @@ export interface components {
             /** Warnings */
             warnings?: string[];
             workspace: components["schemas"]["ManifestWorkspace"];
+        };
+        /**
+         * JournalRecord
+         * @description One record of a run's journal. `seq` counts every record of the run, from the job's
+         *     `journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's
+         *     `data` (the display types as `RunEvent`, the others below) and consumes a bad record.
+         */
+        JournalRecord: {
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            };
+            /** Job */
+            job: string;
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id?: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /** Type */
+            type: string;
+        };
+        /** JournalRequest */
+        JournalRequest: {
+            /** Records */
+            records: components["schemas"]["JournalRecord"][];
+        };
+        /**
+         * JournalResponse
+         * @description `ack`: the run's highest applied seq (resend from `ack + 1`); `rejected`: the seqs of this
+         *     batch's records that were consumed without applying.
+         */
+        JournalResponse: {
+            /** Ack */
+            ack: number;
+            /** Cancel */
+            cancel: boolean;
+            /** Rejected */
+            rejected: number[];
         };
         /** LogData */
         LogData: {
@@ -2107,6 +2190,23 @@ export interface components {
              * @enum {string}
              */
             outcome: "completed" | "abandoned";
+        };
+        /**
+         * ResultData
+         * @description A `result` record's data (and the old `complete` body): how the job ended.
+         */
+        ResultData: {
+            /** Error */
+            error?: string | null;
+            /** Failed Stage */
+            failed_stage?: string | null;
+            /** Pr Url */
+            pr_url?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "failed" | "cancelled";
         };
         /** RunDetail */
         RunDetail: {
@@ -5426,7 +5526,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CompleteRequest"];
+                "application/json": components["schemas"]["ResultData"];
             };
         };
         responses: {
@@ -5477,6 +5577,127 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventsResponse"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    job_api_worker_job_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobPackage"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    job_sync_back_api_worker_jobs__job_id__sync_back_put: {
+        parameters: {
+            query: {
+                sha256: string;
+                files: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    journal_api_worker_journal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JournalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalResponse"];
                 };
             };
             /** @description Client error */

@@ -180,7 +180,7 @@ def test_nothing_to_run_after_the_last_stage(
     t = create_ticket(repo=None)
     worker = runs.start(t.key, "review")  # the last enabled stage (open-pr is disabled)
     worker.run_stage("review")
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     assert runs.get(worker.run_id).status == "succeeded"
     r = runs.dispatch(t.key)
     assert error(r) == (422, "invalid_stage")
@@ -425,19 +425,19 @@ def test_stage_names_fall_back_to_the_id(
 def test_event_paging(authed: TestClient, create_ticket: CreateTicket, runs: RunDriver) -> None:
     t = create_ticket()
     worker = runs.start(t.key)
-    assert worker.events(*(log_event(i, "plan", f"line {i}") for i in range(1, 11))).json() == {
-        "cancel": False
-    }
+    # Seq 1 is the job's `started` record, which is no event.
+    lines = (log_event(i, "plan", f"line {i}") for i in range(2, 11))
+    assert worker.events(*lines).json()["ack"] == 10
 
     def seqs(query: str) -> list[int]:
         r = authed.get(f"/api/runs/{worker.run_id}/events{query}")
         assert r.status_code == 200, r.text
         return [e["seq"] for e in r.json()]
 
-    assert seqs("") == list(range(1, 11))
+    assert seqs("") == list(range(2, 11))
     assert seqs("?limit=3") == [8, 9, 10]
     assert seqs("?after_seq=4&limit=3") == [5, 6, 7]
-    assert seqs("?before_seq=4") == [1, 2, 3]
+    assert seqs("?before_seq=4") == [2, 3]
     assert seqs("?before_seq=8&limit=2") == [6, 7]
     assert seqs("?after_seq=10") == []
     assert authed.get(f"/api/runs/{worker.run_id}/events?limit=1001").status_code == 422
@@ -465,8 +465,7 @@ def test_cancel_running_waits_for_the_worker(
 ) -> None:
     t = create_ticket()
     worker = runs.start(t.key)
-    worker.events(event(1, "stage_started", "plan"))
-    worker.seq = 1
+    worker.events(event(worker.next_seq(), "stage_started", "plan"))
     r = authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF)
     first = RunSummary.model_validate(r.json())
     assert first.status == "running"
@@ -475,8 +474,8 @@ def test_cancel_running_waits_for_the_worker(
         authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF).json()
     )
     assert again.cancel_requested_at == first.cancel_requested_at  # set once
-    assert worker.events().json() == {"cancel": True}  # the heartbeat carries it
-    assert worker.complete("cancelled", failed_stage="plan").status_code == 204
+    assert worker.events().json()["cancel"] is True  # the heartbeat carries it
+    assert worker.complete("cancelled", failed_stage="plan").status_code == 200
     detail = runs.get(worker.run_id)
     assert detail.status == "cancelled"
     assert [s.status for s in detail.stage_runs] == ["cancelled"]
@@ -589,7 +588,7 @@ def test_board_through_plan_gate_continue_succeed(
             reason=None,
         )
     )
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     assert runs.get(run.id).status == "gated"
     assert board(authed, t.key) == (
         "needs_you",
@@ -609,7 +608,7 @@ def test_board_through_plan_gate_continue_succeed(
         "done done skipped current skipped",
     )
     w2.run_stage("review")
-    assert w2.complete().status_code == 204
+    assert w2.complete().status_code == 200
     assert runs.get(cont.id).status == "succeeded"
     assert board(authed, t.key) == (
         "needs_you",
@@ -627,7 +626,7 @@ def test_retry_after_a_failure_starts_at_the_failed_stage(
     worker = runs.start(t.key, "implement")
     worker.run_stage("implement")
     worker.run_stage("review", "failed")
-    assert worker.complete("failed", failed_stage="review").status_code == 204
+    assert worker.complete("failed", failed_stage="review").status_code == 200
     detail = runs.get(worker.run_id)
     assert detail.status == "failed"
     assert detail.error == "stage review failed"

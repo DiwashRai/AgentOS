@@ -14,9 +14,9 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from agentos.context import AppContext
-from agentos.models import ClientPollResponse, ClientToken, JobPackage, Me, Role, TicketDetail
+from agentos.models import ClientPollResponse, ClientToken, Me, Role, TicketDetail
 from agentos.worker_api import service
-from tests.run_support import CSRF, RunDriver, Worker, bearer
+from tests.run_support import CSRF, RunDriver, bearer
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -138,21 +138,12 @@ def test_the_dispatch_token_drives_the_worker_api(
     run = ClientPollResponse.model_validate(r.json()).run
     assert run is not None
 
-    worker_token = secrets.token_urlsafe(32)
-    claim = client.post(
-        "/api/worker/claim",
-        json={"worker_token": worker_token},
-        headers=bearer(run.dispatch_token),
-    )
-    assert claim.status_code == 200, claim.text
-    worker = Worker(
-        client, run_id, worker_token, JobPackage.model_validate(claim.json()["manifest"])
-    )
+    worker = runs.bind(run_id, run.dispatch_token)
     worker.run_stage("plan")
     synced = worker.manifest.context[0]
     files = [{"path": synced.path, "content": "edited", "mode": synced.mode}]
     assert worker.sync("plan", files).status_code == 200
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     assert runs.get(run_id).status == "gated"
 
 

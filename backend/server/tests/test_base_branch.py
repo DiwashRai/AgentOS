@@ -171,7 +171,7 @@ def test_the_first_stage_started_locks_the_base_branch(
     info = detail(authed, t.key).base_branch_info
     assert info is not None
     assert (info.locked, info.locked_by_run) == (True, worker.run_id)
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     # A later run keeps the first run's lock.
     second = runs.start(t.key)
     second.run_stage("implement")
@@ -185,7 +185,7 @@ def test_a_run_that_fails_before_any_stage_never_locks(
     worker = runs.start(t.key)
     assert worker.events(log_event(worker.next_seq(), None, "cannot start")).status_code == 200
     response = worker.complete("failed", error="cannot start agent/AOS-1 from origin/main")
-    assert response.status_code == 204
+    assert response.status_code == 200
     assert locked_by(ctx, t.key) is None
     fixed = patch(authed, t.key, base_branch="develop")
     assert fixed.status_code == 200, fixed.text  # the owner can still fix the base
@@ -198,7 +198,7 @@ def test_a_no_repo_ticket_is_never_locked(
     worker = runs.start(t.key)
     worker.run_stage("plan")
     assert locked_by(ctx, t.key) is None
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     assert detail(authed, t.key).base_branch_info is None
 
 
@@ -207,7 +207,7 @@ def test_a_duplicate_stage_started_after_the_lock_is_a_no_op(
 ) -> None:
     t = create_ticket()
     worker = runs.start(t.key)
-    first = event(1, "stage_started", "plan")
+    first = event(worker.next_seq(), "stage_started", "plan")
     assert worker.events(first).status_code == 200
     assert worker.events(first).status_code == 200  # a retried batch: stored once
     assert locked_by(ctx, t.key) == worker.run_id
@@ -219,7 +219,7 @@ def test_a_locked_ticket_refuses_base_branch_and_repo_changes(
     t = create_ticket(base_branch="rel")
     worker = runs.start(t.key)
     worker.run_stage("plan")
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     for body in (
         {"base_branch": "other"},
         {"base_branch": None},
@@ -246,7 +246,7 @@ def test_the_lock_pins_a_repo_default_ticket_to_the_branch_it_started_from(
     t = create_ticket()  # no own branch: the repo's default ("main")
     worker = runs.start(t.key)
     worker.run_stage("plan")
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     with ctx.db.read() as conn:
         own = conn.execute("SELECT base_branch FROM tickets WHERE key = ?", (t.key,)).fetchone()
     assert own["base_branch"] == "main"  # pinned from the locking run's manifest

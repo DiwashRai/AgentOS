@@ -1554,13 +1554,70 @@ class SyncResponse(ApiModel):
     refused: list[str]  # paths that aren't write context or notes of the run's package
 
 
-class CompleteRequest(ApiModel):
+class ResultData(ApiModel):
+    """A `result` record's data (and the old `complete` body): how the job ended."""
+
     status: WorkerFinalStatus
     failed_stage: str | None = None
     error: str | None = None
     # The PR for the run's `branch`, as last reported by a worker (repo mode, when one exists).
     # The server stores it only if it passes `validate_pr_url`; an invalid one is ignored.
     pr_url: str | None = Field(default=None, max_length=500)
+
+
+CompleteRequest = ResultData
+
+
+class JournalRecord(ApiModel):
+    """One record of a run's journal. `seq` counts every record of the run, from the job's
+    `journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's
+    `data` (the display types as `RunEvent`, the others below) and consumes a bad record."""
+
+    seq: int = Field(ge=1)
+    ts: AwareDatetime
+    job: str
+    type: str
+    stage_id: str | None = None
+    data: dict[str, Any]
+
+
+class JournalRequest(ApiModel):
+    records: list[JournalRecord] = Field(max_length=500)
+
+
+class JournalResponse(ApiModel):
+    """`ack`: the run's highest applied seq (resend from `ack + 1`); `rejected`: the seqs of this
+    batch's records that were consumed without applying."""
+
+    ack: int
+    cancel: bool
+    rejected: list[int]
+
+
+class StartedData(ApiModel):
+    """The first record of a job: it binds the posting instance (`X-AgentOS-Instance`)."""
+
+    protocol: Literal[2]
+    worker_sha256: str
+
+
+class SyncData(ApiModel):
+    files: list[SyncFile]
+
+
+class SyncBackData(ApiModel):
+    """Describes the zip uploaded to `PUT /api/worker/jobs/{id}/sync-back` before it."""
+
+    sha256: str
+    bytes: int = Field(ge=1)
+    files: int = Field(ge=1)
+
+
+class PushedData(ApiModel):
+    branch: str
+    head: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    commits: int = Field(ge=0)
+    method: Literal["git", "api"]
 
 
 CLIENT_POLL_MAX_WAIT_S = 25

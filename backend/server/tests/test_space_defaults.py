@@ -160,7 +160,7 @@ def test_runtime_fallback_chain(
     set_defaults(authed, runtime="claude")
     worker = runs.start(a, "plan")
     assert first_argv(worker.manifest)[: len(CLAUDE_ARGV)] == CLAUDE_ARGV
-    assert worker.complete("failed", failed_stage="plan").status_code == 204
+    assert worker.complete("failed", failed_stage="plan").status_code == 200
     assert first_argv(runs.start(b, "plan").manifest) == FAKE_ARGV
 
 

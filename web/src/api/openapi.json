@@ -437,59 +437,6 @@
         "title": "ClientTokenCreated",
         "type": "object"
       },
-      "CompleteRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "failed_stage": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failed Stage"
-          },
-          "pr_url": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pr Url"
-          },
-          "status": {
-            "enum": [
-              "completed",
-              "failed",
-              "cancelled"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "title": "CompleteRequest",
-        "type": "object"
-      },
       "ContextEntry": {
         "additionalProperties": false,
         "description": "A context file. `name`: the skill, block, agent or file it belongs to. `block`: the block\nname in block mode (`content` is then the block's). `access: write` entries are synced back.",
@@ -1608,6 +1555,101 @@
           "limits"
         ],
         "title": "JobPackage",
+        "type": "object"
+      },
+      "JournalRecord": {
+        "additionalProperties": false,
+        "description": "One record of a run's journal. `seq` counts every record of the run, from the job's\n`journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's\n`data` (the display types as `RunEvent`, the others below) and consumes a bad record.",
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "job",
+          "type",
+          "data"
+        ],
+        "title": "JournalRecord",
+        "type": "object"
+      },
+      "JournalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/JournalRecord"
+            },
+            "maxItems": 500,
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "records"
+        ],
+        "title": "JournalRequest",
+        "type": "object"
+      },
+      "JournalResponse": {
+        "additionalProperties": false,
+        "description": "`ack`: the run's highest applied seq (resend from `ack + 1`); `rejected`: the seqs of this\nbatch's records that were consumed without applying.",
+        "properties": {
+          "ack": {
+            "title": "Ack",
+            "type": "integer"
+          },
+          "cancel": {
+            "title": "Cancel",
+            "type": "boolean"
+          },
+          "rejected": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Rejected",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ack",
+          "cancel",
+          "rejected"
+        ],
+        "title": "JournalResponse",
         "type": "object"
       },
       "LogData": {
@@ -2916,6 +2958,60 @@
           "outcome"
         ],
         "title": "ResolveRequest",
+        "type": "object"
+      },
+      "ResultData": {
+        "additionalProperties": false,
+        "description": "A `result` record's data (and the old `complete` body): how the job ended.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "failed_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Stage"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ResultData",
         "type": "object"
       },
       "RunDetail": {
@@ -8686,7 +8782,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CompleteRequest"
+                "$ref": "#/components/schemas/ResultData"
               }
             }
           },
@@ -8769,6 +8865,164 @@
           }
         },
         "summary": "Events",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/job": {
+      "get": {
+        "description": "The job's package, exactly as stored when the run was dispatched.",
+        "operationId": "job_api_worker_job_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPackage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Job",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/jobs/{job_id}/sync-back": {
+      "put": {
+        "description": "The job's sync_back zip as the raw body; a `sync_back` record describing it follows. The\ntoken and instance are checked before anything is read.",
+        "operationId": "job_sync_back_api_worker_jobs__job_id__sync_back_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha256",
+            "required": true,
+            "schema": {
+              "title": "Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "files",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Files",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Job Sync Back",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/journal": {
+      "post": {
+        "operationId": "journal_api_worker_journal_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Journal",
         "tags": [
           "worker"
         ]
@@ -8879,7 +9133,6 @@
     },
     "/api/worker/sync-back": {
       "put": {
-        "description": "The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload\nis refused (413) without being held whole; the store runs in a thread.",
         "operationId": "sync_back_api_worker_sync_back_put",
         "parameters": [
           {
