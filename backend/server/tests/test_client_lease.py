@@ -15,8 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from agentos.config import WORKER_PATH
 from agentos.context import AppContext
-from agentos.launchers.local import WORKER_PATH
 from agentos.models import ClientToken, LeasedJob, LeaseResponse, Me, Role, TicketDetail
 from agentos.worker_api import service
 from tests.run_support import CSRF, RunDriver, bearer

@@ -32,9 +32,8 @@ from pydantic import SecretStr
 
 import agentos.main
 from agentos.clock import utcnow
-from agentos.config import Settings
+from agentos.config import WORKER_PATH, Settings
 from agentos.context import AppContext
-from agentos.launchers.local import WORKER_PATH
 from agentos.main import create_app
 from agentos.models import ClientToken, ClientTokenCreated, Me, RunSummary, TaskProgress
 from agentos.pipeline.runtime import NamedRuntime
@@ -73,7 +72,6 @@ WORKER_PID_RE = re.compile(r"\(pid (\d+)\)")
 class Server:
     url: str
     root: Path
-    settings: Settings
     ctx: AppContext
     remote: Path
     provider: FakeProvider
@@ -106,7 +104,6 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         settings = Settings(
             _env_file=None,
             data_dir=root / "data",
-            workspaces_dir=root / "workspaces",
             dev_auth=True,
             public_url=url,
             launcher="github",
@@ -135,7 +132,7 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
             time.sleep(0.05)
 
         try:
-            yield Server(url, root, settings, app.state.ctx, remote, provider, env_file)
+            yield Server(url, root, app.state.ctx, remote, provider, env_file)
         finally:
             server.should_exit = True
             thread.join(30)
@@ -147,22 +144,10 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
 
 @dataclass
 class User(E2E):
-    """A signed-in user (their own cookie session). Their client's run workers log to
-    `<client_root>/runs/<run_id>.log`."""
+    """A signed-in user (their own cookie session). Their client keeps its run workspaces and
+    logs in `logs` = `<client_root>/runs`."""
 
     client_root: Path = field(kw_only=True)
-
-    @property
-    def client_runs(self) -> Path:
-        """Where the client keeps its run workspaces and logs."""
-        return self.client_root / "runs"
-
-    def diag(self, run_id: int | None) -> str:
-        if run_id is None:
-            return ""
-        log = self.client_runs / f"{run_id}.log"
-        text = log.read_text("utf-8", "replace") if log.exists() else "(no client worker log)"
-        return f"{super().diag(run_id)}\n--- client worker {run_id}.log ---\n{text}"
 
     def dispatch(
         self, key: str, from_stage: str | None = None, target: str | None = None
@@ -207,7 +192,7 @@ class World:
         assert r.status_code == 200, r.text
         root = self.server.root / "clients" / username
         user = User(
-            http, self.server.settings, self.server.remote, Me.model_validate(r.json()),
+            http, self.server.remote, Me.model_validate(r.json()), root / "runs",
             client_root=root,
         )  # fmt: skip
         self.users.append(user)
@@ -345,7 +330,7 @@ def test_client_runs_gate_edit_continue_while_the_provider_serves_server_runs(
         ("plan", "succeeded", 0)
     ], ann.diag(run1.id)
     assert (detail.target, detail.launch_ref, detail.launch_url) == ("client", "ann-laptop", None)
-    assert (ann.client_runs / f"{run1.id}.log").is_file()
+    assert (ann.logs / f"{run1.id}.log").is_file()
     t = ann.ticket(key)
     assert t.attention == "needs_you"
     assert t.next_stage == "implement"
@@ -378,7 +363,7 @@ def test_client_runs_gate_edit_continue_while_the_provider_serves_server_runs(
     assert_clean_branch(ann.remote, key)
 
     # Bob's client never got Ann's runs; no client took the server run.
-    assert list(bob.client_runs.iterdir()) == []  # no run workspace or log
+    assert list(bob.logs.iterdir()) == []  # no run workspace or log
     assert anns.proc.poll() is None
     assert bobs.proc.poll() is None
     server_detail = ann.run(server_run.id)
@@ -425,7 +410,7 @@ def test_a_client_run_waits_while_the_client_is_offline(world: World, server: Se
     detail = cleo.wait_run(run.id, "gated")
     assert [(s.stage_id, s.status) for s in detail.stage_runs] == [("plan", "succeeded")]
     assert (detail.launch_ref, detail.client_online) == ("cleo-desktop", True)
-    assert (cleo.client_runs / f"{run.id}.log").is_file()
+    assert (cleo.logs / f"{run.id}.log").is_file()
 
 
 def test_revoking_the_token_stops_the_client(world: World) -> None:

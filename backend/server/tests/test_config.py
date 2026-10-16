@@ -24,7 +24,6 @@ BASE_URL = "http://127.0.0.1:8000"
 def make(tmp_path: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "data_dir": tmp_path / "data",
-        "workspaces_dir": tmp_path / "workspaces",
         "dev_auth": True,
     }
     values.update(overrides)
@@ -58,28 +57,22 @@ def test_env_comma_lists(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_empty_env_values_mean_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("WORKER_ENV_FILE", "JIRA_URL", "ADMINS"):
+    for name in ("LAUNCHER", "JIRA_URL", "ADMINS"):
         monkeypatch.setenv(f"AGENTOS_{name}", "")
     settings = Settings(_env_file=None)
-    assert settings.worker_env_file is None
+    assert settings.launcher is None
     assert settings.jira_url is None
     assert settings.admins == []
 
 
 def test_defaults() -> None:
     settings = Settings(_env_file=None)
-    assert settings.workspaces_dir == (Path.home() / ".agentos" / "workspaces").resolve()
     assert settings.data_dir == Path("data").resolve()
-    assert settings.local_max_concurrency == 2
+    assert settings.launcher is None  # no server route: runs go to clients
     assert settings.effective_worker_url == "http://127.0.0.1:8000"
     assert Settings(_env_file=None, worker_url="https://t.example/").effective_worker_url == (
         "https://t.example"
     )
-
-
-def test_unlimited_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_LOCAL_MAX_CONCURRENCY", "unlimited")
-    assert Settings(_env_file=None).local_max_concurrency is None
 
 
 def test_env_example_parses(tmp_path: Path) -> None:
@@ -87,7 +80,6 @@ def test_env_example_parses(tmp_path: Path) -> None:
     settings = Settings(_env_file=example)
     assert settings.data_dir == Path("data").resolve()  # inline `# comment` stripped
     assert settings.dev_auth is True
-    assert settings.local_max_concurrency == 2
 
 
 def test_load_settings_reports_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,12 +95,10 @@ def test_load_settings_reports_invalid_values(monkeypatch: pytest.MonkeyPatch) -
 # ------------------------------------------------------------------ startup checks
 
 
-def test_valid_settings_pass_and_create_dirs(tmp_path: Path) -> None:
+def test_valid_settings_pass_and_create_the_data_dir(tmp_path: Path) -> None:
     settings = make(tmp_path)
     startup_checks(settings)
     assert settings.data_dir.is_dir()
-    assert settings.logs_dir.is_dir()
-    assert settings.workspaces_dir.is_dir()
 
 
 def test_dev_auth_requires_loopback_host_and_public_url(tmp_path: Path) -> None:
@@ -237,34 +227,9 @@ def test_mailbox_launcher_is_built_from_settings(tmp_path: Path) -> None:
     assert ctx.route == ("push", "github", "file")
 
 
-def test_workspaces_inside_data_dir(tmp_path: Path) -> None:
-    found = problems(make(tmp_path, workspaces_dir=tmp_path / "data" / "ws"))
-    assert any("AGENTOS_WORKSPACES_DIR" in p and "AGENTOS_DATA_DIR" in p for p in found)
-
-
-def test_data_dir_inside_workspaces(tmp_path: Path) -> None:
-    found = problems(make(tmp_path, data_dir=tmp_path / "workspaces" / "data"))
-    assert any("AGENTOS_DATA_DIR" in p for p in found)
-
-
-def test_workspaces_inside_git_repo(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    (repo / ".git").mkdir(parents=True)
-    found = problems(make(tmp_path, workspaces_dir=repo / "not" / "yet" / "there"))
-    assert any("git repo" in p for p in found)
-    assert not (repo / "not").exists()  # nothing created when checks fail
-
-
-def test_workspaces_inside_git_worktree(tmp_path: Path) -> None:
-    repo = tmp_path / "wt"
-    repo.mkdir()
-    (repo / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")  # worktrees use a file
-    assert any("git repo" in p for p in problems(make(tmp_path, workspaces_dir=repo / "ws")))
-
-
-def test_missing_worker_env_file(tmp_path: Path) -> None:
-    found = problems(make(tmp_path, worker_env_file=tmp_path / "missing.env"))
-    assert any("AGENTOS_WORKER_ENV_FILE" in p for p in found)
+def test_no_launcher_starts_no_workers(tmp_path: Path) -> None:
+    ctx = build_context(make(tmp_path))
+    assert (ctx.providers, ctx.route, ctx.mailbox) == ({}, None, None)
 
 
 def test_lifespan_fails_fast_on_bad_config(tmp_path: Path) -> None:

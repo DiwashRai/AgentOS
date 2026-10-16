@@ -1,8 +1,10 @@
 """Stage processes: background children don't hang the worker, timeouts and cancel kill the tree,
-line caps, stdin, the Windows .cmd guard, and the shell prefix."""
+line caps, stdin, the Windows .cmd guard, the shell prefix, and the client's detached run workers
+surviving Ctrl+C."""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -150,3 +152,33 @@ def test_shell_prefix_defaults_and_override(monkeypatch: pytest.MonkeyPatch) -> 
         assert default == ["bash", "-lc"]
         monkeypatch.setenv("AGENTOS_SHELL", "'/opt/my shell/sh' -c")
         assert worker.shell_prefix() == ["/opt/my shell/sh", "-c"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Ctrl+C console semantics are Windows-only")
+def test_a_detached_child_survives_ctrl_c_to_the_client_console(tmp_path: Path) -> None:
+    """A Ctrl+C in the client's terminal must not kill the run workers it started.
+
+    The harness runs in its own hidden console, so the Ctrl+C never reaches pytest. A control child
+    started without `spawn_detached` must die, proving the event was actually delivered.
+    """
+    out = tmp_path / "result.json"
+    env = dict(os.environ)
+    worker_dir = str(Path(worker.__file__).resolve().parent)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [worker_dir, env.get("PYTHONPATH")]))
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    harness = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "ctrl_c_harness.py"), str(out), str(tmp_path)],
+        env=env,
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+        startupinfo=startupinfo,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert harness.returncode == 0, harness.stderr
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["control_exit"] is not None, "control child ignored Ctrl+C; test proves nothing"
+    assert result["detached_alive"] is True

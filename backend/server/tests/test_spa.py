@@ -31,7 +31,7 @@ def web_dir(tmp_path: Path) -> Path:
 
 
 def serve(settings: Settings) -> Iterator[TestClient]:
-    app = create_app(settings, providers={"local": FakeProvider()}, run_loops=False)
+    app = create_app(settings, providers={"github": FakeProvider()}, run_loops=False)
     with TestClient(app, base_url=BASE_URL) as client:
         yield client
 

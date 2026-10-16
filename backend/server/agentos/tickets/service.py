@@ -345,8 +345,8 @@ def client_online(start: StartMode, created_by: int | None, online: set[int]) ->
 
 
 def launch_url(start: StartMode, launch_ref: str | None) -> str | None:
-    """The provider's page for a push run: GitHub's ref is the Actions run URL; the local
-    launcher's is a PID and a client run's the client's name (no page)."""
+    """The provider's page for a push run: GitHub's ref is the Actions run URL. A client run's
+    ref is the client's name (no page)."""
     if start == "push" and launch_ref is not None and launch_ref.startswith("https://"):
         return launch_ref
     return None

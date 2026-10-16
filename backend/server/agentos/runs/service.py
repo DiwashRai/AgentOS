@@ -620,12 +620,5 @@ def reap(
     return out
 
 
-def active_run_ids(db: Database) -> set[int]:
-    with db.read() as conn:
-        return set(
-            _ids(conn, "SELECT id FROM runs WHERE status IN ('queued', 'dispatched', 'running')")
-        )
-
-
 def _ids(conn: Conn, sql: str, params: Sequence[object] = ()) -> list[int]:
     return [int(r[0]) for r in conn.execute(sql, tuple(params)).fetchall()]

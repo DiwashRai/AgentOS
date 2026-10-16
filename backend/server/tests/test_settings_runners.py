@@ -242,12 +242,12 @@ def test_runtimes_are_admin_only(client: TestClient, login: LoginFn) -> None:
 # ------------------------------------------------------------------ runner
 
 
-def test_seeded_runner_with_the_local_launcher(authed: TestClient) -> None:
+def test_seeded_runner(authed: TestClient) -> None:
     got = runner(authed)
     assert got.model_dump(exclude={"updated_at"}) == {
         "value": {"github_repo": None, "workflow": "agentos-worker.yml", "ref": "main"},
-        "launcher": None,  # unset (the local launcher)
-        "token_set": False,
+        "launcher": "github",  # the test settings' env
+        "token_set": True,
         "version": 1,
         "updated_by": None,
     }
@@ -303,7 +303,7 @@ def test_github_provider_reads_the_runner_at_each_start(
         seen.append(request)
         return httpx.Response(204)
 
-    ctx.providers["local"] = GitHubActionsProvider(
+    ctx.providers["github"] = GitHubActionsProvider(
         target=runner_target(ctx.db),
         token=GH_TOKEN,
         transport=httpx.MockTransport(handler),

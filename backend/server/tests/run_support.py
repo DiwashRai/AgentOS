@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from agentos.config import WORKER_PATH
 from agentos.context import AppContext
 from agentos.launchers.base import JobStart, JobStatus
-from agentos.launchers.local import WORKER_PATH
 from agentos.models import JobPackage, RunDetail, RunSummary
 from agentos.runs import dispatcher
 

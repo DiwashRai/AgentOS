@@ -45,7 +45,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"], responses=ERROR_RE
 def _env(ctx: AppContext) -> SettingsEnv:
     return SettingsEnv(
         jira_auth=not ctx.settings.dev_auth,
-        launcher=None if ctx.settings.launcher == "local" else ctx.settings.launcher,
+        launcher=ctx.settings.launcher,
         token_set=ctx.settings.github_token is not None,
         intake_cache=ctx.intake_cache,
     )

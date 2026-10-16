@@ -1,4 +1,4 @@
-"""Shared fixtures: isolated settings (tmp data + workspaces, dev auth), the app and clients.
+"""Shared fixtures: isolated settings (tmp data dir, dev auth), the app and clients.
 
 One app and client serve the whole session; each test gets its own `ctx` on a copy of the
 template db: the test Space's settings (`settings_support.seed_test_settings`) plus what the
@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from agentos.clock import to_db
 from agentos.config import Settings
@@ -70,12 +71,14 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _test_settings(root: Path) -> Settings:
-    # _env_file=None: a developer's backend/.env never leaks into tests.
+    """Dev auth, and the `github` launcher, whose provider the tests swap for a FakeProvider (the
+    token is never sent). _env_file=None: a developer's backend/.env never leaks into tests."""
     return Settings(
         _env_file=None,
         data_dir=root / "data",
-        workspaces_dir=root / "workspaces",
         dev_auth=True,
+        launcher="github",
+        github_token=SecretStr("t0ken-unused"),
     )
 
 
@@ -92,7 +95,7 @@ def provider() -> FakeProvider:
 @pytest.fixture
 def providers(provider: FakeProvider) -> dict[str, Provider]:
     """The context's providers: the fake under the default route's name (AGENTOS_LAUNCHER)."""
-    return {"local": provider}
+    return {"github": provider}
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,7 @@ def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session
             seed_test_settings(settings)
 
             # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
-            app = create_app(settings, providers={"local": FakeProvider()}, run_loops=False)
+            app = create_app(settings, providers={"github": FakeProvider()}, run_loops=False)
             client = stack.enter_context(TestClient(app, base_url=BASE_URL))
 
         # Every connection is closed after startup, so SQLite has checkpointed its WAL.
@@ -244,7 +247,7 @@ def add_run(ctx: AppContext) -> AddRun:
             cursor = conn.execute(
                 "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
                 "provider, created_by, created_at, started_at, finished_at) "
-                "VALUES (?, ?, ?, ?, 3600, 'local', ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, 3600, 'github', ?, ?, ?, ?)",
                 (
                     ticket["id"],
                     status,

@@ -9,9 +9,9 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
+from agentos.config import WORKER_PATH
 from agentos.errors import ERROR_RESPONSES, ApiError
 from agentos.http_deps import Ctx
-from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
     JobPackage,
     JournalRequest,

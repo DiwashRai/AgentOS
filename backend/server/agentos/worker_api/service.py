@@ -19,10 +19,10 @@ from pydantic import ValidationError
 from agentos.auth.service import hash_token
 from agentos.clients import service as clients
 from agentos.clock import to_db, utcnow
+from agentos.config import WORKER_PATH
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError, field_error, validation_error
 from agentos.files.service import write_version
-from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
     JobPackage,
     JournalRecord,

@@ -356,7 +356,7 @@ def test_datacenter_uses_a_bearer_pat_and_the_user_key(
 ) -> None:
     dc = settings.model_copy(update={"jira_deployment": "datacenter"})
     fake_jira.add(f"Bearer {TOKEN}", "jsmith", email="j@example.com")
-    app = create_app(dc, providers={"local": provider}, run_loops=False)
+    app = create_app(dc, providers={"github": provider}, run_loops=False)
     with TestClient(app, base_url=BASE_URL) as client:
         ctx = app.state.ctx
         ctx.jira = JiraClient(JIRA, "datacenter", transport=httpx.MockTransport(fake_jira.handler))

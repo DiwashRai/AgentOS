@@ -106,20 +106,20 @@ def test_a_queued_run_keeps_its_route_after_the_launcher_changes(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, provider: FakeProvider
 ) -> None:
     before = runs.queue(create_ticket("before", repo=None).key).id
-    github = FakeProvider()
-    runs.ctx.route = Route("push", "github", "live")
-    runs.ctx.providers = {"github": github}
+    other = FakeProvider()
+    runs.ctx.route = Route("push", "other", "live")
+    runs.ctx.providers = {"other": other}
     after = runs.queue(create_ticket("after", repo=None).key).id
 
     assert runs.tick() == [after]
-    assert github.launched == [after]
+    assert other.launched == [after]
     held = runs.get(before)
     assert held.status == "queued"
     assert held.queue_reason is not None
-    assert "local" in held.queue_reason  # its own provider, which is no longer configured
-    assert runs.db_run(before)["provider"] == "local"
+    assert "github" in held.queue_reason  # its own provider, which is no longer configured
+    assert runs.db_run(before)["provider"] == "github"
 
-    runs.ctx.providers["local"] = provider
+    runs.ctx.providers["github"] = provider
     assert runs.tick() == [before]
     assert provider.launched == [before]
     assert runs.get(before).queue_reason is None
@@ -179,7 +179,7 @@ def with_loops(
     """The app with its background loops on, ticking every 50 ms, signed in as dev."""
     monkeypatch.setattr(dispatcher, "INTERVAL_S", 0.05)
     monkeypatch.setattr(main, "REAPER_INTERVAL_S", 0.05)
-    app = create_app(settings, providers={"local": provider})  # loops on
+    app = create_app(settings, providers={"github": provider})  # loops on
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         assert client.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
         yield client, app.state.ctx

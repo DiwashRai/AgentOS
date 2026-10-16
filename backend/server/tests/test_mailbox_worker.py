@@ -14,8 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.clock import utcnow
+from agentos.config import WORKER_PATH
 from agentos.launchers.base import Provider
-from agentos.launchers.local import WORKER_PATH
 from agentos.mailbox import dispatcher as mailbox_dispatcher
 from agentos.mailbox import service as mailbox_service
 from agentos.mailbox.reaper import MailboxReaper

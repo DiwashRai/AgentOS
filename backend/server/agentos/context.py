@@ -10,13 +10,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentos.config import ConfigError, Settings, startup_checks
+from agentos.config import WORKER_PATH, ConfigError, Settings, startup_checks
 from agentos.db import Database
 from agentos.launchers.base import Provider
 from agentos.launchers.github import GitHubActionsProvider, GitHubTarget
-from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
 from agentos.launchers.mailbox import Mailbox, MailboxLauncher
-from agentos.models import FieldMapping, JiraField, Route
+from agentos.models import FieldMapping, JiraField, LauncherName, Route
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, RuntimesConfig
 from agentos.pipeline.space import RunnerSection, SpaceConfig
 from agentos.ratelimit import RateLimiter
@@ -127,7 +126,7 @@ class AppContext:
 
 
 def build_context(settings: Settings, providers: dict[str, Provider] | None = None) -> AppContext:
-    """Run the startup checks (creating data/logs/workspaces), migrate the db, seed the settings
+    """Run the startup checks (creating the data dir), migrate the db, seed the settings
     areas the db doesn't have yet (`seed_settings`).
 
     `providers=None` builds the configured ones (`AGENTOS_LAUNCHER`, with the mailbox); the
@@ -146,12 +145,12 @@ def build_context(settings: Settings, providers: dict[str, Provider] | None = No
     return AppContext(settings, db, providers, route, mailbox, jira)
 
 
-def server_route(launcher: str) -> Route:
-    """The route of the server's runs: `mailbox` is GitHub with file reporting; every other
-    launcher is the provider of the same name, whose workers report live."""
-    if launcher == "mailbox":
-        return Route("push", "github", "file")
-    return Route("push", launcher, "live")
+def server_route(launcher: LauncherName | None) -> Route | None:
+    """The route of the server's runs: `mailbox` is GitHub with file reporting, `github` reports
+    live; no launcher, no server route."""
+    if launcher is None:
+        return None
+    return Route("push", "github", "file" if launcher == "mailbox" else "live")
 
 
 def seed_settings(db: Database) -> list[Area]:
@@ -191,8 +190,8 @@ def runner_target(db: Database) -> Callable[[], GitHubTarget]:
 
 
 def _providers(settings: Settings, db: Database) -> tuple[dict[str, Provider], Mailbox | None]:
-    if settings.launcher == "local":
-        return {"local": LocalProcessLauncher.from_settings(settings, WORKER_PATH)}, None
+    if settings.launcher is None:
+        return {}, None
     github = _github_provider(settings, db)
     if settings.launcher == "github":
         return {"github": github}, None

@@ -1047,7 +1047,7 @@ class EventSink:
 # ---------------------------------------------------------------- live echo
 
 # Every agent call's output is also printed on the worker's stderr as it arrives (the Actions job
-# console, the local launcher's log file) in a short readable form; the log events still carry
+# console, the client's run log) in a short readable form; the log events still carry
 # each line as it was. AGENTOS_ECHO=0 in the worker's own environment turns it off.
 ECHO_LINE_CHARS = 200  # a tool call, a tool result, a line nothing recognises
 ECHO_TEXT_CHARS = 2000  # one block of agent text or reasoning
@@ -2935,8 +2935,8 @@ class Run:
 # ---------------------------------------------------------------- client mode
 #
 # `--client` runs on a user's own machine: it long-polls the server for the runs its user
-# dispatched to "My client" and starts this same file as a detached worker for each, the way the
-# server's local launcher does (agentos.launchers.local).
+# dispatched to "My client" and starts this same file as a detached worker for each, so a Ctrl+C
+# in the client's console never kills a run.
 
 _ENV_PREFIX = "AGENTOS_"
 _ENV_BLANK_RE = re.compile(r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)")
@@ -2958,7 +2958,7 @@ class EnvFileError(ValueError):
 
 
 def parse_env(text: str) -> dict[str, str | None]:
-    """The python-dotenv subset the local launcher's env file uses: `KEY=value` lines, `#`
+    """The python-dotenv subset a client's `--env-file` uses: `KEY=value` lines, `#`
     comments (whole-line, or after whitespace in an unquoted value), an optional `export `,
     single quotes (literal but `\\'` and `\\\\`), double quotes (with `\\n`-style escapes), quoted
     values across lines, and a bare `KEY` meaning "unset KEY" (None). `${VAR}` is not expanded."""
@@ -3008,7 +3008,7 @@ def child_env(
 ) -> dict[str, str]:
     """A run worker's environment: `base` (default: ours) minus every AGENTOS_* var, then the env
     file's values (None removes the key), then unbuffered UTF-8 output and AGENTOS_TOKEN. The
-    same as the local launcher's child_env; the token is never on the command line."""
+    token is never on the command line."""
     source = os.environ if base is None else base
     env = {k: v for k, v in source.items() if not k.upper().startswith(_ENV_PREFIX)}
     for key, value in env_file.items():

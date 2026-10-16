@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -248,7 +246,7 @@ def test_a_taken_client_run_must_be_started_in_time(
     ]
 
 
-@pytest.mark.parametrize("configured", ["local", "github", "mailbox"])
+@pytest.mark.parametrize("configured", ["github", "mailbox"])
 def test_a_silent_client_run_is_lost_whatever_the_launcher(
     mine: ClientSide, runs: RunDriver, reaper: Reaper, configured: str
 ) -> None:
@@ -296,49 +294,3 @@ def test_a_queued_client_run_is_cancelled_at_once(mine: ClientSide, runs: RunDri
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
     lease = mine.client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(mine.token))
     assert lease.json()["job"] is None
-
-
-# ------------------------------------------------------------------ rule 6: workspaces
-
-
-def _age(path: os.PathLike[str], when: datetime) -> None:
-    ts = when.timestamp()
-    os.utime(path, (ts, ts))
-
-
-def test_old_workspaces_are_deleted(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reaper: Reaper
-) -> None:
-    root = runs.ctx.settings.workspaces_dir
-    worker = started(create_ticket, runs)
-    now = utcnow()
-    old = root / "9001"
-    (old / ".git" / "objects").mkdir(parents=True)
-    pack = old / ".git" / "objects" / "pack.idx"
-    pack.write_text("x", encoding="utf-8")
-    pack.chmod(stat.S_IREAD)  # read-only, like git packs on Windows
-    active = root / str(worker.run_id)  # an active run's workspace is never deleted
-    active.mkdir()
-    young = root / "9002"
-    young.mkdir()
-    stray = root / "stray.txt"
-    stray.write_text("x", encoding="utf-8")
-    eight_days = now - timedelta(days=8)
-    for p in (old, active, stray):
-        _age(p, eight_days)
-    _age(young, now - timedelta(days=6))
-    armed(reaper, now).tick(now)
-    assert sorted(p.name for p in root.iterdir()) == sorted([active.name, young.name])
-
-
-def test_workspace_cleanup_is_local_only(
-    authed: TestClient, runs: RunDriver, reaper: Reaper
-) -> None:
-    root = runs.ctx.settings.workspaces_dir
-    old = root / "9001"
-    old.mkdir(parents=True)
-    now = utcnow()
-    _age(old, now - timedelta(days=8))
-    runs.ctx.providers = {"github": runs.provider}
-    armed(reaper, now).tick(now)
-    assert old.exists()
