@@ -19,7 +19,7 @@ from agentos.db import Conn
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
-from agentos.runs.service import Snapshot, finish, not_after
+from agentos.runs.service import WORKER_EXITED, Snapshot, finish, not_after
 from tests.run_support import CSRF, FakeProvider, RunDriver, bearer
 
 CreateTicket = Callable[..., TicketDetail]
@@ -149,15 +149,21 @@ def lose(ctx: AppContext, run_id: int) -> None:
         assert finish(conn, run_id, "failed", ("running",), now=utcnow(), error=WORKER_LOST)
 
 
-def lost_client_run(
-    runs: RunDriver, ctx: AppContext, client: TestClient, key: str, token: str
-) -> LeasedJob:
-    """A client run leased, started, listed as alive and lost (no result)."""
+def listed_client_run(runs: RunDriver, client: TestClient, key: str, token: str) -> LeasedJob:
+    """A client run leased, started and listed as alive by its client's next lease."""
     runs.queue(key, target="client")
     job = lease(client, token)
     assert job is not None
     runs.bind(job.run_id, job.job_token)
     assert lease(client, token, (job.job_id,), take=False) is None
+    return job
+
+
+def lost_client_run(
+    runs: RunDriver, ctx: AppContext, client: TestClient, key: str, token: str
+) -> LeasedJob:
+    """A client run leased, started, listed as alive and lost (no result)."""
+    job = listed_client_run(runs, client, key, token)
     lose(ctx, job.run_id)
     return job
 
@@ -173,6 +179,47 @@ def job_ended_at(ctx: AppContext, run_id: int) -> str | None:
 def waits_for(runs: RunDriver, run_id: int, earlier: int) -> bool:
     run = runs.get(run_id)
     return run.status == "queued" and f"run #{earlier}'s" in (run.queue_reason or "")
+
+
+def test_a_lease_that_leaves_out_a_running_job_ends_its_run_and_job(
+    key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    first = listed_client_run(runs, client, key, token)
+
+    assert lease(client, token, take=False) is None  # its worker exited without a result
+    run = runs.get(first.run_id)
+    assert (run.status, run.error) == ("failed", WORKER_EXITED)
+    assert job_ended_at(ctx, first.run_id) is not None
+
+    second = runs.queue(key, target="client").id  # no fence: no reaper tick needed
+    taken = lease(client, token)
+    assert taken is not None
+    assert taken.run_id == second
+
+
+def test_only_its_own_clients_lease_judges_a_listed_bound_job(
+    key: str,
+    create_ticket: CreateTicket,
+    me: Me,
+    client: TestClient,
+    token: str,
+    runs: RunDriver,
+) -> None:
+    listed = listed_client_run(runs, client, key, token)
+    r = client.post("/api/me/clients", json={"name": "desktop"}, headers=CSRF)
+    other = str(r.json()["token"])
+    assert lease(client, other, take=False) is None  # another client of the same user
+
+    unlisted = create_ticket("U", repo=None, owner_id=me.id).key
+    runs.queue(unlisted, target="client")
+    taken = lease(client, token, (listed.job_id,))  # leased, but not started or listed yet
+    assert taken is not None
+    assert lease(client, token, (listed.job_id,), take=False) is None
+    runs.bind(taken.run_id, taken.job_token)  # started, never listed yet
+    assert lease(client, token, (listed.job_id,), take=False) is None
+
+    assert runs.get(listed.run_id).status == "running"
+    assert runs.get(taken.run_id).status == "running"
 
 
 def test_the_fence_lifts_on_the_accepted_result(

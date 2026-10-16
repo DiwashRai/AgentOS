@@ -308,6 +308,20 @@ def test_a_worker_that_exits_during_a_long_poll_is_reported_at_once(
     ]
 
 
+def test_a_started_worker_is_listed_before_it_holds_its_lock(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spawn.finish = False
+    answer_leases(server, [assigned(5, "d" * 43), NOTHING])
+
+    assert run_client(server, tmp_path / "ws", "--max-runs", "2") == 1
+
+    assert not (tmp_path / "ws" / "runs" / f"{job_id(5)}.lock").exists()  # the fake never locks
+    assert [body["alive"] for body in server.bodies(LEASE)] == [[], [job_id(5)], [job_id(5)]]
+    spawn.calls[0].child.done.set()
+    eventually(lambda: f"job {job_id(5)}" in capsys.readouterr().err, "its exit logged")
+
+
 def test_a_restarted_client_lists_the_workers_that_outlived_it(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path
 ) -> None:

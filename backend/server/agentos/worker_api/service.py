@@ -42,7 +42,14 @@ from agentos.models import (
 )
 from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
-from agentos.runs.service import EVENT_ADAPTER, STOPPED, TERMINAL, end_job, finish
+from agentos.runs.service import (
+    EVENT_ADAPTER,
+    STOPPED,
+    TERMINAL,
+    WORKER_EXITED,
+    end_job,
+    finish,
+)
 from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import parsed, path_key, pydantic_issues, validate_pr_url
@@ -454,7 +461,12 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
 def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResponse:
     """Authenticate a leasing client (401/403: `clients.service.authenticate`), record that it
     was seen and stamp `jobs.alive_at` on the jobs in `alive` that are its user's client runs
-    (other ids are ignored). Once per lease. Returns the answer without a job."""
+    (other ids are ignored). Once per lease. Returns the answer without a job.
+
+    A job this client was leased, bound and listed before, whose run is still active, that the
+    lease leaves out has lost its worker: the client lists every worker that hasn't exited (its
+    own children, and every held `<job id>.lock`; a worker locks before it binds). Its run ends
+    now (as `STOPPED` says if it was stopped, else failed `WORKER_EXITED`), and its job with it."""
     client = clients.authenticate(db, client_token)
     now = utcnow()
     # One transaction: the reaper ends a pull job its client has seen since it was last listed
@@ -467,6 +479,20 @@ def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResp
             "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",
             (to_db(now), json.dumps(alive), client.user.id),
         )
+        gone = conn.execute(
+            "SELECT r.id, r.stop_reason, j.id AS job_id FROM jobs j JOIN runs r ON r.id = j.run_id "
+            "WHERE j.client_id = ? AND j.ended_at IS NULL AND j.instance_hash IS NOT NULL "
+            "AND j.alive_at IS NOT NULL AND r.status IN ('dispatched', 'running') "
+            "AND j.id NOT IN (SELECT value FROM json_each(?))",
+            (client.id, json.dumps(alive)),
+        ).fetchall()
+        for run in gone:
+            end: tuple[RunStatus, str | None] = ("failed", WORKER_EXITED)
+            if run["stop_reason"] is not None:
+                end = STOPPED[run["stop_reason"]]
+            finish(conn, run["id"], end[0], ("dispatched", "running"), now=now, error=end[1])
+            end_job(conn, run["id"], run["job_id"], now)
+            log.warning("run %s %s: %s (job %s)", run["id"], end[0], WORKER_EXITED, run["job_id"])
 
     sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()
     return LeaseResponse(job=None, protocol=2, worker_sha256=sha256)

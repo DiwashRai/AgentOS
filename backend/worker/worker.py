@@ -3163,7 +3163,8 @@ class Children:
                 self._waiting = False
 
     def _watch(self, job_id: str, child: Child) -> None:
-        child.wait()
+        code = child.wait()
+        say(f"job {job_id}: its worker (pid {child.pid}) exited with code {code}")
         with self._lock:
             if not self._waiting or self._running.pop(job_id, None) is None:
                 return  # the loop's next lease leaves it out
