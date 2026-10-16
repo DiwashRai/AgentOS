@@ -104,12 +104,9 @@ def authenticate(db: Database, token: str) -> Client:
     return Client(id=row["client_id"], name=row["name"], user=user)
 
 
-def touch(db: Database, client_id: int, now: datetime) -> None:
-    """Record that the client was seen (it leased)."""
-    with db.tx() as conn:
-        conn.execute(
-            "UPDATE client_tokens SET last_seen_at = ? WHERE id = ?", (to_db(now), client_id)
-        )
+def touch(conn: Conn, client_id: int, now: datetime) -> None:
+    """Record that the client was seen (it leased), in the caller's transaction."""
+    conn.execute("UPDATE client_tokens SET last_seen_at = ? WHERE id = ?", (to_db(now), client_id))
 
 
 def has_client(conn: Conn, user_id: int) -> bool:

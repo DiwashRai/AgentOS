@@ -457,8 +457,11 @@ def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResp
     (other ids are ignored). Once per lease. Returns the answer without a job."""
     client = clients.authenticate(db, client_token)
     now = utcnow()
-    clients.touch(db, client.id, now)
+    # One transaction: the reaper ends a pull job its client has seen since it was last listed
+    # (`reaper.job_ended`), so a snapshot between these two writes would end a job this very
+    # lease lists as alive, and lift the fence while its worker can still publish.
     with db.tx() as conn:
+        clients.touch(conn, client.id, now)
         conn.execute(
             "UPDATE jobs SET alive_at = ? WHERE id IN (SELECT value FROM json_each(?)) "
             "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",

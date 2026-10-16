@@ -12,8 +12,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from agentos.clients import service as clients
 from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
+from agentos.db import Conn
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
@@ -161,6 +163,14 @@ def lost_client_run(
     return job
 
 
+def job_ended_at(ctx: AppContext, run_id: int) -> str | None:
+    with ctx.db.read() as conn:
+        ended: str | None = conn.execute(
+            "SELECT ended_at FROM jobs WHERE run_id = ?", (run_id,)
+        ).fetchone()[0]
+    return ended
+
+
 def waits_for(runs: RunDriver, run_id: int, earlier: int) -> bool:
     run = runs.get(run_id)
     return run.status == "queued" and f"run #{earlier}'s" in (run.queue_reason or "")
@@ -185,6 +195,30 @@ def test_the_fence_lifts_on_the_accepted_result(
     taken = lease(client, token, (job.job_id,))
     assert taken is not None
     assert taken.run_id == third
+
+
+def test_a_lease_between_its_writes_never_ends_a_job_it_lists(
+    key: str,
+    client: TestClient,
+    token: str,
+    runs: RunDriver,
+    ctx: AppContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = lost_client_run(runs, ctx, client, key, token)
+    reaper = Reaper(ctx)
+    reaper.tick(utcnow() - 15 * S)  # its grace tick
+
+    # The reaper ticks right after the lease records that the client was seen.
+    touch = clients.touch
+
+    def touch_then_reap(conn: Conn, client_id: int, now: datetime) -> None:
+        touch(conn, client_id, now)
+        reaper.tick(utcnow())
+
+    monkeypatch.setattr(clients, "touch", touch_then_reap)
+    assert lease(client, token, (first.job_id,), take=False) is None
+    assert job_ended_at(ctx, first.run_id) is None
 
 
 def test_push_fence_holds_until_the_provider_says_ended(
