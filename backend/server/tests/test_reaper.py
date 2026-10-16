@@ -304,6 +304,20 @@ def test_a_user_cancel_reaches_the_provider_only_after_the_stop_grace(
     assert side.cancelled() == ([ref(worker.run_id)] if side.push else [])
 
 
+def test_a_worker_that_reports_cancelled_is_never_cancelled_at_its_provider(
+    side: Side, runs: RunDriver, reaper: Reaper
+) -> None:
+    worker = side.start()
+    assert side.client.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF).status_code == 200
+    now = utcnow()
+    armed(reaper, now)
+    assert worker.complete("cancelled").status_code == 200  # inside the grace
+    for seconds in (15, 30, 45):
+        reaper.tick(now + timedelta(seconds=seconds))
+    assert runs.get(worker.run_id).status == "cancelled"
+    assert side.cancelled() == []
+
+
 def test_rules_apply_in_order(side: Side, runs: RunDriver, reaper: Reaper) -> None:
     """A run that is silent, over budget and past its stop grace is reaped once, as lost."""
     worker = side.start()

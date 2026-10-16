@@ -18,8 +18,8 @@ cancel is asked once per job per process, best effort. File-report jobs get rule
 mailbox reaper watches them); with no mailbox configured, one past its `not_after` is failed
 UNWATCHED. Queued runs are never touched. A push job's status is polled at most every STATUS_EVERY.
 
-An ended run's job gets `ended_at` once `job_ended` (lifting the fence for its ticket's next
-run); a push run cancelled while queued or dispatched is cancelled at its provider first.
+An ended run's job gets `ended_at` once `job_ended` (lifting the fence for the next run). A push
+run cancelled before its worker started is cancelled at its provider first; no other ended one is.
 
 `judge` is pure; `Reaper(ctx).tick(now)` is synchronous with an injected clock, and the lifespan
 runs it in a thread. A job whose check raises is logged and the next job is checked.
@@ -67,6 +67,7 @@ class JobFacts:
     ref: str | None
     dispatched_at: datetime
     started_at: datetime
+    bound: bool  # its worker's `started` arrived
     seen_at: datetime
     budget_s: int
     stop_requested_at: datetime | None
@@ -140,6 +141,7 @@ def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
         ref=row["launch_ref"],
         dispatched_at=dispatched,
         started_at=started,
+        bound=row["started_at"] is not None,
         seen_at=from_db_opt(row["last_seen_at"]) or started,
         budget_s=row["budget_s"],
         stop_requested_at=from_db_opt(row["stop_requested_at"]),
@@ -162,8 +164,7 @@ class Reaper:
     def tick(self, now: datetime) -> list[Reaped]:
         previous, self.previous = self.previous, now
         if previous is None or now - previous > SLEEP_GRACE:
-            touched = service.touch_running(self.ctx.db, now)
-            if touched:
+            if touched := service.touch_running(self.ctx.db, now):
                 log.info("reaper: grace tick, refreshed %s running run(s)", touched)
             return []
 
@@ -177,8 +178,8 @@ class Reaper:
         for job in jobs:
             try:
                 if job.status in TERMINAL:
-                    if job.status == "cancelled" and job.start == "push":
-                        self._cancel(job)
+                    if job.status == "cancelled" and job.start == "push" and not job.bound:
+                        self._cancel(job)  # cancelled before its worker started
                     if job_ended(job, now, self._status(job, now)):
                         service.end_job(self.ctx.db, job.run_id, job.job_id, now)
                     continue

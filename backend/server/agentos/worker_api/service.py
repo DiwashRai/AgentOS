@@ -56,7 +56,6 @@ MAX_EVENTS_PER_RUN = 100_000  # SPEC §6; beyond it `log` events are dropped
 _FINAL: dict[str, frozenset[RunStatus]] = {
     "completed": frozenset({"gated", "succeeded"}),
     "failed": frozenset({"failed"}),
-    "cancelled": frozenset({"cancelled"}),
 }
 
 # The journal record types stored as `run_events` rows (validated as `RunEvent`).
@@ -146,7 +145,7 @@ def post_journal(
 
 
 def _is_final(run: Row, result: dict[str, Any]) -> bool:
-    """Whether the run ended as a `result` with these `data` ends it (cancelled: by the stop
+    """Whether a `result` with these `data` is the one that ended the run (cancelled: by the stop
     table, so a run failed "worker lost" never matches)."""
     status = str(result.get("status"))
     if status == "cancelled":

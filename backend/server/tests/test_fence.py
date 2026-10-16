@@ -53,6 +53,7 @@ PULL = JobFacts(
     ref="laptop",
     dispatched_at=T0,
     started_at=T0,
+    bound=True,
     seen_at=T0,
     budget_s=3600,
     stop_requested_at=None,
