@@ -1,6 +1,6 @@
 # AgentOS: repo rules for agents
 
-AgentOS is a web app for creating tickets, editing their context and pipeline, and dispatching them to disposable workers that run agent CLIs (Claude Code, Copilot CLI). The loop: create → dispatch → gate → edit → continue → PR. A FastAPI + SQLite server (`backend/server/agentos`), a React web app (`web/`) and a stdlib-only worker (`backend/worker/worker.py`) that runs on a local process, a GitHub Actions runner or a user's own client (`worker.py --client`, which pulls that user's runs) and dials back to the server.
+AgentOS is a web app for creating tickets, editing their context and pipeline, and dispatching them to disposable workers that run agent CLIs (Claude Code, Copilot CLI). The loop: create → dispatch → gate → edit → continue → PR. A FastAPI + SQLite server (`backend/server/agentos`), a React web app (`web/`) and a stdlib-only worker (`backend/worker/worker.py`) that runs on a GitHub Actions runner or a user's own client (`worker.py --client`, which pulls that user's runs) and dials back to the server.
 
 Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (the system and why), `backend/AGENTS.md` (backend conventions), `web/AGENTS.md` (frontend conventions), `backend/deploy/README.md` (container, runners). Local-only planning docs (`SPEC.md`, `TASKS.md`, `CONTRACT_REQUESTS.md`, `design/`) are gitignored: use them if present, never assume them.
 
@@ -99,7 +99,7 @@ A long session acts as an **orchestrator**: it breaks its work into tasks, deleg
 - Files are LF everywhere (`.gitattributes`, `.editorconfig`), except `backend/worker/worker_tests/fixtures/**`, which holds deliberate CRLF content. Python on Windows writes CRLF by default: use `write_text(..., newline="\n")` or bytes for anything generated or synced.
 - Vite binds `127.0.0.1` explicitly, because `localhost` can resolve to `::1` only on Windows.
 - pytest uses the default (prepend) import mode; importlib mode shadows `worker.py` with a `worker` namespace package. Worker tests live in `backend/worker/worker_tests/` so both suites can have a `conftest.py`. Keep test file basenames unique across suites.
-- `uvicorn --reload` on Windows restarts by sending Ctrl+C to its console. Processes the server spawns (workers) must use `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, or a backend edit kills in-flight runs.
-- The local launcher strips every `AGENTOS_*` variable from the worker's environment; pass agent credentials through `AGENTOS_WORKER_ENV_FILE`. Client mode (`worker.py --client`) does the same for the run workers it starts; give it `--env-file` for agent and git credentials.
+- `uvicorn --reload` on Windows restarts by sending Ctrl+C to its console. The client's run workers use `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, so a Ctrl+C in its console doesn't kill in-flight runs.
+- Client mode (`worker.py --client`) strips every `AGENTOS_*` variable from the run workers it starts; give it `--env-file` for agent and git credentials.
 - `claude` runs headless with the prompt on stdin plus `-p --output-format stream-json --verbose`. The built-in runtime argv is in `backend/server/agentos/pipeline/runtime.py`.
 - Never name a test fixture `.env` or `*.db`: `.gitignore` drops them.
