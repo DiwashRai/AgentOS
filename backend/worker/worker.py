@@ -52,7 +52,9 @@ import argparse
 import base64
 import contextlib
 import ctypes
+import hashlib
 import http.client
+import io
 import json
 import os
 import re
@@ -70,6 +72,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -81,6 +84,7 @@ PROTOCOL = 2
 
 # ---------------------------------------------------------------- tunables (tests shrink these)
 HTTP_TIMEOUT_S = 30.0  # per request
+UPLOAD_TIMEOUT_S = 300.0  # per attempt of the sync_back upload (up to sync_back.max_bytes)
 RETRY_BUDGET_S = 300.0  # network errors and 5xx are retried this long; then "unreachable"
 BACKOFF_START_S = 0.5
 BACKOFF_CAP_S = 10.0
@@ -719,7 +723,8 @@ def _http_error(exc: urllib.error.HTTPError) -> HttpError:
 
 
 class Client:
-    """JSON POSTs with a bearer token. Retries network errors and 5xx with exponential backoff."""
+    """JSON POSTs and raw PUTs with a bearer token. Retries network errors and 5xx with
+    exponential backoff."""
 
     def __init__(self, server: str, token: str) -> None:
         self._base = server.rstrip("/")
@@ -741,6 +746,21 @@ class Client:
         each attempt; failures are retried for `retry_budget_s` (default RETRY_BUDGET_S, 0 = one
         attempt), then raise Unreachable. A 4xx raises HttpError at once."""
         data = json.dumps(body).encode("utf-8")
+        return self._send("POST", path, data, "application/json", timeout_s, retry_budget_s)
+
+    def put(self, path: str, data: bytes) -> Any:
+        """PUT raw bytes (a zip), retried like `post`; each attempt gets UPLOAD_TIMEOUT_S."""
+        return self._send("PUT", path, data, "application/zip", UPLOAD_TIMEOUT_S, None)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        data: bytes,
+        content_type: str,
+        timeout_s: float | None,
+        retry_budget_s: float | None,
+    ) -> Any:
         timeout = HTTP_TIMEOUT_S if timeout_s is None else timeout_s
         deadline = time.monotonic() + (RETRY_BUDGET_S if retry_budget_s is None else retry_budget_s)
         delay = BACKOFF_START_S
@@ -748,11 +768,8 @@ class Client:
             request = urllib.request.Request(  # noqa: S310 -- the scheme is checked in parse_args
                 self._base + path,
                 data=data,
-                method="POST",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._token}",
-                },
+                method=method,
+                headers={"Content-Type": content_type, "Authorization": f"Bearer {self._token}"},
             )
             try:
                 with self._opener.open(request, timeout=timeout) as resp:
@@ -767,8 +784,8 @@ class Client:
                 problem = f"{type(exc).__name__}: {exc}"
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise Unreachable(f"POST {path}: {problem}")
-            say(f"POST {path} failed ({problem}); retrying in {delay:.1f}s")
+                raise Unreachable(f"{method} {path}: {problem}")
+            say(f"{method} {path} failed ({problem}); retrying in {delay:.1f}s")
             time.sleep(min(delay, remaining))
             delay = min(delay * 2, BACKOFF_CAP_S)
 
@@ -776,15 +793,24 @@ class Client:
 class WorkerApi:
     """Worker-token routes. 401/410 mean the run was taken away (RunGone)."""
 
+    uploads = True  # `put` reaches the server (a Recorder has no upload)
+
     def __init__(self, client: Client) -> None:
         self._client = client
 
     def call(self, path: str, body: dict[str, Any]) -> Any:
+        return self._gone("POST", path, lambda: self._client.post(path, body))
+
+    def put(self, path: str, data: bytes) -> Any:
+        return self._gone("PUT", path, lambda: self._client.put(path, data))
+
+    @staticmethod
+    def _gone(method: str, path: str, send: Callable[[], Any]) -> Any:
         try:
-            return self._client.post(path, body)
+            return send()
         except HttpError as exc:
             if exc.status in (401, 410):
-                raise RunGone(f"POST {path}: HTTP {exc.status} {exc.code}") from exc
+                raise RunGone(f"{method} {path}: HTTP {exc.status} {exc.code}") from exc
             raise
 
 
@@ -795,7 +821,10 @@ class Recorder(WorkerApi):
     order, flushed per line (default json.dumps, so the body is what Client.post would send).
     Empty event batches (heartbeats) are not recorded. `call` always returns None: no cancel, no
     RunGone. A failed write raises Unreachable (and every later call too), so the run aborts.
+    Nothing is uploaded: the run warns instead of returning sync_back.
     """
+
+    uploads = False
 
     def __init__(self, outbox: Path, run_id: int) -> None:
         self._lock = threading.Lock()
@@ -2110,6 +2139,14 @@ class Run:
         if problem:
             return self._finish("failed", None, problem)
         self._write_files()
+        sync_back, problem = resolve_inside(self.workdir, self.m.sync_back["dir"])
+        try:
+            if not problem:
+                sync_back.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            problem = str(exc)
+        if problem:
+            self.events.warn(None, f"cannot create {self.m.sync_back['dir']}: {problem}")
         if self.repo:
             self._protect()
         self.ready = True
@@ -2170,6 +2207,8 @@ class Run:
 
     def _finish(self, status: str, failed_stage: str | None, error: str | None) -> int:
         pr_url = self._find_pr()
+        if self.ready:
+            self._send_sync_back()
         self.events.close()
         body: dict[str, Any] = {
             "status": status,
@@ -2190,6 +2229,42 @@ class Run:
             except OSError as exc:
                 say(f"could not delete the workdir {self.workdir}: {exc}")
         return 0
+
+    def _send_sync_back(self) -> None:
+        """Upload the sync_back folder's regular files as one zip, unless it is empty or over
+        `sync_back.max_bytes`. Only RunGone escapes; any other failure is a warning."""
+        folder, cap = self.m.sync_back["dir"], self.m.sync_back["max_bytes"]
+        files, skipped = _walk_files(self.workdir, folder)
+        if not files and not skipped:
+            return
+        if not self.api.uploads:
+            self.events.warn(None, f"{folder} is not returned in mailbox mode")
+            return
+        if skipped:
+            self.events.warn(
+                None, _clip(f"{folder}: skipped (not a regular file): {', '.join(skipped)}")
+            )
+        if not files:
+            return
+
+        buf = io.BytesIO()
+        try:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as zf:
+                for path in files:
+                    zf.write(self.workdir / path, path[len(folder) + 1 :])
+        except OSError as exc:
+            self.events.warn(None, f"{folder} not sent: {exc}")
+            return
+        data = buf.getvalue()
+        if len(data) > cap:
+            self.events.warn(None, f"{folder} not sent: the zip is {len(data)} bytes, over {cap}")
+            return
+
+        digest = hashlib.sha256(data).hexdigest()
+        try:
+            self.api.put(f"/api/worker/sync-back?sha256={digest}&files={len(files)}", data)
+        except (HttpError, Unreachable) as exc:
+            self.events.warn(None, f"{folder} not sent: {exc}")
 
     # ------------------------------------------------------------ workspace (SPEC §9.2)
 

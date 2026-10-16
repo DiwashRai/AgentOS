@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
@@ -62,6 +63,8 @@ class FakeServer:
             return 200, {"versions": {f["path"]: 2 for f in body["files"]}, "refused": []}
         if path == "/api/worker/complete":
             return 200, None
+        if path.startswith("/api/worker/sync-back?"):
+            return 204, None
         return 404, {"error": {"code": "not_found", "message": path}}
 
     # ------------------------------------------------------------ views for assertions
@@ -69,6 +72,15 @@ class FakeServer:
     def bodies(self, path: str) -> list[Any]:
         with self.lock:
             return [r.body for r in self.requests if r.path == path]
+
+    def uploads(self) -> list[tuple[dict[str, str], bytes]]:
+        """Every sync_back PUT: (its query, its raw body)."""
+        with self.lock:
+            return [
+                (dict(parse_qsl(urlsplit(r.path).query)), r.body)
+                for r in self.requests
+                if r.path.startswith("/api/worker/sync-back?")
+            ]
 
     def events(self) -> list[dict[str, Any]]:
         return [e for body in self.bodies("/api/worker/events") for e in body["events"]]
@@ -103,9 +115,13 @@ def eventually(condition: Callable[[], bool], what: str, timeout_s: float = 10.0
 
 def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
+        def do_PUT(self) -> None:
+            self.do_POST(raw=True)
+
+        def do_POST(self, raw: bool = False) -> None:
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length) or b"null")
+            data = self.rfile.read(length)
+            body = data if raw else json.loads(data or b"null")
             with server.lock:
                 server.requests.append(Request(self.path, self.headers.get("Authorization"), body))
             status, answer = server.answer(self.path, body)
