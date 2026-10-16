@@ -120,6 +120,7 @@ CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this ofte
 CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take lease this often keeps it online
 WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
 CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
+LEASE_LIST_MAX = 100  # a lease's `alive` and `gone` hold at most this many (models.LeaseRequest)
 # Lease answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
 CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
@@ -3105,9 +3106,10 @@ def release_lock(lock: IO[bytes]) -> None:
 
 
 def lock_held(path: Path) -> bool:
-    """Whether a process holds `path`'s lock (`hold_lock`): try to take it without waiting."""
+    """Whether a process holds `path`'s lock (`hold_lock`): try to take it without waiting. A
+    missing file is not created: nobody holds it."""
     try:
-        lock = path.open("a+b")
+        lock = path.open("r+b")
     except OSError:
         return False  # gone, or not openable: nobody holds it
     with lock:
@@ -3119,10 +3121,12 @@ def lock_held(path: Path) -> bool:
 
 class Children:
     """What the client saw of its run workers: those it started (by process handle), the
-    survivors it found holding their `<job id>.lock` in `runs` at startup (an earlier client
-    started them), and the jobs it saw end (`gone`: a process exited, or a lock was released),
-    kept until the server acknowledges them. Only `gone` ends a job on the server; `alive` is for
-    display.
+    survivors whose `<job id>.lock` in `runs` is held (an earlier client started them, or a
+    started process exited while its lock stays held: on Windows a venv's python.exe is a stub
+    whose child is the real worker), and the jobs it saw end (`gone`: the process exited and the
+    lock is free), kept until the server acknowledges them. Only `gone` ends a job on the server;
+    `alive` is for display. Each list goes out at most LEASE_LIST_MAX at a time; the rest of
+    `gone` goes with the next lease, sent at once.
 
     A thread per started worker waits on its process: one that exits while the client loop waits
     (`waiting`: a lease in flight, or a busy client's pause) is reported at once by `report`
@@ -3164,16 +3168,17 @@ class Children:
         the alive and the gone job ids; until the block ends, each exit is reported at once."""
         with self._lock:
             survivors = set(self._survivors)
-        freed = {job for job in survivors if not lock_held(self._runs / f"{job}.lock")}
+            exited = [job for job, child in self._running.items() if child.poll() is not None]
+        freed = {job for job in survivors if not self._held(job)}
+        still_held = {job for job in exited if self._held(job)}
         with self._lock:
-            for job, child in list(self._running.items()):
-                if child.poll() is not None:
-                    del self._running[job]
-                    self._gone.add(job)
+            for job in exited:
+                if self._running.pop(job, None) is not None:
+                    (self._survivors if job in still_held else self._gone).add(job)
             self._survivors -= freed
             self._gone |= freed
             self._waiting = True
-            listing = ([*self._running, *sorted(self._survivors)], sorted(self._gone))
+            listing = self._listing()
         try:
             yield listing
         finally:
@@ -3192,16 +3197,28 @@ class Children:
             except OSError as exc:  # Windows: its process is still being torn down
                 say(f"cannot delete {job}.lock ({exc}); the next client reports it again")
 
+    def _held(self, job: str) -> bool:
+        return lock_held(self._runs / f"{job}.lock")
+
+    def _listing(self) -> tuple[list[str], list[str]]:
+        """(alive, gone), each capped at LEASE_LIST_MAX; the caller holds the lock."""
+        alive = [*self._running, *sorted(self._survivors)]
+        return alive[:LEASE_LIST_MAX], sorted(self._gone)[:LEASE_LIST_MAX]
+
     def _watch(self, job_id: str, child: Child) -> None:
         code = child.wait()
         say(f"job {job_id}: its worker (pid {child.pid}) exited with code {code}")
+        held = self._held(job_id)
         with self._lock:
             if self._running.pop(job_id, None) is None:
                 return  # `waiting` saw it first
+            if held:  # its process was a stub: the worker still runs, held by its lock
+                self._survivors.add(job_id)
+                return
             self._gone.add(job_id)
             if not self._waiting:
                 return  # the loop's next lease, sent at once, reports it
-            alive, gone = [*self._running, *sorted(self._survivors)], sorted(self._gone)
+            alive, gone = self._listing()
         try:
             self._report(alive, gone)
         except (HttpError, Unreachable, ValueError) as exc:

@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import pytest
 
@@ -354,6 +354,61 @@ def test_a_restarted_client_lists_the_workers_that_outlived_it(
     ]
     assert not (runs / f"{job_id(4)}.lock").exists()  # acknowledged, then deleted
     assert (runs / f"{job_id(5)}.lock").exists()  # its `gone` got a 401: reported again later
+
+
+def test_long_lists_go_out_at_most_the_cap_per_lease(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker, "CLIENT_HEARTBEAT_S", 0.05)
+    runs = tmp_path / "ws" / "runs"
+    runs.mkdir(parents=True)
+    ended = [job_id(n) for n in range(1, 131)]  # their workers ended while no client watched
+    for job in ended:
+        (runs / f"{job}.lock").write_bytes(b"")
+    survivors = [worker.hold_lock(runs / f"{job_id(n)}.lock") for n in range(201, 302)]
+    answer_leases(server, [NOTHING, NOTHING])
+    try:
+        assert run_client(server, tmp_path / "ws") == 1
+    finally:
+        for lock in survivors:
+            worker.release_lock(lock)
+
+    bodies = server.bodies(LEASE)
+    assert [(len(b["alive"]), len(b["gone"])) for b in bodies] == [(100, 100), (100, 30), (100, 0)]
+    assert sorted(job for b in bodies for job in b["gone"]) == sorted(ended)
+
+
+def test_a_worker_whose_process_exits_while_its_lock_is_held_stays_alive(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows with a venv: the started process is a stub, and the real worker is its child."""
+    spawn.finish = False
+    lock = (tmp_path / "ws").resolve() / "runs" / f"{job_id(5)}.lock"
+    real: list[IO[bytes]] = []
+
+    def stub_spawn(argv: list[str], cwd: Path, env: dict[str, str], log: Path) -> FakeChild:
+        child = spawn(argv, cwd, env, log)
+        real.append(worker.hold_lock(lock))  # the real worker runs, holding its lock
+        child.done.set()  # while the stub exits
+        return child
+
+    def hook(path: str, body: Any) -> tuple[int, Any] | None:
+        if path != LEASE:
+            return None
+        n = len(server.bodies(LEASE))
+        if n == 1:
+            return assigned(5, "d" * 43)
+        if n == 2:
+            worker.release_lock(real.pop())  # now the real worker exits too
+            return NOTHING
+        return error(401, "unauthorized")
+
+    monkeypatch.setattr(worker, "spawn_detached", stub_spawn)
+    server.hook = hook
+    assert run_client(server, tmp_path / "ws", "--max-runs", "2") == 1
+
+    listed = [(b["alive"], b["gone"]) for b in server.bodies(LEASE)]
+    assert listed == [([], []), ([job_id(5)], []), ([], [job_id(5)])]
 
 
 @pytest.mark.parametrize("end", ["exit", "kill"])
