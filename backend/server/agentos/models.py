@@ -1565,9 +1565,6 @@ class ResultData(ApiModel):
     pr_url: str | None = Field(default=None, max_length=500)
 
 
-CompleteRequest = ResultData
-
-
 class JournalRecord(ApiModel):
     """One record of a run's journal. `seq` counts every record of the run, from the job's
     `journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's

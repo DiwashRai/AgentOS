@@ -212,17 +212,19 @@ def test_replay_is_idempotent(
     run_id = launch(runs, mailbox, ticket.key)
     outbox = tmp_path / "outbox.jsonl"
     outbox.write_bytes(full_outbox(run_id, ticket).data())
-    real_complete = worker_api.complete
+    real_ingest = worker_api.ingest
 
-    def crash(*args: Any) -> None:
-        raise RuntimeError("the server died mid-replay")
+    def crash(*args: Any) -> Any:
+        if args[3][-1].type == "result":
+            raise RuntimeError("the server died mid-replay")
+        return real_ingest(*args)
 
-    monkeypatch.setattr(worker_api, "complete", crash)
+    monkeypatch.setattr(worker_api, "ingest", crash)
     with pytest.raises(RuntimeError):
         service.replay(runs.ctx.db, run_id, outbox)
     before = counts(runs.ctx, run_id, tasks_path(ticket))
     assert before == (3, 2)
-    monkeypatch.setattr(worker_api, "complete", real_complete)
+    monkeypatch.setattr(worker_api, "ingest", real_ingest)
     assert service.replay(runs.ctx.db, run_id, outbox) == "completed"
     assert counts(runs.ctx, run_id, tasks_path(ticket)) == before
     assert service.replay(runs.ctx.db, run_id, outbox) == "gone"
@@ -347,16 +349,16 @@ def test_an_error_in_one_run_does_not_stop_the_others(
     for run_id, t in ((first, one), (second, two)):
         mailbox.put_outbox(run_id, full_outbox(run_id, t).data())
     mailbox.statuses[mailbox.ref_of(third)] = RuntimeError("a bug")  # not a MailboxError
-    real = worker_api.post_events
+    real = worker_api.ingest
     calls = {"n": 0}
 
-    def post_events_failing_once(*args: Any) -> bool:
+    def ingest_failing_once(*args: Any) -> Any:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
         return real(*args)
 
-    monkeypatch.setattr(worker_api, "post_events", post_events_failing_once)
+    monkeypatch.setattr(worker_api, "ingest", ingest_failing_once)
     assert reaper.tick(utcnow()) == {first: "ended", second: "replayed"}
     detail = runs.get(first)
     assert (detail.status, detail.error) == ("failed", "could not replay the results: RuntimeError")
