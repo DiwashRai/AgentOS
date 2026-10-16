@@ -110,6 +110,21 @@ def test_over_max_bytes_warns_and_sends_nothing(server: FakeServer, tmp_path: Pa
     assert any("over" in w for w in server.warnings())
 
 
+def test_a_file_far_over_max_bytes_warns_and_sends_nothing(
+    server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Random bytes don't deflate, so the zip passes the cap partway through the file."""
+    python_shell(monkeypatch)
+    write = f"open('{SYNC_BACK}/big.bin', 'wb').write(os.urandom(8 << 20))"
+    package = make_package([shell_stage("big", f"import os; {write}")])
+    package["sync_back"]["max_bytes"] = 64 << 10
+    server.manifest = package
+    assert run_worker(server, tmp_path / "ws") == 0
+    assert status_of(server) == "completed"
+    assert server.uploads() == []
+    assert any("over" in w for w in server.warnings())
+
+
 @pytest.mark.parametrize(
     ("answer", "code"), [(error(413, "too_large"), 0), (error(410, "run_gone"), 1)]
 )

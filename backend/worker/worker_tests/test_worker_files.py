@@ -158,7 +158,7 @@ def test_unwritten_manifest_files_are_not_synced_as_deleted(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize("kind", LINK_KINDS)
-def test_links_in_sync_dirs_are_skipped(tmp_path: Path, kind: LinkKind) -> None:
+def test_links_in_protected_folders_are_skipped(tmp_path: Path, kind: LinkKind) -> None:
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (secrets / "key.md").write_bytes(b"secret\n")

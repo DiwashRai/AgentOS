@@ -345,7 +345,10 @@ def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFil
 def store_sync_back(db: Database, worker_token: str, data: bytes, sha256: str, files: int) -> None:
     """Store the run's sync_back zip while the run is running. A repeat upload replaces it, so a
     retry is safe. 413 `too_large` over MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex)
-    doesn't match the bytes."""
+    doesn't match the bytes. The token is checked first, as on the other worker routes."""
+    with db.read() as conn:
+        _live_run(conn, worker_token)
+
     if len(data) > MAX_SYNC_BACK_BYTES:
         raise ApiError(413, "too_large", f"sync_back: over {MAX_SYNC_BACK_BYTES} bytes")
     if not data:

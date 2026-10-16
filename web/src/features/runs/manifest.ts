@@ -221,9 +221,11 @@ export function timeoutText(seconds: number): string {
 
 /** What the section says when the manifest can't be shown. The server answers 404 `not_found`
  *  until a worker claims the run (backend `runs/service.py` `get_manifest`). */
-export function manifestErrorText(error: Error): { text: string; quiet: boolean } {
+export function manifestErrorText(error: Error, active: boolean): { text: string; quiet: boolean } {
   if (error instanceof ApiError && error.status === 404 && error.code === "not_found") {
-    return { text: "Built when a worker picks the run up", quiet: true };
+    // A finished run without one was never claimed, or was stored under an older protocol.
+    const text = active ? "Built when a worker picks the run up" : "Not recorded for this run";
+    return { text, quiet: true };
   }
   return { text: `Can't load how the stages were called · ${error.message}`, quiet: false };
 }

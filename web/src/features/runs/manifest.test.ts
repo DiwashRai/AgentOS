@@ -251,11 +251,15 @@ describe("the rest", () => {
   });
 
   it("says a queued run's manifest is built later, and shows other errors", () => {
-    expect(manifestErrorText(new ApiError(404, "not_found", "no manifest"))).toEqual({
+    expect(manifestErrorText(new ApiError(404, "not_found", "no manifest"), true)).toEqual({
       text: "Built when a worker picks the run up",
       quiet: true,
     });
-    expect(manifestErrorText(new ApiError(500, "http_error", "Boom"))).toEqual({
+    expect(manifestErrorText(new ApiError(404, "not_found", "no manifest"), false)).toEqual({
+      text: "Not recorded for this run",
+      quiet: true,
+    });
+    expect(manifestErrorText(new ApiError(500, "http_error", "Boom"), false)).toEqual({
       text: "Can't load how the stages were called · Boom",
       quiet: false,
     });

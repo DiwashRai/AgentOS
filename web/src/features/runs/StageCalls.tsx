@@ -19,7 +19,7 @@ import {
   type TokenKind,
 } from "./manifest";
 import s from "./RunsTab.module.css";
-import type { RunStatus } from "./runFormat";
+import { isActiveRun, type RunStatus } from "./runFormat";
 
 const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
   program: s.tProgram,
@@ -156,7 +156,7 @@ function ManifestLoader({ runId, status }: { runId: number; status: RunStatus })
 
   if (q.isPending) return <StatusLine>Loading</StatusLine>;
   if (q.isError) {
-    const e = manifestErrorText(q.error);
+    const e = manifestErrorText(q.error, isActiveRun(status));
     return <StatusLine error={!e.quiet}>{e.text}</StatusLine>;
   }
   return <ManifestBody manifest={q.data} />;

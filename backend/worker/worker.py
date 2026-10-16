@@ -2236,7 +2236,8 @@ class Run:
 
     def _send_sync_back(self) -> None:
         """Upload the sync_back folder's regular files as one zip, unless it is empty or over
-        `sync_back.max_bytes`. Only RunGone escapes; any other failure is a warning."""
+        `sync_back.max_bytes`. Files stream into the zip in chunks, and zipping stops as soon as
+        the zip passes the cap. Only RunGone escapes; any other failure is a warning."""
         folder, cap = self.m.sync_back["dir"], self.m.sync_back["max_bytes"]
         files, skipped = _walk_files(self.workdir, folder)
         if not files and not skipped:
@@ -2255,14 +2256,23 @@ class Run:
         try:
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as zf:
                 for path in files:
-                    zf.write(self.workdir / path, path[len(folder) + 1 :])
+                    src = self.workdir / path
+                    info = zipfile.ZipInfo.from_file(
+                        src, path[len(folder) + 1 :], strict_timestamps=False
+                    )
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    with src.open("rb") as fh, zf.open(info, "w") as dst:
+                        while (chunk := fh.read(1 << 20)) and buf.tell() <= cap:
+                            dst.write(chunk)
+                    if buf.tell() > cap:
+                        break
         except OSError as exc:
             self.events.warn(None, f"{folder} not sent: {exc}")
             return
-        data = buf.getvalue()
-        if len(data) > cap:
-            self.events.warn(None, f"{folder} not sent: the zip is {len(data)} bytes, over {cap}")
+        if buf.tell() > cap:
+            self.events.warn(None, f"{folder} not sent: the zip is over {cap} bytes")
             return
+        data = buf.getvalue()
 
         digest = hashlib.sha256(data).hexdigest()
         try:
