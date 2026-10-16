@@ -10,7 +10,8 @@
    This is the ONLY file allowed to hold raw colour values.
    Min text size is 11px. Contrast: every text/ground pair >= 4.5:1 (refresh/checks/contrast.txt).
    Hue rules: blue = you (--waiting fills, --you-text text), vermilion/brass = running (--live),
-   crimson = blocked, green = done (--done text, --progress bars/ticks). The accent is only Dispatch
+   crimson = blocked, green = done (--done text, --progress bars/ticks), amber = a run log
+   warning's label (--warn-text). The accent is only Dispatch
    run and the logo. Focus is ink, never blue or the accent. --cat-* are identity hues (project key
    chips, row avatars); --av-* stay for Talk.
    ===================================================================== */
@@ -73,6 +74,7 @@
   --you-ring: rgba(23, 81, 118, 0.2);
   --you-tint: #e4edf4;
   --blocked: #a62441;
+  --warn-text: #875200;
   --done: #3f6b2f;
   --done-tint: #e5eedf;
   --progress: #4f8a3a;
@@ -192,6 +194,7 @@
   --you-ring: rgba(111, 165, 224, 0.22);
   --you-tint: rgba(111, 165, 224, 0.13);
   --blocked: #f27c91;
+  --warn-text: #f39a3d;
   --done: #a9d8ad;
   --done-tint: rgba(169, 216, 173, 0.1);
   --progress: #8cc98f;

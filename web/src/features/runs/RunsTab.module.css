@@ -584,12 +584,12 @@
 }
 
 .warning {
-  margin: 4px 0;
-  padding: 3px 8px;
-  border-radius: 6px;
-  border-left: 2px solid var(--rule-strong);
-  background: var(--field);
   color: var(--ink-1);
+}
+
+.warnLabel {
+  font-weight: 600;
+  color: var(--warn-text);
 }
 
 /* a check's verdict and its notes */
