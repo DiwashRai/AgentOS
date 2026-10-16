@@ -73,7 +73,7 @@ def route(runs: RunDriver, run_id: int) -> tuple[str, str | None, str]:
             "https://github.com/o/r/actions/runs/9",
             "https://github.com/o/r/actions/runs/9",
         ),
-        ("push", "4242", None),  # a PID
+        ("push", "4242", None),  # a ref that isn't a URL
         ("push", None, None),  # not launched yet
         ("pull", "https://laptop", None),  # a client's name
     ],

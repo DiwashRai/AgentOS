@@ -50,7 +50,7 @@ def mailbox() -> FakeMailbox:
 @pytest.fixture(autouse=True)
 def _mailbox_on(ctx: AppContext, mailbox: FakeMailbox) -> None:
     """As with AGENTOS_LAUNCHER=mailbox: dispatches store the mailbox route."""
-    ctx.route, ctx.mailbox = service.ROUTE, mailbox
+    ctx.route, ctx.mailbox = server_route("mailbox"), mailbox
 
 
 @pytest.fixture

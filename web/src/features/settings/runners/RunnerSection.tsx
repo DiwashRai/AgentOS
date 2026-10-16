@@ -1,7 +1,7 @@
 // Settings › Runners › Runner: where the GitHub launchers (github, and mailbox: GitHub Actions
-// with Artifactory carrying each run in and out; none = clients only) dispatch run workflows. The launcher and
-// the token come from the server's env (read-only here); the repo, workflow file and ref are read
-// at every dispatch. Controlled; the page owns the document and the save, and the server's issues
+// with Artifactory carrying each run in and out; none = clients only) dispatch run workflows.
+// The launcher and the token come from the server's env (read-only here); the repo, workflow file
+// and ref are read at every dispatch. Controlled; the page owns the document and the save, and the server's issues
 // show on their fields.
 import { errorAt, Field, Input, type Issues } from "../../../editor";
 import { cx } from "../../../ui";

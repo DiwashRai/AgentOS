@@ -21,14 +21,12 @@ from pydantic import TypeAdapter, ValidationError
 
 from agentos.clock import from_db, from_db_opt, utcnow
 from agentos.db import Database
-from agentos.models import JournalRecord, Route, RunStatus
+from agentos.models import JournalRecord, RunStatus
 from agentos.runs.service import STOPPED, finish
 from agentos.worker_api import service as worker_api
 
 log = logging.getLogger(__name__)
 
-# Mailbox runs: GitHub starts their workers, which report through a file (the outbox).
-ROUTE = Route("push", "github", "file")
 ReplayResult = Literal["completed", "ended", "gone"]
 
 # A line over this is skipped (logged): 500 events x 256 KiB lines fit well below it.

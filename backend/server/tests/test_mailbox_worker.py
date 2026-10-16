@@ -15,9 +15,9 @@ from fastapi.testclient import TestClient
 
 from agentos.clock import utcnow
 from agentos.config import WORKER_PATH
+from agentos.context import server_route
 from agentos.launchers.base import Provider
 from agentos.mailbox import dispatcher as mailbox_dispatcher
-from agentos.mailbox import service as mailbox_service
 from agentos.mailbox.reaper import MailboxReaper
 from agentos.models import TicketDetail
 from tests.mailbox_support import FakeMailbox
@@ -48,7 +48,7 @@ def test_a_real_worker_outbox_replays_into_the_run(
 ) -> None:
     ticket = create_ticket("Mailbox end to end", repo=None)
     mailbox = FakeMailbox()
-    runs.ctx.route, runs.ctx.mailbox = mailbox_service.ROUTE, mailbox
+    runs.ctx.route, runs.ctx.mailbox = server_route("mailbox"), mailbox
     run_id = runs.queue(ticket.key).id
     assert mailbox_dispatcher.tick(runs.ctx, mailbox) == [run_id]
 
