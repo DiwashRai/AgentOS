@@ -2419,10 +2419,19 @@ class Run:
         if r.code:
             return f"git rev-parse HEAD failed: {r.tail()}"
         self.start_head = self.pushed_head = r.out.decode().strip()
-        name = os.environ.get("AGENTOS_GIT_NAME") or "AgentOS"
-        email = os.environ.get("AGENTOS_GIT_EMAIL") or "agentos@localhost"
-        for setting, value in (("user.name", name), ("user.email", email)):
-            r = self._git("config", setting, value)
+        return self._set_identity()
+
+    def _set_identity(self) -> str | None:
+        """On Actions (API mode) commit as AGENTOS_GIT_NAME / _EMAIL, default AgentOS. A local
+        or client worker is the user: their git config (identity, signing, hooks) applies as
+        if they committed themselves, and nothing is set."""
+        if not self.api_mode:
+            return None
+        for setting, var, default in (
+            ("user.name", "AGENTOS_GIT_NAME", "AgentOS"),
+            ("user.email", "AGENTOS_GIT_EMAIL", "agentos@localhost"),
+        ):
+            r = self._git("config", setting, os.environ.get(var, "").strip() or default)
             if r.code:
                 return f"git config {setting} failed: {r.tail()}"
         return None
@@ -2772,9 +2781,7 @@ class Run:
         if not staged:
             return None
         message = f"{self.m.key} [{stage_id}] wip"
-        r = self._git(
-            "-c", "commit.gpgsign=false", "commit", "--no-verify", "-q", "-m", message, show=True
-        )
+        r = self._git("commit", "-q", "-m", message, show=True)
         return f"git commit failed: {r.tail()}" if r.code else None
 
     def _guard(self) -> str | None:
