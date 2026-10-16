@@ -65,9 +65,10 @@ export function useDraftState<T>(
 
 /**
  * Warn before leaving with unsaved changes: closing the tab, or navigating to another page. It
- * holds a router blocker, and the router allows one at a time: call it once per page.
+ * holds a router blocker, and the router allows one at a time: call it once per page. `message`
+ * is the in-app leave question.
  */
-export function useUnsavedWarning(dirty: boolean) {
+export function useUnsavedWarning(dirty: boolean, message = LEAVE) {
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -86,7 +87,7 @@ export function useUnsavedWarning(dirty: boolean) {
   );
   useEffect(() => {
     if (blocker.state !== "blocked") return;
-    if (window.confirm(LEAVE)) blocker.proceed();
+    if (window.confirm(message)) blocker.proceed();
     else blocker.reset();
-  }, [blocker]);
+  }, [blocker, message]);
 }

@@ -7,7 +7,6 @@ import {
   ago,
   duration,
   formatSize,
-  isOld,
   plural,
   prLabel,
   repoShort,
@@ -54,13 +53,6 @@ describe("ageParts", () => {
   it("keeps text without a number+unit pair whole", () => {
     expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
     expect(ageParts("3h ago")).toEqual([{ n: "3h ago", unit: "" }]);
-  });
-});
-
-describe("isOld", () => {
-  it("turns on at 90 minutes", () => {
-    expect(isOld(minAgo(89), now)).toBe(false);
-    expect(isOld(minAgo(90), now)).toBe(true);
   });
 });
 

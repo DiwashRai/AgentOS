@@ -20,6 +20,7 @@ import {
   DataRow,
   DataTitle,
   KeyChip,
+  reducedMotion,
   RunMeter,
   StageGlyph,
   StatusMark,
@@ -88,10 +89,6 @@ function NowCell({ ticket }: { ticket: Ticket }) {
       );
     }
   }
-}
-
-function reducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export function CompactRow({

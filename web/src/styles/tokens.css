@@ -58,7 +58,6 @@
   --accent: #c4461a;
   --accent-hover: #ab3a12;
   --accent-ink: #ffffff;
-  --accent-text: #ad3c12;
   --accent-mark: #ee6a33;
   --accent-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 1px 2px rgba(80, 30, 5, 0.22);
   /* Live (running agents) */
@@ -118,7 +117,6 @@
   --bubble-ink: #26282b;
   --bubble-mine: #212325;
   --bubble-mine-ink: #f2f3f4;
-  --mention: #f6a079;
   /* Avatars (pack; rows use --cat-*) */
   --av-1: #f4af8c;
   --av-2: #a8c9d4;
@@ -178,7 +176,6 @@
   --accent: #e1a548;
   --accent-hover: #ebb563;
   --accent-ink: #1d1404;
-  --accent-text: #e9b665;
   --accent-mark: #e1a548;
   --accent-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 2px rgba(0, 0, 0, 0.45);
   /* Live (running agents) */
@@ -238,7 +235,6 @@
   --bubble-ink: #e6e4de;
   --bubble-mine: #e9e3d6;
   --bubble-mine-ink: #161b22;
-  --mention: #7f4f00;
   /* Avatars (pack; rows use --cat-*) */
   --av-1: #e6b46a;
   --av-2: #8fbde8;
@@ -303,15 +299,12 @@
   --r-pill: 999px; /* reactions, typing dots */
 
   /* Fixed sizes */
-  --h-line: 28px; /* one-line rows: rack line, wait line, small buttons */
-  --h-group: 32px; /* overflow strip, My queue group head */
   --h-group-head: 34px; /* Compact / Intake group head; 12px above it (refresh) */
   --h-col-head: 38px; /* Compact / Intake column head (refresh) */
   --h-compact: 42px; /* Compact / Intake raised row (refresh: was 36) */
   --h-compact-flat: 38px; /* Compact flat (settled) row, 4px shorter (refresh) */
   --h-empty: 34px; /* dashed empty row: Needs you, Running, Queued (refresh) */
   --h-quiet: 44px; /* My queue flat row min-height (refresh: was 42) */
-  --h-team-item: 44px; /* All teams item */
   --h-item: 56px; /* My queue raised item row min-height (refresh: was 52) */
   --sp-zone: 18px; /* gap between My queue zones (refresh) */
   --h-btn-xs: 24px; /* Add context (refresh) */
@@ -320,25 +313,13 @@
   --h-btn-lg: 40px;
   --h-top: 58px; /* top bar */
   --w-rail: 60px; /* left rail */
-  --w-peek: 560px; /* peek panel (min(560px, 100vw - 24px)), 12px inset from top/right/bottom */
-  --w-queue: 392px; /* queue overlay, 10px from the rail */
-  --av: 20px; /* avatar floor; also 24, 26 (Talk), 30 (rail) */
 
   /* Motion. Animate transform and opacity only, and only on live things. */
   --lift: -3px; /* My queue items, tiles, team items: hover / focus lift, translate only (rack lines and chips 2px).
                    Compact and Intake rows never lift: they light up (--row-hover*). */
   --t-fast: 0.16s; /* lift, hover colour, chip, button */
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --ease-glide: cubic-bezier(0.2, 0.75, 0.2, 1);
   --dur-scrim: 200ms; /* scrim fade; peek opacity is 220ms */
   --dur-panel: 260ms; /* peek slide (24px) and queue overlay slide (18px), --ease-out */
-  --dur-reveal: 260ms; /* compact row expand: 4px rise + fade */
-  --dur-msg: 350ms; /* new Talk message: 8px rise + fade */
-  --dur-swap: 450ms; /* step label cross-fade (one line height) */
-  --dur-enter: 500ms; /* unmatched element fades in from 6px below */
-  --dur-glide: 1100ms; /* FLIP move between places (queue hand-off uses 1200ms) */
   --dur-breathe: 2s; /* running dot ring: scale .45 -> 1.45, opacity .75 -> 0 */
-  --dur-sweep: 1.7s; /* current run step sweep, --ease-out */
-  --dur-blink: 1.4s; /* current arc segment of the live dot (opacity -> .35) */
-  --dur-typing: 1.2s; /* typing dots bob 2px, staggered .15s */
 }

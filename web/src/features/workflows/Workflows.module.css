@@ -88,12 +88,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.oneLine {
-  font-family: inherit;
-  font-size: 13px;
-  min-height: 34px;
-}
-
 .editor {
   display: flex;
   flex-direction: column;

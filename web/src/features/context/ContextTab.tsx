@@ -3,11 +3,12 @@
 // human edits the plan between a gate and Approve. Markdown preview, the version list and diffs
 // come later.
 import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
-import { Link as RouterLink, useBlocker, useSearchParams } from "react-router";
+import { Link as RouterLink, useSearchParams } from "react-router";
 
 import { ApiError } from "../../api/client";
 import { useDeleteFile, useFile, useFiles, useMe, useSaveFile } from "../../api/queries";
-import { age, formatSize } from "../../domain/format";
+import { age, formatSize, plural } from "../../domain/format";
+import { useUnsavedWarning } from "../../editor";
 import { Button, Chip, cx, Kbd, LinkButton, linkClass, Tag } from "../../ui";
 import { useNow } from "../../ui/useNow";
 import { ticketPath } from "../ticket/model";
@@ -604,30 +605,9 @@ export function ContextTab({ ticketKey, runActive }: { ticketKey: string; runAct
   );
 
   // Unsaved edits: warn before the page unloads, and before leaving this tab in the app.
-  useEffect(() => {
-    if (!anyDirty) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-    };
-  }, [anyDirty]);
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      anyDirty && currentLocation.pathname !== nextLocation.pathname,
-  );
-  useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    const n = dirtyPaths.length;
-    const what = n === 1 ? "1 context file" : `${String(n)} context files`;
-    if (window.confirm(`You have unsaved edits in ${what}. Leave and lose them?`)) {
-      blocker.proceed();
-    } else {
-      blocker.reset();
-    }
-  }, [blocker, dirtyPaths.length]);
+  const n = dirtyPaths.length;
+  const what = `${String(n)} ${plural(n, "context file")}`;
+  useUnsavedWarning(anyDirty, `You have unsaved edits in ${what}. Leave and lose them?`);
 
   if (filesQ.isPending) return <p className={s.quiet}>Loading files</p>;
   if (filesQ.isError) {

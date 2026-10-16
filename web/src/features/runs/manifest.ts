@@ -200,14 +200,9 @@ export function promptLabel(via: "stdin" | "arg"): string {
   return via === "stdin" ? "Prompt (stdin)" : "Prompt";
 }
 
-export interface PackageFile {
-  path: string;
-  kind: Manifest["context"][number]["kind"] | "note";
-}
-
 /** The context entries and notes as path and kind (never their contents), sorted by path so a
  *  file is easy to find. */
-export function packageFiles(manifest: Pick<Manifest, "context" | "notes">): PackageFile[] {
+export function packageFiles(manifest: Pick<Manifest, "context" | "notes">) {
   return [
     ...manifest.context.map((f) => ({ path: f.path, kind: f.kind })),
     ...manifest.notes.map((f) => ({ path: f.path, kind: "note" as const })),

@@ -39,11 +39,6 @@ export function ageParts(text: string): { n: string; unit: string }[] {
   return parts.map((m) => ({ n: m?.[1] ?? "", unit: m?.[2] ?? "" }));
 }
 
-/** An age of 90 minutes or more is shown strong (`.is-old`). */
-export function isOld(from: Instant, now: Instant): boolean {
-  return minutesBetween(from, now) >= 90;
-}
-
 /** "just now" under a minute, else the age plus "ago": "5m ago", "3h 10m ago", "2d ago". */
 export function ago(from: Instant, now: Instant): string {
   const a = age(from, now);
