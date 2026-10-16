@@ -2,12 +2,12 @@
 `worker_tests.worker_support` (never `import conftest`: server/tests has its own conftest.py)."""
 
 from worker_tests.worker_support import (
-    empty_git_config,
     fast,
     no_pr_lookup,
     origin,
     origin_template,
     server,
+    user_git_config,
 )
 
-__all__ = ["empty_git_config", "fast", "no_pr_lookup", "origin", "origin_template", "server"]
+__all__ = ["fast", "no_pr_lookup", "origin", "origin_template", "server", "user_git_config"]

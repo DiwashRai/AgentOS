@@ -86,7 +86,7 @@ def test_repo_run_commits_code_and_never_context(
     subjects = git(origin.bare, "log", "--format=%s", f"main..{BRANCH}").splitlines()
     assert subjects == [f"{KEY} [lint] wip", f"{KEY} [implement] wip"]
     author = git(origin.bare, "log", "-1", "--format=%an <%ae>", BRANCH).strip()
-    assert author == "AgentOS <agentos@localhost>", "no git identity configured: the fallback"
+    assert author == "Test User <test@example.com>", "the user's own git identity"
 
     # Context went to the server instead.
     files = synced(server, "implement")
@@ -146,17 +146,29 @@ def test_a_second_run_continues_the_branch(
     assert {"src/app.py", "src/review.md"} <= set(origin.tree(BRANCH))
 
 
-def test_commits_as_the_users_git_identity_unless_agentos_git_vars_override(
+def test_local_commits_are_the_users_own(
     server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The user's git config applies as is: identity, and hooks (no --no-verify); AgentOS's
+    # Actions identity vars are ignored.
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_bytes(b'#!/bin/sh\necho ran >> "$HOOK_LOG"\n')
+    (hooks / "pre-commit").chmod(0o755)
     config = tmp_path / "gitconfig"
-    config.write_text("[user]\n\tname = Dee Veloper\n\temail = dee@example.com\n", newline="\n")
+    config.write_text(
+        f"[user]\n\tname = Dee Veloper\n\temail = dee@example.com\n"
+        f"[core]\n\thooksPath = {hooks.as_posix()}\n",
+        newline="\n",
+    )
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
-    monkeypatch.setenv("AGENTOS_GIT_EMAIL", "bot@example.com")
+    monkeypatch.setenv("HOOK_LOG", (tmp_path / "hook.log").as_posix())
+    monkeypatch.setenv("AGENTOS_GIT_NAME", "Bot")
     server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
     author = git(origin.bare, "log", "-1", "--format=%an <%ae>", BRANCH).strip()
-    assert author == "Dee Veloper <bot@example.com>"
+    assert author == "Dee Veloper <dee@example.com>"
+    assert (tmp_path / "hook.log").read_text() == "ran\n"
 
 
 def test_build_caches_are_not_committed(server: FakeServer, origin: Origin, tmp_path: Path) -> None:

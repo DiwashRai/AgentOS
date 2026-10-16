@@ -2422,17 +2422,16 @@ class Run:
         return self._set_identity()
 
     def _set_identity(self) -> str | None:
-        """Commit as AGENTOS_GIT_NAME / _EMAIL if set, else as the user's own git config (a
-        local or client worker is the user), else as AgentOS (a bare runner has no identity).
-        Signing and the rest of the user's git config apply unchanged."""
+        """On Actions (API mode) commit as AGENTOS_GIT_NAME / _EMAIL, default AgentOS. A local
+        or client worker is the user: their git config (identity, signing, hooks) applies as
+        if they committed themselves, and nothing is set."""
+        if not self.api_mode:
+            return None
         for setting, var, default in (
             ("user.name", "AGENTOS_GIT_NAME", "AgentOS"),
             ("user.email", "AGENTOS_GIT_EMAIL", "agentos@localhost"),
         ):
-            value = os.environ.get(var, "").strip()
-            if not value and self._git("config", "--get", setting).code == 0:
-                continue  # the user's own
-            r = self._git("config", setting, value or default)
+            r = self._git("config", setting, os.environ.get(var, "").strip() or default)
             if r.code:
                 return f"git config {setting} failed: {r.tail()}"
         return None
@@ -2782,9 +2781,7 @@ class Run:
         if not staged:
             return None
         message = f"{self.m.key} [{stage_id}] wip"
-        # --no-verify: a repo's own hooks (enabled by a setup step) would block wip commits; the
-        # pipeline's check stages run those gates.
-        r = self._git("commit", "--no-verify", "-q", "-m", message, show=True)
+        r = self._git("commit", "-q", "-m", message, show=True)
         return f"git commit failed: {r.tail()}" if r.code else None
 
     def _guard(self) -> str | None:
