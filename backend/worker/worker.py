@@ -3292,9 +3292,14 @@ def run_client(
     client = Client(server, token)
     me = Path(__file__).resolve()
     sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
+    # This process's id on every lease: only the instance that last listed a job can end it by
+    # leaving it out, so another process with this token (or on another root) never does.
+    instance = secrets.token_urlsafe(32)
     children = Children(
         lambda alive: client.post(
-            "/api/worker/lease", {"wait_s": 0, "take": False, "alive": alive}, retry_budget_s=0
+            "/api/worker/lease",
+            {"instance": instance, "wait_s": 0, "take": False, "alive": alive},
+            retry_budget_s=0,
         ),
         lambda: held_jobs(runs),
     )
@@ -3311,7 +3316,7 @@ def run_client(
                     continue
 
                 wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-                body = {"wait_s": wait_s, "take": not busy, "alive": alive}
+                body = {"instance": instance, "wait_s": wait_s, "take": not busy, "alive": alive}
                 try:
                     resp = client.post(
                         "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0

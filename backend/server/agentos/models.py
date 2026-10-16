@@ -1601,8 +1601,11 @@ class PushedData(ApiModel):
 
 class LeaseRequest(ApiModel):
     """Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
-    the jobs the client's workers still run."""
+    the jobs the client's workers still run. `instance`: the client process's random id, the same
+    on every lease it sends; only the instance that last listed a job can end it by leaving it
+    out of `alive`."""
 
+    instance: str = Field(min_length=16, max_length=128)
     wait_s: int = Field(default=25, ge=0, le=25)
     take: bool = True
     alive: list[str] = Field(default_factory=list, max_length=100)

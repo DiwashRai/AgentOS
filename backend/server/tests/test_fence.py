@@ -1,7 +1,8 @@
 """The fence: a ticket's next run stays queued, with a reason, until the previous job can no longer
 publish: its accepted result says so; for a worker that sent none, push: its provider says ended;
-pull: its client stops listing it (never because the client went quiet); any route: past
-`not_after`. Plus tables for `job_ended` and `not_after`."""
+pull: the client instance that last listed it leaves it out of a lease (never another instance,
+never because a client went quiet); any route: past `not_after`. Plus tables for `job_ended` and
+`not_after`."""
 
 from __future__ import annotations
 
@@ -12,16 +13,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.clients import service as clients
 from agentos.clock import from_db, to_db, utcnow
 from agentos.context import AppContext
-from agentos.db import Conn
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
 from agentos.runs.service import WORKER_EXITED, Snapshot, finish, not_after
-from tests.run_support import CSRF, FakeProvider, RunDriver, bearer
+from tests.run_support import CSRF, INSTANCE, FakeProvider, RunDriver, bearer
 
+OTHER = "test-client-instance-b"  # another client process with the same token
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
 T0 = datetime(2026, 10, 16, 12, tzinfo=UTC)
@@ -45,7 +45,7 @@ def test_not_after_is_dispatch_plus_start_budget_and_overhead(
     assert not_after(route, T0, 3600, 600) == T0 + timedelta(hours=1) + allowance
 
 
-# A pull job: dispatched at T0, its result at +10 s, last listed by its client's lease at +20 s.
+# A pull job of a run that ended without a result, dispatched at T0.
 PULL = JobFacts(
     run_id=1,
     job_id="1-1-0123456789abcdef",
@@ -63,11 +63,9 @@ PULL = JobFacts(
     stop_reason=None,
     start_timeout=timedelta(minutes=2),
     not_after=T0 + timedelta(hours=2),
-    alive_at=T0 + 20 * S,
-    client_seen_at=T0 + 20 * S,
     read=Snapshot("succeeded", "laptop", to_db(T0), to_db(T0)),
 )
-PUSH = replace(PULL, start="push", provider="github", ref="r", alive_at=None, client_seen_at=None)
+PUSH = replace(PULL, start="push", provider="github", ref="r")
 LATE = T0 + timedelta(hours=2) + S
 
 
@@ -78,28 +76,9 @@ LATE = T0 + timedelta(hours=2) + S
         pytest.param(PUSH, T0 + 60 * S, JobStatus("running"), False, id="push-running"),
         pytest.param(PUSH, T0 + 60 * S, JobStatus("ended"), True, id="push-ended"),
         pytest.param(PUSH, LATE, None, True, id="push-past-not-after"),
-        pytest.param(PULL, T0 + 60 * S, None, False, id="pull-listed-by-the-last-lease"),
-        pytest.param(
-            replace(PULL, client_seen_at=T0 + 21 * S), T0 + 30 * S, None, True, id="pull-unlisted"
-        ),
-        pytest.param(
-            replace(PULL, alive_at=None, client_seen_at=T0 - S),
-            T0 + 30 * S,
-            None,
-            False,
-            id="pull-no-lease-since-the-take",
-        ),
-        pytest.param(PULL, T0 + timedelta(hours=1), None, False, id="pull-client-offline"),
-        pytest.param(
-            replace(PULL, alive_at=None, client_seen_at=None),
-            T0 + timedelta(hours=1),
-            None,
-            False,
-            id="pull-client-revoked",
-        ),
-        pytest.param(
-            replace(PULL, client_seen_at=LATE), LATE, None, True, id="pull-past-not-after"
-        ),
+        # Only its lister's lease ends a pull job early (`lease_client`), never the reaper.
+        pytest.param(PULL, T0 + timedelta(hours=1), None, False, id="pull-before-not-after"),
+        pytest.param(PULL, LATE, None, True, id="pull-past-not-after"),
     ],
 )
 def test_job_ended(job: JobFacts, now: datetime, status: JobStatus | None, ended: bool) -> None:
@@ -127,9 +106,13 @@ def token(client: TestClient, me: Me) -> str:
 
 
 def lease(
-    client: TestClient, token: str, alive: tuple[str, ...] = (), take: bool = True
+    client: TestClient,
+    token: str,
+    alive: tuple[str, ...] = (),
+    take: bool = True,
+    instance: str = INSTANCE,
 ) -> LeasedJob | None:
-    body = {"wait_s": 0, "take": take, "alive": list(alive)}
+    body = {"instance": instance, "wait_s": 0, "take": take, "alive": list(alive)}
     r = client.post("/api/worker/lease", json=body, headers=bearer(token))
     assert r.status_code == 200, r.text
     return LeaseResponse.model_validate(r.json()).job
@@ -197,7 +180,43 @@ def test_a_lease_that_leaves_out_a_running_job_ends_its_run_and_job(
     assert taken.run_id == second
 
 
-def test_only_its_own_clients_lease_judges_a_listed_bound_job(
+def test_two_instances_of_one_token_each_end_only_their_own_jobs(
+    key: str,
+    create_ticket: CreateTicket,
+    me: Me,
+    client: TestClient,
+    token: str,
+    runs: RunDriver,
+) -> None:
+    a = listed_client_run(runs, client, key, token)
+    runs.queue(create_ticket("B's", repo=None, owner_id=me.id).key, target="client")
+    b = lease(client, token, instance=OTHER)  # leaves A's job out
+    assert b is not None
+    runs.bind(b.run_id, b.job_token)
+    assert lease(client, token, (b.job_id,), take=False, instance=OTHER) is None
+    assert lease(client, token, (a.job_id,), take=False) is None  # leaves B's job out
+    assert [runs.get(j.run_id).status for j in (a, b)] == ["running", "running"]
+
+    assert lease(client, token, (a.job_id,), take=False, instance=OTHER) is None  # B's exited
+    assert [runs.get(j.run_id).status for j in (a, b)] == ["running", "failed"]
+
+
+def test_a_restarted_client_takes_over_the_survivors_it_lists(
+    key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    survivor = listed_client_run(runs, client, key, token)
+    # The new instance lists it (its lock is held under the same root); the old one is gone.
+    assert lease(client, token, (survivor.job_id,), take=False, instance=OTHER) is None
+    assert lease(client, token, take=False) is None  # the old instance no longer judges it
+    assert runs.get(survivor.run_id).status == "running"
+
+    assert lease(client, token, take=False, instance=OTHER) is None  # the survivor exited
+    run = runs.get(survivor.run_id)
+    assert (run.status, run.error) == ("failed", WORKER_EXITED)
+    assert job_ended_at(ctx, survivor.run_id) is not None
+
+
+def test_a_job_its_instance_never_listed_is_left_alone(
     key: str,
     create_ticket: CreateTicket,
     me: Me,
@@ -206,10 +225,6 @@ def test_only_its_own_clients_lease_judges_a_listed_bound_job(
     runs: RunDriver,
 ) -> None:
     listed = listed_client_run(runs, client, key, token)
-    r = client.post("/api/me/clients", json={"name": "desktop"}, headers=CSRF)
-    other = str(r.json()["token"])
-    assert lease(client, other, take=False) is None  # another client of the same user
-
     unlisted = create_ticket("U", repo=None, owner_id=me.id).key
     runs.queue(unlisted, target="client")
     taken = lease(client, token, (listed.job_id,))  # leased, but not started or listed yet
@@ -243,30 +258,6 @@ def test_the_fence_lifts_on_the_accepted_result(
     assert taken.run_id == third
 
 
-def test_a_lease_between_its_writes_never_ends_a_job_it_lists(
-    key: str,
-    client: TestClient,
-    token: str,
-    runs: RunDriver,
-    ctx: AppContext,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = lost_client_run(runs, ctx, client, key, token)
-    reaper = Reaper(ctx)
-    reaper.tick(utcnow() - 15 * S)  # its grace tick
-
-    # The reaper ticks right after the lease records that the client was seen.
-    touch = clients.touch
-
-    def touch_then_reap(conn: Conn, client_id: int, now: datetime) -> None:
-        touch(conn, client_id, now)
-        reaper.tick(utcnow())
-
-    monkeypatch.setattr(clients, "touch", touch_then_reap)
-    assert lease(client, token, (first.job_id,), take=False) is None
-    assert job_ended_at(ctx, first.run_id) is None
-
-
 def test_push_fence_holds_until_the_provider_says_ended(
     key: str, runs: RunDriver, ctx: AppContext, provider: FakeProvider
 ) -> None:
@@ -285,7 +276,7 @@ def test_push_fence_holds_until_the_provider_says_ended(
     assert runs.get(second).queue_reason is None
 
 
-def test_pull_fence_holds_until_the_client_stops_listing_the_job(
+def test_pull_fence_holds_until_its_lister_leaves_the_job_out(
     key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
 ) -> None:
     first = lost_client_run(runs, ctx, client, key, token)
@@ -293,11 +284,12 @@ def test_pull_fence_holds_until_the_client_stops_listing_the_job(
 
     assert lease(client, token, (first.job_id,)) is None
     assert waits_for(runs, second, first.run_id)
-    reap(ctx, utcnow())
-    assert lease(client, token, (first.job_id,)) is None  # still listed
+    assert lease(client, token, take=False, instance=OTHER) is None  # not its lister
+    reap(ctx, utcnow())  # nor does the reaper end a pull job before its not_after
+    assert waits_for(runs, second, first.run_id)
 
-    assert lease(client, token, take=False) is None  # its worker exited
-    reap(ctx, utcnow())
+    assert lease(client, token, take=False) is None  # its lister: the worker exited
+    assert runs.get(second).queue_reason is None
     taken = lease(client, token)
     assert taken is not None
     assert taken.run_id == second
@@ -328,8 +320,11 @@ def test_the_fence_lifts_once_not_after_has_passed(
         first = runs.start(key).run_id
         lose(ctx, first)
     second = runs.queue(key, target=target).id
+    # Client: a new instance on another root, which can't see the old worker, takes.
     take = (
-        runs.tick if target == "server" else lambda: [j.run_id for j in [lease(client, token)] if j]
+        runs.tick
+        if target == "server"
+        else lambda: [j.run_id for j in [lease(client, token, instance=OTHER)] if j]
     )
 
     assert take() == []

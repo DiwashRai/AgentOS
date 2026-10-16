@@ -588,14 +588,13 @@ def touch_running(db: Database, now: datetime) -> int:
 
 def active_jobs(db: Database) -> list[Row]:
     """Every job that hasn't ended (those of dispatched and running runs, and of ended runs whose
-    worker may still publish), with its run's route and clocks and its client's last lease."""
+    worker may still publish), with its run's route and clocks."""
     with db.read() as conn:
         rows: list[Row] = conn.execute(
             "SELECT r.id AS run_id, r.status, r.start, r.provider, r.report, r.launch_ref, "
-            "r.dispatched_at, r.started_at, r.last_seen_at, r.finished_at, r.stop_requested_at, "
-            "r.stop_reason, j.id AS job_id, j.budget_s, j.not_after, j.alive_at, "
-            "c.last_seen_at AS client_seen_at FROM runs r JOIN jobs j ON j.run_id = r.id "
-            "LEFT JOIN client_tokens c ON c.id = j.client_id WHERE j.ended_at IS NULL ORDER BY r.id"
+            "r.dispatched_at, r.started_at, r.last_seen_at, r.stop_requested_at, r.stop_reason, "
+            "j.id AS job_id, j.budget_s, j.not_after FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "WHERE j.ended_at IS NULL ORDER BY r.id"
         ).fetchall()
     return rows
 

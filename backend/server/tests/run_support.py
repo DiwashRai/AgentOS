@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from httpx import Response
 
 CSRF = {"X-AgentOS": "1"}
+INSTANCE = "test-client-instance-a"  # a client process's lease `instance`
 
 
 class FakeProvider:

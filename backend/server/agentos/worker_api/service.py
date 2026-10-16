@@ -458,41 +458,48 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
 # ------------------------------------------------------------------ client lease
 
 
-def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResponse:
+def lease_client(db: Database, client_token: str, instance: str, alive: list[str]) -> LeaseResponse:
     """Authenticate a leasing client (401/403: `clients.service.authenticate`), record that it
-    was seen and stamp `jobs.alive_at` on the jobs in `alive` that are its user's client runs
-    (other ids are ignored). Once per lease. Returns the answer without a job.
+    was seen, and stamp the jobs in `alive` that are its user's client runs (other ids are
+    ignored) as listed now (`alive_at`) by this client instance (`alive_by`: its digest). Once per
+    lease. Returns the answer without a job.
 
-    A job this client was leased, bound and listed before, whose run is still active, that the
-    lease leaves out has lost its worker: the client lists every worker that hasn't exited (its
-    own children, and every held `<job id>.lock`; a worker locks before it binds). Its run ends
-    now (as `STOPPED` says if it was stopped, else failed `WORKER_EXITED`), and its job with it."""
+    A job whose last lister is this instance and that this lease leaves out has lost its worker:
+    an instance lists every worker that hasn't exited (its own children, and every held
+    `<job id>.lock` under its root; a worker locks before it binds). The job ends now. If its run
+    is still active and the job bound, the run ends too (as `STOPPED` says if it was stopped,
+    else failed `WORKER_EXITED`); an unbound one is left to the never-started rule. A job listed
+    by another instance (another process with this token, or one on another root) or never listed
+    is left alone, to its own lister or its `not_after`."""
     client = clients.authenticate(db, client_token)
     now = utcnow()
-    # One transaction: the reaper ends a pull job its client has seen since it was last listed
-    # (`reaper.job_ended`), so a snapshot between these two writes would end a job this very
-    # lease lists as alive, and lift the fence while its worker can still publish.
+    lister = hash_token(instance)
+    # One transaction: the stamp and the judgement read the same lease.
     with db.tx() as conn:
         clients.touch(conn, client.id, now)
         conn.execute(
-            "UPDATE jobs SET alive_at = ? WHERE id IN (SELECT value FROM json_each(?)) "
+            "UPDATE jobs SET alive_at = ?, alive_by = ? "
+            "WHERE id IN (SELECT value FROM json_each(?)) "
             "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",
-            (to_db(now), json.dumps(alive), client.user.id),
+            (to_db(now), lister, json.dumps(alive), client.user.id),
         )
         gone = conn.execute(
-            "SELECT r.id, r.stop_reason, j.id AS job_id FROM jobs j JOIN runs r ON r.id = j.run_id "
-            "WHERE j.client_id = ? AND j.ended_at IS NULL AND j.instance_hash IS NOT NULL "
-            "AND j.alive_at IS NOT NULL AND r.status IN ('dispatched', 'running') "
-            "AND j.id NOT IN (SELECT value FROM json_each(?))",
-            (client.id, json.dumps(alive)),
+            "SELECT r.id, r.status, r.stop_reason, j.id AS job_id, j.instance_hash "
+            "FROM jobs j JOIN runs r ON r.id = j.run_id "
+            "WHERE r.created_by = ? AND r.start = 'pull' AND j.alive_by = ? "
+            "AND j.ended_at IS NULL AND j.id NOT IN (SELECT value FROM json_each(?))",
+            (client.user.id, lister, json.dumps(alive)),
         ).fetchall()
-        for run in gone:
-            end: tuple[RunStatus, str | None] = ("failed", WORKER_EXITED)
-            if run["stop_reason"] is not None:
-                end = STOPPED[run["stop_reason"]]
-            finish(conn, run["id"], end[0], ("dispatched", "running"), now=now, error=end[1])
-            end_job(conn, run["id"], run["job_id"], now)
-            log.warning("run %s %s: %s (job %s)", run["id"], end[0], WORKER_EXITED, run["job_id"])
+        for job in gone:
+            if job["status"] not in TERMINAL:
+                if job["instance_hash"] is None:
+                    continue
+                end: tuple[RunStatus, str | None] = ("failed", WORKER_EXITED)
+                if job["stop_reason"] is not None:
+                    end = STOPPED[job["stop_reason"]]
+                finish(conn, job["id"], end[0], ("dispatched", "running"), now=now, error=end[1])
+                log.warning("run %s %s: %s", job["id"], end[0], WORKER_EXITED)
+            end_job(conn, job["id"], job["job_id"], now)
 
     sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()
     return LeaseResponse(job=None, protocol=2, worker_sha256=sha256)

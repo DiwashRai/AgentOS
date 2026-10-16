@@ -1497,7 +1497,7 @@
       },
       "LeaseRequest": {
         "additionalProperties": false,
-        "description": "Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:\nthe jobs the client's workers still run.",
+        "description": "Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:\nthe jobs the client's workers still run. `instance`: the client process's random id, the same\non every lease it sends; only the instance that last listed a job can end it by leaving it\nout of `alive`.",
         "properties": {
           "alive": {
             "items": {
@@ -1506,6 +1506,12 @@
             "maxItems": 100,
             "title": "Alive",
             "type": "array"
+          },
+          "instance": {
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Instance",
+            "type": "string"
           },
           "take": {
             "default": true,
@@ -1520,6 +1526,9 @@
             "type": "integer"
           }
         },
+        "required": [
+          "instance"
+        ],
         "title": "LeaseRequest",
         "type": "object"
       },

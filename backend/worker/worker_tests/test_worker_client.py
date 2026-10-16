@@ -117,6 +117,13 @@ def leases(server: FakeServer) -> int:
     return len(server.bodies(LEASE))
 
 
+def lease_bodies(server: FakeServer) -> list[dict[str, Any]]:
+    """The lease bodies without `instance`, after checking every one carries the same."""
+    bodies = server.bodies(LEASE)
+    assert len({body["instance"] for body in bodies}) == 1
+    return [{k: v for k, v in body.items() if k != "instance"} for body in bodies]
+
+
 def test_one_worker_per_run_with_the_token_in_its_env_only(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -151,7 +158,7 @@ def test_one_worker_per_run_with_the_token_in_its_env_only(
         assert not any(token in arg or CLIENT_TOKEN in arg for arg in call.argv)
 
     assert {r.auth for r in server.requests} == {f"Bearer {CLIENT_TOKEN}"}
-    assert server.bodies(LEASE) == [TAKE] * 4
+    assert lease_bodies(server) == [TAKE] * 4
     assert "AGENTOS_CLIENT_TOKEN" not in os.environ
 
 
@@ -236,7 +243,7 @@ def test_a_busy_client_sends_heartbeats_that_take_nothing(
     assert run_client(server, tmp_path / "ws") == 1  # the 401 after the answers
 
     heartbeat = {"wait_s": 0, "take": False, "alive": [job_id(5)]}
-    assert server.bodies(LEASE) == [TAKE, *[heartbeat] * 4]
+    assert lease_bodies(server) == [TAKE, *[heartbeat] * 4]
     assert spawn.count() == 1
 
 
@@ -301,7 +308,7 @@ def test_a_worker_that_exits_during_a_long_poll_is_reported_at_once(
     finally:
         release.set()
     assert result == [1]
-    assert server.bodies(LEASE) == [
+    assert lease_bodies(server) == [
         TAKE,
         {"wait_s": 25, "take": True, "alive": [job_id(5)]},
         {"wait_s": 0, "take": False, "alive": []},
@@ -369,6 +376,21 @@ def test_a_run_worker_holds_its_lock_until_its_process_ends(
             proc.kill()
             proc.wait()
     eventually(lambda: not worker.lock_held(lock), "the OS to release the dead worker's lock")
+
+
+def test_each_client_process_leases_as_its_own_instance(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instances: list[set[str]] = []
+    for started in range(2):  # the same token and root, started twice
+        monkeypatch.setenv("AGENTOS_CLIENT_TOKEN", CLIENT_TOKEN)  # main pops it
+        answer_leases(server, [NOTHING])
+        assert run_client(server, tmp_path / "ws") == 1
+        bodies = server.bodies(LEASE)[started * 2 :]  # NOTHING, then the 401
+        instances.append({body["instance"] for body in bodies})
+
+    assert [len(i) for i in instances] == [1, 1]
+    assert instances[0] != instances[1]
 
 
 def test_a_job_id_that_cant_name_a_file_is_a_malformed_answer(

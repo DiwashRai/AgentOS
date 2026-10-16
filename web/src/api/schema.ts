@@ -1537,11 +1537,15 @@ export interface components {
         /**
          * LeaseRequest
          * @description Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
-         *     the jobs the client's workers still run.
+         *     the jobs the client's workers still run. `instance`: the client process's random id, the same
+         *     on every lease it sends; only the instance that last listed a job can end it by leaving it
+         *     out of `alive`.
          */
         LeaseRequest: {
             /** Alive */
             alive?: string[];
+            /** Instance */
+            instance: string;
             /**
              * Take
              * @default true

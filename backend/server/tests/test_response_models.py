@@ -43,7 +43,7 @@ from agentos.models import (
     Workflow,
 )
 from agentos.sources.jira import JiraClient
-from tests.run_support import RunDriver, bearer
+from tests.run_support import INSTANCE, RunDriver, bearer
 
 CSRF = {"X-AgentOS": "1"}
 CreateTicket = Callable[..., TicketDetail]
@@ -70,7 +70,9 @@ def test_every_get_matches_its_model(
         client.post("/api/me/clients", json={"name": n}, headers=CSRF).json()["token"]
         for n in ("seen", "never")
     ]
-    seen = client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(tokens[0]))
+    seen = client.post(
+        "/api/worker/lease", json={"instance": INSTANCE, "wait_s": 0}, headers=bearer(tokens[0])
+    )
     assert seen.json()["job"] is None
     waiting = create_ticket("Client ticket", repo=None, owner_id=dev.id)
     assert runs.queue(waiting.key, target="client").client_online is True

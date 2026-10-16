@@ -58,8 +58,7 @@ UNWATCHED = "its runner is no longer configured"
 
 @dataclass(frozen=True, slots=True)
 class JobFacts:
-    """A job as the reaper sees it. `seen_at`: its last post (else its start); pull: `alive_at`,
-    the last lease that listed it, and `client_seen_at`, its client's last lease."""
+    """A job as the reaper sees it. `seen_at`: its last post (else its start)."""
 
     run_id: int
     job_id: str
@@ -77,8 +76,6 @@ class JobFacts:
     stop_reason: StopReason | None
     start_timeout: timedelta
     not_after: datetime
-    alive_at: datetime | None
-    client_seen_at: datetime | None
     read: service.Snapshot  # the run as stored: a verdict is written only while it still holds
 
 
@@ -119,15 +116,13 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool)
 
 def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:
     """Whether the job of a run that ended without its result can no longer publish: past its
-    `not_after` (any route); push: its provider says `ended` (`status`); pull: a later lease by
-    its client didn't list it (the client lists every worker whose lock is held, so this is seen,
-    not inferred). A silent client proves nothing: its workers outlive it."""
+    `not_after` (any route); push: its provider says `ended` (`status`). A pull job also ends when
+    the client instance that last listed it leaves it out of a lease, which the lease itself
+    stamps (`worker_api.service.lease_client`): only that instance can see its worker exit, and a
+    silent client proves nothing, since its workers outlive it."""
     if now > job.not_after:
         return True
-    if job.start == "push":
-        return status is not None and status.state == "ended"
-    seen = job.client_seen_at
-    return seen is not None and seen > (job.alive_at or job.dispatched_at)
+    return job.start == "push" and status is not None and status.state == "ended"
 
 
 def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
@@ -151,8 +146,6 @@ def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
         stop_reason=row["stop_reason"],
         start_timeout=start_timeout if row["start"] == "push" else PULL_START_TIMEOUT,
         not_after=from_db(row["not_after"]),
-        alive_at=from_db_opt(row["alive_at"]),
-        client_seen_at=from_db_opt(row["client_seen_at"]),
         read=service.Snapshot(
             row["status"], row["launch_ref"], row["started_at"], row["last_seen_at"]
         ),
