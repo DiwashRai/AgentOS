@@ -1,13 +1,14 @@
 """The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, the sync_back
 upload, complete, and the client poll.
 
-Claim authenticates with the dispatch token, every other route with the worker token the worker
-generated and bound at claim. Tokens are looked up by their SHA-256 hash. Worker-token runs are
-`running` or terminal; a terminal run answers 410 `run_gone` (the worker aborts and never pushes),
-except `complete` repeating the run's final status (idempotent retry).
+Claim authenticates with the job token (the run's job is built at dispatch), every other route
+with the worker token the worker generated and bound at claim. Tokens are looked up by their
+SHA-256 hash. Worker-token runs are `running` or terminal; a terminal run answers 410 `run_gone`
+(the worker aborts and never pushes), except `complete` repeating the run's final status
+(idempotent retry).
 
 The poll authenticates with a client token (`agentos.clients`) and hands the client a run its user
-dispatched to "My client", with a dispatch token; from there on the run's worker uses the routes
+dispatched to "My client", with its job token; from there on the run's worker uses the routes
 above, unchanged.
 """
 
@@ -16,16 +17,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import secrets
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from agentos.clients import service as clients
 from agentos.clients.service import Client
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError, field_error
-from agentos.files.service import current_bundle, write_version
+from agentos.files.service import write_version
 from agentos.models import (
     ClientRunAssignment,
     CompleteRequest,
@@ -37,14 +36,10 @@ from agentos.models import (
     SyncResponse,
     WorkerFinalStatus,
 )
-from agentos.pipeline.manifest import build_package
-from agentos.pipeline.runtime import RuntimesConfig
-from agentos.pipeline.segment import completion_status, plan_run
-from agentos.pipeline.space import SpaceConfig
+from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
 from agentos.runs.service import TERMINAL, finish, token_hash
-from agentos.templates.service import current_defaults
-from agentos.tickets.service import run_ticket_ref, ticket_pipeline
+from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import path_key, validate_pr_url
 
@@ -71,86 +66,36 @@ def _unauthorized(what: str) -> ApiError:
 # ------------------------------------------------------------------ claim
 
 
-@dataclass(frozen=True, slots=True)
-class _Claim:
-    manifest: JobPackage | None = None
-    error: ApiError | None = None
-
-
-def claim(
-    db: Database,
-    runtimes: RuntimesConfig,
-    space: SpaceConfig,
-    dispatch_token: str,
-    worker_token: str,
-) -> JobPackage:
-    """dispatched → running, binding the worker token and building the manifest from the bundle
-    as it is now (the bundle locks from here). A safe retry with the same worker token returns
-    the stored manifest; another worker token → 409 `already_claimed`; terminal → 410."""
-    outcome = _claim(db, runtimes, space, token_hash(dispatch_token), token_hash(worker_token))
-    if outcome.error is not None:
-        raise outcome.error
-    if outcome.manifest is None:  # pragma: no cover - _claim sets one or the other
-        raise RuntimeError("claim produced no manifest")
-    return outcome.manifest
-
-
-def _claim(
-    db: Database, runtimes: RuntimesConfig, space: SpaceConfig, dispatch_hash: str, worker_hash: str
-) -> _Claim:
-    """Errors are returned rather than raised where the transaction must still commit (a run
-    whose manifest can't be built is failed)."""
-    now = utcnow()
+def claim(db: Database, job_token: str, worker_token: str) -> JobPackage:
+    """dispatched → running, binding the worker token, and returns the job's stored package. A
+    safe retry with the same worker token returns it again; another worker token → 409
+    `already_claimed`; terminal → 410."""
+    worker_hash = token_hash(worker_token)
+    stamp = to_db(utcnow())
     with db.tx() as conn:
         run = conn.execute(
-            "SELECT * FROM runs WHERE dispatch_token_hash = ?", (dispatch_hash,)
+            "SELECT r.*, j.package FROM jobs j JOIN runs r ON r.id = j.run_id "
+            "WHERE j.token_hash = ?",
+            (token_hash(job_token),),
         ).fetchone()
         if run is None:
-            raise _unauthorized("dispatch")
+            raise _unauthorized("job")
         if run["status"] == "running":
             if run["worker_token_hash"] != worker_hash:
                 raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-            return _Claim(manifest=JobPackage.model_validate_json(run["manifest"]))
+            return JobPackage.model_validate_json(run["package"])
         if run["status"] != "dispatched":
             raise _gone(run["id"], run["status"])
+
         try:
-            manifest = _build(conn, run, runtimes, space)
-        except ApiError as exc:
-            error = f"cannot build the manifest: {exc.message}"
-            finish(conn, run["id"], "failed", ("dispatched",), now=now, error=error)
-            return _Claim(error=_gone(run["id"], f"failed: {error}"))
-        stamp = to_db(now)
-        try:
-            cursor = conn.execute(
-                "UPDATE runs SET status = 'running', worker_token_hash = ?, manifest = ?, "
-                "started_at = ?, last_seen_at = ? WHERE id = ? AND status = 'dispatched'",
-                (worker_hash, manifest.model_dump_json(), stamp, stamp, run["id"]),
+            conn.execute(
+                "UPDATE runs SET status = 'running', worker_token_hash = ?, started_at = ?, "
+                "last_seen_at = ? WHERE id = ? AND status = 'dispatched'",
+                (worker_hash, stamp, stamp, run["id"]),
             )
         except IntegrityError as exc:  # worker_token_hash is UNIQUE: a token reused across runs
             raise ApiError(409, "already_claimed", "That worker token is already in use") from exc
-        if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
-            raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-        return _Claim(manifest=manifest)
-
-
-def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> JobPackage:
-    """The run's plan comes from the ticket's current pipeline: it is locked while the run is
-    active, so it is the one validated at dispatch (the plan must still cover the run's stages).
-    The workspace's repo URL and base branch are resolved from the Space's catalog now; a repo
-    that left it fails the run. Null stage runtimes/models take the Space defaults as they are
-    now (the current template's)."""
-    ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
-    plan = plan_run(ticket_pipeline(ticket), run["from_stage"])
-    if [s.id for s in plan.stages] != json.loads(run["stage_ids"]):
-        raise ApiError(422, "invalid_stage", "the pipeline changed since the run was dispatched")
-    return build_package(
-        run["id"],
-        run_ticket_ref(ticket, space),
-        plan,
-        current_bundle(conn, ticket["id"]),
-        runtimes,
-        defaults=current_defaults(conn),
-    )
+    return JobPackage.model_validate_json(run["package"])
 
 
 # ------------------------------------------------------------------ worker-token routes
@@ -289,11 +234,11 @@ def _lock_base_branch(conn: Conn, run: Row) -> None:
     `repo` can't change while the run is active (409 `run_active`), so it is the run's.
 
     A ticket that followed the repo default is pinned to the branch the run started from (its
-    manifest), so a later change to the repo's `default_branch` doesn't move locked work.
+    job's package), so a later change to the repo's `default_branch` doesn't move locked work.
     """
     conn.execute(
         "UPDATE tickets SET base_branch_locked_by_run = ?, base_branch = COALESCE(base_branch, "
-        "(SELECT json_extract(manifest, '$.workspace.base_branch') FROM runs WHERE id = ?)) "
+        "(SELECT json_extract(package, '$.workspace.base_branch') FROM jobs WHERE run_id = ?)) "
         "WHERE id = ? AND repo IS NOT NULL AND base_branch_locked_by_run IS NULL",
         (run["id"], run["id"], run["ticket_id"]),
     )
@@ -315,7 +260,9 @@ def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFil
             raise ApiError(
                 422, "validation_error", f"stage_id: {stage_id!r} is not a stage of this run"
             )
-        package = JobPackage.model_validate_json(run["manifest"])
+        package = JobPackage.model_validate_json(
+            conn.execute("SELECT package FROM jobs WHERE run_id = ?", (run["id"],)).fetchone()[0]
+        )
         declared: dict[str, tuple[str, Mode]] = {
             path_key(e.path): (e.path, e.mode) for e in package.context if e.access == "write"
         }
@@ -414,20 +361,23 @@ def poll_client(db: Database, client_token: str) -> Client:
 
 
 def take_client_run(db: Database, client_token: str, server_url: str) -> ClientRunAssignment | None:
-    """One take of a poll: the oldest client run queued by the token's user, with a new dispatch
-    token for its worker (in plaintext only in the answer; never logged). The token is checked
-    again on every take, so a revoke or a disabled user also stops a poll that is waiting. Only
-    reads run until a run is queued; the write transaction opens only to take it."""
+    """One take of a poll: the oldest client run queued by the token's user, whose job is built
+    now, with the job token for its worker (in plaintext only in the answer; never logged). The
+    token is checked again on every take, so a revoke or a disabled user also stops a poll that
+    is waiting. Only reads run until a run is queued; the write transaction opens only to take
+    it. A run whose job can't be built is failed, and the poll goes on waiting."""
     client = clients.authenticate(db, client_token)
     if not runs.client_run_queued(db, client.user.id):
         return None
 
-    dispatch_token = secrets.token_urlsafe(32)
-    run_id = runs.take_client_run(db, client.user.id, token_hash(dispatch_token), client.name)
-    if run_id is None:
+    taken = runs.take_client_run(db, client.user.id, client.name, server_url)
+    if taken is None:
+        return None
+    run_id, job_token = taken
+    if job_token is None:
         return None
     log.info("run %s: handed to client %s of user %s", run_id, client.id, client.user.id)
-    return ClientRunAssignment(run_id=run_id, server_url=server_url, dispatch_token=dispatch_token)
+    return ClientRunAssignment(run_id=run_id, server_url=server_url, dispatch_token=job_token)
 
 
 def _store_pr_url(conn: Conn, run: Row, pr_url: str | None) -> None:

@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from agentos.clock import utcnow
 from agentos.context import AppContext
-from agentos.models import Me, RunSummary, TicketDetail, TicketSummary
-from tests.run_support import CSRF, RunDriver, bearer, event, log_event
+from agentos.models import JobPackage, Me, RunSummary, TicketDetail, TicketSummary
+from agentos.runs.service import BUDGET_GRACE
+from tests.run_support import CSRF, FakeLauncher, RunDriver, bearer, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -102,7 +105,6 @@ def test_dispatch_queues_the_next_segment(
     row = runs.db_run(run.id)
     assert row["time_budget_s"] == 3600
     assert row["launcher"] == "local"
-    assert row["manifest"] is None
     detail = runs.get(run.id)
     assert [(s.stage_id, s.name, s.idx, s.status) for s in detail.stage_runs] == [
         ("plan", "Plan", 0, "pending")
@@ -327,6 +329,25 @@ def test_a_waiting_client_run_keeps_what_its_owner_dispatched(
     assert patch({"owner_id": bob.id}).status_code == 200
 
 
+def test_a_client_run_whose_package_cannot_be_built_fails_at_the_take(
+    client: TestClient,
+    login: LoginFn,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
+) -> None:
+    ann = login("ann")
+    token = new_client(client)
+    t = create_ticket(owner_id=ann.id)
+    run = runs.queue(t.key, target="client")
+    with ctx.db.tx() as conn:  # as if the catalog lost the repo while the run waited
+        conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (t.key,))
+
+    taken = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(token))
+    assert taken.json()["run"] is None
+    assert runs.get(run.id).status == "failed"
+
+
 # ------------------------------------------------------------------ reads
 
 
@@ -347,26 +368,37 @@ def test_get_run_404(authed: TestClient) -> None:
         assert error(authed.get(f"/api/runs/999{path}")) == (404, "run_not_found")
 
 
-def test_manifest_is_404_until_claimed(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
+def test_the_package_is_built_at_dispatch(
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
+    launcher: FakeLauncher,
 ) -> None:
     t = create_ticket()
     run = runs.queue(t.key)
-    r = authed.get(f"/api/runs/{run.id}/manifest")
-    assert error(r) == (404, "not_found")
-    assert "claims" in r.json()["error"]["message"]
+    assert error(authed.get(f"/api/runs/{run.id}/manifest")) == (404, "not_found")
+
+    before = utcnow()
     runs.tick()
+    package = JobPackage.model_validate(authed.get(f"/api/runs/{run.id}/manifest").json())
+    job = package.job
+    assert job.id.startswith(f"{run.id}-1-")
+    assert len(job.id.rsplit("-", 1)[1]) == 16
+    assert (job.run_id, job.segment, job.segments, job.budget_s) == (run.id, 1, 1, 3600)
+    allowance = timedelta(seconds=ctx.space.claim_timeout_s + 3600) + BUDGET_GRACE
+    assert before + allowance <= job.not_after <= utcnow() + allowance
+    assert package.journal.first_seq == 1
+    assert package.report.model_dump() == {
+        "mode": "live",
+        "url": ctx.settings.effective_worker_url,
+    }
+
+    # The worker's claim returns the same package.
     worker_token = "w" * 43
     claimed = runs.claim(run.id, worker_token).json()["manifest"]
     assert authed.get(f"/api/runs/{run.id}/manifest").json() == claimed
-
-
-def test_a_run_stored_under_protocol_1_has_no_package(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
-) -> None:
-    worker = runs.start(create_ticket().key)
-    runs.set_run(worker.run_id, manifest=json.dumps({"protocol": 1, "files": []}))
-    assert error(authed.get(f"/api/runs/{worker.run_id}/manifest")) == (404, "not_found")
+    assert [r for r, _, _ in launcher.launched] == [run.id]
 
 
 def test_stage_names_fall_back_to_the_id(
@@ -469,7 +501,7 @@ def test_cancel_terminal_is_unchanged(
 # ------------------------------------------------------------------ bundle lock
 
 
-def test_bundle_locked_from_claim_to_complete(
+def test_bundle_locked_from_dispatch_to_complete(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
     t = create_ticket()
@@ -484,12 +516,12 @@ def test_bundle_locked_from_claim_to_complete(
     run = runs.queue(t.key)
     assert put("queued", 0).status_code == 200  # a queued run doesn't lock
     runs.tick()
-    assert put("dispatched", 1).status_code == 200  # nor does a dispatched one
+    assert error(put("dispatched", 1)) == (409, "bundle_locked")  # its package is built
     worker_token = "k" * 43
     assert runs.claim(run.id, worker_token).status_code == 200
-    assert error(put("running", 2)) == (409, "bundle_locked")
+    assert error(put("running", 1)) == (409, "bundle_locked")
     assert error(put("new", 0, "new.md")) == (409, "bundle_locked")
-    deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=2", headers=CSRF)
+    deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=1", headers=CSRF)
     assert error(deleted) == (409, "bundle_locked")
     assert runs.get(run.id).status == "running"
     r = authed.post(
@@ -498,7 +530,7 @@ def test_bundle_locked_from_claim_to_complete(
         headers={"Authorization": f"Bearer {worker_token}"},
     )
     assert r.status_code == 204
-    assert put("after", 2).status_code == 200
+    assert put("after", 1).status_code == 200
 
 
 # ------------------------------------------------------------------ the board through a run

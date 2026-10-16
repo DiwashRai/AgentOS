@@ -66,7 +66,6 @@ def test_claim_returns_the_manifest_and_starts_the_run(
     assert row["status"] == "running"
     assert row["started_at"] is not None
     assert row["last_seen_at"] == row["started_at"]
-    assert json.loads(row["manifest"]) == r.json()["manifest"]
     assert row["worker_token_hash"] != "a" * 43  # hashed
 
 
@@ -89,7 +88,7 @@ def test_claim_after_cancel_is_gone(ticket: TicketDetail, runs: RunDriver) -> No
     assert error(runs.claim(run.id)) == (410, "run_gone")
 
 
-def test_claim_needs_a_known_dispatch_token(ticket: TicketDetail, runs: RunDriver) -> None:
+def test_claim_needs_a_known_job_token(ticket: TicketDetail, runs: RunDriver) -> None:
     run = runs.queue(ticket.key)
     runs.tick()
     body = {"worker_token": "a" * 43}
@@ -101,42 +100,37 @@ def test_claim_needs_a_known_dispatch_token(ticket: TicketDetail, runs: RunDrive
     assert runs.db_run(run.id)["status"] == "dispatched"
 
 
-def test_manifest_is_the_bundle_at_claim_time(
+def test_the_package_is_the_bundle_at_dispatch(
     authed: TestClient, ticket: TicketDetail, runs: RunDriver
 ) -> None:
-    def put(path: str, content: str) -> None:
-        r = authed.put(
-            f"/api/tickets/{ticket.key}/files/{path}",
-            json={"content": content, "base_version": 0},
-            headers=CSRF,
-        )
-        assert r.status_code == 200, r.text
-
     run = runs.queue(ticket.key)
-    put("while-queued.md", "q")
-    runs.tick()
-    put("while-dispatched.md", "d")
+    r = authed.put(
+        f"/api/tickets/{ticket.key}/files/while-queued.md",
+        json={"content": "q", "base_version": 0},
+        headers=CSRF,
+    )
+    assert r.status_code == 200, r.text
     r = authed.delete(f"/api/tickets/{ticket.key}/files/CLAUDE.md?base_version=1", headers=CSRF)
     assert r.status_code == 204, r.text
+    runs.tick()
     m = JobPackage.model_validate(runs.claim(run.id).json()["manifest"])
     files = {e.path: e.content for e in m.context}
     assert files["while-queued.md"] == "q"
-    assert files["while-dispatched.md"] == "d"
     assert "CLAUDE.md" not in files  # deleted files are not in the bundle
 
 
-def test_a_manifest_that_cannot_be_built_fails_the_run(
+def test_a_package_that_cannot_be_built_fails_the_run_at_dispatch(
     ticket: TicketDetail, runs: RunDriver, ctx: AppContext
 ) -> None:
     run = runs.queue(ticket.key)
-    runs.tick()
-    # Dispatch rendered the prompts; break one behind the API's back before the claim.
+    # Queueing rendered the prompts; break one behind the API's back before the dispatch.
     with ctx.db.tx() as conn:
         row = conn.execute("SELECT pipeline FROM tickets WHERE key = ?", (ticket.key,)).fetchone()
         p = json.loads(row["pipeline"])
         p["stages"][0]["prompt"] = "{{ 1 / 0 }}"
         conn.execute("UPDATE tickets SET pipeline = ? WHERE key = ?", (json.dumps(p), ticket.key))
-    assert error(runs.claim(run.id)) == (410, "run_gone")
+    assert runs.tick() == [run.id]
+    assert runs.launcher.launched == []
     detail = runs.get(run.id)
     assert detail.status == "failed"
     assert detail.error is not None
@@ -156,14 +150,14 @@ def test_manifest_workspace_comes_from_the_repo_catalog(
     assert m.workspace.base_branch == "release/2"
 
 
-def test_a_repo_that_left_the_catalog_fails_the_run_at_claim(
+def test_a_repo_that_left_the_catalog_fails_the_run_at_dispatch(
     ticket: TicketDetail, runs: RunDriver, ctx: AppContext
 ) -> None:
     run = runs.queue(ticket.key)
-    runs.tick()
-    with ctx.db.tx() as conn:  # as if the catalog lost the repo between dispatch and claim
+    with ctx.db.tx() as conn:  # as if the catalog lost the repo between queueing and dispatch
         conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (ticket.key,))
-    assert error(runs.claim(run.id)) == (410, "run_gone")
+    assert runs.tick() == [run.id]
+    assert runs.launcher.launched == []
     detail = runs.get(run.id)
     assert detail.status == "failed"
     assert detail.error is not None

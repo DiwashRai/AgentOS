@@ -117,8 +117,11 @@ def test_dispatch_claims_sends_the_manifest_and_locks_the_bundle(
     assert row["launcher"] == "mailbox"
     [(sent_id, folder, manifest)] = mailbox.sent
     assert sent_id == run_id
-    assert folder == f"{run_id}-{row['dispatch_token_hash'][:16]}"
-    assert manifest == row["manifest"].encode("utf-8")  # byte-identical to the stored manifest
+    with runs.ctx.db.read() as conn:
+        job = conn.execute("SELECT id, package FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+    assert folder == f"{run_id}-{job['id'][-16:]}"
+    assert manifest == job["package"].encode("utf-8")  # byte-identical to the stored package
+    assert json.loads(manifest)["report"] == {"mode": "file", "url": None}
     assert row["launch_ref"] == mailbox.ref_of(run_id)
     assert runs.get(run_id).launch_url == mailbox.ref_of(run_id)
     assert runs.get(run_id).log_delivery == "at_end"

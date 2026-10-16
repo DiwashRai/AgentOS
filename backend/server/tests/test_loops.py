@@ -594,7 +594,7 @@ def test_a_lost_loop_blocks_the_ticket_at_its_failing_check(
     assert (review.state, review.round, review.max_rounds) == ("failed", 3, 3)
 
 
-def test_the_claim_fails_a_run_whose_pipeline_changed(
+def test_dispatch_fails_a_run_whose_pipeline_changed(
     ctx: AppContext, ticket: TicketDetail, runs: RunDriver
 ) -> None:
     run = runs.queue(ticket.key, "review")
@@ -606,8 +606,9 @@ def test_the_claim_fails_a_run_whose_pipeline_changed(
             "UPDATE tickets SET pipeline = ? WHERE key = ?", (json.dumps(pipeline), ticket.key)
         )
     assert run.id in runs.tick()
-    r = runs.claim(run.id)
-    assert (r.status_code, r.json()["error"]["code"]) == (410, "run_gone")
-    assert runs.get(run.id).error == (
+    assert runs.launcher.launched == []
+    detail = runs.get(run.id)
+    assert detail.status == "failed"
+    assert detail.error == (
         "cannot build the manifest: the pipeline changed since the run was dispatched"
     )

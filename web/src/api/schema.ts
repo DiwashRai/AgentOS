@@ -1107,8 +1107,9 @@ export interface components {
         };
         /**
          * ClientRunAssignment
-         * @description A run handed to a client: its worker claims it at `server_url` with `dispatch_token`
-         *     (`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker.
+         * @description A run handed to a client: its worker claims it at `server_url` with `dispatch_token` (the
+         *     job token; `worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched
+         *     worker.
          */
         ClientRunAssignment: {
             /** Dispatch Token */
@@ -1559,8 +1560,9 @@ export interface components {
         };
         /**
          * JobPackage
-         * @description What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
-         *     paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.
+         * @description What a worker receives for its job, built when the run is dispatched. `env`: non-secret
+         *     stage variables (workspace-relative paths); the worker adds `AGENTOS_RUN_ID` and
+         *     `AGENTOS_TICKET_KEY` itself.
          */
         JobPackage: {
             /** Context */
@@ -1569,6 +1571,8 @@ export interface components {
             env: {
                 [key: string]: string;
             };
+            job: components["schemas"]["ManifestJob"];
+            journal: components["schemas"]["ManifestJournal"];
             limits: components["schemas"]["ManifestLimits"];
             /** Loops */
             loops?: components["schemas"]["ManifestLoop"][];
@@ -1579,6 +1583,7 @@ export interface components {
              * @constant
              */
             protocol: 2;
+            report: components["schemas"]["ManifestReport"];
             /** Run Id */
             run_id: number;
             /** Stages */
@@ -1671,6 +1676,33 @@ export interface components {
             /** Tail */
             tail: string;
         };
+        /**
+         * ManifestJob
+         * @description The job: `id` is `<run_id>-<segment>-<16 hex>`. `budget_s`: the job's stage budgets;
+         *     `not_after`: the worker publishes nothing after it.
+         */
+        ManifestJob: {
+            /** Budget S */
+            budget_s: number;
+            /** Id */
+            id: string;
+            /**
+             * Not After
+             * Format: date-time
+             */
+            not_after: string;
+            /** Run Id */
+            run_id: number;
+            /** Segment */
+            segment: number;
+            /** Segments */
+            segments: number;
+        };
+        /** ManifestJournal */
+        ManifestJournal: {
+            /** First Seq */
+            first_seq: number;
+        };
         /** ManifestLimits */
         ManifestLimits: {
             /** Max File Bytes */
@@ -1689,6 +1721,16 @@ export interface components {
             max_rounds: number;
             /** Start */
             start: string;
+        };
+        /** ManifestReport */
+        ManifestReport: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "live" | "file";
+            /** Url */
+            url: string | null;
         };
         /**
          * ManifestStage

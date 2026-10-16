@@ -36,13 +36,10 @@ def worker_source() -> str:
     return WORKER_PATH.read_text(encoding="utf-8")
 
 
-# Bearer: the dispatch token. Every other worker route: the worker token bound at claim.
+# Bearer: the job token. Every other worker route: the worker token bound at claim.
 @router.post("/api/worker/claim")
 def claim(body: ClaimRequest, token: RunToken, ctx: Ctx) -> ClaimResponse:
-    snapshot = ctx.snapshot()
-    return ClaimResponse(
-        manifest=service.claim(ctx.db, snapshot.runtimes, snapshot.space, token, body.worker_token)
-    )
+    return ClaimResponse(manifest=service.claim(ctx.db, token, body.worker_token))
 
 
 @router.post("/api/worker/events")

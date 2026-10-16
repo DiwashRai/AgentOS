@@ -512,6 +512,9 @@ class Package:
     loops: tuple[Loop, ...] = ()
     start_stage: str | None = None  # where round 1 starts; None = the first stage
     warnings: tuple[str, ...] = ()  # emitted as warning events once the workspace is ready
+    job: dict[str, Any] | None = None  # id, run_id, segment, segments, budget_s, not_after
+    journal: dict[str, int] | None = None  # first_seq
+    report: dict[str, Any] | None = None  # mode (live | file), url
 
     @property
     def key(self) -> str:

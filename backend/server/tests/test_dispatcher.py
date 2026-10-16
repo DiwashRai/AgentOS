@@ -66,7 +66,7 @@ def test_unlimited(
     assert runs.tick() == ids
 
 
-def test_tokens_and_launch_ref(
+def test_job_token_and_launch_ref(
     authed: TestClient,
     create_ticket: CreateTicket,
     runs: RunDriver,
@@ -79,11 +79,13 @@ def test_tokens_and_launch_ref(
     assert launched_id == run_id
     assert server_url == ctx.settings.effective_worker_url
     assert len(token) >= 43
+    with ctx.db.read() as conn:
+        job = dict(conn.execute("SELECT * FROM jobs WHERE run_id = ?", (run_id,)).fetchone())
+    assert job["token_hash"] == hashlib.sha256(token.encode()).hexdigest()
+    assert token not in repr(job)  # only the hash is stored
     row = runs.db_run(run_id)
-    assert row["dispatch_token_hash"] == hashlib.sha256(token.encode()).hexdigest()
     assert row["dispatched_at"] is not None
     assert row["launch_ref"] == f"fake-{run_id}"
-    assert token not in repr(row)  # only the hash is stored
     assert runs.get(run_id).launch_ref == f"fake-{run_id}"
 
 

@@ -8,6 +8,16 @@ const PROMPT = "Review the change.\nSECRET-LOOKING-PROMPT-BODY";
 
 const MANIFEST: Manifest = {
   protocol: 2,
+  job: {
+    id: "7-1-0123456789abcdef",
+    run_id: 7,
+    segment: 1,
+    segments: 1,
+    budget_s: 3600,
+    not_after: "2026-10-16T12:00:00Z",
+  },
+  journal: { first_seq: 1 },
+  report: { mode: "live", url: "http://127.0.0.1:8000" },
   run_id: 7,
   ticket: { key: "AOS-1", title: "A ticket" },
   workspace: {

@@ -89,7 +89,7 @@ class MailboxReaper:
     # ------------------------------------------------------------------ one run
 
     def check(self, run: service.MailboxRun, now: datetime) -> Outcome | None:
-        folder = run_folder(run.id, run.dispatch_token_hash)
+        folder = run_folder(run.id, run.job_hex)
         ref = run.launch_ref
         cancel_requested = run.cancel_requested_at is not None
         # 1. a requested cancel reaches GitHub once

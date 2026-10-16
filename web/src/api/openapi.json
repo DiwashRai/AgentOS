@@ -329,7 +329,7 @@
       },
       "ClientRunAssignment": {
         "additionalProperties": false,
-        "description": "A run handed to a client: its worker claims it at `server_url` with `dispatch_token`\n(`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker.",
+        "description": "A run handed to a client: its worker claims it at `server_url` with `dispatch_token` (the\njob token; `worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched\nworker.",
         "properties": {
           "dispatch_token": {
             "title": "Dispatch Token",
@@ -1506,7 +1506,7 @@
       },
       "JobPackage": {
         "additionalProperties": false,
-        "description": "What a worker receives at claim. `env`: non-secret stage variables (workspace-relative\npaths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.",
+        "description": "What a worker receives for its job, built when the run is dispatched. `env`: non-secret\nstage variables (workspace-relative paths); the worker adds `AGENTOS_RUN_ID` and\n`AGENTOS_TICKET_KEY` itself.",
         "properties": {
           "context": {
             "items": {
@@ -1521,6 +1521,12 @@
             },
             "title": "Env",
             "type": "object"
+          },
+          "job": {
+            "$ref": "#/components/schemas/ManifestJob"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/ManifestJournal"
           },
           "limits": {
             "$ref": "#/components/schemas/ManifestLimits"
@@ -1543,6 +1549,9 @@
             "const": 2,
             "title": "Protocol",
             "type": "integer"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ManifestReport"
           },
           "run_id": {
             "title": "Run Id",
@@ -1585,6 +1594,9 @@
         },
         "required": [
           "protocol",
+          "job",
+          "journal",
+          "report",
           "run_id",
           "ticket",
           "workspace",
@@ -1785,6 +1797,61 @@
         "title": "ManifestInvocation",
         "type": "object"
       },
+      "ManifestJob": {
+        "additionalProperties": false,
+        "description": "The job: `id` is `<run_id>-<segment>-<16 hex>`. `budget_s`: the job's stage budgets;\n`not_after`: the worker publishes nothing after it.",
+        "properties": {
+          "budget_s": {
+            "title": "Budget S",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "not_after": {
+            "format": "date-time",
+            "title": "Not After",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "segment": {
+            "title": "Segment",
+            "type": "integer"
+          },
+          "segments": {
+            "title": "Segments",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "segment",
+          "segments",
+          "budget_s",
+          "not_after"
+        ],
+        "title": "ManifestJob",
+        "type": "object"
+      },
+      "ManifestJournal": {
+        "additionalProperties": false,
+        "properties": {
+          "first_seq": {
+            "title": "First Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "first_seq"
+        ],
+        "title": "ManifestJournal",
+        "type": "object"
+      },
       "ManifestLimits": {
         "additionalProperties": false,
         "properties": {
@@ -1827,6 +1894,36 @@
           "max_rounds"
         ],
         "title": "ManifestLoop",
+        "type": "object"
+      },
+      "ManifestReport": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "live",
+              "file"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "mode",
+          "url"
+        ],
+        "title": "ManifestReport",
         "type": "object"
       },
       "ManifestStage": {

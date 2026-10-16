@@ -1311,11 +1311,39 @@ class ManifestLimits(ApiModel):
     max_line_bytes: int
 
 
+class ManifestJob(ApiModel):
+    """The job: `id` is `<run_id>-<segment>-<16 hex>`. `budget_s`: the job's stage budgets;
+    `not_after`: the worker publishes nothing after it."""
+
+    id: str
+    run_id: int
+    segment: int
+    segments: int
+    budget_s: int
+    not_after: AwareDatetime
+
+
+class ManifestJournal(ApiModel):
+    first_seq: int  # the seq of the job's first journal record
+
+
+ReportMode = Literal["live", "file"]
+
+
+class ManifestReport(ApiModel):
+    mode: ReportMode
+    url: str | None  # live: the server's base URL
+
+
 class JobPackage(ApiModel):
-    """What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
-    paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself."""
+    """What a worker receives for its job, built when the run is dispatched. `env`: non-secret
+    stage variables (workspace-relative paths); the worker adds `AGENTOS_RUN_ID` and
+    `AGENTOS_TICKET_KEY` itself."""
 
     protocol: Literal[2]
+    job: ManifestJob
+    journal: ManifestJournal
+    report: ManifestReport
     run_id: int
     ticket: ManifestTicket
     workspace: ManifestWorkspace
@@ -1548,8 +1576,9 @@ class ClientPollRequest(ApiModel):
 
 
 class ClientRunAssignment(ApiModel):
-    """A run handed to a client: its worker claims it at `server_url` with `dispatch_token`
-    (`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker."""
+    """A run handed to a client: its worker claims it at `server_url` with `dispatch_token` (the
+    job token; `worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched
+    worker."""
 
     run_id: int
     server_url: str

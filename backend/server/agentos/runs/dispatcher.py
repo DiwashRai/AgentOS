@@ -2,15 +2,16 @@
 `max_concurrency` (None = unlimited; the dispatcher counts active runs, plugins never query).
 
 `tick(ctx)` is synchronous and unit-testable; the lifespan runs it every INTERVAL_S in a thread.
-The dispatch token exists in plaintext only here and in the launcher call; never log it.
+Each run's job is built as it is dispatched; the job token exists in plaintext only here and in
+the launcher call; never log it.
 """
 
 from __future__ import annotations
 
 import logging
-import secrets
 
 from agentos.context import AppContext
+from agentos.models import ManifestReport
 from agentos.runs import service
 
 log = logging.getLogger(__name__)
@@ -20,17 +21,21 @@ INTERVAL_S = 2.0
 
 def tick(ctx: AppContext) -> list[int]:
     """Dispatch queued runs until none is left or the launcher is full. Returns the run ids
-    handed to the launcher (including ones whose launch failed)."""
+    taken from the queue (including ones whose build or launch failed: those runs are failed)."""
     launcher = ctx.launcher
+    report = ManifestReport(mode="live", url=ctx.settings.effective_worker_url)
     launched: list[int] = []
     while True:
-        token = secrets.token_urlsafe(32)
-        run_id = service.mark_next_dispatched(
-            ctx.db, launcher.name, launcher.max_concurrency, service.token_hash(token)
+        dispatched = service.mark_next_dispatched(
+            ctx.db, launcher.name, launcher.max_concurrency, report
         )
-        if run_id is None:
+        if dispatched is None:
             return launched
+        run_id, token = dispatched
         launched.append(run_id)
+        if token is None:
+            log.warning("run %s: not launched: its job could not be built", run_id)
+            continue
         # Outside any transaction: a launch may take a while (a GitHub API call in M1).
         try:
             ref = launcher.launch(run_id, ctx.settings.effective_worker_url, token)

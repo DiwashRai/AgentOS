@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,9 @@ from agentos.models import (
     ContextEntry,
     FileEntry,
     JobPackage,
+    ManifestJob,
+    ManifestJournal,
+    ManifestReport,
     Mode,
     NoteEntry,
     Stage,
@@ -21,7 +25,7 @@ from agentos.pipeline.manifest import build_package, classify, render_stages, re
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig, RuntimeSpec
 from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, default_pipeline
-from agentos.pipeline.segment import plan_run
+from agentos.pipeline.segment import RunPlan, plan_run
 from agentos.validate import (
     MAX_AGENT_LINE_BYTES,
     MAX_FILE_BYTES,
@@ -213,9 +217,30 @@ def _bundle(ticket: TicketRef = TICKET) -> list[FileEntry]:
     return render_scaffold(DEFAULT_SCAFFOLD, ticket)
 
 
+def _build(run_id: int, ticket: TicketRef, plan: RunPlan) -> JobPackage:
+    job = ManifestJob(
+        id=f"{run_id}-1-0123456789abcdef",
+        run_id=run_id,
+        segment=1,
+        segments=1,
+        budget_s=plan.time_budget_s(),
+        not_after=datetime(2026, 10, 16, tzinfo=UTC),
+    )
+    return build_package(
+        run_id,
+        ticket,
+        plan,
+        _bundle(ticket),
+        RUNTIMES,
+        defaults=NONE,
+        job=job,
+        journal=ManifestJournal(first_seq=1),
+        report=ManifestReport(mode="live", url="http://127.0.0.1:8000"),
+    )
+
+
 def test_build_package_default_ticket() -> None:
-    p = default_pipeline()
-    m = build_package(42, TICKET, plan_run(p, "implement"), _bundle(), RUNTIMES, defaults=NONE)
+    m = _build(42, TICKET, plan_run(default_pipeline(), "implement"))
     assert JobPackage.model_validate_json(m.model_dump_json()) == m
     assert (m.protocol, m.run_id) == (2, 42)
     assert m.ticket.model_dump() == {"key": "AOS-42", "title": TICKET.title}
@@ -248,9 +273,7 @@ def test_build_package_default_ticket() -> None:
 
 def test_build_package_no_repo_nulls_workspace() -> None:
     t = replace(TICKET, workspace_mode="none")
-    m = build_package(
-        1, t, plan_run(default_pipeline(), "plan"), _bundle(t), RUNTIMES, defaults=NONE
-    )
+    m = _build(1, t, plan_run(default_pipeline(), "plan"))
     ws = m.workspace
     assert (ws.mode, ws.repo_url, ws.base_branch, ws.branch) == ("none", None, None, None)
     agents = next(e for e in m.context if e.path == "AGENTS.md")
@@ -291,10 +314,10 @@ def test_fixture_shape_matches_builder() -> None:
     # The fixture exercises both file modes and both stage kinds in the worker suite too.
     assert {e.mode for e in fixture.context} == {"replace", "block"}
     assert {s.kind for s in fixture.stages} == {"agent", "shell"}
-    built = build_package(
-        42, TICKET, plan_run(default_pipeline(), "implement"), _bundle(), RUNTIMES, defaults=NONE
-    )
+    built = _build(42, TICKET, plan_run(default_pipeline(), "implement"))
     assert set(built.model_dump()) == set(fixture.model_dump())
+    assert set(built.job.model_dump()) == set(fixture.job.model_dump())
+    assert set(built.report.model_dump()) == set(fixture.report.model_dump())
     assert set(built.context[0].model_dump()) == set(fixture.context[0].model_dump())
     assert set(built.notes[0].model_dump()) == set(fixture.notes[0].model_dump())
     assert built.ticket == fixture.ticket

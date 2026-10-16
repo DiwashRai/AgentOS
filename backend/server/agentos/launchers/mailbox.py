@@ -3,7 +3,8 @@
 The server uploads the run's manifest and worker.py to a store (Artifactory) under
 `runs/<folder>/`, dispatches `agentos-mailbox.yml`, polls the Actions run, and later fetches
 `runs/<folder>/outbox.jsonl` (the worker's recorded API calls) to replay. `<folder>` is
-`run_folder(run_id, dispatch_token_hash)`, unique per run even across servers and db resets.
+`run_folder(run_id, <the random hex of the run's job id>)`, unique per run even across servers
+and db resets.
 
 The mailbox dispatcher and reaper (`agentos.mailbox`) drive it; `launch()` is never used.
 Every method raises MailboxError (a safe message, no credentials) when GitHub or the store fails.

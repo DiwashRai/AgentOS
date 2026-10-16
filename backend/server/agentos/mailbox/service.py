@@ -46,7 +46,7 @@ class MailboxRun:
     """A running mailbox run, as the mailbox reaper sees it."""
 
     id: int
-    dispatch_token_hash: str
+    job_hex: str  # the random part of its job id, which names its folder
     launch_ref: str | None
     started_at: datetime | None
     time_budget_s: int
@@ -60,15 +60,15 @@ def running_runs(db: Database) -> list[MailboxRun]:
     """Every `running` mailbox run, oldest first."""
     with db.read() as conn:
         rows = conn.execute(
-            "SELECT id, dispatch_token_hash, launch_ref, started_at, time_budget_s, "
-            "cancel_requested_at FROM runs WHERE launcher = ? AND status = 'running' "
-            "AND dispatch_token_hash IS NOT NULL ORDER BY id",
+            "SELECT r.id, substr(j.id, -16) AS job_hex, r.launch_ref, r.started_at, "
+            "r.time_budget_s, r.cancel_requested_at FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "WHERE r.launcher = ? AND r.status = 'running' ORDER BY r.id",
             (LAUNCHER,),
         ).fetchall()
     return [
         MailboxRun(
             id=r["id"],
-            dispatch_token_hash=r["dispatch_token_hash"],
+            job_hex=r["job_hex"],
             launch_ref=r["launch_ref"],
             started_at=from_db_opt(r["started_at"]),
             time_budget_s=r["time_budget_s"],
@@ -79,13 +79,14 @@ def running_runs(db: Database) -> list[MailboxRun]:
 
 
 def active_runs(db: Database) -> dict[int, str | None]:
-    """Every dispatched or running run (any launcher: run ids are per server) → its dispatch
-    token hash. What the sweep must keep."""
+    """Every dispatched or running run (any launcher: run ids are per server) → the random part
+    of its job id (None without a job). What the sweep must keep."""
     with db.read() as conn:
         rows = conn.execute(
-            "SELECT id, dispatch_token_hash FROM runs WHERE status IN ('dispatched', 'running')"
+            "SELECT r.id, substr(j.id, -16) AS job_hex FROM runs r "
+            "LEFT JOIN jobs j ON j.run_id = r.id WHERE r.status IN ('dispatched', 'running')"
         ).fetchall()
-    return {int(r["id"]): r["dispatch_token_hash"] for r in rows}
+    return {int(r["id"]): r["job_hex"] for r in rows}
 
 
 def is_running(db: Database, run_id: int) -> bool:
