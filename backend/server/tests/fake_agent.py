@@ -5,8 +5,9 @@ seeds. It reads the prompt from stdin and acts on the LAST line of the form
 `fake-agent: <mode>` (the test appends one to each stage's prompt through the pipeline API):
 
   plan       write a 3-item checklist to TASKS.md, append to learnings.log
-  implement  tick every TASKS.md item, append to learnings.log, write src/hello.py and append a
-             line to AGENTS.md outside the agentos block (a tracked file: must not be committed)
+  implement  tick every TASKS.md item, append to learnings.log, write src/hello.py, add a line
+             inside AGENTS.md's agentos block and append one outside it (a tracked file: must not
+             be committed), and write SYNC_BACK_FILE into $AGENTOS_SYNC_BACK
   review     write REVIEW.md in the skill dir
   fail       print, then exit 1
   slow       print its pid, then print a line every 0.2 s for up to 120 s (for cancel)
@@ -26,6 +27,8 @@ import time
 from pathlib import Path
 
 MODE_RE = re.compile(r"^fake-agent:\s*([a-z]+)\s*$", re.MULTILINE)
+BLOCK_LINE = "Edited by the fake agent (inside the agentos block)."
+SYNC_BACK_FILE = "summary.txt"
 
 
 def emit(**event: object) -> None:
@@ -47,9 +50,18 @@ def implement(skill: Path, key: str, run_id: str) -> None:
     tasks = skill / "TASKS.md"
     tasks.write_bytes(tasks.read_bytes().replace(b"- [ ]", b"- [x]"))
     append(skill / "learnings.log", f"run {run_id}: implemented the plan\n")
+
     Path("src").mkdir(exist_ok=True)
     Path("src/hello.py").write_bytes(f'GREETING = "hello from {key}"\n'.encode())
-    append(Path("AGENTS.md"), "\nNote from the fake agent (outside the agentos block).\n")
+
+    agents = Path("AGENTS.md")
+    end = f"\n<!-- agentos:end {key} -->".encode()
+    agents.write_bytes(agents.read_bytes().replace(end, f"\n{BLOCK_LINE}".encode() + end, 1))
+    append(agents, "\nNote from the fake agent (outside the agentos block).\n")
+
+    sync_back = Path(os.environ["AGENTOS_SYNC_BACK"])
+    sync_back.mkdir(parents=True, exist_ok=True)
+    (sync_back / SYNC_BACK_FILE).write_bytes(f"run {run_id} implemented {key}\n".encode())
 
 
 def review(skill: Path, key: str) -> None:
