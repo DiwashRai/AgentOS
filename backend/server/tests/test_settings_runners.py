@@ -14,7 +14,7 @@ from pydantic import SecretStr
 
 from agentos.config import Settings
 from agentos.context import AppContext, runner_target
-from agentos.launchers.github import NO_REPO, GitHubActionsLauncher
+from agentos.launchers.github import NO_REPO, GitHubActionsProvider
 from agentos.main import create_app
 from agentos.models import AppConfig, JobPackage, RunnerSettings, RuntimeSettings, TicketDetail
 from tests.run_support import RunDriver
@@ -242,12 +242,12 @@ def test_runtimes_are_admin_only(client: TestClient, login: LoginFn) -> None:
 # ------------------------------------------------------------------ runner
 
 
-def test_seeded_runner_with_the_local_launcher(authed: TestClient) -> None:
+def test_seeded_runner(authed: TestClient) -> None:
     got = runner(authed)
     assert got.model_dump(exclude={"updated_at"}) == {
         "value": {"github_repo": None, "workflow": "agentos-worker.yml", "ref": "main"},
-        "launcher": "local",
-        "token_set": False,
+        "launcher": "github",  # the test settings' env
+        "token_set": True,
         "version": 1,
         "updated_by": None,
     }
@@ -292,18 +292,18 @@ def test_runner_is_validated(authed: TestClient, changes: dict[str, Any]) -> Non
     assert runner(authed).version == 1
 
 
-def test_github_launcher_reads_the_runner_at_each_launch(
+def test_github_provider_reads_the_runner_at_each_start(
     authed: TestClient, ctx: AppContext, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    """No repo set → the run fails at launch saying where to set it (GitHub isn't called). Once
-    an admin saves one, the next launch goes there, no restart."""
+    """No repo set → the run fails at its start saying where to set it (GitHub isn't called).
+    Once an admin saves one, the next start goes there, no restart."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(204)
 
-    ctx.launcher = GitHubActionsLauncher(
+    ctx.providers["github"] = GitHubActionsProvider(
         target=runner_target(ctx.db),
         token=GH_TOKEN,
         transport=httpx.MockTransport(handler),

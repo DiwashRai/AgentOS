@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pydantic import TypeAdapter
 
 from agentos.auth.service import hash_token
-from agentos.clients.service import CLIENT_LAUNCHER, has_client, online_user_ids
+from agentos.clients.service import has_client, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError, field_error
@@ -35,11 +35,13 @@ from agentos.models import (
     ManifestReport,
     Me,
     Pipeline,
+    Route,
     RunDetail,
     RunEvent,
     RunStatus,
     RunSummary,
     StageRunInfo,
+    StopReason,
     SyncBackInfo,
 )
 from agentos.pipeline.manifest import build_package, render_stages
@@ -62,13 +64,27 @@ from agentos.tickets.service import (
 ACTIVE: tuple[RunStatus, ...] = ("queued", "dispatched", "running")
 TERMINAL: tuple[RunStatus, ...] = ("succeeded", "gated", "failed", "cancelled")
 
-# Reaper thresholds (SPEC §8 "Reaper loop").
-HEARTBEAT_TIMEOUT = timedelta(seconds=90)
+# A job's allowance past its time budget (clone, publish), plus the publish job's for a file
+# report; a pull job's allowance to start after the lease.
 BUDGET_GRACE = timedelta(minutes=15)
-CANCEL_GRACE = timedelta(minutes=2)
-NEVER_CONNECTED = "worker never connected"
-WORKER_LOST = "worker lost"
+FILE_GRACE = timedelta(minutes=30)
+PULL_START_TIMEOUT = timedelta(minutes=2)
+NEVER_STARTED = "never started"
+WORKER_EXITED = "its worker exited without a result"
+EXITED_UNSTARTED = "its worker exited before it started"
 OVER_BUDGET = "time budget exceeded"
+
+# A client run: its owner's client leases it and it reports live.
+CLIENT_ROUTE = Route("pull", None, "live")
+
+# How a run ends when its stopped job reports `cancelled`: a user's cancel (or no stop) →
+# cancelled; a stop the server made → failed with its reason.
+STOPPED: dict[StopReason | None, tuple[RunStatus, str | None]] = {
+    None: ("cancelled", None),
+    "cancel": ("cancelled", None),
+    "budget": ("failed", OVER_BUDGET),
+    "never_started": ("failed", NEVER_STARTED),
+}
 
 EVENT_ADAPTER: TypeAdapter[RunEvent] = TypeAdapter(RunEvent)
 
@@ -83,11 +99,15 @@ _SQL_STAGE_RUNS = (
     "SELECT idx, stage_id, round, status, verdict, exit_code, reason, started_at, finished_at "
     "FROM stage_runs WHERE run_id = ? ORDER BY idx"
 )
-# A user's oldest queued client run (params: CLIENT_LAUNCHER, user id).
-_SQL_QUEUED_CLIENT_RUN = (
-    "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
-    "ORDER BY id LIMIT 1"
+# Queued runs, oldest first, each with `fence`: the latest earlier run of its ticket whose job may
+# still publish (params: now, then those of the WHERE part appended).
+_SQL_QUEUED = (
+    "SELECT r.id, r.provider, r.report, r.queue_reason, (SELECT MAX(p.id) FROM runs p JOIN jobs j "
+    "ON j.run_id = p.id WHERE p.ticket_id = r.ticket_id AND p.id < r.id AND j.ended_at IS NULL "
+    "AND j.not_after > ?) AS fence FROM runs r WHERE r.status = 'queued' AND "
 )
+_SQL_QUEUED_PUSH = _SQL_QUEUED + "r.start = 'push' AND r.report = ? ORDER BY r.id"
+_SQL_QUEUED_PULL = _SQL_QUEUED + "r.start = 'pull' AND r.created_by = ? ORDER BY r.id"
 
 
 # ------------------------------------------------------------------ row → model helpers
@@ -103,11 +123,7 @@ def run_row(conn: Conn, run_id: int) -> Row:
 
 def _summaries(conn: Conn, rows: Sequence[Row]) -> list[RunSummary]:
     """`run_row`-shaped rows → summaries, with one query for whose clients are online."""
-    creators = [
-        r["created_by"]
-        for r in rows
-        if r["launcher"] == CLIENT_LAUNCHER and r["created_by"] is not None
-    ]
+    creators = [r["created_by"] for r in rows if r["start"] == "pull" and r["created_by"]]
     online = online_user_ids(conn, creators, utcnow()) if creators else set()
     return [run_summary(r, r["ticket_key"], online) for r in rows]
 
@@ -157,7 +173,7 @@ def dispatch(
     db: Database,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
-    launcher_name: str,
+    server_route: Route | None,
     key: str,
     user: Me,
     from_stage: str | None,
@@ -173,12 +189,16 @@ def dispatch(
     The run covers `plan_run`'s stages (`stage_ids`): from `from_stage` on, plus the start of the
     loop block it is in (run from round 2 on), with a time budget for every round.
 
-    `target` "server" queues the run for the configured launcher (`launcher_name`); "client"
-    queues it for `user`'s own client (`launcher = 'client'`, taken by `take_client_run`), which
-    only the ticket's owner may do (403 `forbidden`), and only with a client token (422
-    `validation_error`).
+    The run stores its route. `target` "server" takes `server_route` (None: 422
+    `validation_error`, this server starts no workers); "client" queues it for `user`'s own
+    client (`CLIENT_ROUTE`, taken by `take_client_run`), which only the ticket's owner may do
+    (403 `forbidden`), and only with a client token (422 `validation_error`).
     """
     now = to_db(utcnow())
+    route = CLIENT_ROUTE if target == "client" else server_route
+    if route is None:
+        raise field_error(["target"], "No runner is configured on this server; use your client.")
+
     with db.tx() as conn:
         ticket = get_ticket_row(conn, key)
         if target == "client" and ticket["owner_id"] != user.id:
@@ -197,12 +217,12 @@ def dispatch(
                 raise ApiError(422, "invalid_stage", "nothing to run; pick a stage")
         plan = plan_run(pipeline, from_stage)
         check_segment(plan.stages, ref.workspace_mode)
-        launcher = CLIENT_LAUNCHER if target == "client" else launcher_name
         try:
             cursor = conn.execute(
-                "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
-                "launcher, created_by, created_at) VALUES (?, 'queued', ?, '[]', 0, ?, ?, ?)",
-                (ticket["id"], from_stage, launcher, user.id, now),
+                "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, start, "
+                "provider, report, created_by, created_at) "
+                "VALUES (?, 'queued', ?, '[]', 0, ?, ?, ?, ?, ?)",
+                (ticket["id"], from_stage, *route, user.id, now),
             )
         except IntegrityError as exc:  # runs_one_active
             raise ApiError(409, "run_active", f"{key} already has an active run") from exc
@@ -301,22 +321,36 @@ def run_events(
 
 
 def cancel(db: Database, run_id: int) -> RunSummary:
-    """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → set
-    `cancel_requested_at` once; the worker sees `cancel: true` on its next journal post and
-    completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A terminal run
-    is returned unchanged."""
+    """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → stop the
+    run and its job once (reason `cancel`); the worker sees `cancel: true` on its next journal
+    post and completes as cancelled (the reaper ends it after its stop grace otherwise). A
+    terminal run is returned unchanged."""
     now = utcnow()
     with db.tx() as conn:
         row = run_row(conn, run_id)
         if row["status"] in ("queued", "dispatched"):
             finish(conn, run_id, "cancelled", ("queued", "dispatched"), now=now)
         elif row["status"] == "running":
-            conn.execute(
-                "UPDATE runs SET cancel_requested_at = ? "
-                "WHERE id = ? AND status = 'running' AND cancel_requested_at IS NULL",
-                (to_db(now), run_id),
-            )
+            stop(conn, run_id, "cancel", now)
         return _summary(conn, run_row(conn, run_id))
+
+
+def stop(conn: Conn, run_id: int, reason: StopReason, now: datetime) -> bool:
+    """Stop an active run and its job once, with `reason`, in the caller's transaction: its
+    worker sees `cancel: true` in its next journal reply. Returns whether it stopped it now."""
+    params = (to_db(now), reason, run_id)
+    cursor = conn.execute(
+        "UPDATE runs SET stop_requested_at = ?, stop_reason = ? "
+        "WHERE id = ? AND status IN ('dispatched', 'running') AND stop_requested_at IS NULL",
+        params,
+    )
+    if cursor.rowcount:
+        conn.execute(
+            "UPDATE jobs SET stop_requested_at = ?, stop_reason = ? "
+            "WHERE run_id = ? AND stop_requested_at IS NULL",
+            params,
+        )
+    return cursor.rowcount > 0
 
 
 # ------------------------------------------------------------------ state machine primitives
@@ -332,6 +366,11 @@ def finish(
     error: str | None = None,
 ) -> bool:
     """Guarded terminal transition + side effects, in the caller's transaction.
+
+    A live-report run's job that never bound ends with it (`end_job`, lifting the fence): once
+    ended, its package and journal answer 410, so no worker can start it any more. Except a push
+    run ending cancelled: the reaper still asks its provider to cancel the job, which then ends
+    when the provider says so. A file-report job is left alone: its worker never binds live.
 
     Returns False (and changes nothing) if the run's status isn't one of `from_statuses`.
     """
@@ -354,29 +393,46 @@ def finish(
         "UPDATE tickets SET updated_at = ? WHERE id = (SELECT ticket_id FROM runs WHERE id = ?)",
         (stamp, run_id),
     )
+    unbound = conn.execute(
+        "SELECT j.id FROM jobs j JOIN runs r ON r.id = j.run_id WHERE j.run_id = ? "
+        "AND j.ended_at IS NULL AND j.instance_hash IS NULL AND r.report = 'live' "
+        "AND NOT (r.start = 'push' AND r.status = 'cancelled')",
+        (run_id,),
+    ).fetchone()
+    if unbound is not None:
+        end_job(conn, run_id, unbound["id"], now)
     return True
 
 
 # ------------------------------------------------------------------ dispatcher primitives
 
 
+def not_after(route: Route, dispatched: datetime, budget_s: int, start_timeout: int) -> datetime:
+    """When a job's worker may no longer publish: its dispatch + the start allowance (push: the
+    start timeout; pull: PULL_START_TIMEOUT) + its budget + BUDGET_GRACE (+ FILE_GRACE)."""
+    start = timedelta(seconds=start_timeout) if route.start == "push" else PULL_START_TIMEOUT
+    overhead = BUDGET_GRACE + (FILE_GRACE if route.report == "file" else timedelta())
+    return dispatched + start + timedelta(seconds=budget_s) + overhead
+
+
 def build_job(
-    conn: Conn, run: Row, report: ManifestReport, now: datetime
+    conn: Conn, run: Row, report: ManifestReport, now: datetime, client_id: int | None = None
 ) -> tuple[str, str] | None:
-    """Build and store the job of a run just dispatched, in the caller's transaction, from the
-    ticket, its bundle and the Space as they are now. Returns the job id and its token (in
-    plaintext only here; never logged). A build failure (a repo gone from the catalog, a changed
-    pipeline) fails the run through `finish()` and returns None, so the run is never launched."""
+    """Build and store the job of a run just dispatched (by `client_id`, for pull), in the
+    caller's transaction, from the ticket, its bundle and the Space as they are now. Returns the
+    job id and its token (in plaintext only here; never logged). A build failure (a repo gone
+    from the catalog, a changed pipeline) fails the run through `finish()` and returns None."""
     snapshot = load_snapshot(conn)
     ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
     budget_s: int = run["time_budget_s"]
+    route = Route(run["start"], run["provider"], run["report"])
     job = ManifestJob(
         id=f"{run['id']}-1-{secrets.token_hex(8)}",
         run_id=run["id"],
         segment=1,
         segments=1,
         budget_s=budget_s,
-        not_after=now + timedelta(seconds=snapshot.space.claim_timeout_s + budget_s) + BUDGET_GRACE,
+        not_after=not_after(route, now, budget_s, snapshot.space.claim_timeout_s),
     )
     journal = ManifestJournal(first_seq=run["journal_seq"] + 1)
 
@@ -405,7 +461,7 @@ def build_job(
     token = secrets.token_urlsafe(32)
     conn.execute(
         "INSERT INTO jobs(id, run_id, segment, token_hash, package, first_seq, budget_s, "
-        "not_after, created_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
+        "not_after, created_at, client_id) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
         (
             job.id,
             run["id"],
@@ -415,73 +471,88 @@ def build_job(
             budget_s,
             to_db(job.not_after),
             to_db(now),
+            client_id,
         ),
     )
     return job.id, token
 
 
+def fence_reason(run_id: int) -> str:  # the `queue_reason` of a run held by run_id's job
+    return f"waiting for run #{run_id}'s worker to stop"
+
+
+def _next_queued(
+    conn: Conn, sql: str, param: str | int, now: datetime, providers: Collection[str] | None
+) -> tuple[Row | None, list[tuple[str, int]]]:
+    """The oldest queued run `sql` selects that may start now, and `(queue_reason, id)` for each
+    older one that waits for a new reason: the fence (its ticket's earlier job may still
+    publish) or, for push (`providers` given), a runner that isn't configured."""
+    held: list[tuple[str, int]] = []
+    for row in conn.execute(sql, (to_db(now), param)).fetchall():
+        if row["fence"] is not None:
+            reason = fence_reason(row["fence"])
+        elif providers is not None and row["provider"] not in providers:
+            runner = "mailbox" if row["report"] == "file" else row["provider"]
+            reason = f"its runner ({runner}) is not configured on this server"
+        else:
+            return row, held
+        if reason != row["queue_reason"]:
+            held.append((reason, row["id"]))
+    return None, held
+
+
 def mark_next_dispatched(
-    db: Database,
-    launcher_name: str,
-    max_concurrency: int | None,
-    report: ManifestReport,
-) -> tuple[int, tuple[str, str] | None] | None:
-    """Move the launcher's oldest `queued` run to `dispatched` and build its job, unless its
-    active (dispatched|running) runs are already at `max_concurrency`. Returns the run id and
-    `build_job`'s answer."""
+    db: Database, providers: Collection[str], report: ManifestReport
+) -> tuple[int, str, tuple[str, str] | None] | None:
+    """Move the oldest `queued` push run reporting `report.mode` that may start (`_next_queued`)
+    to `dispatched` (clearing its `queue_reason`) and build its job. Returns the run id, its
+    provider and `build_job`'s answer. With no `providers` nothing starts: every such run only
+    gets the reason it waits."""
     now = utcnow()
     with db.tx() as conn:
-        if max_concurrency is not None:
-            active = conn.execute(
-                "SELECT COUNT(*) FROM runs "
-                "WHERE launcher = ? AND status IN ('dispatched', 'running')",
-                (launcher_name,),
-            ).fetchone()[0]
-            if active >= max_concurrency:
-                return None
-        row = conn.execute(
-            "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' ORDER BY id LIMIT 1",
-            (launcher_name,),
-        ).fetchone()
+        row, held = _next_queued(conn, _SQL_QUEUED_PUSH, report.mode, now, providers)
+        conn.executemany("UPDATE runs SET queue_reason = ? WHERE id = ?", held)
         if row is None:
             return None
         run_id: int = row["id"]
         cursor = conn.execute(
-            "UPDATE runs SET status = 'dispatched', dispatched_at = ? "
+            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, queue_reason = NULL "
             "WHERE id = ? AND status = 'queued'",
             (to_db(now), run_id),
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
-        return run_id, build_job(conn, run_row(conn, run_id), report, now)
+        return run_id, row["provider"], build_job(conn, run_row(conn, run_id), report, now)
 
 
 def take_client_run(
-    db: Database, user_id: int, launch_ref: str, server_url: str
+    db: Database, user_id: int, client_id: int, launch_ref: str, server_url: str
 ) -> LeasedJob | None:
-    """Hand the user's oldest `queued` client run to their leasing client: → `dispatched`,
-    storing `launch_ref` (the client's name), and build its job (reporting to `server_url`).
-    Returns it, or None if none is queued or the build failed. It reads first and takes the
-    write lock only when a run is queued, so a waiting lease never holds it."""
-    with db.read() as conn:
-        if conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone() is None:
-            return None
-
+    """Hand the user's oldest client run that may start (`_next_queued`) to their leasing client
+    `client_id`: → `dispatched`, storing `launch_ref` (its name), and build its job (reporting to
+    `server_url`). Returns it, or None. It takes the write lock only when a run may start or a
+    `queue_reason` changes, so a waiting lease never holds it."""
     now = utcnow()
+    with db.read() as conn:
+        row, held = _next_queued(conn, _SQL_QUEUED_PULL, user_id, now, None)
+    if row is None and not held:
+        return None
+
     with db.tx() as conn:
-        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
+        row, held = _next_queued(conn, _SQL_QUEUED_PULL, user_id, now, None)
+        conn.executemany("UPDATE runs SET queue_reason = ? WHERE id = ?", held)
         if row is None:
             return None
         run_id: int = row["id"]
         cursor = conn.execute(
-            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, launch_ref = ? "
-            "WHERE id = ? AND status = 'queued'",
+            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, launch_ref = ?, "
+            "queue_reason = NULL WHERE id = ? AND status = 'queued'",
             (to_db(now), launch_ref, run_id),
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
         report = ManifestReport(mode="live", url=server_url)
-        built = build_job(conn, run_row(conn, run_id), report, now)
+        built = build_job(conn, run_row(conn, run_id), report, now, client_id)
     if built is None:
         return None
     return LeasedJob(job_id=built[0], run_id=run_id, server_url=server_url, job_token=built[1])
@@ -504,24 +575,20 @@ def start(db: Database, run_id: int) -> str | None:
 
 
 def set_launch_ref(db: Database, run_id: int, launch_ref: str) -> None:
-    """Store where the launcher started the worker (the run's `launch_url` derives from it)."""
+    """Store the provider's ref of the started worker (the run's `launch_url` derives from it)."""
     with db.tx() as conn:
         conn.execute("UPDATE runs SET launch_ref = ? WHERE id = ?", (launch_ref, run_id))
 
 
-def fail_launch(db: Database, run_id: int, error: str) -> None:
+def fail_start(db: Database, run_id: int, job_id: str, error: str) -> None:
+    """The provider didn't start the job: the run fails and the job has ended (nothing ran)."""
+    now = utcnow()
     with db.tx() as conn:
-        finish(conn, run_id, "failed", ("dispatched",), now=utcnow(), error=error)
+        finish(conn, run_id, "failed", ("dispatched",), now=now, error=error)
+        conn.execute("UPDATE jobs SET ended_at = ? WHERE id = ?", (to_db(now), job_id))
 
 
 # ------------------------------------------------------------------ reaper primitives
-
-
-@dataclass(frozen=True, slots=True)
-class Reaped:
-    run_id: int
-    status: RunStatus
-    reason: str
 
 
 def touch_running(db: Database, now: datetime) -> int:
@@ -533,77 +600,65 @@ def touch_running(db: Database, now: datetime) -> int:
         return cursor.rowcount
 
 
-def reap(
-    db: Database,
-    now: datetime,
-    claim_timeout_s: int,
-    exempt_launcher: str | None = None,
-) -> list[Reaped]:
-    """Reaper rules 2-5 (SPEC §8), in order, in one transaction.
-
-    Each rule keys on the run's own row: `queued` runs are never touched (a client run waits for
-    its user's client), and a dispatched or running client run is reaped exactly like a local
-    one. Runs whose `launcher` is `exempt_launcher` skip rules 3-5 (heartbeat, budget,
-    unacknowledged cancel): the reaper passes "mailbox" only while the mailbox reaper
-    (`agentos.mailbox`) watches those runs, as they never send heartbeats.
-    """
-    out: list[Reaped] = []
-    # Rules 3-5 end with `AND (? IS NULL OR launcher <> ?)`, bound to these two values.
-    exempt = (exempt_launcher, exempt_launcher)
-    with db.tx() as conn:
-
-        def end(
-            ids: Sequence[int], was: RunStatus, status: RunStatus, error: str | None, why: str
-        ) -> None:
-            for run_id in ids:
-                if finish(conn, run_id, status, (was,), now=now, error=error):
-                    out.append(Reaped(run_id, status, why))
-
-        # 2. dispatched, never started
-        stale = _ids(
-            conn,
-            "SELECT id FROM runs WHERE status = 'dispatched' AND dispatched_at < ?",
-            (to_db(now - timedelta(seconds=claim_timeout_s)),),
-        )
-        end(stale, "dispatched", "failed", NEVER_CONNECTED, NEVER_CONNECTED)
-        # 3. no heartbeat
-        lost = _ids(
-            conn,
-            "SELECT id FROM runs WHERE status = 'running' "
-            "AND COALESCE(last_seen_at, started_at) < ? AND (? IS NULL OR launcher <> ?)",
-            (to_db(now - HEARTBEAT_TIMEOUT), *exempt),
-        )
-        end(lost, "running", "failed", WORKER_LOST, WORKER_LOST)
-        # 4. over the time budget
-        running = conn.execute(
-            "SELECT id, started_at, time_budget_s FROM runs "
-            "WHERE status = 'running' AND started_at IS NOT NULL "
-            "AND (? IS NULL OR launcher <> ?)",
-            exempt,
-        ).fetchall()
-        over = [
-            int(r["id"])
-            for r in running
-            if from_db(r["started_at"]) + timedelta(seconds=r["time_budget_s"]) + BUDGET_GRACE < now
-        ]
-        end(over, "running", "failed", OVER_BUDGET, OVER_BUDGET)
-        # 5. a cancel the worker never acknowledged
-        unacked = _ids(
-            conn,
-            "SELECT id FROM runs WHERE status = 'running' AND cancel_requested_at < ? "
-            "AND (? IS NULL OR launcher <> ?)",
-            (to_db(now - CANCEL_GRACE), *exempt),
-        )
-        end(unacked, "running", "cancelled", None, "cancel not acknowledged")
-    return out
-
-
-def active_run_ids(db: Database) -> set[int]:
+def active_jobs(db: Database) -> list[Row]:
+    """Every job that hasn't ended (those of dispatched and running runs, and of ended runs whose
+    worker may still publish), with its run's route and clocks."""
     with db.read() as conn:
-        return set(
-            _ids(conn, "SELECT id FROM runs WHERE status IN ('queued', 'dispatched', 'running')")
-        )
+        rows: list[Row] = conn.execute(
+            "SELECT r.id AS run_id, r.status, r.start, r.provider, r.report, r.launch_ref, "
+            "r.dispatched_at, r.started_at, r.last_seen_at, r.stop_requested_at, r.stop_reason, "
+            "j.id AS job_id, j.budget_s, j.not_after FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "WHERE j.ended_at IS NULL ORDER BY r.id"
+        ).fetchall()
+    return rows
 
 
-def _ids(conn: Conn, sql: str, params: Sequence[object] = ()) -> list[int]:
-    return [int(r[0]) for r in conn.execute(sql, tuple(params)).fetchall()]
+def end_job(conn: Conn, run_id: int, job_id: str, now: datetime) -> None:
+    """The job's worker can no longer publish, in the caller's transaction: lift the fence, and
+    its reason on the next run. Its accepted `result` says so (`worker_api.service.ingest`); the
+    reaper infers it for a worker that never sent one."""
+    conn.execute(
+        "UPDATE jobs SET ended_at = ? WHERE id = ? AND ended_at IS NULL", (to_db(now), job_id)
+    )
+    conn.execute(
+        "UPDATE runs SET queue_reason = NULL WHERE status = 'queued' AND queue_reason = ?",
+        (fence_reason(run_id),),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Action:
+    """A reaper verdict: stop the run (`stop`), end it (`end`, with `error`), and ask its provider
+    to cancel the job (`cancel`)."""
+
+    end: RunStatus | None = None
+    error: str | None = None
+    stop: StopReason | None = None
+    cancel: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    """What a reaper verdict read of its run, as stored: the rules decide on these."""
+
+    status: RunStatus
+    launch_ref: str | None
+    started_at: str | None
+    last_seen_at: str | None
+
+
+def reap(db: Database, run_id: int, read: Snapshot, now: datetime, action: Action) -> bool:
+    """Write a reaper verdict in one transaction, only while the run is still as the verdict read
+    it (`read`): stop the run, then end it. Returns whether it wrote anything. The reaper reads,
+    then asks the provider, then writes: a `started`, a post or a result in between changes the
+    run, and the stale verdict is dropped."""
+    with db.tx() as conn:
+        row = conn.execute(
+            "SELECT status, launch_ref, started_at, last_seen_at FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None or Snapshot(*row) != read:
+            return False
+        stopped = action.stop is not None and stop(conn, run_id, action.stop, now)
+        end, error = action.end, action.error
+        ended = end is not None and finish(conn, run_id, end, (read.status,), now=now, error=error)
+        return stopped or ended

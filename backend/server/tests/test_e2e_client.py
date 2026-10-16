@@ -1,6 +1,6 @@
 """End to end for client mode, no network and no LLM: the real server (uvicorn on a free loopback
-port, dispatcher and reaper loops on) with a recording fake as its configured launcher (named
-`github`, it starts nothing), and users' clients as real `worker.py --client` processes that start
+port, dispatcher and reaper loops on) with the recording `FakeProvider` as its configured provider
+(`github`; it starts nothing), and users' clients as real `worker.py --client` processes that start
 real run workers. Agent stages run `fake_agent.py`; the remote is a temp bare repo, reached as in
 `test_e2e.py` through `url.<file-url>.insteadOf` in the env file the client hands its run workers
 (`--env-file`).
@@ -30,11 +30,10 @@ import pytest
 import uvicorn
 from pydantic import SecretStr
 
-import agentos.main
+import worker
 from agentos.clock import utcnow
-from agentos.config import Settings
+from agentos.config import WORKER_PATH, Settings
 from agentos.context import AppContext
-from agentos.launchers.local import WORKER_PATH
 from agentos.main import create_app
 from agentos.models import ClientToken, ClientTokenCreated, Me, RunSummary, TaskProgress
 from agentos.pipeline.runtime import NamedRuntime
@@ -43,6 +42,7 @@ from agentos.runs import dispatcher
 from agentos.runs.reaper import INTERVAL_S as REAPER_INTERVAL_S
 from agentos.runs.reaper import Reaper
 from agentos.worker_api.routes import LEASE_RETRY_S
+from tests.run_support import FakeProvider
 from tests.settings_support import seed_test_settings
 from tests.test_e2e import (
     CSRF,
@@ -65,26 +65,6 @@ pytestmark = pytest.mark.e2e
 WORKER_PID_RE = re.compile(r"\(pid (\d+)\)")
 
 
-class RecordingLauncher:
-    """The server's configured launcher, named like the GitHub one: it records the runs it is
-    handed and starts nothing (they stay `dispatched`)."""
-
-    name = "github"
-    max_concurrency: int | None = None
-
-    def __init__(self) -> None:
-        self.launched: list[int] = []
-
-    def launch(self, run_id: int, server_url: str, token: str) -> str:
-        del server_url, token
-        self.launched.append(run_id)
-        return self.url(run_id)
-
-    @staticmethod
-    def url(run_id: int) -> str:
-        return f"https://github.invalid/acme/runner/actions/runs/{run_id}"
-
-
 # ------------------------------------------------------------------ the server
 
 
@@ -92,10 +72,9 @@ class RecordingLauncher:
 class Server:
     url: str
     root: Path
-    settings: Settings
     ctx: AppContext
     remote: Path
-    launcher: RecordingLauncher
+    provider: FakeProvider
     env_file: Path  # the clients' --env-file
 
 
@@ -107,7 +86,6 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
             if name.upper().startswith("AGENTOS_"):
                 mp.delenv(name)
         mp.setattr(dispatcher, "INTERVAL_S", 0.1)
-        mp.setattr(agentos.main, "REAPER_INTERVAL_S", 0.5)  # the real reaper watches every run
 
         remote = make_remote(root)
         env_file = root / "client.env"
@@ -125,11 +103,10 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         settings = Settings(
             _env_file=None,
             data_dir=root / "data",
-            workspaces_dir=root / "workspaces",
             dev_auth=True,
             public_url=url,
             launcher="github",
-            github_token=SecretStr("e2e-unused"),  # the recording launcher never calls GitHub
+            github_token=SecretStr("e2e-unused"),  # the fake provider never calls GitHub
         )
         seed_test_settings(
             settings,
@@ -140,8 +117,8 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
                 )
             ],
         )
-        launcher = RecordingLauncher()
-        app = create_app(settings, launcher=launcher)
+        provider = FakeProvider()
+        app = create_app(settings, providers={"github": provider})
         server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
         thread = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, name="e2e-client-uvicorn", daemon=True
@@ -154,7 +131,7 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
             time.sleep(0.05)
 
         try:
-            yield Server(url, root, settings, app.state.ctx, remote, launcher, env_file)
+            yield Server(url, root, app.state.ctx, remote, provider, env_file)
         finally:
             server.should_exit = True
             thread.join(30)
@@ -166,27 +143,15 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
 
 @dataclass
 class User(E2E):
-    """A signed-in user (their own cookie session). Their client's run workers log to
-    `<client_root>/runs/<run_id>.log`."""
+    """A signed-in user (their own cookie session). Their client keeps its run workspaces and
+    logs in `logs` = `<client_root>/runs`."""
 
     client_root: Path = field(kw_only=True)
-
-    @property
-    def client_runs(self) -> Path:
-        """Where the client keeps its run workspaces and logs."""
-        return self.client_root / "runs"
-
-    def diag(self, run_id: int | None) -> str:
-        if run_id is None:
-            return ""
-        log = self.client_runs / f"{run_id}.log"
-        text = log.read_text("utf-8", "replace") if log.exists() else "(no client worker log)"
-        return f"{super().diag(run_id)}\n--- client worker {run_id}.log ---\n{text}"
 
     def dispatch(
         self, key: str, from_stage: str | None = None, target: str | None = None
     ) -> RunSummary:
-        """POST /api/tickets/{key}/runs; `target=None` leaves it out (the server's launcher)."""
+        """POST /api/tickets/{key}/runs; `target=None` leaves it out (the server's route)."""
         body: dict[str, Any] = {} if from_stage is None else {"from_stage": from_stage}
         if target is not None:
             body["target"] = target
@@ -200,11 +165,13 @@ class User(E2E):
 
 @dataclass
 class ClientProcess:
-    """A running `worker.py --client` and the token it uses."""
+    """A running `worker.py --client` and the token it uses. Windows: `job` holds it and every run
+    worker it starts, so teardown ends exactly those (a bare pid may name another process)."""
 
     token: ClientTokenCreated
     proc: subprocess.Popen[bytes]
     log: Path
+    job: worker._Job
 
     def output(self) -> str:
         return self.log.read_text("utf-8", "replace") if self.log.exists() else ""
@@ -226,7 +193,7 @@ class World:
         assert r.status_code == 200, r.text
         root = self.server.root / "clients" / username
         user = User(
-            http, self.server.settings, self.server.remote, Me.model_validate(r.json()),
+            http, self.server.remote, Me.model_validate(r.json()), root / "runs",
             client_root=root,
         )  # fmt: skip
         self.users.append(user)
@@ -261,7 +228,7 @@ class World:
                 stderr=subprocess.STDOUT,
                 creationflags=flags,
             )
-        client = ClientProcess(token, proc, log)
+        client = ClientProcess(token, proc, log, worker._Job(proc.pid))
         self.clients.append(client)
         return client
 
@@ -289,7 +256,8 @@ def world(server: Server) -> Iterator[World]:
             client.proc.wait(10)
         for user in w.users:
             _settle(user)
-        _end_workers([pid for client in w.clients for pid in client.worker_pids()])
+        for client in w.clients:
+            _end_workers(client)
         for user in w.users:
             user.http.close()
 
@@ -307,11 +275,18 @@ def _settle(user: User) -> None:
             continue
 
 
-def _end_workers(pids: list[int]) -> None:
-    """Wait for run workers to exit after their runs ended; kill any that outlive the wait."""
+def _end_workers(client: ClientProcess) -> None:
+    """Wait for the client's run workers to exit after their runs ended, then end any left.
+    Windows ends them through the client's job object, never by pid: Windows reuses the pid of
+    an exited worker at once, so killing by number can end another test's run worker."""
+    pids = client.worker_pids()
     deadline = time.monotonic() + 15
     while any(pid_alive(pid) for pid in pids) and time.monotonic() < deadline:
         time.sleep(0.2)
+    if sys.platform == "win32":
+        client.job.kill()
+        client.job.close()
+        return
     for pid in pids:
         if pid_alive(pid):
             try:
@@ -330,7 +305,7 @@ def wait_exit(client: ClientProcess) -> int:
 # ------------------------------------------------------------------ the tests
 
 
-def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
+def test_client_runs_gate_edit_continue_while_the_provider_serves_server_runs(
     world: World,
 ) -> None:
     ann, bob = world.user("ann"), world.user("bob")
@@ -349,14 +324,14 @@ def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
     run1 = ann.dispatch(key, target="client")
     assert (run1.target, run1.stage_ids) == ("client", ["plan"])
 
-    # Meanwhile a ticket dispatched with the default target goes to the configured launcher.
+    # Meanwhile a ticket dispatched with the default target goes to the configured provider.
     other = ann.create_ticket("Run me on the server").key
     ann.configure(other, {"plan": "plan"})
     server_run = ann.dispatch(other)
     assert (server_run.target, server_run.client_online) == ("server", None)
     ann.wait(
-        "the launcher to get the server run",
-        lambda: server_run.id in world.server.launcher.launched,
+        "the provider to get the server run",
+        lambda: server_run.id in world.server.provider.launched,
     )
 
     detail = ann.wait_run(run1.id, "gated")
@@ -364,7 +339,7 @@ def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
         ("plan", "succeeded", 0)
     ], ann.diag(run1.id)
     assert (detail.target, detail.launch_ref, detail.launch_url) == ("client", "ann-laptop", None)
-    assert (ann.client_runs / f"{run1.id}.log").is_file()
+    assert (ann.logs / f"{run1.id}.log").is_file()
     t = ann.ticket(key)
     assert t.attention == "needs_you"
     assert t.next_stage == "implement"
@@ -381,7 +356,11 @@ def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
         {"content": edited, "mode": "replace", "base_version": current.version},
     )
 
-    # 3. Continue on the client: implement → review run to the end.
+    # 3. Continue on the client: implement → review run to the end. Run 1's result ended its job,
+    # so run 2 has no fence to wait for.
+    with world.server.ctx.db.read() as conn:
+        ended = conn.execute("SELECT ended_at FROM jobs WHERE run_id = ?", (run1.id,)).fetchone()
+    assert ended[0] is not None
     run2 = ann.dispatch(key, target="client")
     assert (run2.from_stage, run2.stage_ids) == ("implement", ["implement", "review"])
     detail = ann.wait_run(run2.id, "succeeded")
@@ -397,12 +376,12 @@ def test_client_runs_gate_edit_continue_while_the_launcher_serves_server_runs(
     assert_clean_branch(ann.remote, key)
 
     # Bob's client never got Ann's runs; no client took the server run.
-    assert list(bob.client_runs.iterdir()) == []  # no run workspace or log
+    assert [p.name for p in bob.logs.iterdir()] == ["client.lock"]  # no run workspace or log
     assert anns.proc.poll() is None
     assert bobs.proc.poll() is None
     server_detail = ann.run(server_run.id)
     assert server_detail.status == "dispatched"
-    assert server_detail.launch_url == RecordingLauncher.url(server_run.id)
+    assert server_detail.launch_url == FakeProvider.ref(server_run.id)
 
 
 def test_a_client_run_waits_while_the_client_is_offline(world: World, server: Server) -> None:
@@ -444,7 +423,7 @@ def test_a_client_run_waits_while_the_client_is_offline(world: World, server: Se
     detail = cleo.wait_run(run.id, "gated")
     assert [(s.stage_id, s.status) for s in detail.stage_runs] == [("plan", "succeeded")]
     assert (detail.launch_ref, detail.client_online) == ("cleo-desktop", True)
-    assert (cleo.client_runs / f"{run.id}.log").is_file()
+    assert (cleo.logs / f"{run.id}.log").is_file()
 
 
 def test_revoking_the_token_stops_the_client(world: World) -> None:

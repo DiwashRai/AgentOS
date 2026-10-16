@@ -1,7 +1,7 @@
 """Helpers for run tests: dispatch through the API, drive the dispatcher, act as a worker on the
 journal.
 
-`RunDriver` is provided by the `runs` fixture (conftest.py); the app runs with a FakeLauncher and
+`RunDriver` is provided by the `runs` fixture (conftest.py); the app runs with a FakeProvider and
 no background loops, so every transition happens when a test asks for it.
 """
 
@@ -13,8 +13,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from agentos.clock import to_db, utcnow
+from agentos.config import WORKER_PATH
 from agentos.context import AppContext
-from agentos.launchers.local import WORKER_PATH
+from agentos.launchers.base import JobStart, JobStatus
 from agentos.models import JobPackage, RunDetail, RunSummary
 from agentos.runs import dispatcher
 
@@ -25,24 +27,42 @@ if TYPE_CHECKING:
 CSRF = {"X-AgentOS": "1"}
 
 
-class FakeLauncher:
-    """In-memory Launcher: records launches (incl. the plaintext job token) and can fail."""
+class FakeProvider:
+    """In-memory Provider: records each start (the plaintext job token too) and cancel, answers
+    `statuses` by ref (unknown when unset); `fail` makes `start` raise."""
 
-    name = "local"
-
-    def __init__(self, max_concurrency: int | None = 2) -> None:
-        self.max_concurrency = max_concurrency
-        self.launched: list[tuple[int, str, str]] = []  # (run_id, server_url, job_token)
+    def __init__(self) -> None:
+        self.started: list[JobStart] = []
+        self.statuses: dict[str, JobStatus] = {}
+        self.cancelled: list[str] = []
         self.fail: Exception | None = None
 
-    def launch(self, run_id: int, server_url: str, token: str) -> str:
+    def start(self, job: JobStart) -> str:
         if self.fail is not None:
             raise self.fail
-        self.launched.append((run_id, server_url, token))
-        return f"fake-{run_id}"
+        self.started.append(job)
+        return self.ref(job.run_id)
+
+    def status(self, ref: str) -> JobStatus:
+        return self.statuses.get(ref, JobStatus("unknown"))
+
+    def cancel(self, ref: str) -> None:
+        self.cancelled.append(ref)
+
+    def cleanup(self, ref: str) -> None:
+        del ref
+
+    @property
+    def launched(self) -> list[int]:
+        """The run ids started, in order."""
+        return [job.run_id for job in self.started]
 
     def token(self, run_id: int) -> str:
-        return next(t for r, _, t in self.launched if r == run_id)
+        return next(job.job_token for job in self.started if job.run_id == run_id)
+
+    @staticmethod
+    def ref(run_id: int) -> str:
+        return f"https://provider.invalid/runs/{run_id}"
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -141,7 +161,7 @@ class Worker:
 class RunDriver:
     client: TestClient
     ctx: AppContext
-    launcher: FakeLauncher
+    provider: FakeProvider
 
     def dispatch(
         self, key: str, from_stage: str | None = None, target: str | None = None
@@ -167,9 +187,11 @@ class RunDriver:
         return self.launch_and_bind(self.queue(key, from_stage).id)
 
     def launch_and_bind(self, run_id: int) -> Worker:
-        """Tick the dispatcher (it must launch `run_id`) and bind its job as a new worker."""
+        """End the earlier runs' jobs (`end_jobs`), tick the dispatcher (it must launch `run_id`)
+        and bind its job as a new worker."""
+        self.end_jobs()
         assert run_id in self.tick()
-        return self.bind(run_id, self.launcher.token(run_id))
+        return self.bind(run_id, self.provider.token(run_id))
 
     def bind(self, run_id: int, token: str) -> Worker:
         """Fetch the job of a job token and bind it as a new worker instance (`started`)."""
@@ -180,6 +202,16 @@ class RunDriver:
         r = worker.journal(worker.record("started", **started_data()))
         assert r.json()["ack"] == worker.seq, r.text
         return worker
+
+    def end_jobs(self) -> None:
+        """Every ended run's job has ended (its worker exited), as the reaper would stamp it:
+        the fence lets each ticket's next run start."""
+        with self.ctx.db.tx() as conn:
+            conn.execute(
+                "UPDATE jobs SET ended_at = ? WHERE ended_at IS NULL AND run_id IN "
+                "(SELECT id FROM runs WHERE status NOT IN ('queued', 'dispatched', 'running'))",
+                (to_db(utcnow()),),
+            )
 
     def get(self, run_id: int) -> RunDetail:
         r = self.client.get(f"/api/runs/{run_id}")

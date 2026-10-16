@@ -254,20 +254,20 @@ describe("RunnerSection", () => {
     expect(byLabel(el, "Workflow", HTMLInputElement).placeholder).toBe("agentos-mailbox.yml");
   });
 
-  it("with the local launcher, says the fields apply only to the GitHub launcher", () => {
+  it("with no launcher (clients only), says the fields apply only to a GitHub launcher", () => {
     const onChange = vi.fn();
     const el = mount(
       <RunnerSection
-        settings={{ launcher: "local", token_set: true }}
+        settings={{ launcher: null, token_set: true }}
         value={FORM}
         issues={NO_ISSUES}
         readOnly={false}
         onChange={onChange}
       />,
     );
-    expect(el.textContent).toContain("Local process");
+    expect(el.textContent).toContain("Clients only");
     expect(el.textContent).toContain("GitHub token set");
-    expect(el.textContent).toContain("apply only when it uses the GitHub launcher");
+    expect(el.textContent).toContain("apply only with a GitHub launcher");
     expect(el.textContent).not.toContain("runs fail at launch");
     type(byLabel(el, "GitHub repo", HTMLInputElement), "acme/agentos");
     expect(onChange).toHaveBeenLastCalledWith({ ...FORM, github_repo: "acme/agentos" });

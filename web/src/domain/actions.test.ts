@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { type ActionSet, ticketActions } from "./actions";
 import { gate, person, run, step, ticket } from "./fixtures";
+import { words } from "./words";
 
 /** The group as `id:variant` left → right, the primary last (how it renders). */
 const shape = (s: ActionSet) =>
@@ -137,14 +138,26 @@ describe("ticketActions", () => {
       expect(s.secondary).toEqual([{ id: "cancel", label: "Cancel", variant: "default" }]);
     });
 
-    it("shows Cancelling… (disabled) while a cancel is requested", () => {
+    it.each([
+      [null, "cancel"],
+      ["cancel", "cancel"],
+      ["budget", "budget"],
+      ["never_started", "never_started"],
+    ] as const)("once a stop is requested (reason %s), names it, disabled", (reason, shown) => {
       const t = ticket({
         attention: "running",
-        latest_run: run("running", { cancel_requested_at: "2026-10-11T10:05:00Z" }),
+        latest_run: run("running", {
+          stop_requested_at: "2026-10-11T10:05:00Z",
+          stop_reason: reason,
+        }),
       });
       const s = ticketActions(t, "row");
       expect(s.cancelling).toBe(true);
-      expect(s.secondary[0]).toMatchObject({ id: "cancel", label: "Cancelling…", disabled: true });
+      expect(s.secondary[0]).toMatchObject({
+        id: "cancel",
+        label: words.stopping[shown],
+        disabled: true,
+      });
     });
   });
 

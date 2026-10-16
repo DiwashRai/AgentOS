@@ -17,6 +17,9 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from agentos.models import LauncherName
 
+# backend/worker/worker.py, served at GET /api/worker/worker.py so runners get this version.
+WORKER_PATH = Path(__file__).resolve().parents[2] / "worker" / "worker.py"
+
 
 class ConfigError(Exception):
     """Invalid configuration. `problems` lists every problem found, so one restart fixes all."""
@@ -44,14 +47,11 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Path("./data")
-    workspaces_dir: Path = Path("~/.agentos/workspaces")
     public_url: str = "http://127.0.0.1:8000"
     worker_url: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
-    launcher: LauncherName = "local"
-    local_max_concurrency: int | None = 2  # None ("none"/"unlimited" in env) = no limit
-    worker_env_file: Path | None = None
+    launcher: LauncherName | None = None  # None: this server starts no workers (clients only)
     web_dir: Path | None = None  # the built SPA (web/dist) to serve; None = API only (dev)
     dev_auth: bool = False
     trust_proxy: bool = False
@@ -68,14 +68,14 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     github_api_url: str = "https://api.github.com"  # GHES: https://<host>/api/v3
     github_api_version: str = "2022-11-28"
-    # AGENTOS_LAUNCHER=mailbox (design/mailbox.md): runs are dispatched as with `github`, but the
-    # manifest and the worker's results travel through an Artifactory folder
-    # (https://<host>/artifactory/<repo>/<folder>, the same string as the runner repo's variable).
+    # The mailbox store (design/mailbox.md, `mailbox_store`): file-report runs are dispatched as
+    # with `github`, but the manifest and the worker's results travel through an Artifactory
+    # folder (https://<host>/artifactory/<repo>/<folder>, the runner repo variable's string).
     artifactory_url: str | None = None
     artifactory_user: str | None = None
     artifactory_password: SecretStr | None = None
 
-    @field_validator("data_dir", "workspaces_dir", "worker_env_file", "web_dir")
+    @field_validator("data_dir", "web_dir")
     @classmethod
     def _absolute(cls, value: Path | None) -> Path | None:
         return None if value is None else value.expanduser().resolve()
@@ -90,25 +90,19 @@ class Settings(BaseSettings):
     def _csv(cls, value: object) -> object:
         return _split_csv(value)
 
-    @field_validator("local_max_concurrency", mode="before")
-    @classmethod
-    def _unlimited(cls, value: object) -> object:
-        if isinstance(value, str) and value.strip().lower() in ("none", "unlimited"):
-            return None
-        return value
-
     @property
     def effective_worker_url(self) -> str:
         """What workers dial: WORKER_URL, defaulting to PUBLIC_URL."""
         return self.worker_url or self.public_url
 
     @property
-    def db_path(self) -> Path:
-        return self.data_dir / "agentos.db"
+    def mailbox_store(self) -> bool:
+        """AGENTOS_LAUNCHER=mailbox, or another launcher with AGENTOS_ARTIFACTORY_URL."""
+        return self.launcher == "mailbox" or bool(self.launcher and self.artifactory_url)
 
     @property
-    def logs_dir(self) -> Path:
-        return self.data_dir / "logs"
+    def db_path(self) -> Path:
+        return self.data_dir / "agentos.db"
 
 
 def load_settings(**overrides: Any) -> Settings:
@@ -144,14 +138,6 @@ def _url_problem(name: str, url: str) -> str | None:
     return None
 
 
-def _git_repo_containing(path: Path) -> Path | None:
-    """The nearest existing ancestor of `path` (itself included) that holds a `.git` entry."""
-    for candidate in (path, *path.parents):
-        if candidate.exists() and (candidate / ".git").exists():
-            return candidate
-    return None
-
-
 def _jira_service_problems(settings: Settings) -> list[str]:
     """The import service account: the token needs AGENTOS_JIRA_URL; Cloud needs the email and
     the token together (or neither). Problems name the settings, never the token's value."""
@@ -172,7 +158,7 @@ def _jira_service_problems(settings: Settings) -> list[str]:
 
 
 def _artifactory_problems(settings: Settings) -> list[str]:
-    """AGENTOS_LAUNCHER=mailbox: all three Artifactory vars, and an https URL with an
+    """The mailbox store: all three Artifactory vars, and an https URL with an
     `/artifactory/<repo>` path. Problems never quote the password."""
     password = settings.artifactory_password
     values = {
@@ -181,7 +167,7 @@ def _artifactory_problems(settings: Settings) -> list[str]:
         "AGENTOS_ARTIFACTORY_PASSWORD": password.get_secret_value() if password else None,
     }
     problems = [
-        f"{name} is required with AGENTOS_LAUNCHER=mailbox"
+        f"{name} is required for the mailbox"
         for name, value in values.items()
         if value is None or not value.strip()
     ]
@@ -199,7 +185,7 @@ def _artifactory_problems(settings: Settings) -> list[str]:
 
 
 def startup_checks(settings: Settings) -> None:
-    """Validate cross-field rules, then create the data, logs and workspaces dirs.
+    """Validate cross-field rules, then create the data dir.
 
     Raises ConfigError listing every problem.
     """
@@ -226,7 +212,7 @@ def startup_checks(settings: Settings) -> None:
         problems.append(problem)
     problems.extend(_jira_service_problems(settings))
 
-    if settings.launcher in ("github", "mailbox"):
+    if settings.launcher is not None:
         # The repo/workflow/ref are set in the app (Settings > Runners) and read at each launch.
         if settings.github_token is None or not settings.github_token.get_secret_value().strip():
             problems.append(
@@ -234,30 +220,10 @@ def startup_checks(settings: Settings) -> None:
             )
         if problem := _url_problem("AGENTOS_GITHUB_API_URL", settings.github_api_url):
             problems.append(problem)
-    if settings.launcher == "mailbox":
+    if settings.mailbox_store:
         problems.extend(_artifactory_problems(settings))
-
-    if settings.local_max_concurrency is not None and settings.local_max_concurrency < 1:
-        problems.append("AGENTOS_LOCAL_MAX_CONCURRENCY must be >= 1 (or 'unlimited')")
-    if settings.worker_env_file is not None and not settings.worker_env_file.is_file():
-        problems.append(f"AGENTOS_WORKER_ENV_FILE={settings.worker_env_file} does not exist")
-
-    # SPEC §12: workers run outside DATA_DIR (agents could reach the DB) and outside any git
-    # repo (parent CLAUDE.md / AGENTS.md would leak into agents).
-    workspaces, data = settings.workspaces_dir, settings.data_dir
-    if workspaces.is_relative_to(data) or data.is_relative_to(workspaces):
-        problems.append(
-            f"AGENTOS_WORKSPACES_DIR ({workspaces}) and AGENTOS_DATA_DIR ({data}) must not "
-            "contain one another"
-        )
-    if (repo := _git_repo_containing(workspaces)) is not None:
-        problems.append(
-            f"AGENTOS_WORKSPACES_DIR ({workspaces}) is inside the git repo {repo}; "
-            "move it outside any repo (default: ~/.agentos/workspaces)"
-        )
 
     if problems:
         raise ConfigError(problems)
 
-    for directory in (settings.data_dir, settings.logs_dir, settings.workspaces_dir):
-        directory.mkdir(parents=True, exist_ok=True)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)

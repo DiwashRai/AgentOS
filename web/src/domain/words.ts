@@ -75,7 +75,12 @@ export const words = {
   resolveNote: "Add a note (optional)",
   retry: "Retry",
   cancel: "Cancel",
-  cancelling: "Cancelling…",
+  /** A stop the server asked for, by its `stop_reason`; a cancel still in flight reads as cancel. */
+  stopping: {
+    cancel: "Cancelling…",
+    budget: "Stopping: over budget",
+    never_started: "Stopping: never started",
+  },
   reopen: "Reopen",
   open: "Open",
   requestChanges: "Request changes",

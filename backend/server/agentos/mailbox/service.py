@@ -19,15 +19,14 @@ from typing import Any, BinaryIO, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
-from agentos.clock import from_db_opt, utcnow
+from agentos.clock import from_db, from_db_opt, utcnow
 from agentos.db import Database
-from agentos.models import JournalRecord
-from agentos.runs.service import finish
+from agentos.models import JournalRecord, RunStatus
+from agentos.runs.service import STOPPED, finish
 from agentos.worker_api import service as worker_api
 
 log = logging.getLogger(__name__)
 
-LAUNCHER = "mailbox"
 ReplayResult = Literal["completed", "ended", "gone"]
 
 # A line over this is skipped (logged): 500 events x 256 KiB lines fit well below it.
@@ -46,31 +45,30 @@ class MailboxRun:
     id: int
     job_hex: str  # the random part of its job id, which names its folder
     launch_ref: str | None
-    started_at: datetime | None
-    time_budget_s: int
-    cancel_requested_at: datetime | None
+    started_at: datetime  # when the server started it
+    not_after: datetime  # its job's: the worker publishes nothing after it
+    stop_requested_at: datetime | None
 
 
 # ------------------------------------------------------------------ queries
 
 
 def running_runs(db: Database) -> list[MailboxRun]:
-    """Every `running` mailbox run, oldest first."""
+    """Every `running` mailbox (file-report) run, oldest first."""
     with db.read() as conn:
         rows = conn.execute(
             "SELECT r.id, substr(j.id, -16) AS job_hex, r.launch_ref, r.started_at, "
-            "r.time_budget_s, r.cancel_requested_at FROM runs r JOIN jobs j ON j.run_id = r.id "
-            "WHERE r.launcher = ? AND r.status = 'running' ORDER BY r.id",
-            (LAUNCHER,),
+            "j.not_after, r.stop_requested_at FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "WHERE r.report = 'file' AND r.status = 'running' ORDER BY r.id"
         ).fetchall()
     return [
         MailboxRun(
             id=r["id"],
             job_hex=r["job_hex"],
             launch_ref=r["launch_ref"],
-            started_at=from_db_opt(r["started_at"]),
-            time_budget_s=r["time_budget_s"],
-            cancel_requested_at=from_db_opt(r["cancel_requested_at"]),
+            started_at=from_db(r["started_at"]),
+            not_after=from_db(r["not_after"]),
+            stop_requested_at=from_db_opt(r["stop_requested_at"]),
         )
         for r in rows
     ]
@@ -93,14 +91,9 @@ def is_running(db: Database, run_id: int) -> bool:
 # ------------------------------------------------------------------ end
 
 
-def end(
-    db: Database,
-    run_id: int,
-    status: Literal["failed", "cancelled"],
-    error: str | None,
-) -> bool:
-    """running → failed|cancelled through `finish()` (guarded). Returns whether it ended the run
-    (False: it was terminal already)."""
+def end(db: Database, run_id: int, status: RunStatus, error: str | None) -> bool:
+    """running → `status` (failed|cancelled) through `finish()` (guarded). Returns whether it
+    ended the run (False: it was terminal already)."""
     with db.tx() as conn:
         ended = finish(conn, run_id, status, ("running",), now=utcnow(), error=error)
     if ended:
@@ -118,7 +111,7 @@ def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
       to do.
     - `completed`: the recorded `complete` was applied.
     - `ended`: the recording had no `complete` (or isn't this run's): the run was ended here,
-      `cancelled` if a cancel was requested, else `failed`.
+      by the stop table if it was asked to stop, else `failed`.
 
     Each line is one ingest transaction, its records numbered in line order from the job's
     `first_seq`, so a replay after a crash skips what was applied. Rejected records and refused
@@ -127,8 +120,8 @@ def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
     with db.read() as conn:
         job = conn.execute(
             "SELECT j.* FROM jobs j JOIN runs r ON r.id = j.run_id "
-            "WHERE r.id = ? AND r.status = 'running' AND r.launcher = ?",
-            (run_id, LAUNCHER),
+            "WHERE r.id = ? AND r.status = 'running' AND r.report = 'file'",
+            (run_id,),
         ).fetchone()
     if job is None:
         return "gone"
@@ -152,8 +145,8 @@ def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
 
             with db.tx() as conn:
                 run = conn.execute(
-                    "SELECT * FROM runs WHERE id = ? AND status = 'running' AND launcher = ?",
-                    (run_id, LAUNCHER),
+                    "SELECT * FROM runs WHERE id = ? AND status = 'running' AND report = 'file'",
+                    (run_id,),
                 ).fetchone()
                 if run is None:
                     return "gone"
@@ -163,19 +156,11 @@ def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
             if last.type == "result" and last.seq > run["journal_seq"] and last.seq not in rejected:
                 return "completed"
 
-    if _cancel_requested(db, run_id):
-        ended = end(db, run_id, "cancelled", None)
-    else:
-        ended = end(db, run_id, "failed", NO_COMPLETE)
-    return "ended" if ended else "gone"
-
-
-def _cancel_requested(db: Database, run_id: int) -> bool:
-    with db.read() as conn:
-        row = conn.execute(
-            "SELECT cancel_requested_at FROM runs WHERE id = ?", (run_id,)
-        ).fetchone()
-    return row is not None and row["cancel_requested_at"] is not None
+    with db.read() as conn:  # a stop sets its reason with it
+        stop = conn.execute("SELECT stop_reason FROM runs WHERE id = ?", (run_id,)).fetchone()
+    reason = stop["stop_reason"] if stop is not None else None
+    status, error = STOPPED[reason] if reason else ("failed", NO_COMPLETE)
+    return "ended" if end(db, run_id, status, error) else "gone"
 
 
 def _records(run_id: int, number: int, job_id: str, seq: int, entry: object) -> list[JournalRecord]:

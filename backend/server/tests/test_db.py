@@ -61,7 +61,7 @@ def add_ticket(conn: Conn, key: str = "AOS-1") -> int:
 
 def add_run(conn: Conn, ticket_id: int, status: str) -> None:
     conn.execute(
-        "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, launcher,"
+        "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, provider,"
         " created_at) VALUES (?, ?, 'plan', '[\"plan\"]', 600, 'local', ?)",
         (ticket_id, status, NOW),
     )

@@ -1497,7 +1497,7 @@
       },
       "LeaseRequest": {
         "additionalProperties": false,
-        "description": "Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:\nthe jobs the client's workers still run.",
+        "description": "Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:\nthe jobs the client's workers still run (recorded for display; leaving one out ends\nnothing). `gone`: the jobs whose worker the client saw end (its process exited, or its lock\nwas released); the server ends exactly those, once, so a repeat or a late one is harmless.",
         "properties": {
           "alive": {
             "items": {
@@ -1505,6 +1505,14 @@
             },
             "maxItems": 100,
             "title": "Alive",
+            "type": "array"
+          },
+          "gone": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Gone",
             "type": "array"
           },
           "take": {
@@ -2896,18 +2904,6 @@
       "RunDetail": {
         "additionalProperties": false,
         "properties": {
-          "cancel_requested_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cancel Requested At"
-          },
           "client_online": {
             "anyOf": [
               {
@@ -2994,6 +2990,17 @@
             ],
             "title": "Log Delivery",
             "type": "string"
+          },
+          "queue_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Reason"
           },
           "stage_ids": {
             "items": {
@@ -3034,6 +3041,34 @@
             "title": "Status",
             "type": "string"
           },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cancel",
+                  "budget",
+                  "never_started"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Reason"
+          },
+          "stop_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Requested At"
+          },
           "sync_back": {
             "anyOf": [
               {
@@ -3067,7 +3102,9 @@
           "created_at",
           "started_at",
           "finished_at",
-          "cancel_requested_at",
+          "stop_requested_at",
+          "stop_reason",
+          "queue_reason",
           "error",
           "launch_ref",
           "launch_url",
@@ -3083,18 +3120,6 @@
       "RunSummary": {
         "additionalProperties": false,
         "properties": {
-          "cancel_requested_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cancel Requested At"
-          },
           "client_online": {
             "anyOf": [
               {
@@ -3182,6 +3207,17 @@
             "title": "Log Delivery",
             "type": "string"
           },
+          "queue_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Reason"
+          },
           "stage_ids": {
             "items": {
               "type": "string"
@@ -3214,6 +3250,34 @@
             "title": "Status",
             "type": "string"
           },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cancel",
+                  "budget",
+                  "never_started"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Reason"
+          },
+          "stop_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Requested At"
+          },
           "target": {
             "enum": [
               "server",
@@ -3237,7 +3301,9 @@
           "created_at",
           "started_at",
           "finished_at",
-          "cancel_requested_at",
+          "stop_requested_at",
+          "stop_reason",
+          "queue_reason",
           "error",
           "launch_ref",
           "launch_url",
@@ -3282,16 +3348,22 @@
       },
       "RunnerSettings": {
         "additionalProperties": false,
-        "description": "`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the\nserver's env and are read-only.",
+        "description": "`launcher` (AGENTOS_LAUNCHER; null = unset) and `token_set` (AGENTOS_GITHUB_TOKEN is set)\ncome from the server's env and are read-only.",
         "properties": {
           "launcher": {
-            "enum": [
-              "local",
-              "github",
-              "mailbox"
+            "anyOf": [
+              {
+                "enum": [
+                  "github",
+                  "mailbox"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Launcher",
-            "type": "string"
+            "title": "Launcher"
           },
           "token_set": {
             "title": "Token Set",

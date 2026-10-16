@@ -15,8 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from agentos.config import WORKER_PATH
 from agentos.context import AppContext
-from agentos.launchers.local import WORKER_PATH
 from agentos.models import ClientToken, LeasedJob, LeaseResponse, Me, Role, TicketDetail
 from agentos.worker_api import service
 from tests.run_support import CSRF, RunDriver, bearer
@@ -301,5 +301,6 @@ def test_a_lease_needs_a_known_bearer_token(client: TestClient, login: LoginFn) 
     login("ann")
     new_token(client)
     assert error(lease_raw(client, secrets.token_urlsafe(32))) == (401, "unauthorized")
-    no_bearer = client.post("/api/worker/lease", json={"wait_s": 0})  # the session cookie only
+    body = {"wait_s": 0}
+    no_bearer = client.post("/api/worker/lease", json=body)  # the session cookie only
     assert error(no_bearer) == (401, "unauthorized")

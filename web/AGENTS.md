@@ -59,7 +59,7 @@ src/styles/    tokens.css, base.css, fonts.css
 - A 401 on any read, or a 403 `pending_approval` on any read or write, re-checks `keys.me()`. The auth guard then routes to `/login` or swaps the shell to the pending page. `useMe` itself returns `null` on 401.
 
 ## Don't derive board state
-- Render what the server returns: `attention`, `phase`, `phase_track`, `rail`, `now`, `next_stage`, `active_run_id`, `attention_since`, `latest_run.cancel_requested_at`. Never compute these on the client, because the backend owns the derivation and two copies drift.
+- Render what the server returns: `attention`, `phase`, `phase_track`, `rail`, `now`, `next_stage`, `active_run_id`, `attention_since`, `latest_run.stop_requested_at` / `stop_reason` / `queue_reason`. Never compute these on the client, because the backend owns the derivation and two copies drift.
 - `src/domain/` only selects: it counts, filters, groups and sorts over server fields, and never invents a state. It is pure and unit-tested (`domain/fixtures.ts` builds typed tickets).
 - Views read the board through `useBoard()` (`src/app/useBoard.ts`), which returns tickets, `me`, and the shared `counts` and `groups`. Views never count or group for themselves.
 - One view-model, read by every view (My queue, Compact, the peek, the Ticket page), so the same ticket shows the same strings everywhere:

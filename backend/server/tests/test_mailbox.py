@@ -12,32 +12,24 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
-from agentos.clock import from_db, to_db, utcnow
+from agentos.clock import from_db, utcnow
 from agentos.config import Settings
-from agentos.context import AppContext
-from agentos.launchers.github import GitHubActionsLauncher, GitHubTarget
+from agentos.context import AppContext, server_route
+from agentos.launchers.base import JobStatus, Provider
 from agentos.launchers.mailbox import MailboxError, MailboxLauncher
 from agentos.mailbox import dispatcher as mailbox_dispatcher
 from agentos.mailbox import service
-from agentos.mailbox.reaper import (
-    CANCEL_GRACE,
-    LAUNCH_GRACE,
-    LAUNCH_INTERRUPTED,
-    NOT_PICKED_UP,
-    TOO_LARGE,
-    MailboxReaper,
-)
+from agentos.mailbox.reaper import CANCEL_GRACE, TOO_LARGE, MailboxReaper
 from agentos.main import create_app
 from agentos.models import TicketDetail
 from agentos.runs import dispatcher as runs_dispatcher
-from agentos.runs.reaper import Reaper
-from agentos.runs.service import BUDGET_GRACE, OVER_BUDGET
-from agentos.stores.artifactory import ArtifactoryStore
-from agentos.tickets.service import log_delivery
+from agentos.runs.reaper import START_GRACE, START_INTERRUPTED
+from agentos.runs.service import NEVER_STARTED, OVER_BUDGET
 from agentos.worker_api import service as worker_api
 from tests.mailbox_support import FakeMailbox, Outbox
-from tests.run_support import CSRF, FakeLauncher, RunDriver, log_event
+from tests.run_support import CSRF, FakeProvider, RunDriver, log_event
 
 CreateTicket = Callable[..., TicketDetail]
 AddRun = Callable[..., int]
@@ -45,16 +37,20 @@ PR = "https://github.com/o/r/pull/7"
 
 
 @pytest.fixture
-def launcher() -> FakeLauncher:
-    """Overrides conftest's: dispatches store `launcher = 'mailbox'` (the loops never call it)."""
-    fake = FakeLauncher(max_concurrency=None)
-    fake.name = "mailbox"
-    return fake
+def providers(provider: FakeProvider) -> dict[str, Provider]:
+    """Overrides conftest's: mailbox runs go through GitHub."""
+    return {"github": provider}
 
 
 @pytest.fixture
 def mailbox() -> FakeMailbox:
     return FakeMailbox()
+
+
+@pytest.fixture(autouse=True)
+def _mailbox_on(ctx: AppContext, mailbox: FakeMailbox) -> None:
+    """As with AGENTOS_LAUNCHER=mailbox: dispatches store the mailbox route."""
+    ctx.route, ctx.mailbox = server_route("mailbox"), mailbox
 
 
 @pytest.fixture
@@ -114,7 +110,7 @@ def test_dispatch_claims_sends_the_manifest_and_locks_the_bundle(
     run_id = launch(runs, mailbox, ticket.key)
     row = runs.db_run(run_id)
     assert row["status"] == "running"
-    assert row["launcher"] == "mailbox"
+    assert (row["start"], row["provider"], row["report"]) == ("push", "github", "file")
     [(sent_id, folder, manifest)] = mailbox.sent
     assert sent_id == run_id
     with runs.ctx.db.read() as conn:
@@ -187,7 +183,7 @@ def test_replay_applies_events_sync_and_complete(
     run_id = launch(runs, mailbox, ticket.key)
     folder = mailbox.folder_of(run_id)
     assert reaper.tick(utcnow()) == {}  # queued on GitHub, no outbox yet
-    mailbox.set_status(run_id, "in_progress")
+    mailbox.set_status(run_id, "running")
     mailbox.put_outbox(run_id, full_outbox(run_id, ticket).data())
     assert reaper.tick(utcnow()) == {run_id: "replayed"}
     detail = runs.get(run_id)
@@ -382,7 +378,7 @@ def test_github_completed_without_an_outbox(
     run_id = launch(runs, mailbox, ticket.key)
     if cancel:
         authed.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
-    mailbox.set_status(run_id, "completed", "failure")
+    mailbox.set_status(run_id, "ended", "failure")
     assert reaper.tick(utcnow()) == {run_id: "ended"}
     detail = runs.get(run_id)
     if cancel:
@@ -399,7 +395,7 @@ def test_a_store_error_skips_the_outbox_rules(
     ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
 ) -> None:
     run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_status(run_id, "completed", "success")
+    mailbox.set_status(run_id, "ended", "success")
     mailbox.fail_fetch = MailboxError("Artifactory unreachable")
     assert reaper.tick(utcnow()) == {}  # the results may exist: don't fail the run
     assert runs.get(run_id).status == "running"
@@ -425,68 +421,37 @@ def test_queued_too_long(
     assert reaper.tick(deadline - timedelta(seconds=1)) == {}
     assert mailbox.cancelled == []
     assert reaper.tick(deadline + timedelta(seconds=1)) == {run_id: "ended"}
-    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NOT_PICKED_UP)
+    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NEVER_STARTED)
     assert mailbox.cancelled == [mailbox.ref_of(run_id)]
 
 
-def test_a_started_job_is_not_failed_by_the_queue_rule(
-    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
-) -> None:
-    run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_status(run_id, "in_progress")
-    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
-    assert reaper.tick(later) == {}
-
-
-def test_a_waiting_publish_is_not_failed_by_the_queue_rule(
-    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
-) -> None:
-    # The work job finished and publish waits, so GitHub reports the run as waiting again.
-    run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_status(run_id, "waiting")
-    mailbox.set_jobs(run_id, {"fetch": "completed", "work": "completed", "publish": "waiting"})
-    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 3600)
-    assert reaper.tick(later) == {}
-    assert reaper.tick(later + timedelta(seconds=20)) == {}
-    assert mailbox.cancelled == []
-    assert len(mailbox.job_checks) == 1  # a started work job is remembered
-
-
 @pytest.mark.parametrize(
-    "jobs", [{"fetch": "in_progress", "work": "pending"}, MailboxError("GitHub answered 502")]
+    "answer",
+    [JobStatus("running"), JobStatus("unknown"), MailboxError("GitHub answered 502")],
 )
-def test_a_running_job_or_a_jobs_error_does_not_fail_a_queued_run(
+def test_only_a_pending_work_job_is_failed_by_the_queue_rule(
     ticket: TicketDetail,
     runs: RunDriver,
     mailbox: FakeMailbox,
     reaper: MailboxReaper,
-    jobs: dict[str, str] | MailboxError,
+    answer: JobStatus | MailboxError,
 ) -> None:
+    # Running also covers a finished work job whose publish job still waits (job-level status).
     run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_jobs(run_id, jobs)
+    mailbox.statuses[mailbox.ref_of(run_id)] = answer
     later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
     assert reaper.tick(later) == {}
     assert mailbox.cancelled == []
-
-
-def test_a_work_job_never_picked_up_fails_the_run(
-    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
-) -> None:
-    run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_jobs(run_id, {"fetch": "completed", "work": "queued", "publish": "pending"})
-    later = started_at(runs, run_id) + timedelta(seconds=runs.ctx.space.claim_timeout_s + 60)
-    assert reaper.tick(later) == {run_id: "ended"}
-    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", NOT_PICKED_UP)
 
 
 def test_over_budget(
     ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
 ) -> None:
     run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_status(run_id, "in_progress")
-    row = runs.db_run(run_id)
-    budget = timedelta(seconds=row["time_budget_s"] + runs.ctx.space.claim_timeout_s) + BUDGET_GRACE
-    deadline = started_at(runs, run_id) + budget
+    mailbox.set_status(run_id, "running")
+    with runs.ctx.db.read() as conn:
+        row = conn.execute("SELECT not_after FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+    deadline = from_db(row["not_after"])
     assert reaper.tick(deadline - timedelta(seconds=1)) == {}
     assert reaper.tick(deadline + timedelta(seconds=1)) == {run_id: "ended"}
     assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", OVER_BUDGET)
@@ -501,9 +466,9 @@ def test_cancel_grace_applies_only_while_the_status_is_unknown(
     reaper: MailboxReaper,
 ) -> None:
     run_id = launch(runs, mailbox, ticket.key)
-    mailbox.set_status(run_id, "in_progress")
+    mailbox.set_status(run_id, "running")
     authed.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
-    requested = from_db(runs.db_run(run_id)["cancel_requested_at"])
+    requested = from_db(runs.db_run(run_id)["stop_requested_at"])
     late = requested + CANCEL_GRACE + timedelta(seconds=1)
     assert reaper.tick(late) == {}  # GitHub answers: wait for it to complete
     mailbox.statuses[mailbox.ref_of(run_id)] = MailboxError("GitHub unreachable")
@@ -518,10 +483,10 @@ def test_a_launch_without_a_ref_is_failed_after_the_launch_grace(
 ) -> None:
     run_id = launch(runs, mailbox, ticket.key)
     runs.set_run(run_id, launch_ref=None)  # the server died between the claim and the ref
-    deadline = started_at(runs, run_id) + LAUNCH_GRACE
+    deadline = started_at(runs, run_id) + START_GRACE
     assert reaper.tick(deadline - timedelta(seconds=1)) == {}
     assert reaper.tick(deadline + timedelta(seconds=1)) == {run_id: "ended"}
-    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", LAUNCH_INTERRUPTED)
+    assert (runs.get(run_id).status, runs.get(run_id).error) == ("failed", START_INTERRUPTED)
 
 
 def test_the_sweep_keeps_active_runs_folders(
@@ -550,38 +515,38 @@ def test_the_sweep_keeps_active_runs_folders(
 # ------------------------------------------------------------------ the runs reaper and loops
 
 
-def test_the_runs_reaper_leaves_mailbox_runs_alone(
+def test_each_dispatcher_and_reaper_takes_only_its_own_stored_route(
     authed: TestClient,
-    ticket: TicketDetail,
     create_ticket: CreateTicket,
-    add_run: AddRun,
     runs: RunDriver,
     mailbox: FakeMailbox,
+    reaper: MailboxReaper,
 ) -> None:
-    run_id = launch(runs, mailbox, ticket.key)
-    authed.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
-    reaper = Reaper(runs.ctx)
-    now = utcnow() + timedelta(hours=1)
-    reaper.tick(now - timedelta(seconds=15))  # the grace tick (refreshes last_seen_at)
-    old = to_db(now - timedelta(hours=1))
-    runs.set_run(run_id, last_seen_at=old, cancel_requested_at=old, time_budget_s=1)
-    local = add_run(create_ticket("local").key, "running", [("plan", "running")])  # silent
-    # No heartbeat, budget or cancel rule for mailbox runs; other launchers' runs still reaped.
-    assert [(r.run_id, r.reason) for r in reaper.tick(now)] == [(local, "worker lost")]
-    assert runs.db_run(run_id)["status"] == "running"
+    """A file run queued before the launcher moved to `github` still goes through the mailbox,
+    and the new live run never does."""
+    file_ticket = create_ticket("file")
+    file_run = runs.queue(file_ticket.key).id
+    runs.ctx.route = server_route("github")
+    live_run = runs.queue(create_ticket("live").key).id
+
+    assert runs_dispatcher.tick(runs.ctx) == [live_run]
+    assert mailbox_dispatcher.tick(runs.ctx, mailbox) == [file_run]
+    assert [sent_id for sent_id, _, _ in mailbox.sent] == [file_run]
+
+    mailbox.put_outbox(file_run, full_outbox(file_run, file_ticket).data())
+    assert reaper.tick(utcnow()) == {file_run: "replayed"}  # live_run isn't the mailbox's
+    assert runs.db_run(live_run)["status"] == "dispatched"
 
 
-def test_the_lifespan_runs_the_mailbox_loops_instead_of_the_runs_dispatcher(
-    settings: Settings, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("launcher", ["mailbox", "github"])
+def test_with_a_mailbox_store_the_lifespan_runs_every_loop(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, launcher: str
 ) -> None:
-    calls: dict[str, int] = {"runs": 0, "dispatcher": 0, "reaper": 0}
-    seen = {name: threading.Event() for name in ("dispatcher", "reaper")}
+    seen = {name: threading.Event() for name in ("runs", "dispatcher", "reaper")}
 
     def record(name: str) -> Callable[..., Any]:
         def tick(*args: Any) -> Any:
-            calls[name] += 1
-            if name in seen:
-                seen[name].set()
+            seen[name].set()
             return {}
 
         return tick
@@ -589,25 +554,14 @@ def test_the_lifespan_runs_the_mailbox_loops_instead_of_the_runs_dispatcher(
     monkeypatch.setattr(runs_dispatcher, "tick", record("runs"))
     monkeypatch.setattr(mailbox_dispatcher, "tick", record("dispatcher"))
     monkeypatch.setattr(MailboxReaper, "tick", record("reaper"))
-    github = GitHubActionsLauncher(
-        target=lambda: GitHubTarget(repo="o/r", workflow="agentos-mailbox.yml", ref="main"),
-        token="t0ken",  # noqa: S106 - a fake; no request is made
-    )
-    store = ArtifactoryStore(
-        base_url="https://a.example/artifactory/r",
-        user="u",
-        password="p",  # noqa: S106 - a fake; no request is made
-    )
-    launcher = MailboxLauncher(github=github, store=store, worker_path=Path("worker.py"))
-    with TestClient(create_app(settings, launcher=launcher)):
-        assert seen["dispatcher"].wait(10)
-        assert seen["reaper"].wait(10)
-    assert calls["runs"] == 0
-
-
-def test_only_mailbox_runs_deliver_their_logs_at_the_end() -> None:
-    assert [log_delivery(name) for name in ("mailbox", "github", "local")] == [
-        "at_end",
-        "live",
-        "live",
-    ]
+    mailbox_settings = {
+        "launcher": launcher,
+        "github_token": SecretStr("t0ken"),  # a fake; no request is made
+        "artifactory_url": "https://a.example/artifactory/r",
+        "artifactory_user": "u",
+        "artifactory_password": SecretStr("p"),
+    }
+    app = create_app(settings.model_copy(update=mailbox_settings))
+    with TestClient(app):
+        assert isinstance(app.state.ctx.mailbox, MailboxLauncher)
+        assert all(event.wait(10) for event in seen.values())

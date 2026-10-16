@@ -1,4 +1,4 @@
-"""MailboxLauncher (mailbox mode) over a dict-backed fake Store and a GitHubActionsLauncher on
+"""MailboxLauncher (mailbox mode) over a dict-backed fake Store and a GitHubActionsProvider on
 httpx.MockTransport (never the real GitHub or Artifactory)."""
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agentos.launchers.github import ActionsRun, GitHubActionsLauncher, GitHubTarget
+from agentos.launchers.base import JobStatus
+from agentos.launchers.github import GitHubActionsProvider, GitHubTarget
 from agentos.launchers.mailbox import (
     MAX_OUTBOX_BYTES,
     MailboxError,
@@ -67,7 +68,7 @@ class FakeStore:
         return sorted({k[len(prefix) :].split("/")[0] for k in self.files if k.startswith(prefix)})
 
 
-def _github_answering(handler: Handler) -> tuple[GitHubActionsLauncher, list[httpx.Request]]:
+def _github_answering(handler: Handler) -> tuple[GitHubActionsProvider, list[httpx.Request]]:
     seen: list[httpx.Request] = []
 
     def recording(request: httpx.Request) -> httpx.Response:
@@ -75,7 +76,7 @@ def _github_answering(handler: Handler) -> tuple[GitHubActionsLauncher, list[htt
         return handler(request)
 
     target = GitHubTarget(repo="o/r", workflow="agentos-mailbox.yml", ref="main")
-    github = GitHubActionsLauncher(
+    github = GitHubActionsProvider(
         target=lambda: target, token=GH_TOKEN, transport=httpx.MockTransport(recording)
     )
     return github, seen
@@ -99,8 +100,6 @@ def _mailbox(
 def test_send_uploads_then_dispatches(tmp_path: Path) -> None:
     mailbox, store, seen = _mailbox(tmp_path)
 
-    assert mailbox.name == "mailbox"
-    assert mailbox.max_concurrency is None
     assert mailbox.send(42, FOLDER, MANIFEST) == RUN_HTML
 
     assert FOLDER == "42-0123456789abcdef"
@@ -182,41 +181,26 @@ def test_send_without_worker_py_is_a_mailbox_error(tmp_path: Path) -> None:
     assert store.calls == []
 
 
-def test_launch_is_never_used(tmp_path: Path) -> None:
-    mailbox, _, _ = _mailbox(tmp_path)
-    with pytest.raises(MailboxError):
-        mailbox.launch(1, "http://x", "token")
-
-
 # ---------------------------------------------------------------- status and cancel
 
 
 def test_status_and_cancel_delegate_to_github(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
-            return httpx.Response(200, json={"status": "in_progress", "conclusion": None})
+            return httpx.Response(200, json={"jobs": [{"name": "work", "status": "queued"}]})
         return httpx.Response(202)
 
     mailbox, _, seen = _mailbox(tmp_path, handler)
-    assert mailbox.status(RUN_HTML) == ActionsRun(status="in_progress", conclusion=None)
+    assert mailbox.status(RUN_HTML) == JobStatus("pending")
     mailbox.cancel(RUN_HTML)
     assert [(r.method, str(r.url)) for r in seen] == [
-        ("GET", "https://api.github.com/repos/o/r/actions/runs/77"),
+        ("GET", "https://api.github.com/repos/o/r/actions/runs/77/jobs"),
         ("POST", "https://api.github.com/repos/o/r/actions/runs/77/cancel"),
     ]
 
-    assert mailbox.status(RUNS_PAGE) is None
+    assert mailbox.status(RUNS_PAGE).state == "unknown"
     mailbox.cancel(RUNS_PAGE)
     assert len(seen) == 2
-
-
-def test_jobs_reads_the_runs_jobs(tmp_path: Path) -> None:
-    answers = [{"jobs": [{"name": "work", "status": "queued"}]}, {"jobs": [{"status": "queued"}]}]
-    mailbox, _, seen = _mailbox(tmp_path, lambda _r: httpx.Response(200, json=answers.pop(0)))
-    assert mailbox.jobs(RUN_HTML) == {"work": "queued"}
-    assert (seen[0].method, seen[0].url.path) == ("GET", "/repos/o/r/actions/runs/77/jobs")
-    with pytest.raises(MailboxError):  # a malformed answer is a MailboxError, not a crash
-        mailbox.jobs(RUN_HTML)
 
 
 def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
@@ -226,7 +210,6 @@ def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
     mailbox, _, _ = _mailbox(tmp_path, handler)
     calls: list[Callable[[], object]] = [
         lambda: mailbox.status(RUN_HTML),
-        lambda: mailbox.jobs(RUN_HTML),
         lambda: mailbox.cancel(RUN_HTML),
     ]
     for call in calls:

@@ -13,17 +13,17 @@ import json
 import logging
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from pydantic import ValidationError
 
 from agentos.auth.service import hash_token
 from agentos.clients import service as clients
-from agentos.clients.service import CLIENT_LAUNCHER
 from agentos.clock import to_db, utcnow
+from agentos.config import WORKER_PATH
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError, field_error, validation_error
 from agentos.files.service import write_version
-from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
     JobPackage,
     JournalRecord,
@@ -42,7 +42,15 @@ from agentos.models import (
 )
 from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
-from agentos.runs.service import EVENT_ADAPTER, TERMINAL, finish
+from agentos.runs.service import (
+    EVENT_ADAPTER,
+    EXITED_UNSTARTED,
+    STOPPED,
+    TERMINAL,
+    WORKER_EXITED,
+    end_job,
+    finish,
+)
 from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import parsed, path_key, pydantic_issues, validate_pr_url
@@ -51,11 +59,11 @@ log = logging.getLogger(__name__)
 
 MAX_EVENTS_PER_RUN = 100_000  # SPEC §6; beyond it `log` events are dropped
 
-# The run statuses a repeated final result may find (by `ResultData.status`).
+# The run statuses a repeated final result may find (by `ResultData.status`); a cancelled one
+# goes by the stop table instead (`_is_final`).
 _FINAL: dict[str, frozenset[RunStatus]] = {
     "completed": frozenset({"gated", "succeeded"}),
     "failed": frozenset({"failed"}),
-    "cancelled": frozenset({"cancelled"}),
 }
 
 # The journal record types stored as `run_events` rows (validated as `RunEvent`).
@@ -74,7 +82,8 @@ def _gone(run_id: int, status: str) -> ApiError:
 def _job_run(conn: Conn, job_token: str, instance: str) -> tuple[Row, Row]:
     """The job of this job token and its run (any status). 401 for an unknown token; 409
     `already_claimed` when the job is bound to another instance, or its run was started without
-    one (a mailbox run, started by the server)."""
+    one (a mailbox run, started by the server); 410 for an unbound job that has ended (the fence
+    may have lifted: no worker may start it any more)."""
     job: Row | None = conn.execute(
         "SELECT * FROM jobs WHERE token_hash = ?", (hash_token(job_token),)
     ).fetchone()
@@ -85,6 +94,8 @@ def _job_run(conn: Conn, job_token: str, instance: str) -> tuple[Row, Row]:
     bound = job["instance_hash"]
     if (bound is None and run["status"] == "running") or bound not in (None, hash_token(instance)):
         raise ApiError(409, "already_claimed", f"Job {job['id']} is bound to another worker")
+    if bound is None and job["ended_at"] is not None:
+        raise ApiError(410, "run_gone", f"Job {job['id']} has ended")
     return job, run
 
 
@@ -117,11 +128,7 @@ def post_journal(
         new = [r for r in records if r.seq > run["journal_seq"]]
         if run["status"] in TERMINAL:
             last = records[-1] if records else None
-            final = (
-                last is not None
-                and last.type == "result"
-                and run["status"] in _FINAL.get(str(last.data.get("status")), ())
-            )
+            final = last is not None and last.type == "result" and _is_final(run, last.data)
             if not final or any(r is not last for r in new):
                 raise _gone(run["id"], run["status"])
 
@@ -146,6 +153,15 @@ def post_journal(
             (to_db(now), run["id"]),
         )
     return response
+
+
+def _is_final(run: Row, result: dict[str, Any]) -> bool:
+    """Whether a `result` with these `data` is the one that ended the run (cancelled: by the stop
+    table, so a run failed "worker lost" never matches)."""
+    status = str(result.get("status"))
+    if status == "cancelled":
+        return (run["status"], run["error"]) == STOPPED[run["stop_reason"]]
+    return run["status"] in _FINAL.get(status, ())
 
 
 def ingest(
@@ -198,7 +214,7 @@ def ingest(
 
     _store_events(conn, run, events, now)
     conn.execute("UPDATE runs SET journal_seq = ? WHERE id = ?", (seq, run["id"]))
-    cancel = run["cancel_requested_at"] is not None
+    cancel = run["stop_requested_at"] is not None
     return JournalResponse(ack=seq, cancel=cancel, rejected=rejected)
 
 
@@ -233,8 +249,9 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
         conn.execute("UPDATE runs SET head_commit = ? WHERE id = ?", (head, run["id"]))
 
     elif record.type == "result":
-        # running → gated|succeeded (completed, per `completion_status`), failed or cancelled,
-        # and the reported PR stored. A run that isn't running is left as it is.
+        # running → gated|succeeded (completed, per `completion_status`), failed, or as the stop
+        # table says for cancelled, and the reported PR stored. A run that isn't running is left
+        # as it is.
         result = ResultData.model_validate(record.data)
         status: RunStatus
         error = result.error
@@ -248,9 +265,11 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
             failed = result.failed_stage
             error = error or (f"stage {failed} failed" if failed else "the run failed")
         else:
-            status = "cancelled"
+            status, error = STOPPED[run["stop_reason"]]
         if finish(conn, run["id"], status, ("running",), now=now, error=error):
             _store_pr_url(conn, run, result.pr_url)
+        # The result is the worker's last post: it has published all it will, so the fence lifts.
+        end_job(conn, run["id"], record.job, now)
 
     else:
         raise field_error(["type"], f"Unknown record type {record.type!r}.")
@@ -443,19 +462,45 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
 # ------------------------------------------------------------------ client lease
 
 
-def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResponse:
+def lease_client(
+    db: Database, client_token: str, alive: list[str], gone: list[str]
+) -> LeaseResponse:
     """Authenticate a leasing client (401/403: `clients.service.authenticate`), record that it
-    was seen and stamp `jobs.alive_at` on the jobs in `alive` that are its user's client runs
-    (other ids are ignored). Once per lease. Returns the answer without a job."""
+    was seen, and stamp the jobs in `alive` that are its user's client runs as listed now
+    (`alive_at`; for display only: leaving a job out ends nothing). Once per lease. Returns the
+    answer without a job.
+
+    `gone` are the jobs whose worker the client saw end (its process exited, or its lock file was
+    released). Each that this client was leased (`jobs.client_id`; others are ignored) and that
+    hasn't ended ends now, in this transaction, and so does its run if still active: as `STOPPED`
+    says if it was stopped, else failed `WORKER_EXITED`, or `EXITED_UNSTARTED` when the job never
+    bound (a late bind of an ended job gets 410). An ended job is skipped, so a repeated or late
+    `gone` changes nothing, whatever order leases arrive in."""
     client = clients.authenticate(db, client_token)
     now = utcnow()
-    clients.touch(db, client.id, now)
     with db.tx() as conn:
+        clients.touch(conn, client.id, now)
         conn.execute(
             "UPDATE jobs SET alive_at = ? WHERE id IN (SELECT value FROM json_each(?)) "
-            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND launcher = ?)",
-            (to_db(now), json.dumps(alive), client.user.id, CLIENT_LAUNCHER),
+            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",
+            (to_db(now), json.dumps(alive), client.user.id),
         )
+        ended = conn.execute(
+            "SELECT r.id, r.status, r.stop_reason, j.id AS job_id, j.instance_hash "
+            "FROM jobs j JOIN runs r ON r.id = j.run_id WHERE j.client_id = ? "
+            "AND j.ended_at IS NULL AND j.id IN (SELECT value FROM json_each(?))",
+            (client.id, json.dumps(gone)),
+        ).fetchall()
+        for job in ended:
+            if job["status"] not in TERMINAL:
+                bound = job["instance_hash"] is not None
+                error = WORKER_EXITED if bound else EXITED_UNSTARTED
+                end: tuple[RunStatus, str | None] = ("failed", error)
+                if job["stop_reason"] is not None:
+                    end = STOPPED[job["stop_reason"]]
+                finish(conn, job["id"], end[0], ("dispatched", "running"), now=now, error=end[1])
+                log.warning("run %s %s (%s): its worker exited", job["id"], end[0], end[1])
+            end_job(conn, job["id"], job["job_id"], now)
 
     sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()
     return LeaseResponse(job=None, protocol=2, worker_sha256=sha256)
@@ -466,7 +511,7 @@ def take_client_run(db: Database, client_token: str, server_url: str) -> LeasedJ
     answer, never logged. The client token is checked on every take, so a revoke or a disabled
     user also stops a waiting lease. A run whose job can't be built is failed; the lease waits."""
     client = clients.authenticate(db, client_token)
-    job = runs.take_client_run(db, client.user.id, client.name, server_url)
+    job = runs.take_client_run(db, client.user.id, client.id, client.name, server_url)
     if job is not None:
         log.info("job %s: handed to client %s of user %s", job.job_id, client.id, client.user.id)
     return job

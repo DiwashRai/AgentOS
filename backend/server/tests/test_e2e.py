@@ -1,10 +1,11 @@
 """End to end, no network and no LLM (SPEC §14): the real server (uvicorn on a free loopback port,
-dispatcher and reaper loops on), the real LocalProcessLauncher, the real worker.py and a temp bare
-git repo as the remote, driven only through the HTTP API. Agent stages run `fake_agent.py`.
+dispatcher and reaper loops on) with the test-only `SubprocessProvider` as its `github` provider,
+the real worker.py as a process and a temp bare git repo as the remote, driven only through the
+HTTP API. Agent stages run `fake_agent.py`.
 
 The remote is the catalog repo `remote`. Its `https://` URL (repo_url_problem accepts no file://)
 is what the worker's git rewrites to the bare repo's file:// URL with `url.<file-url>.insteadOf`,
-set via GIT_CONFIG_* in the worker env file (AGENTOS_WORKER_ENV_FILE). No server escape hatch.
+set via GIT_CONFIG_* in the env the provider gives its workers. No server escape hatch.
 
 Skip with `pytest -m "not e2e"`.
 """
@@ -29,8 +30,10 @@ from typing import Any, TypeVar
 import httpx
 import pytest
 import uvicorn
+from pydantic import SecretStr
 
 from agentos.config import Settings
+from agentos.launchers.base import Provider
 from agentos.main import create_app
 from agentos.models import (
     FileContent,
@@ -46,6 +49,7 @@ from agentos.pipeline.runtime import NamedRuntime
 from agentos.pipeline.space import RepoSpec, SpaceConfig
 from agentos.runs import dispatcher
 from tests.fake_agent import BLOCK_LINE, SYNC_BACK_FILE
+from tests.provider_support import SubprocessProvider
 from tests.settings_support import seed_test_settings
 
 pytestmark = pytest.mark.e2e
@@ -59,6 +63,8 @@ TERMINAL: frozenset[RunStatus] = frozenset({"succeeded", "gated", "failed", "can
 GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
 
 T = TypeVar("T")
+
+_: Provider = SubprocessProvider(Path("unused"))
 
 
 # ------------------------------------------------------------------ the remote
@@ -106,6 +112,16 @@ def make_remote(root: Path) -> Path:
     return bare
 
 
+def worker_git_env(remote: Path) -> dict[str, str | None]:
+    """What a run worker needs to reach `remote` as REPO_URL, and no real `gh` PR lookup."""
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": f"url.{remote.as_uri()}.insteadOf",
+        "GIT_CONFIG_VALUE_0": REPO_URL,
+        "AGENTOS_PR_LOOKUP": "0",
+    }
+
+
 # ------------------------------------------------------------------ processes
 
 
@@ -142,10 +158,12 @@ def pid_alive(pid: int) -> bool:
 
 @dataclass
 class E2E:
+    """A signed-in user. The run workers it sees log to `<logs>/<run_id>.log`."""
+
     http: httpx.Client
-    settings: Settings
     remote: Path
     me: Me
+    logs: Path
     run_ids: list[int] = field(default_factory=list)
 
     # ---------------------------------------------------------------- diagnostics
@@ -154,7 +172,7 @@ class E2E:
         """The worker log and the run's last events, for assertion messages."""
         if run_id is None:
             return ""
-        log = self.settings.logs_dir / f"worker-{run_id}.log"
+        log = self.logs / f"{run_id}.log"
         text = log.read_text("utf-8", "replace") if log.exists() else "(no worker log)"
         try:
             events = self.events(run_id)[-40:]
@@ -162,7 +180,7 @@ class E2E:
         except AssertionError as exc:
             lines = [f"(events unavailable: {exc})"]
         return (
-            f"\n--- worker-{run_id}.log ---\n{text}"
+            f"\n--- {run_id}.log ---\n{text}"
             f"\n--- run {run_id} events (last 40) ---\n" + "\n".join(lines)
         )
 
@@ -260,7 +278,23 @@ def _free_socket() -> socket.socket:
 
 
 @pytest.fixture(scope="module")
-def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
+def remote(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return make_remote(tmp_path_factory.mktemp("e2e-remote"))
+
+
+@pytest.fixture(scope="module")
+def runner(tmp_path_factory: pytest.TempPathFactory, remote: Path) -> Iterator[SubprocessProvider]:
+    """The server's provider. Teardown kills any worker that outlived its test."""
+    provider = SubprocessProvider(tmp_path_factory.mktemp("e2e-runs"), worker_git_env(remote))
+    yield provider
+    for ref in list(provider.children):
+        provider.cleanup(ref)
+
+
+@pytest.fixture(scope="module")
+def e2e(
+    tmp_path_factory: pytest.TempPathFactory, remote: Path, runner: SubprocessProvider
+) -> Iterator[E2E]:
     root = tmp_path_factory.mktemp("e2e")
     with pytest.MonkeyPatch.context() as mp:
         for name in list(os.environ):
@@ -268,27 +302,15 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
                 mp.delenv(name)
         mp.setattr(dispatcher, "INTERVAL_S", 0.1)
 
-        remote = make_remote(root)
-        worker_env = root / "worker.env"
-        worker_env.write_bytes(
-            (
-                "GIT_CONFIG_COUNT=1\n"
-                f"GIT_CONFIG_KEY_0='url.{remote.as_uri()}.insteadOf'\n"
-                f"GIT_CONFIG_VALUE_0='{REPO_URL}'\n"
-                "AGENTOS_PR_LOOKUP=0\n"  # never ask a real `gh` about the fake remote
-            ).encode()
-        )
-
         sock = _free_socket()
         url = f"http://127.0.0.1:{sock.getsockname()[1]}"
         settings = Settings(
             _env_file=None,
             data_dir=root / "data",
-            workspaces_dir=root / "workspaces",
             dev_auth=True,
             public_url=url,
-            worker_env_file=worker_env,
-            local_max_concurrency=None,
+            launcher="github",
+            github_token=SecretStr("e2e-unused"),  # the subprocess provider never calls GitHub
         )
         seed_test_settings(
             settings,
@@ -301,7 +323,11 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
         )
 
         server = uvicorn.Server(
-            uvicorn.Config(create_app(settings), log_config=None, access_log=False)
+            uvicorn.Config(
+                create_app(settings, providers={"github": runner}),
+                log_config=None,
+                access_log=False,
+            )
         )
         thread = threading.Thread(
             target=server.run, kwargs={"sockets": [sock]}, name="e2e-uvicorn", daemon=True
@@ -317,7 +343,7 @@ def e2e(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2E]:
             with httpx.Client(base_url=url, headers=CSRF, timeout=15) as http:
                 r = http.post("/api/auth/login", json={"username": "e2e"})
                 assert r.status_code == 200, r.text
-                env = E2E(http, settings, remote, Me.model_validate(r.json()))
+                env = E2E(http, remote, Me.model_validate(r.json()), runner.root)
                 try:
                     yield env
                 finally:
@@ -536,7 +562,7 @@ def test_failed_stage_then_retry_succeeds(e2e: E2E) -> None:
     assert_clean_branch(e2e.remote, key)
 
 
-def test_cancel_mid_stage(e2e: E2E) -> None:
+def test_cancel_mid_stage(e2e: E2E, runner: SubprocessProvider) -> None:
     key = e2e.create_ticket("Cancel me").key
     e2e.configure(key, {"implement": "slow"})
     run = e2e.dispatch(key, from_stage="implement")
@@ -548,8 +574,8 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
         return detail if running else None
 
     detail = e2e.wait("the implement stage to run", stage_running, run.id)
-    assert detail.launch_ref is not None
-    worker_pid = int(detail.launch_ref)
+    ref = detail.launch_ref
+    assert ref is not None
 
     def agent_pid() -> int | None:
         for e in e2e.events(run.id):
@@ -561,7 +587,7 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
     pid = e2e.wait("the fake agent's pid", agent_pid, run.id)
 
     r = e2e.send("POST", f"/api/runs/{run.id}/cancel", None)
-    assert RunSummary.model_validate(r).cancel_requested_at is not None
+    assert RunSummary.model_validate(r).stop_requested_at is not None
     detail = e2e.wait_run(run.id, "cancelled")
     assert detail.stage_runs[0].status == "cancelled", e2e.diag(run.id)
     assert detail.stage_runs[0].started_at is not None
@@ -574,7 +600,7 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
 
     # No process left behind: the stage tree is killed and the worker exits after completing.
     e2e.wait("the fake agent to exit", lambda: not pid_alive(pid), run.id)
-    e2e.wait("the worker to exit", lambda: not pid_alive(worker_pid), run.id)
+    e2e.wait("the worker to exit", lambda: runner.status(ref).state == "ended", run.id)
 
 
 def test_shipped_agent_the_repo_already_has_fails_setup(e2e: E2E) -> None:

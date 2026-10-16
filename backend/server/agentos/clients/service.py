@@ -22,9 +22,6 @@ from agentos.errors import ApiError
 from agentos.models import ClientToken, ClientTokenCreate, ClientTokenCreated, Me
 
 ONLINE_WINDOW = timedelta(seconds=60)
-# `runs.launcher` of a run dispatched to "My client". Never a configurable launcher name
-# (LauncherName), so the dispatcher and `max_concurrency` never see these runs.
-CLIENT_LAUNCHER = "client"
 
 _SELECT_CLIENT = "SELECT id, name, created_at, last_seen_at FROM client_tokens"
 
@@ -107,12 +104,9 @@ def authenticate(db: Database, token: str) -> Client:
     return Client(id=row["client_id"], name=row["name"], user=user)
 
 
-def touch(db: Database, client_id: int, now: datetime) -> None:
-    """Record that the client was seen (it leased)."""
-    with db.tx() as conn:
-        conn.execute(
-            "UPDATE client_tokens SET last_seen_at = ? WHERE id = ?", (to_db(now), client_id)
-        )
+def touch(conn: Conn, client_id: int, now: datetime) -> None:
+    """Record that the client was seen (it leased), in the caller's transaction."""
+    conn.execute("UPDATE client_tokens SET last_seen_at = ? WHERE id = ?", (to_db(now), client_id))
 
 
 def has_client(conn: Conn, user_id: int) -> bool:
@@ -125,9 +119,9 @@ def waiting_client_run_id(conn: Conn, ticket_id: int) -> int | None:
     """The ticket's client run that is queued or dispatched (not started yet), if any. While one
     waits, what it will run (the context, the owner) must stay the dispatcher's."""
     row = conn.execute(
-        "SELECT id FROM runs WHERE ticket_id = ? AND launcher = ? "
+        "SELECT id FROM runs WHERE ticket_id = ? AND start = 'pull' "
         "AND status IN ('queued', 'dispatched')",
-        (ticket_id, CLIENT_LAUNCHER),
+        (ticket_id,),
     ).fetchone()
     return None if row is None else int(row["id"])
 

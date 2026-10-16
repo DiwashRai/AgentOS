@@ -124,7 +124,7 @@ source_modules = ["agentos.launchers", "agentos.sources", "agentos.stores"]
 forbidden_modules = [
     "fastapi", "starlette", "sqlite3", "agentos.db", "agentos.*.service", "agentos.*.routes",
 ]
-broken_contract_guidance = "Plugins receive what they need as arguments (the dispatcher counts active runs). A fork adds plugins without touching the schema."
+broken_contract_guidance = "Plugins receive what they need as arguments. A fork adds plugins without touching the schema."
 
 [[tool.importlinter.contracts]]
 name = "No import cycles between agentos subpackages"

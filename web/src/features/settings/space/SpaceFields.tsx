@@ -122,7 +122,7 @@ export function SpaceFields(props: SpaceFieldsProps) {
       </Field>
 
       <Field
-        label="Claim timeout (seconds)"
+        label="Start timeout (seconds)"
         error={errorAt(issues, "claim_timeout_s")}
         hint={claimHint(value.claim_timeout_s)}
       >

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from agentos.launchers.github import ActionsRun
+from agentos.launchers.base import JobStatus, State
 from agentos.launchers.mailbox import MailboxError, MailboxTooLarge
 from tests.run_support import event, finished, log_event
 
@@ -16,14 +16,12 @@ OUTBOX = "outbox.jsonl"
 
 class FakeMailbox:
     """Implements `launchers.mailbox.Mailbox` in memory. `statuses` maps a launch_ref to what
-    `status()` answers (an exception is raised), `job_lists` likewise for `jobs()` (no jobs
-    when unset); `fail_*` make a call raise."""
+    `status()` answers (an exception is raised; unknown when unset); `fail_*` make a call
+    raise."""
 
     def __init__(self) -> None:
         self.folders: dict[str, dict[str, bytes]] = {}
-        self.statuses: dict[str, ActionsRun | Exception | None] = {}
-        self.job_lists: dict[str, dict[str, str] | Exception] = {}
-        self.job_checks: list[str] = []
+        self.statuses: dict[str, JobStatus | Exception] = {}
         self.sent: list[tuple[int, str, bytes]] = []
         self.cancelled: list[str] = []
         self.deleted: list[str] = []
@@ -39,20 +37,13 @@ class FakeMailbox:
         self.sent.append((run_id, folder, manifest_json))
         self.folders[folder] = {"manifest.json": manifest_json, "worker.py": b"# worker\n"}
         ref = self.ref_of(run_id)
-        self.statuses[ref] = ActionsRun("queued", None)
+        self.statuses[ref] = JobStatus("pending")
         if self.on_send is not None:
             self.on_send(run_id)
         return ref
 
-    def status(self, launch_ref: str) -> ActionsRun | None:
-        answer = self.statuses.get(launch_ref)
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-
-    def jobs(self, launch_ref: str) -> dict[str, str] | None:
-        self.job_checks.append(launch_ref)
-        answer = self.job_lists.get(launch_ref, {})
+    def status(self, launch_ref: str) -> JobStatus:
+        answer = self.statuses.get(launch_ref, JobStatus("unknown"))
         if isinstance(answer, Exception):
             raise answer
         return answer
@@ -86,11 +77,8 @@ class FakeMailbox:
     def ref_of(self, run_id: int) -> str:
         return f"https://github.com/o/r/actions/runs/{9000 + run_id}"
 
-    def set_status(self, run_id: int, status: str, conclusion: str | None = None) -> None:
-        self.statuses[self.ref_of(run_id)] = ActionsRun(status, conclusion)
-
-    def set_jobs(self, run_id: int, answer: dict[str, str] | Exception) -> None:
-        self.job_lists[self.ref_of(run_id)] = answer
+    def set_status(self, run_id: int, state: State, conclusion: str | None = None) -> None:
+        self.statuses[self.ref_of(run_id)] = JobStatus(state, detail=conclusion)
 
     def put_outbox(self, run_id: int, data: bytes) -> None:
         self.folders.setdefault(self.folder_of(run_id), {})[OUTBOX] = data

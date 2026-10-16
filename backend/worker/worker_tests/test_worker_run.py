@@ -2,7 +2,8 @@
 
 Covers binding and the journal (every step a record, in seq order, resent from the ack), the
 commit procedure (context files and notes never committed, repo edits committed), the pre-push
-guard, abort (410), server loss, cancel, push rejection, no-repo mode and the early exits.
+guard, the pre-push hook, abort (410), not_after, server loss, cancel, the time budget, push
+rejection, no-repo mode and the early exits.
 """
 
 from __future__ import annotations
@@ -321,14 +322,65 @@ def test_run_gone_after_binding_means_no_commit_and_no_push(
     assert git(tmp_path / "ws", "log", "--format=%s", "-1").strip() == "init", "nothing committed"
 
 
+@pytest.mark.parametrize("mode", ["live", "file"])
 def test_nothing_is_published_after_the_jobs_not_after(
+    server: FakeServer, origin: Origin, tmp_path: Path, mode: str
+) -> None:
+    package = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
+    package["job"]["not_after"] = "2000-01-01T00:00:00Z"
+    package["report"]["mode"] = mode
+    if mode == "live":
+        server.manifest = package
+        assert run_worker(server, tmp_path / "ws") == 1
+        assert server.complete() is None
+    else:
+        manifest = tmp_path / "job.json"
+        manifest.write_text(json.dumps(package), encoding="utf-8", newline="\n")
+        outbox, workdir = tmp_path / "outbox.jsonl", tmp_path / "ws"
+        args = ["--manifest", str(manifest), "--outbox", str(outbox), "--workdir", str(workdir)]
+        assert worker.main(args) == 1
+    assert not origin.has_branch(BRANCH)
+
+
+def test_over_budget_kills_the_stage_still_publishes_then_fails(
+    server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = time.monotonic
+
+    def hook(path: str, body: Any) -> None:  # the budget runs out once the stage is running
+        if path == JOURNAL and any(
+            r["type"] == "log" and r["data"]["text"] == "started" for r in body["records"]
+        ):
+            monkeypatch.setattr(time, "monotonic", lambda: real() + 3600)
+
+    server.hook = hook
+    server.manifest = make_package(
+        [agent_stage("implement", "edit", "sleep=60"), agent_stage("never", "print=no")],
+        repo_url=origin.url,
+    )
+    started = real()
+    assert run_worker(server, tmp_path / "ws") == 0
+    assert real() - started < 45, "the stage tree was killed"
+    assert server.complete() == {
+        "status": "failed",
+        "failed_stage": "implement",
+        "error": worker.OVER_BUDGET,
+    }
+    assert [e["stage_id"] for e in stage_events(server, "stage_started")] == ["implement"]
+    assert synced(server, "implement")
+    assert "src/app.py" in origin.tree(BRANCH)
+
+
+def test_the_pre_push_hook_refuses_an_agent_push_but_not_the_workers(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
-    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
-    server.manifest["job"]["not_after"] = "2000-01-01T00:00:00Z"
-    assert run_worker(server, tmp_path / "ws") == 1
-    assert not origin.has_branch(BRANCH)
-    assert server.complete() is None
+    stage = agent_stage("implement", "edit", "forcecommit=src/app.py", "push")
+    server.manifest = make_package([stage], repo_url=origin.url)
+    assert run_worker(server, tmp_path / "ws") == 0
+    assert "push exit 1" in server.logs("stdout")
+    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
+    [pushed] = server.records("pushed")
+    assert pushed["data"]["head"] == git(origin.bare, "rev-parse", BRANCH).strip()
 
 
 def test_unreachable_server_saves_the_work_and_exits_1(
@@ -383,11 +435,10 @@ def test_rejected_push_fails_the_run(server: FakeServer, origin: Origin, tmp_pat
     hook.chmod(0o755)
     server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
-    assert server.complete() == {
-        "status": "failed",
-        "failed_stage": "implement",
-        "error": "push rejected",
-    }
+    done = server.complete()
+    assert done is not None
+    assert (done["status"], done["failed_stage"]) == ("failed", "implement")
+    assert "did the agent push?" in done["error"]
 
 
 def test_no_repo_mode(server: FakeServer, tmp_path: Path) -> None:

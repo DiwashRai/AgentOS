@@ -11,11 +11,11 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.clock import utcnow
+from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
-from agentos.models import JobPackage, Me, RunSummary, TicketDetail, TicketSummary
-from agentos.runs.service import BUDGET_GRACE
-from tests.run_support import CSRF, FakeLauncher, RunDriver, bearer, event, log_event
+from agentos.models import JobPackage, Me, Route, RunSummary, TicketDetail, TicketSummary
+from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, OVER_BUDGET
+from tests.run_support import CSRF, FakeProvider, RunDriver, bearer, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -57,32 +57,38 @@ def run_count(ctx: AppContext) -> int:
     return n
 
 
+def route(runs: RunDriver, run_id: int) -> tuple[str, str | None, str]:
+    row = runs.db_run(run_id)
+    return row["start"], row["provider"], row["report"]
+
+
 # ------------------------------------------------------------------ dispatch
 
 
 @pytest.mark.parametrize(
-    ("launcher_name", "launch_ref", "url"),
+    ("start", "launch_ref", "url"),
     [
         (
-            "github",
+            "push",
             "https://github.com/o/r/actions/runs/9",
             "https://github.com/o/r/actions/runs/9",
         ),
-        ("local", "4242", None),  # a PID
-        ("github", None, None),  # not launched yet
+        ("push", "4242", None),  # a ref that isn't a URL
+        ("push", None, None),  # not launched yet
+        ("pull", "https://laptop", None),  # a client's name
     ],
 )
 def test_launch_url_links_the_github_run(
     authed: TestClient,
     create_ticket: CreateTicket,
     runs: RunDriver,
-    launcher_name: str,
+    start: str,
     launch_ref: str | None,
     url: str | None,
 ) -> None:
     t = create_ticket()
     run = runs.queue(t.key)
-    runs.set_run(run.id, launcher=launcher_name, launch_ref=launch_ref)
+    runs.set_run(run.id, start=start, launch_ref=launch_ref)
     assert runs.get(run.id).launch_url == url
     latest = authed.get(f"/api/tickets/{t.key}").json()["latest_run"]
     assert latest["launch_url"] == url
@@ -104,7 +110,6 @@ def test_dispatch_queues_the_next_segment(
     assert run.launch_url is None
     row = runs.db_run(run.id)
     assert row["time_budget_s"] == 3600
-    assert row["launcher"] == "local"
     detail = runs.get(run.id)
     assert [(s.stage_id, s.name, s.idx, s.status) for s in detail.stage_runs] == [
         ("plan", "Plan", 0, "pending")
@@ -240,7 +245,7 @@ def test_the_owner_can_dispatch_to_their_client(
     t = create_ticket(owner_id=ann.id)
     run = runs.queue(t.key, target="client")
     assert (run.target, run.client_online, run.launch_url) == ("client", False, None)
-    assert runs.db_run(run.id)["launcher"] == "client"
+    assert route(runs, run.id) == ("pull", None, "live")
     latest = TicketDetail.model_validate(client.get(f"/api/tickets/{t.key}").json()).latest_run
     assert latest is not None
     assert (latest.target, latest.client_online) == ("client", False)
@@ -278,12 +283,23 @@ def test_dispatching_to_a_client_needs_a_client_token(
 
 
 @pytest.mark.parametrize("target", [None, "server"])
-def test_the_server_target_uses_the_configured_launcher(
+def test_the_server_target_stores_the_servers_route(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, target: str | None
 ) -> None:
+    runs.ctx.route = Route("push", "github", "file")
     run = runs.queue(create_ticket().key, target=target)
-    assert (run.target, run.client_online) == ("server", None)
-    assert runs.db_run(run.id)["launcher"] == "local"
+    assert (run.target, run.client_online, run.log_delivery) == ("server", None, "at_end")
+    assert route(runs, run.id) == ("push", "github", "file")
+
+
+def test_the_server_target_needs_a_route(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
+) -> None:
+    runs.ctx.route = None
+    r = runs.dispatch(create_ticket().key)
+    assert error(r) == (422, "validation_error")
+    assert [i["loc"] for i in r.json()["error"]["issues"]] == [["target"]]
+    assert run_count(ctx) == 0
 
 
 def test_a_waiting_client_run_blocks_another_dispatch(
@@ -373,7 +389,7 @@ def test_the_package_is_built_at_dispatch(
     create_ticket: CreateTicket,
     runs: RunDriver,
     ctx: AppContext,
-    launcher: FakeLauncher,
+    provider: FakeProvider,
 ) -> None:
     t = create_ticket()
     run = runs.queue(t.key)
@@ -395,9 +411,9 @@ def test_the_package_is_built_at_dispatch(
     }
 
     # The worker's job returns the same package.
-    fetched = runs.client.get("/api/worker/job", headers=bearer(launcher.token(run.id))).json()
+    fetched = runs.client.get("/api/worker/job", headers=bearer(provider.token(run.id))).json()
     assert authed.get(f"/api/runs/{run.id}/manifest").json() == fetched
-    assert [r for r, _, _ in launcher.launched] == [run.id]
+    assert provider.launched == [run.id]
 
 
 def test_stage_names_fall_back_to_the_id(
@@ -467,12 +483,16 @@ def test_cancel_running_waits_for_the_worker(
     worker.events(event(worker.next_seq(), "stage_started", "plan"))
     r = authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF)
     first = RunSummary.model_validate(r.json())
-    assert first.status == "running"
-    assert first.cancel_requested_at is not None
+    assert (first.status, first.stop_reason) == ("running", "cancel")
+    assert first.stop_requested_at is not None
     again = RunSummary.model_validate(
         authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF).json()
     )
-    assert again.cancel_requested_at == first.cancel_requested_at  # set once
+    assert again.stop_requested_at == first.stop_requested_at  # set once
+    with runs.ctx.db.read() as conn:
+        job = conn.execute("SELECT * FROM jobs WHERE run_id = ?", (worker.run_id,)).fetchone()
+    assert job["stop_reason"] == "cancel"
+    assert job["stop_requested_at"] is not None
     assert worker.events().json()["cancel"] is True  # the heartbeat carries it
     assert worker.complete("cancelled", failed_stage="plan").status_code == 200
     detail = runs.get(worker.run_id)
@@ -480,6 +500,44 @@ def test_cancel_running_waits_for_the_worker(
     assert [s.status for s in detail.stage_runs] == ["cancelled"]
     assert detail.stage_runs[0].started_at is not None
     assert detail.stage_runs[0].finished_at is not None
+
+
+@pytest.mark.parametrize(
+    ("reason", "status", "error_text"),
+    [
+        (None, "cancelled", None),  # the worker stopped on its own
+        ("cancel", "cancelled", None),
+        ("budget", "failed", OVER_BUDGET),
+        ("never_started", "failed", NEVER_STARTED),
+    ],
+)
+def test_a_cancelled_result_ends_the_run_by_its_stop_reason(
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    reason: str | None,
+    status: str,
+    error_text: str | None,
+) -> None:
+    worker = runs.start(create_ticket().key)
+    if reason is not None:
+        runs.set_run(worker.run_id, stop_requested_at=to_db(utcnow()), stop_reason=reason)
+    assert worker.events().json()["cancel"] is (reason is not None)
+    assert worker.complete("cancelled").status_code == 200
+    detail = runs.get(worker.run_id)
+    assert (detail.status, detail.stop_reason, detail.error) == (status, reason, error_text)
+    assert worker.complete("cancelled").status_code == 200  # a repeated final result
+
+
+@pytest.mark.parametrize("reason", [None, "budget"])
+def test_a_run_failed_otherwise_refuses_a_late_cancelled_result(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reason: str | None
+) -> None:
+    """Only a failure the stop table made accepts `cancelled` as its final result."""
+    worker = runs.start(create_ticket().key)
+    runs.set_run(worker.run_id, stop_requested_at=to_db(utcnow()), stop_reason=reason)
+    runs.set_run(worker.run_id, status="failed", error="worker lost", finished_at=to_db(utcnow()))
+    assert error(worker.complete("cancelled")) == (410, "run_gone")
 
 
 def test_cancel_terminal_is_unchanged(
@@ -492,7 +550,7 @@ def test_cancel_terminal_is_unchanged(
     r = authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF)
     assert r.status_code == 200
     assert r.json()["status"] == "gated"
-    assert r.json()["cancel_requested_at"] is None
+    assert r.json()["stop_requested_at"] is None
     assert error(authed.post("/api/runs/999/cancel", headers=CSRF)) == (404, "run_not_found")
 
 
@@ -515,7 +573,7 @@ def test_bundle_locked_from_dispatch_to_complete(
     assert put("queued", 0).status_code == 200  # a queued run doesn't lock
     runs.tick()
     assert error(put("dispatched", 1)) == (409, "bundle_locked")  # its package is built
-    worker = runs.bind(run.id, runs.launcher.token(run.id))
+    worker = runs.bind(run.id, runs.provider.token(run.id))
     assert error(put("running", 1)) == (409, "bundle_locked")
     assert error(put("new", 0, "new.md")) == (409, "bundle_locked")
     deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=1", headers=CSRF)

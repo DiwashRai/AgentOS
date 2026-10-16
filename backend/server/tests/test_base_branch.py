@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from agentos.context import AppContext
 from agentos.models import Me, RepoSettings, TicketDetail, TicketSummary
 from agentos.pipeline.space import RepoSpec
-from tests.run_support import FakeLauncher, RunDriver, event, log_event
+from tests.run_support import FakeProvider, RunDriver, event, log_event
 from tests.settings_support import set_repos
 
 CSRF = {"X-AgentOS": "1"}
@@ -134,13 +134,13 @@ def test_a_queued_run_fails_at_dispatch_if_its_base_branch_went_away(
     create_ticket: CreateTicket,
     runs: RunDriver,
     ctx: AppContext,
-    launcher: FakeLauncher,
+    provider: FakeProvider,
 ) -> None:
     t = create_ticket(repo="docs")  # docs: default branch develop
     run = runs.queue(t.key)
     set_repos(ctx, [r.model_copy(update={"default_branch": None}) for r in ctx.space.repos])
     assert run.id in runs.tick()
-    assert launcher.launched == []
+    assert provider.launched == []
     got = runs.get(run.id)
     assert got.status == "failed"
     assert got.error is not None

@@ -1,11 +1,11 @@
 // Settings › Runners › Runner: where the GitHub launchers (github, and mailbox: GitHub Actions
-// with Artifactory carrying each run in and out) dispatch each run's workflow. The launcher and
-// the token come from the server's env (read-only here); the repo, workflow file and ref are read
-// at every dispatch. Controlled; the page owns the document and the save, and the server's issues
-// show on their fields.
+// with Artifactory carrying each run in and out; none = clients only) dispatch run workflows.
+// The launcher and the token come from the server's env (read-only here); the repo, workflow file
+// and ref are read at every dispatch. Controlled; the page owns the document and the save,
+// and the server's issues show on their fields.
 import { errorAt, Field, Input, type Issues } from "../../../editor";
 import { cx } from "../../../ui";
-import { dispatchesWorkflow, launcherLabel, type RunnerForm, type RunnerSettings } from "./model";
+import { launcherLabel, type RunnerForm, type RunnerSettings } from "./model";
 import s from "./Runners.module.css";
 
 export interface RunnerSectionProps {
@@ -17,7 +17,7 @@ export interface RunnerSectionProps {
 }
 
 export function RunnerSection({ settings, value, issues, readOnly, onChange }: RunnerSectionProps) {
-  const github = dispatchesWorkflow(settings.launcher);
+  const github = settings.launcher !== null;
   const noRepo = value.github_repo.trim() === "";
 
   /** A Field's control: one mono text input for `field`. */
@@ -63,7 +63,7 @@ export function RunnerSection({ settings, value, issues, readOnly, onChange }: R
       <p className={s.lead} role="note">
         {github
           ? "Read at every dispatch: changes apply to the next run, no restart."
-          : "This server launches workers as local processes. These apply only when it uses the GitHub launcher; they're read at every dispatch."}
+          : "This server launches no workers: runs go to personal clients. These apply only with a GitHub launcher."}
       </p>
 
       <div className={s.sheet}>

@@ -1,7 +1,7 @@
-"""Mailbox dispatcher (`design/mailbox.md` §3.2): replaces `runs.dispatcher.tick` when
-AGENTOS_LAUNCHER=mailbox.
+"""Mailbox dispatcher (`design/mailbox.md` §3.2): beside `runs.dispatcher.tick` whenever a
+mailbox store is configured, it takes only the queued runs whose route reports through a file.
 
-The runner can't reach the server, so the server dispatches each queued run with a file-report
+The runner can't reach the server, so the server dispatches each such run with a file-report
 job, starts it itself (`dispatched → running`, no worker binds to it), sends the job's package
 through the mailbox and stores the Actions run URL. The job token is never kept in plaintext.
 """
@@ -27,10 +27,10 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
     whose build or send failed: those runs are failed)."""
     launched: list[int] = []
     while True:
-        dispatched = runs.mark_next_dispatched(ctx.db, service.LAUNCHER, None, _REPORT)
+        dispatched = runs.mark_next_dispatched(ctx.db, ctx.providers, _REPORT)
         if dispatched is None:
             return launched
-        run_id, built = dispatched
+        run_id, _, built = dispatched
         launched.append(run_id)
         # Not built (the run is failed), or cancelled meanwhile.
         if built is None or (package := runs.start(ctx.db, run_id)) is None:

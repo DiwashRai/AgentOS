@@ -67,7 +67,7 @@ class StageRunFact:
 @dataclass(frozen=True, slots=True)
 class RunFact:
     """The ticket's latest run (by id). `target`: who serves it; a client run waits for the
-    client of its creator (`creator_name`)."""
+    client of its creator (`creator_name`). `queue_reason`: why a queued run waits."""
 
     id: int
     status: RunStatus
@@ -79,6 +79,7 @@ class RunFact:
     finished_at: datetime | None = None
     target: DispatchTarget = "server"
     creator_name: str | None = None
+    queue_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,6 +486,8 @@ def _now(standing: Standing, facts: TicketFacts, nxt: str | None) -> NowInfo:
             actor=None, person=None, text="add context, then dispatch", run_id=None, progress=None
         )
     if standing == "queued":
+        if run.queue_reason:  # cleared at dispatch
+            return info(run.queue_reason)
         if run.target == "client":
             whose = f"{run.creator_name}'s" if run.creator_name else "a"
             verb = "waiting for" if run.status == "queued" else "starting on"

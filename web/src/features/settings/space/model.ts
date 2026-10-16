@@ -93,7 +93,7 @@ export function duration(seconds: number): string {
 export function claimHint(value: string): string {
   const v = value.trim();
   const words = /^\d+$/.test(v) && Number(v) > 0 ? ` (${duration(Number(v))})` : "";
-  return `A dispatched run whose worker hasn't connected after this long fails${words}.`;
+  return `A dispatched run whose worker hasn't started after this long fails${words}.`;
 }
 
 // ------------------------------------------------------------------ Repos

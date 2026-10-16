@@ -10,12 +10,16 @@ execution: run it, record a `sync`, then (repo mode) commit, pre-push guard, pus
 through EventSink, which resends from `ack + 1` with the instance id `started` bound, to a
 Reporter: HttpReporter, or Recorder in mailbox mode.
 
-Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
-each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
-publish_branch) as one commit: blobs, a tree (checked against HEAD's), the commit on the
-branch's remote commit, then one ref write with `force: false`. Merges and rewrites are refused.
-Setup first checks the token can write there. A GitHub failure fails the stage; it is never a
-lost run or an unreachable server.
+Publication: `git push -u`, never forced, so a push after the branch moved under the run is
+rejected (PUSH_REJECTED; publish_branch's ref write is likewise `force: false` on the last
+published commit). That check is the protection. The clone's pre-push hook, which refuses a push
+without the worker's marker, only guards against an agent's accidental push: the marker is plain
+text in the clone's hook file, and `--no-verify` or `-c core.hooksPath=` skip it. Except on
+GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where each stage's work goes through the
+Git Data API of the ticket's repo at GITHUB_API_URL (see publish_branch) as one commit: blobs, a
+tree (checked against HEAD's), the commit on the branch's remote commit, then one ref write with
+`force: false`. Merges and rewrites are refused. Setup first checks the token can write there.
+A GitHub failure fails the stage; it is never a lost run or an unreachable server.
 
 Every output line goes out as a log event. An agent stage's output is also printed on stderr as
 it arrives, as readable `[stage id] ...` lines (see Echo), so a job console or the launcher's log
@@ -33,6 +37,7 @@ Binding: 409 (another instance holds the job) exits 0; 401/410 or an unusable pa
 with the workdir untouched. Failure paths after it:
 - cancel (`cancel: true` in a journal answer): kill the stage tree, still sync/commit/push,
   result `cancelled`.
+- over budget (the job's `budget_s` passed since binding): the same, then result `failed`.
 - run gone (401/409/410 on any post, or the job's `not_after` passed before a publish): kill the
   stage tree, no commit, no push, exit 1.
 - server unreachable (network errors / 5xx for RETRY_BUDGET_S, or any other 4xx on the journal):
@@ -43,7 +48,7 @@ with the workdir untouched. Failure paths after it:
 Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
 server): no HTTP. The package comes from a file, and the journal is recorded as worker API calls,
 one JSONL line each, in the outbox (see Recorder), which the server replays later. Nothing
-answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
+answers, so no cancel; the only run-gone is `not_after`; a failed outbox write is unreachable.
 
 Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
 machine): long-polls POST /api/worker/lease for the jobs of the runs its user dispatched to their
@@ -80,11 +85,16 @@ import urllib.parse
 import urllib.request
 import zipfile
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, Protocol
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 PROTOCOL = 2
 
@@ -110,6 +120,8 @@ CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this ofte
 CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take lease this often keeps it online
 WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
 CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
+CLIENT_LOCK = "client.lock"  # in CLIENT_RUNS_DIR: held by the one client on that root
+LEASE_LIST_MAX = 100  # a lease's `alive` and `gone` hold at most this many (models.LeaseRequest)
 # Lease answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
 CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
@@ -120,6 +132,12 @@ SHELL_LINE_BYTES = 8192  # line cap for every stream except agent-stage stdout
 MAX_PATH_CHARS = 255
 MAX_ERROR_CHARS = 2000
 CANCELLED = "cancelled"  # stage_finished reason for a plain cancel
+OVER_BUDGET = "time budget exceeded"  # the job's budget_s ran out
+PUSH_REJECTED = "push rejected: the branch moved during the stage; did the agent push?"
+# Installed as the clone's only hook: refuses any push without the worker's per-run marker. A
+# guardrail against an agent's accidental push, not a boundary: the marker is readable in this
+# file and `--no-verify` skips the hook. The never-forced push (PUSH_REJECTED) is the protection.
+PRE_PUSH = '#!/bin/sh\n[ "$AGENTOS_PUSH" = "{}" ] && exit 0\necho "agentos: no push" >&2\nexit 1\n'
 
 # Loop blocks and verdicts. `.agentos/` belongs to AgentOS: never committed, never synced.
 AGENTOS_DIR = ".agentos"
@@ -1047,7 +1065,7 @@ class EventSink:
 # ---------------------------------------------------------------- live echo
 
 # Every agent call's output is also printed on the worker's stderr as it arrives (the Actions job
-# console, the local launcher's log file) in a short readable form; the log events still carry
+# console, the client's run log) in a short readable form; the log events still carry
 # each line as it was. AGENTOS_ECHO=0 in the worker's own environment turns it off.
 ECHO_LINE_CHARS = 200  # a tool call, a tool result, a line nothing recognises
 ECHO_TEXT_CHARS = 2000  # one block of agent text or reasoning
@@ -1284,7 +1302,7 @@ class Echo:
 @dataclass(frozen=True)
 class ProcResult:
     exit_code: int | None
-    stopped: str | None = None  # "timeout" | "cancel" | "abort"
+    stopped: str | None = None  # "timeout" | "cancel" | "budget" | "abort"
     error: str | None = None  # the program could not be started
 
 
@@ -2056,7 +2074,7 @@ def _write_ref(github: GitHub, branch: str, sha: str, exists: bool) -> None:
         return
 
     if failure.action == "rejected":
-        raise PublishError("push rejected")
+        raise PublishError(PUSH_REJECTED)
     if failure.action == "check":
         try:
             ref = github.call("GET", f"/git/ref/heads/{quoted}")
@@ -2083,7 +2101,7 @@ def publish_branch(
     head = _git_out(git, "rev-parse", "HEAD").decode().strip()
     r = git("merge-base", "--is-ancestor", pushed_head, head)
     if r.code == 1:
-        raise PublishError("push rejected")
+        raise PublishError(PUSH_REJECTED)
     if r.code:
         raise PublishError(f"push failed: git merge-base failed: {r.tail()}")
 
@@ -2180,12 +2198,13 @@ class Run:
         self.api_mode = self.repo and api_publish(os.environ)  # publish through the GitHub API
         self.github: GitHub | None = None  # set up by _setup_github in API mode
         self.branch_exists = False  # the branch was on the remote at clone or has been published
-        live = package.report["mode"] == "live"  # nothing is published after the job's not_after
-        self.not_after = datetime.fromisoformat(package.job["not_after"]) if live else None
+        self.not_after = datetime.fromisoformat(package.job["not_after"])  # never publish after
+        self.deadline = time.monotonic() + package.job["budget_s"]
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
-        self.git_env = base
+        self.push_marker = secrets.token_hex(16)  # in the worker's git env, not the stages'
+        self.git_env = {**base, "AGENTOS_PUSH": self.push_marker}
         self.stage_env = {
             **base,
             **package.env,
@@ -2292,6 +2311,8 @@ class Run:
         self.events.check()
         if self.events.cancel.is_set():
             return self._finish("cancelled", stage.id, None), None
+        if time.monotonic() >= self.deadline:
+            return self._finish("failed", stage.id, OVER_BUDGET), None
         status, reason, verdict = self._run_stage(stage, round_, loop, feedback)
         if verdict is None and status != "succeeded":
             # A plain cancel is not an error; a cancel whose after-stage steps failed is.
@@ -2419,12 +2440,21 @@ class Run:
         if r.code:
             return f"git rev-parse HEAD failed: {r.tail()}"
         self.start_head = self.pushed_head = r.out.decode().strip()
+        # The accidental-push guardrail (PRE_PUSH); local, so a global hooksPath doesn't replace it.
+        hooks = self.workdir / ".git" / "agentos-hooks"
+        try:
+            hooks.mkdir()
+            (hooks / "pre-push").write_bytes(PRE_PUSH.format(self.push_marker).encode())
+            (hooks / "pre-push").chmod(0o755)
+        except OSError as exc:
+            return f"cannot install the pre-push hook: {exc}"
         name = os.environ.get("AGENTOS_GIT_NAME") or "AgentOS"
         email = os.environ.get("AGENTOS_GIT_EMAIL") or "agentos@localhost"
-        for setting, value in (("user.name", name), ("user.email", email)):
-            r = self._git("config", setting, value)
+        path = hooks.as_posix()
+        for key, value in (("user.name", name), ("user.email", email), ("core.hooksPath", path)):
+            r = self._git("config", key, value)
             if r.code:
-                return f"git config {setting} failed: {r.tail()}"
+                return f"git config {key} failed: {r.tail()}"
         return None
 
     def _setup_github(self, repo_url: str) -> str | None:
@@ -2562,7 +2592,7 @@ class Run:
             return "abort"
         if self.events.cancel.is_set():
             return "cancel"
-        return None
+        return "budget" if time.monotonic() >= self.deadline else None
 
     def _exec(
         self,
@@ -2604,6 +2634,8 @@ class Run:
             self.events.check()
         if result.stopped == "cancel":
             return "cancelled", None, CANCELLED
+        if result.stopped == "budget":
+            return "failed", None, OVER_BUDGET
         if result.stopped == "timeout":
             return "failed", None, f"timed out after {stage.timeout_s}s"
         if result.exit_code == 0:
@@ -2643,6 +2675,8 @@ class Run:
             self.events.check()
             if self.events.cancel.is_set():
                 return "cancelled", code, CANCELLED, None
+            if time.monotonic() >= self.deadline:
+                return "failed", code, OVER_BUDGET, None
             argv, stdin = stage.repairs[round_ - 1].build(error)
         if stage.repairs and stage.verdict_repairs:
             after = f" after {attempt} repair{'s' if attempt != 1 else ''}"
@@ -2798,7 +2832,7 @@ class Run:
             return self._publish(stage_id, self.github)
         r = self._git("push", "-u", "origin", self.branch, show=True, stage_id=stage_id)
         if r.code:
-            return "push rejected" if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
+            return PUSH_REJECTED if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
         count = self._git("rev-list", "--count", f"{self.pushed_head}..{head}")
         pushed = {"branch": self.branch, "head": head, "commits": int(count.out or 0)}
         self.events.emit("pushed", None, {**pushed, "method": "git"})
@@ -2809,7 +2843,7 @@ class Run:
         """Before every publish: never once the run was taken away, nor after `not_after`."""
         if isinstance(self.events.failure, RunGone):  # taken away while we were committing
             raise self.events.failure
-        if self.not_after is not None and datetime.now(UTC) >= self.not_after:
+        if datetime.now(UTC) >= self.not_after:
             raise RunGone(f"the job's not_after ({self.m.job['not_after']}) has passed")
 
     def _publish(self, stage_id: str | None, github: GitHub) -> str | None:
@@ -2935,8 +2969,8 @@ class Run:
 # ---------------------------------------------------------------- client mode
 #
 # `--client` runs on a user's own machine: it long-polls the server for the runs its user
-# dispatched to "My client" and starts this same file as a detached worker for each, the way the
-# server's local launcher does (agentos.launchers.local).
+# dispatched to "My client" and starts this same file as a detached worker for each, so a Ctrl+C
+# in the client's console never kills a run.
 
 _ENV_PREFIX = "AGENTOS_"
 _ENV_BLANK_RE = re.compile(r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)")
@@ -2950,7 +2984,9 @@ _ENV_ENTRY_RE = re.compile(
 _SINGLE_ESCAPE_RE = re.compile(r"\\([\\'])")
 _DOUBLE_ESCAPE_RE = re.compile(r"\\([\\'\"abfnrtv])")
 _ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
-_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?")  # <run_id> workspaces and <run_id>.log logs
+# <run_id> workspaces and <run_id>.log logs (a <job id>.lock goes once its `gone` is acknowledged)
+_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?")
+_JOB_ID_RE = re.compile(r"[0-9]+-[0-9]+-[0-9a-f]+")  # a job id the client puts in a file name
 
 
 class EnvFileError(ValueError):
@@ -2958,7 +2994,7 @@ class EnvFileError(ValueError):
 
 
 def parse_env(text: str) -> dict[str, str | None]:
-    """The python-dotenv subset the local launcher's env file uses: `KEY=value` lines, `#`
+    """The python-dotenv subset a client's `--env-file` uses: `KEY=value` lines, `#`
     comments (whole-line, or after whitespace in an unquoted value), an optional `export `,
     single quotes (literal but `\\'` and `\\\\`), double quotes (with `\\n`-style escapes), quoted
     values across lines, and a bare `KEY` meaning "unset KEY" (None). `${VAR}` is not expanded."""
@@ -3008,7 +3044,7 @@ def child_env(
 ) -> dict[str, str]:
     """A run worker's environment: `base` (default: ours) minus every AGENTOS_* var, then the env
     file's values (None removes the key), then unbuffered UTF-8 output and AGENTOS_TOKEN. The
-    same as the local launcher's child_env; the token is never on the command line."""
+    token is never on the command line."""
     source = os.environ if base is None else base
     env = {k: v for k, v in source.items() if not k.upper().startswith(_ENV_PREFIX)}
     for key, value in env_file.items():
@@ -3026,8 +3062,170 @@ class Child(Protocol):
 
     def poll(self) -> int | None: ...
 
+    def wait(self) -> int: ...
+
 
 Spawn = Callable[[list[str], Path, dict[str, str], Path], Child]  # (argv, cwd, env, log file)
+
+
+def _take_lock(lock: IO[bytes], wait: bool) -> bool:
+    """Take an exclusive OS lock on an open file (`wait`: until it is free). False if not free."""
+    lock.seek(0)
+    try:
+        if sys.platform == "win32":
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK if wait else msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except OSError:
+        if wait:
+            raise
+        return False
+    return True
+
+
+def hold_lock(path: Path) -> IO[bytes]:
+    """Open `path` (created if missing) and take an exclusive OS lock on it, waiting while
+    another holder has it (a client looking: `lock_held`). The lock lasts while the file stays
+    open, and the OS releases it when the process ends, however it ends."""
+    lock = path.open("a+b")
+    try:
+        _take_lock(lock, wait=True)
+    except BaseException:
+        lock.close()
+        raise
+    return lock
+
+
+def release_lock(lock: IO[bytes]) -> None:
+    """Release a lock `hold_lock` (or `_take_lock`) took, and close its file."""
+    lock.seek(0)
+    if sys.platform == "win32":
+        msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    lock.close()
+
+
+def lock_held(path: Path) -> bool:
+    """Whether a process holds `path`'s lock (`hold_lock`): try to take it without waiting. A
+    missing file is not created: nobody holds it."""
+    try:
+        lock = path.open("r+b")
+    except OSError:
+        return False  # gone, or not openable: nobody holds it
+    with lock:
+        if not _take_lock(lock, wait=False):
+            return True
+        release_lock(lock)
+    return False
+
+
+class Children:
+    """What the client saw of its run workers: those it started (by process handle), the
+    survivors whose `<job id>.lock` in `runs` is held (an earlier client started them, or a
+    started process exited while its lock stays held: on Windows a venv's python.exe is a stub
+    whose child is the real worker), and the jobs it saw end (`gone`: the process exited and the
+    lock is free), kept until the server acknowledges them. Only `gone` ends a job on the server;
+    `alive` is for display. Each list goes out at most LEASE_LIST_MAX at a time; the rest of
+    `gone` goes with the next lease, sent at once.
+
+    A thread per started worker waits on its process: one that exits while the client loop waits
+    (`waiting`: a lease in flight, or a busy client's pause) is reported at once by `report`
+    (alive, gone), so the server hears it ended without waiting for the next lease."""
+
+    def __init__(self, runs: Path, report: Callable[[list[str], list[str]], object]) -> None:
+        self._runs = runs
+        self._report = report
+        self._lock = threading.Lock()
+        self._running: dict[str, Child] = {}
+        self._survivors: set[str] = set()
+        self._gone: set[str] = set()
+        self._waiting = False
+
+    def start(self) -> None:
+        """At startup: a held lock is a worker that outlived the last client; a free one, a worker
+        that ended while no client watched (or whose `gone` was never acknowledged)."""
+        try:
+            jobs = sorted(p.stem for p in self._runs.glob("*.lock") if _JOB_ID_RE.fullmatch(p.stem))
+        except OSError as exc:
+            say(f"cannot list {self._runs} for run workers: {exc}")
+            return
+        for job in jobs:
+            if lock_held(self._runs / f"{job}.lock"):
+                self._survivors.add(job)
+                say(f"job {job}: its worker outlived the last client; it is listed as alive")
+            else:
+                self._gone.add(job)
+                say(f"job {job}: its worker ended while no client watched; reporting it gone")
+
+    def add(self, job_id: str, child: Child) -> None:
+        with self._lock:
+            self._running[job_id] = child
+        threading.Thread(target=self._watch, args=(job_id, child), daemon=True).start()
+
+    @contextlib.contextmanager
+    def waiting(self) -> Iterator[tuple[list[str], list[str]]]:
+        """Note the ends seen since (a started worker's process, a survivor's lock) and yield
+        the alive and the gone job ids; until the block ends, each exit is reported at once."""
+        with self._lock:
+            survivors = set(self._survivors)
+            exited = [job for job, child in self._running.items() if child.poll() is not None]
+        freed = {job for job in survivors if not self._held(job)}
+        still_held = {job for job in exited if self._held(job)}
+        with self._lock:
+            for job in exited:
+                if self._running.pop(job, None) is not None:
+                    (self._survivors if job in still_held else self._gone).add(job)
+            self._survivors -= freed
+            self._gone |= freed
+            self._waiting = True
+            listing = self._listing()
+        try:
+            yield listing
+        finally:
+            with self._lock:
+                self._waiting = False
+
+    def acked(self, gone: list[str]) -> None:
+        """The server has ended these jobs: forget them and delete their lock files (until then
+        a lock file says "report this job gone", at the next startup too)."""
+        with self._lock:
+            self._gone -= set(gone)
+        for job in gone:
+            say(f"job {job}: reported gone")
+            try:
+                (self._runs / f"{job}.lock").unlink(missing_ok=True)
+            except OSError as exc:  # Windows: its process is still being torn down
+                say(f"cannot delete {job}.lock ({exc}); the next client reports it again")
+
+    def _held(self, job: str) -> bool:
+        return lock_held(self._runs / f"{job}.lock")
+
+    def _listing(self) -> tuple[list[str], list[str]]:
+        """(alive, gone), each capped at LEASE_LIST_MAX; the caller holds the lock."""
+        alive = [*self._running, *sorted(self._survivors)]
+        return alive[:LEASE_LIST_MAX], sorted(self._gone)[:LEASE_LIST_MAX]
+
+    def _watch(self, job_id: str, child: Child) -> None:
+        code = child.wait()
+        say(f"job {job_id}: its worker (pid {child.pid}) exited with code {code}")
+        held = self._held(job_id)
+        with self._lock:
+            if self._running.pop(job_id, None) is None:
+                return  # `waiting` saw it first
+            if held:  # its process was a stub: the worker still runs, held by its lock
+                self._survivors.add(job_id)
+                return
+            self._gone.add(job_id)
+            if not self._waiting:
+                return  # the loop's next lease, sent at once, reports it
+            alive, gone = self._listing()
+        try:
+            self._report(alive, gone)
+        except (HttpError, Unreachable, ValueError) as exc:
+            say(f"could not report the end of job {job_id} ({exc}); the next lease will")
+            return
+        self.acked(gone)
 
 
 def spawn_detached(
@@ -3070,8 +3268,8 @@ def git_repo_containing(path: Path) -> Path | None:
 def clean_workdir_root(root: Path, now: float) -> list[Path]:
     """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under the
     client's own `root/CLIENT_RUNS_DIR`, last modified more than WORKSPACE_MAX_AGE_S before `now`
-    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it is left
-    alone. Returns what was deleted."""
+    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it (lock
+    files included: `Children.acked` deletes those) is left alone. Returns what was deleted."""
     runs = root / CLIENT_RUNS_DIR
     try:
         children = sorted(runs.iterdir())
@@ -3108,13 +3306,19 @@ def run_client(
     spawn: Spawn,
 ) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
-    `max_runs` at once, listing the running ones as `alive` on every lease. With every slot busy
+    `max_runs` at once (`Children`). Every lease lists the running ones as `alive` (those it
+    started, and the survivors of an earlier client, which count against `max_runs`) and the
+    ones it saw end as `gone`; only `gone` ends a job, and a worker that exits while a lease waits
+    is reported at once by a no-take lease. The first lease goes out at once, with the survivors
+    and the lock files freed while no client watched. With every slot busy
     it sends a no-take lease every CLIENT_HEARTBEAT_S, so the server still sees it online. Network
     errors, 5xx, CLIENT_TRANSIENT_4XX and malformed answers back off (up to CLIENT_BACKOFF_CAP_S)
     forever; any other 4xx or another protocol exits 1. Started workers outlive the client.
 
     Everything it writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs there with
-    `--workdir <root>/runs/<run_id>`, logs to `<run_id>.log` and gets its job token in child_env."""
+    `--workdir <root>/runs/<run_id>` and `--lock-file <root>/runs/<job id>.lock`, logs to
+    `<run_id>.log` and gets its job token in child_env. It holds `<root>/runs/client.lock`
+    (CLIENT_LOCK) for its whole life; a second client on that root exits 2."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -3131,6 +3335,12 @@ def run_client(
     except OSError as exc:
         say(f"cannot create {runs}: {exc}")
         return 1
+    # One client per root, for its whole life: another would misread this one's workers' locks.
+    client_lock = (runs / CLIENT_LOCK).open("a+b")
+    if not _take_lock(client_lock, wait=False):
+        client_lock.close()
+        say(f"another client already runs on {root}; stop it or choose another --workdir-root")
+        return 2
 
     removed = clean_workdir_root(root, time.time())
     if removed:
@@ -3139,40 +3349,54 @@ def run_client(
     client = Client(server, token)
     me = Path(__file__).resolve()
     sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
-    children: dict[str, Child] = {}  # by job id
+    children = Children(
+        runs,
+        lambda alive, gone: client.post(
+            "/api/worker/lease",
+            {"wait_s": 0, "take": False, "alive": alive, "gone": gone},
+            retry_budget_s=0,
+        ),
+    )
+    children.start()
     delay = BACKOFF_START_S
-    answered = time.monotonic()  # when the server last answered a lease
+    answered: float | None = None  # when the server last answered a lease (None: lease at once)
     say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
     try:
         while True:
-            children = {job: child for job, child in children.items() if child.poll() is None}
-            busy = len(children) >= max_runs
-            if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
-                time.sleep(CLIENT_REAP_S)
-                continue
+            problem: str | None = None
+            with children.waiting() as (alive, gone):
+                busy = len(alive) >= max_runs
+                quiet = answered is not None and time.monotonic() - answered < CLIENT_HEARTBEAT_S
+                if busy and not gone and quiet:
+                    time.sleep(CLIENT_REAP_S)
+                    continue
 
-            wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-            body = {"wait_s": wait_s, "take": not busy, "alive": list(children)}
-            try:
-                resp = client.post(
-                    "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
-                )
-                answered = time.monotonic()
-                if resp["protocol"] != PROTOCOL:
-                    say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
-                    return 1
-                job = resp["job"]
-                leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
-            except HttpError as exc:
-                if exc.status not in CLIENT_TRANSIENT_4XX:
-                    say(f"the server refused this client ({exc}); stopping")
-                    return 1
-                problem = str(exc)
-            except (Unreachable, ValueError) as exc:
-                problem = str(exc)
-            except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
-                problem = f"a malformed answer ({exc!r})"
-            else:
+                wait_s = 0 if busy else CLIENT_POLL_WAIT_S
+                body = {"wait_s": wait_s, "take": not busy, "alive": alive, "gone": gone}
+                try:
+                    resp = client.post(
+                        "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
+                    )
+                    answered = time.monotonic()
+                    children.acked(gone)
+                    if resp["protocol"] != PROTOCOL:
+                        say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
+                        return 1
+                    job = resp["job"]
+                    leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
+                    if leased and not _JOB_ID_RE.fullmatch(leased[0]):
+                        raise ValueError(f"a job id that isn't one: {leased[0]!r}")
+                except HttpError as exc:
+                    if exc.status not in CLIENT_TRANSIENT_4XX:
+                        say(f"the server refused this client ({exc}); stopping")
+                        return 1
+                    problem = str(exc)
+                except (Unreachable, ValueError) as exc:
+                    problem = str(exc)
+                except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
+                    problem = f"a malformed answer ({exc!r})"
+
+            if problem is None:
                 delay = BACKOFF_START_S
                 if sha256 is not None and resp.get("worker_sha256") != sha256:
                     say(f"this worker.py differs from the server's ({server}/api/worker/worker.py)")
@@ -3182,13 +3406,14 @@ def run_client(
                 job_id, run_id, job_token = leased
                 workdir = runs / str(run_id)
                 argv = [sys.executable, str(me), "--server", server, "--workdir", str(workdir)]
+                argv += ["--lock-file", str(runs / f"{job_id}.lock")]
                 log = runs / f"{run_id}.log"
                 try:
                     child = spawn(argv, runs, child_env(job_token, env_values), log)
                 except OSError as exc:
                     say(f"run {run_id}: cannot start its worker: {exc}")
                     continue
-                children[job_id] = child
+                children.add(job_id, child)
                 say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
                 continue
 
@@ -3198,6 +3423,8 @@ def run_client(
     except KeyboardInterrupt:
         say("client stopped; started workers keep running")
         return 130
+    finally:
+        release_lock(client_lock)
 
 
 # ---------------------------------------------------------------- entry point
@@ -3210,6 +3437,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--server", help="AgentOS server URL, e.g. http://127.0.0.1:8000")
     parser.add_argument("--token", help="job token (default: $AGENTOS_TOKEN)")
     parser.add_argument("--workdir", help="workspace directory (default: ./agentos-run-<run_id>)")
+    parser.add_argument(
+        "--lock-file", help="hold an OS lock on this file while running (a client's run worker)"
+    )
     parser.add_argument("--manifest", help="mailbox mode: the run's manifest.json")
     parser.add_argument("--outbox", help="mailbox mode: the outbox.jsonl to create")
     parser.add_argument(
@@ -3228,9 +3458,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     client_only = (args.max_runs, args.workdir_root, args.env_file)
     if args.client:
-        used = [args.token, args.workdir, args.manifest, args.outbox]
+        used = [args.token, args.workdir, args.lock_file, args.manifest, args.outbox]
         if any(value is not None for value in used):
-            parser.error("--client can't be used with --token, --workdir, --manifest or --outbox")
+            parser.error(
+                "--client can't be used with --token, --workdir, --lock-file, --manifest or "
+                "--outbox"
+            )
         if args.server is None:
             parser.error("--client needs --server")
         if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
@@ -3272,9 +3505,24 @@ def main(argv: list[str] | None = None) -> int:
         return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
     if args.mailbox:
         return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
+    if args.lock_file is None:
+        return run_live(args)
 
-    # Live mode: fetch the job, then bind it to a new instance id by posting `started` and waiting
-    # for its ack, all before the workdir is touched.
+    # A client's run worker: its client lists the job as alive while this lock is held.
+    try:
+        lock = hold_lock(Path(args.lock_file))
+    except OSError as exc:
+        say(f"cannot lock {args.lock_file}: {exc}")
+        return 1
+    try:
+        return run_live(args)
+    finally:
+        release_lock(lock)
+
+
+def run_live(args: argparse.Namespace) -> int:
+    """Live mode: fetch the job, then bind it to a new instance id by posting `started` and
+    waiting for its ack, all before the workdir is touched."""
     client = Client(args.server, args.token, secrets.token_urlsafe(32))
     reporter = HttpReporter(client)
     say(f"fetching the job from {args.server}")

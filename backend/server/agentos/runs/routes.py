@@ -22,7 +22,7 @@ def dispatch(key: str, body: DispatchRequest, user: Writer, ctx: Ctx) -> RunSumm
         ctx.db,
         snapshot.runtimes,
         snapshot.space,
-        ctx.launcher.name,
+        ctx.route,
         key,
         user,
         body.from_stage,

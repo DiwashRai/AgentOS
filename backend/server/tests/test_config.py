@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from agentos.config import ConfigError, Settings, load_settings, startup_checks
 from agentos.context import build_context
-from agentos.launchers.github import GitHubActionsLauncher
+from agentos.launchers.github import GitHubActionsProvider
 from agentos.launchers.mailbox import MailboxLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, RepoInfo, RunnerSettings, RuntimeSettings, SpaceSettings
@@ -24,7 +24,6 @@ BASE_URL = "http://127.0.0.1:8000"
 def make(tmp_path: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "data_dir": tmp_path / "data",
-        "workspaces_dir": tmp_path / "workspaces",
         "dev_auth": True,
     }
     values.update(overrides)
@@ -58,28 +57,22 @@ def test_env_comma_lists(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_empty_env_values_mean_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("WORKER_ENV_FILE", "JIRA_URL", "ADMINS"):
+    for name in ("LAUNCHER", "JIRA_URL", "ADMINS"):
         monkeypatch.setenv(f"AGENTOS_{name}", "")
     settings = Settings(_env_file=None)
-    assert settings.worker_env_file is None
+    assert settings.launcher is None
     assert settings.jira_url is None
     assert settings.admins == []
 
 
 def test_defaults() -> None:
     settings = Settings(_env_file=None)
-    assert settings.workspaces_dir == (Path.home() / ".agentos" / "workspaces").resolve()
     assert settings.data_dir == Path("data").resolve()
-    assert settings.local_max_concurrency == 2
+    assert settings.launcher is None  # no server route: runs go to clients
     assert settings.effective_worker_url == "http://127.0.0.1:8000"
     assert Settings(_env_file=None, worker_url="https://t.example/").effective_worker_url == (
         "https://t.example"
     )
-
-
-def test_unlimited_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_LOCAL_MAX_CONCURRENCY", "unlimited")
-    assert Settings(_env_file=None).local_max_concurrency is None
 
 
 def test_env_example_parses(tmp_path: Path) -> None:
@@ -87,7 +80,6 @@ def test_env_example_parses(tmp_path: Path) -> None:
     settings = Settings(_env_file=example)
     assert settings.data_dir == Path("data").resolve()  # inline `# comment` stripped
     assert settings.dev_auth is True
-    assert settings.local_max_concurrency == 2
 
 
 def test_load_settings_reports_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,12 +95,10 @@ def test_load_settings_reports_invalid_values(monkeypatch: pytest.MonkeyPatch) -
 # ------------------------------------------------------------------ startup checks
 
 
-def test_valid_settings_pass_and_create_dirs(tmp_path: Path) -> None:
+def test_valid_settings_pass_and_create_the_data_dir(tmp_path: Path) -> None:
     settings = make(tmp_path)
     startup_checks(settings)
     assert settings.data_dir.is_dir()
-    assert settings.logs_dir.is_dir()
-    assert settings.workspaces_dir.is_dir()
 
 
 def test_dev_auth_requires_loopback_host_and_public_url(tmp_path: Path) -> None:
@@ -178,8 +168,9 @@ def test_github_launcher_needs_a_token_but_not_a_repo(tmp_path: Path) -> None:
 def test_github_launcher_is_built_from_settings(tmp_path: Path) -> None:
     github = {"launcher": "github", "github_token": "t0ken"}
     ctx = build_context(make(tmp_path, **github))
-    assert isinstance(ctx.launcher, GitHubActionsLauncher)
-    assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("github", None)
+    assert list(ctx.providers) == ["github"]
+    assert isinstance(ctx.providers["github"], GitHubActionsProvider)
+    assert (ctx.route, ctx.mailbox) == (("push", "github", "live"), None)
     with pytest.raises(ConfigError) as caught:
         build_context(make(tmp_path, **{**github, "github_api_version": "latest"}))
     assert "AGENTOS_GITHUB_" in str(caught.value)
@@ -197,9 +188,9 @@ def test_mailbox_launcher_needs_the_github_token_and_artifactory(tmp_path: Path)
     found = problems(make(tmp_path, launcher="mailbox"))
     assert found == [
         "AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER=mailbox",
-        "AGENTOS_ARTIFACTORY_URL is required with AGENTOS_LAUNCHER=mailbox",
-        "AGENTOS_ARTIFACTORY_USER is required with AGENTOS_LAUNCHER=mailbox",
-        "AGENTOS_ARTIFACTORY_PASSWORD is required with AGENTOS_LAUNCHER=mailbox",
+        "AGENTOS_ARTIFACTORY_URL is required for the mailbox",
+        "AGENTOS_ARTIFACTORY_USER is required for the mailbox",
+        "AGENTOS_ARTIFACTORY_PASSWORD is required for the mailbox",
     ]
     startup_checks(make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY))  # noqa: S106 - fake
 
@@ -226,43 +217,23 @@ def test_mailbox_artifactory_url_must_be_https_with_a_repo(tmp_path: Path, url: 
     assert "s3cret-pw" not in found[0]
 
 
-def test_mailbox_launcher_is_built_from_settings(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("launcher", "report"), [("mailbox", "file"), ("github", "live")])
+def test_a_mailbox_store_is_built_whatever_the_launcher(
+    tmp_path: Path, launcher: str, report: str
+) -> None:
+    """With the store configured, file runs keep their loops after the launcher changes."""
     ctx = build_context(
-        make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY)  # noqa: S106 - fake
+        make(tmp_path, launcher=launcher, github_token="t0ken", **ARTIFACTORY)  # noqa: S106 - fake
     )
-    assert isinstance(ctx.launcher, MailboxLauncher)
-    assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("mailbox", None)
-    assert isinstance(ctx.launcher.github, GitHubActionsLauncher)
+    assert isinstance(ctx.mailbox, MailboxLauncher)
+    assert ctx.providers == {"github": ctx.mailbox.github}
+    assert isinstance(ctx.mailbox.github, GitHubActionsProvider)
+    assert ctx.route == ("push", "github", report)
 
 
-def test_workspaces_inside_data_dir(tmp_path: Path) -> None:
-    found = problems(make(tmp_path, workspaces_dir=tmp_path / "data" / "ws"))
-    assert any("AGENTOS_WORKSPACES_DIR" in p and "AGENTOS_DATA_DIR" in p for p in found)
-
-
-def test_data_dir_inside_workspaces(tmp_path: Path) -> None:
-    found = problems(make(tmp_path, data_dir=tmp_path / "workspaces" / "data"))
-    assert any("AGENTOS_DATA_DIR" in p for p in found)
-
-
-def test_workspaces_inside_git_repo(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    (repo / ".git").mkdir(parents=True)
-    found = problems(make(tmp_path, workspaces_dir=repo / "not" / "yet" / "there"))
-    assert any("git repo" in p for p in found)
-    assert not (repo / "not").exists()  # nothing created when checks fail
-
-
-def test_workspaces_inside_git_worktree(tmp_path: Path) -> None:
-    repo = tmp_path / "wt"
-    repo.mkdir()
-    (repo / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")  # worktrees use a file
-    assert any("git repo" in p for p in problems(make(tmp_path, workspaces_dir=repo / "ws")))
-
-
-def test_missing_worker_env_file(tmp_path: Path) -> None:
-    found = problems(make(tmp_path, worker_env_file=tmp_path / "missing.env"))
-    assert any("AGENTOS_WORKER_ENV_FILE" in p for p in found)
+def test_no_launcher_starts_no_workers(tmp_path: Path) -> None:
+    ctx = build_context(make(tmp_path))
+    assert (ctx.providers, ctx.route, ctx.mailbox) == ({}, None, None)
 
 
 def test_lifespan_fails_fast_on_bad_config(tmp_path: Path) -> None:
@@ -301,7 +272,7 @@ def test_a_fresh_start_seeds_the_built_in_defaults(tmp_path: Path) -> None:
         "AgentOS",
         "AOS",
         [],
-        900,
+        3600,
     )
     assert [r.model_dump() for r in runtimes.runtimes] == [
         r.model_dump(mode="json") for r in BUILTIN_RUNTIMES

@@ -14,12 +14,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.clock import utcnow
-from agentos.launchers.local import WORKER_PATH
+from agentos.config import WORKER_PATH
+from agentos.context import server_route
+from agentos.launchers.base import Provider
 from agentos.mailbox import dispatcher as mailbox_dispatcher
 from agentos.mailbox.reaper import MailboxReaper
 from agentos.models import TicketDetail
 from tests.mailbox_support import FakeMailbox
-from tests.run_support import FakeLauncher, RunDriver
+from tests.run_support import FakeProvider, RunDriver
 
 CreateTicket = Callable[..., TicketDetail]
 
@@ -33,10 +35,9 @@ AGENT = (
 
 
 @pytest.fixture
-def launcher() -> FakeLauncher:
-    fake = FakeLauncher(max_concurrency=None)
-    fake.name = "mailbox"
-    return fake
+def providers(provider: FakeProvider) -> dict[str, Provider]:
+    """Overrides conftest's: mailbox runs go through GitHub."""
+    return {"github": provider}
 
 
 def test_a_real_worker_outbox_replays_into_the_run(
@@ -47,6 +48,7 @@ def test_a_real_worker_outbox_replays_into_the_run(
 ) -> None:
     ticket = create_ticket("Mailbox end to end", repo=None)
     mailbox = FakeMailbox()
+    runs.ctx.route, runs.ctx.mailbox = server_route("mailbox"), mailbox
     run_id = runs.queue(ticket.key).id
     assert mailbox_dispatcher.tick(runs.ctx, mailbox) == [run_id]
 
@@ -74,7 +76,7 @@ def test_a_real_worker_outbox_replays_into_the_run(
 
     # What the publish job uploads, then the reaper's next tick.
     mailbox.put_outbox(run_id, outbox.read_bytes())
-    mailbox.set_status(run_id, "completed", "success")
+    mailbox.set_status(run_id, "ended", "success")
     assert MailboxReaper(runs.ctx, mailbox).tick(utcnow()) == {run_id: "replayed"}
 
     detail = runs.get(run_id)

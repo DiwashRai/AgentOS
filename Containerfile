@@ -32,19 +32,18 @@ FROM docker.io/library/python:3.12-slim
 RUN groupadd --gid 10001 agentos \
  && useradd --uid 10001 --gid agentos --no-log-init --home-dir /home/agentos --create-home \
       --shell /usr/sbin/nologin agentos \
- && mkdir -p /data /workspaces \
- && chown agentos:agentos /data /workspaces
+ && mkdir -p /data \
+ && chown agentos:agentos /data
 
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     AGENTOS_HOST=0.0.0.0 \
     AGENTOS_PORT=8000 \
     AGENTOS_DATA_DIR=/data \
-    AGENTOS_WEB_DIR=/app/web \
-    AGENTOS_WORKSPACES_DIR=/workspaces
+    AGENTOS_WEB_DIR=/app/web
 
-# The layout mirrors backend/: launchers/local.py finds (and /api/worker/worker.py serves)
-# ../../../worker/worker.py relative to the agentos package.
+# The layout mirrors backend/: config.py finds (and /api/worker/worker.py serves)
+# ../../worker/worker.py relative to the agentos package.
 WORKDIR /app
 COPY --from=deps /app/.venv /app/.venv
 COPY backend/worker/worker.py worker/worker.py

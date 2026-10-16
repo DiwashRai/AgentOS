@@ -11,11 +11,10 @@ AgentOS is a web app for running coding agents on tickets. You create a ticket (
 ## Setup
 ```
 just setup                                  # uv sync, npm ci, git hooks (.githooks)
-cp backend/.env.example backend/.env        # dev defaults: dev auth, 127.0.0.1:8000, local launcher
+cp backend/.env.example backend/.env        # dev defaults: dev auth, 127.0.0.1:8000, no launcher
 ```
 - `backend/.env` holds startup config, URLs and secrets. Every variable is `AGENTOS_`-prefixed; each is described in `backend/.env.example`.
-- Secrets for the agents themselves (e.g. `ANTHROPIC_API_KEY`, `GH_TOKEN`) go in a separate dotenv file named by `AGENTOS_WORKER_ENV_FILE`. The local launcher removes `AGENTOS_*` from the worker's environment and adds that file.
-- `AGENTOS_WORKSPACES_DIR` (default `~/.agentos/workspaces`) must be outside the data dir and outside any git repo. The server refuses to start otherwise.
+- The server never starts workers itself. With `AGENTOS_LAUNCHER` unset, runs go to your own machine: dispatch to "My client" and run `worker.py --client` (setup in `backend/deploy/README.md`). Secrets for the agents themselves (e.g. `ANTHROPIC_API_KEY`, `GH_TOKEN`) go in the dotenv file you pass the client with `--env-file`; it removes `AGENTOS_*` from its run workers' environment and adds that file.
 - The Space, repos, intake queries, agent runtimes and runner are edited in the app under **Settings**. A fresh database starts with the defaults: the Space "AgentOS" (key prefix `AOS`), no repos, and the `claude` and `copilot` runtimes.
 - Jira sign-in (with `AGENTOS_DEV_AUTH` off): set `AGENTOS_JIRA_URL` and `AGENTOS_ADMINS`. A first login waits for an admin to approve it. Jira import also needs the `AGENTOS_JIRA_SERVICE_*` service account.
 

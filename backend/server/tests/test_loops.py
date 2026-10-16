@@ -606,7 +606,7 @@ def test_dispatch_fails_a_run_whose_pipeline_changed(
             "UPDATE tickets SET pipeline = ? WHERE key = ?", (json.dumps(pipeline), ticket.key)
         )
     assert run.id in runs.tick()
-    assert runs.launcher.launched == []
+    assert runs.provider.launched == []
     detail = runs.get(run.id)
     assert detail.status == "failed"
     assert detail.error == (

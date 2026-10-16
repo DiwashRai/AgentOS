@@ -77,7 +77,8 @@ def test_cleanup_deletes_only_old_run_workspaces_and_logs_of_the_client(tmp_path
     (runs / "3.txt").write_bytes(b"x")
     (tmp_path / "4").mkdir()  # not the client's: an unrelated all-digit folder in the root
     (tmp_path / "4.log").write_bytes(b"x")
-    for path in (runs / "1", runs / "1.log", runs / "notes", runs / "3.txt"):
+    (runs / "5-1-ab.lock").write_bytes(b"")  # kept until its `gone` is acknowledged
+    for path in (runs / "1", runs / "1.log", runs / "notes", runs / "3.txt", runs / "5-1-ab.lock"):
         os.utime(path, (old, old))
     for path in (tmp_path / "4", tmp_path / "4.log"):
         os.utime(path, (old, old))
@@ -85,5 +86,6 @@ def test_cleanup_deletes_only_old_run_workspaces_and_logs_of_the_client(tmp_path
     removed = worker.clean_workdir_root(tmp_path, now)
 
     assert sorted(p.name for p in removed) == ["1", "1.log"]
-    assert sorted(p.name for p in runs.iterdir()) == ["2", "2.log", "3.txt", "notes"]
+    names = sorted(p.name for p in runs.iterdir())
+    assert names == ["2", "2.log", "3.txt", "5-1-ab.lock", "notes"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["4", "4.log", "runs"]

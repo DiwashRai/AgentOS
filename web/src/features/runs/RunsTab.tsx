@@ -7,6 +7,7 @@ import { useSearchParams } from "react-router";
 import { ApiError, type Schemas } from "../../api/client";
 import { useCancelRun, useRun, useRunEvents, useRuns } from "../../api/queries";
 import { ago, duration } from "../../domain/format";
+import { words } from "../../domain/words";
 import {
   Button,
   cx,
@@ -69,8 +70,8 @@ function startedText(run: RunSummary, now: number): string {
 
 function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary }) {
   const cancel = useCancelRun(ticketKey);
-  if (run.cancel_requested_at !== null || cancel.isPending) {
-    return <span className={text.label}>Cancelling…</span>;
+  if (run.stop_requested_at !== null || cancel.isPending) {
+    return <span className={text.label}>{words.stopping[run.stop_reason ?? "cancel"]}</span>;
   }
   return (
     <Inline as="span" gap={5}>
@@ -115,7 +116,7 @@ function RunRow({
   return (
     <li className={cx(s.row, selected && s.selected)}>
       <button type="button" className={s.rowMain} aria-current={selected} onClick={onSelect}>
-        <RunMark id={run.id} mark={runMark(run.status)} />
+        <RunMark id={run.id} mark={runMark(run)} />
         <Inline as="span" gap={6} align="baseline" justify="between" className={text.meta}>
           <span className={cx(s.from, text.ellipsis)}>
             from <b>{run.from_stage}</b>

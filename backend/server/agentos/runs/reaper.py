@@ -1,98 +1,235 @@
-"""Reaper loop (SPEC §8): no run stays dispatched or running forever.
+"""Reaper loop: no job stays dispatched or running forever. One rule table, keyed on each job's
+stored route (start and report), never on the server's current settings.
 
-Rules, in order, each tick (every INTERVAL_S):
-1. The previous tick was more than SLEEP_GRACE ago (startup, or the laptop slept): every running
-   run counts as just seen, and the tick does nothing else.
-2. dispatched for longer than `claim_timeout_s` → failed "worker never connected".
-3. running without a heartbeat for 90 s → failed "worker lost".
-4. running past `started_at + time_budget_s + 15 min` → failed "time budget exceeded".
-5. a cancel requested over 2 min ago and still running → cancelled.
-6. local launcher only: delete workspaces older than 7 days that no active run owns.
+Each tick (every INTERVAL_S), job by job, the first rule that applies wins:
+0. Sleep grace: the previous tick was more than SLEEP_GRACE ago (startup, or the laptop slept):
+   every running run counts as just seen, and the tick does nothing else.
+1. Start interrupted: a push job dispatched START_GRACE ago still has no ref → failed.
+2. Never started: no `started` within the start timeout (push: the Space's `claim_timeout_s`,
+   unless the provider says running; pull: PULL_START_TIMEOUT after the lease), or by the job's
+   `not_after` whatever the provider says → failed "never started"; push: stopped
+   `never_started` and cancelled at the provider.
+3. Lost: no post for HEARTBEAT_TIMEOUT → failed "worker lost"; push: cancelled at the provider.
+4. Over budget: past `started_at + budget_s + BUDGET_GRACE` → stopped `budget`, so the worker
+   sees `cancel: true` and publishes before it stops.
+5. Stop grace: no result STOP_GRACE after a stop → ended as `service.STOPPED` says; push:
+   cancelled at the provider.
+Within the stop grace a running job is left alone, so its worker can still publish. Each provider
+cancel is asked once per job per process, best effort. File-report jobs get rule 1 only (the
+mailbox reaper watches them); with no mailbox configured, one past its `not_after` is failed
+UNWATCHED. Queued runs are never touched. A push job's status is polled at most every STATUS_EVERY.
 
-Rules 2-5 key on the run's own row, whichever launcher serves it. No rule touches a `queued`
-run: a client run (`launcher = 'client'`) waits for its user's client however long it is
-offline (cancel still works). Once a client has taken it, it is `dispatched` and rules 2-5 apply
-to it exactly as to a local run. Only mailbox runs (`launcher = 'mailbox'`) skip rules 3-5, and
-only while the mailbox reaper watches them (the mailbox launcher is configured). Rule 6 cleans
-the server's own WORKSPACES_DIR: client runs' workspaces are on the user's machine.
+A job ends (`ended_at`, lifting the fence for the next run) when its `result` is accepted. The
+reaper ends the job of an ended run whose worker sent none (killed, crashed, lost) once
+`job_ended`. A push run cancelled before its worker started is cancelled at its provider first;
+no other ended one is.
 
-`Reaper(ctx).tick(now)` is synchronous with an injected clock; the lifespan runs it in a thread.
+`judge` is pure; `Reaper(ctx).tick(now)` is synchronous with an injected clock, and the lifespan
+runs it in a thread. A job whose check raises is logged and the next job is checked.
 """
 
 from __future__ import annotations
 
 import logging
-import shutil
-import stat
-from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 
+from agentos.clock import from_db, from_db_opt
 from agentos.context import AppContext
+from agentos.db import Row
+from agentos.launchers.base import JobStatus, ProviderError
+from agentos.models import ReportMode, RunStatus, StartMode, StopReason
 from agentos.runs import service
+from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, PULL_START_TIMEOUT, STOPPED, TERMINAL
 
 log = logging.getLogger(__name__)
+Action = service.Action  # a verdict, which `service.reap` writes
 
 INTERVAL_S = 15.0
 SLEEP_GRACE = timedelta(seconds=60)
-WORKSPACE_MAX_AGE = timedelta(days=7)
+START_GRACE = timedelta(minutes=15)
+HEARTBEAT_TIMEOUT = timedelta(seconds=90)
+STOP_GRACE = timedelta(minutes=2)
+STATUS_EVERY = timedelta(seconds=60)
+START_INTERRUPTED = "start interrupted"
+WORKER_LOST = "worker lost"
+UNWATCHED = "its runner is no longer configured"
+
+
+@dataclass(frozen=True, slots=True)
+class JobFacts:
+    """A job as the reaper sees it. `seen_at`: its last post (else its start)."""
+
+    run_id: int
+    job_id: str
+    status: RunStatus
+    start: StartMode
+    provider: str | None
+    report: ReportMode
+    ref: str | None
+    dispatched_at: datetime
+    started_at: datetime
+    bound: bool  # its worker's `started` arrived
+    seen_at: datetime
+    budget_s: int
+    stop_requested_at: datetime | None
+    stop_reason: StopReason | None
+    start_timeout: timedelta
+    not_after: datetime
+    read: service.Snapshot  # the run as stored: a verdict is written only while it still holds
+
+
+@dataclass(frozen=True, slots=True)
+class Reaped:
+    run_id: int
+    status: RunStatus
+    reason: str
+
+
+def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool) -> Action | None:
+    """Rules 1-5 for one job, in order; None leaves it. `status` is its provider's answer (push
+    only; None when there is none); `mailbox`: a mailbox store watches the file-report jobs."""
+    push = job.start == "push"
+    if job.status == "dispatched" and push and job.ref is None:
+        late = now > job.dispatched_at + START_GRACE
+        return Action("failed", START_INTERRUPTED) if late else None
+    if job.report == "file":
+        return Action("failed", UNWATCHED) if not mailbox and now > job.not_after else None
+
+    if job.status == "dispatched":
+        running = status is not None and status.state == "running"
+        waiting = running or now <= job.dispatched_at + job.start_timeout
+        if waiting and now <= job.not_after:  # past it, its worker may no longer publish
+            return None
+        return Action("failed", NEVER_STARTED, "never_started" if push else None, cancel=push)
+
+    if now > job.seen_at + HEARTBEAT_TIMEOUT:
+        return Action("failed", WORKER_LOST, cancel=push)
+    if job.stop_requested_at is None:
+        over = now > job.started_at + timedelta(seconds=job.budget_s) + BUDGET_GRACE
+        return Action(stop="budget") if over else None
+    if now <= job.stop_requested_at + STOP_GRACE:
+        return None  # the worker sees `cancel: true` and still publishes
+    end, error = STOPPED[job.stop_reason]
+    return Action(end, error, cancel=push)
+
+
+def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:
+    """Whether the job of a run that ended without its result can no longer publish: past its
+    `not_after` (any route); push: its provider says `ended` (`status`). A pull job also ends when
+    its client reports it `gone`, which the lease itself stamps (`worker_api.service
+    .lease_client`): only the client sees its worker exit, and a silent client proves nothing,
+    since its workers outlive it."""
+    if now > job.not_after:
+        return True
+    return job.start == "push" and status is not None and status.state == "ended"
+
+
+def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
+    """`service.active_jobs` row → facts; a pull job's start timeout is PULL_START_TIMEOUT."""
+    dispatched = from_db(row["dispatched_at"])
+    started = from_db_opt(row["started_at"]) or dispatched
+    return JobFacts(
+        run_id=row["run_id"],
+        job_id=row["job_id"],
+        status=row["status"],
+        start=row["start"],
+        provider=row["provider"],
+        report=row["report"],
+        ref=row["launch_ref"],
+        dispatched_at=dispatched,
+        started_at=started,
+        bound=row["started_at"] is not None,
+        seen_at=from_db_opt(row["last_seen_at"]) or started,
+        budget_s=row["budget_s"],
+        stop_requested_at=from_db_opt(row["stop_requested_at"]),
+        stop_reason=row["stop_reason"],
+        start_timeout=start_timeout if row["start"] == "push" else PULL_START_TIMEOUT,
+        not_after=from_db(row["not_after"]),
+        read=service.Snapshot(
+            row["status"], row["launch_ref"], row["started_at"], row["last_seen_at"]
+        ),
+    )
 
 
 class Reaper:
     def __init__(self, ctx: AppContext) -> None:
         self.ctx = ctx
         self.previous: datetime | None = None
+        self.polled: dict[str, tuple[datetime, JobStatus | None]] = {}  # by job id
+        self.cancelled: set[str] = set()  # job ids whose provider was asked to cancel
 
-    def tick(self, now: datetime) -> list[service.Reaped]:
+    def tick(self, now: datetime) -> list[Reaped]:
         previous, self.previous = self.previous, now
         if previous is None or now - previous > SLEEP_GRACE:
-            touched = service.touch_running(self.ctx.db, now)
-            if touched:
+            if touched := service.touch_running(self.ctx.db, now):
                 log.info("reaper: grace tick, refreshed %s running run(s)", touched)
             return []
-        # Mailbox runs send no heartbeats: the mailbox reaper (agentos.mailbox) watches them, and
-        # runs only with the mailbox launcher. Every other run (client runs too) is checked here.
-        exempt = "mailbox" if self.ctx.launcher.name == "mailbox" else None
-        reaped = service.reap(self.ctx.db, now, self.ctx.space.claim_timeout_s, exempt)
-        for r in reaped:
-            log.warning("reaper: run %s %s: %s", r.run_id, r.status, r.reason)
-        if self.ctx.launcher.name == "local":
-            self.clean_workspaces(now)
+
+        start_timeout = timedelta(seconds=self.ctx.space.claim_timeout_s)
+        jobs = [job_facts(row, start_timeout) for row in service.active_jobs(self.ctx.db)]
+        active = {job.job_id for job in jobs}
+        self.polled = {k: v for k, v in self.polled.items() if k in active}
+        self.cancelled &= active
+
+        reaped: list[Reaped] = []
+        for job in jobs:
+            try:
+                if job.status in TERMINAL:
+                    if job.status == "cancelled" and job.start == "push" and not job.bound:
+                        self._cancel(job)  # cancelled before its worker started
+                    if job_ended(job, now, self._status(job, now)):
+                        with self.ctx.db.tx() as conn:
+                            service.end_job(conn, job.run_id, job.job_id, now)
+                    continue
+                action = judge(job, now, self._status(job, now), self.ctx.mailbox is not None)
+                if action is not None and (ended := self._apply(job, action, now)):
+                    reaped.append(ended)
+            except Exception:
+                log.exception("reaper: run %s: check failed", job.run_id)
         return reaped
 
-    def clean_workspaces(self, now: datetime) -> list[Path]:
-        """Delete direct children of WORKSPACES_DIR older than WORKSPACE_MAX_AGE whose name isn't
-        an active run id. Returns what was deleted."""
-        root = self.ctx.settings.workspaces_dir
-        try:
-            children = list(root.iterdir())
-        except OSError:
-            return []
-        active = {str(i) for i in service.active_run_ids(self.ctx.db)}
-        cutoff = (now - WORKSPACE_MAX_AGE).timestamp()
-        removed: list[Path] = []
-        for child in children:
+    def _status(self, job: JobFacts, now: datetime) -> JobStatus | None:
+        """A push job's provider status (file: once ended), asked at most every STATUS_EVERY."""
+        provider = self.ctx.providers.get(job.provider or "")
+        live = job.report == "live" or job.status in TERMINAL
+        if not live or job.ref is None or provider is None:
+            return None
+        polled = self.polled.get(job.job_id)
+        if polled is None or now - polled[0] >= STATUS_EVERY:
             try:
-                if child.name in active or child.lstat().st_mtime >= cutoff:
-                    continue
-                if child.is_dir() and not child.is_symlink():
-                    _rmtree(child)
-                else:
-                    child.unlink()
-            except OSError as exc:
-                log.warning("reaper: cannot delete workspace %s: %s", child, exc)
-                continue
-            removed.append(child)
-        if removed:
-            log.info("reaper: deleted %s old workspace(s)", len(removed))
-        return removed
+                status: JobStatus | None = provider.status(job.ref)
+            except ProviderError as exc:
+                log.warning("reaper: run %s: no provider status: %s", job.run_id, exc)
+                status = None
+            polled = self.polled[job.job_id] = (now, status)
+        return polled[1]
 
+    def _apply(self, job: JobFacts, action: Action, now: datetime) -> Reaped | None:
+        """Write the verdict, then ask the provider to cancel (once per job), only if the run was
+        still as the verdict read it. Returns the run's end, if it ended."""
+        if not service.reap(self.ctx.db, job.run_id, job.read, now, action):
+            log.info("reaper: run %s changed since it was read; verdict dropped", job.run_id)
+            return None
 
-def _rmtree(path: Path) -> None:
-    """shutil.rmtree that also removes read-only files (git packs on Windows)."""
+        ended = None
+        if action.end is not None:
+            ended = Reaped(job.run_id, action.end, action.error or "stop unanswered")
+            log.warning("reaper: run %s %s: %s", ended.run_id, ended.status, ended.reason)
+        else:
+            log.info("reaper: run %s stopped: %s", job.run_id, action.stop)
 
-    def retry(func: Callable[..., object], target: str, _exc: object) -> None:
-        Path(target).chmod(stat.S_IWRITE)
-        func(target)
+        if action.cancel:
+            self._cancel(job)
+        return ended
 
-    shutil.rmtree(path, onexc=retry)
+    def _cancel(self, job: JobFacts) -> None:
+        """Ask the job's provider to cancel it, once per job (best effort)."""
+        provider = self.ctx.providers.get(job.provider or "")
+        if job.ref and provider and job.job_id not in self.cancelled:
+            try:
+                provider.cancel(job.ref)
+            except ProviderError as exc:
+                log.warning("reaper: run %s: provider cancel failed: %s", job.run_id, exc)
+            else:
+                self.cancelled.add(job.job_id)

@@ -1,4 +1,4 @@
-"""Shared fixtures: isolated settings (tmp data + workspaces, dev auth), the app and clients.
+"""Shared fixtures: isolated settings (tmp data dir, dev auth), the app and clients.
 
 One app and client serve the whole session; each test gets its own `ctx` on a copy of the
 template db: the test Space's settings (`settings_support.seed_test_settings`) plus what the
@@ -19,13 +19,15 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from agentos.clock import to_db
 from agentos.config import Settings
 from agentos.context import AppContext, build_context
+from agentos.launchers.base import Provider
 from agentos.main import create_app
 from agentos.models import Me, Role, RunStatus, StageRunStatus, TicketDetail
-from tests.run_support import FakeLauncher, RunDriver
+from tests.run_support import FakeProvider, RunDriver
 from tests.settings_support import seed_test_settings
 
 CSRF = {"X-AgentOS": "1"}
@@ -38,7 +40,7 @@ LoginFn = Callable[..., Me]
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
-        "markers", "e2e: real server + launcher + worker + git (deselect with -m 'not e2e')"
+        "markers", "e2e: real server + provider + worker + git (deselect with -m 'not e2e')"
     )
 
 
@@ -69,12 +71,14 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _test_settings(root: Path) -> Settings:
-    # _env_file=None: a developer's backend/.env never leaks into tests.
+    """Dev auth, and the `github` launcher, whose provider the tests swap for a FakeProvider (the
+    token is never sent). _env_file=None: a developer's backend/.env never leaks into tests."""
     return Settings(
         _env_file=None,
         data_dir=root / "data",
-        workspaces_dir=root / "workspaces",
         dev_auth=True,
+        launcher="github",
+        github_token=SecretStr("t0ken-unused"),
     )
 
 
@@ -84,8 +88,14 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def launcher() -> FakeLauncher:
-    return FakeLauncher()
+def provider() -> FakeProvider:
+    return FakeProvider()
+
+
+@pytest.fixture
+def providers(provider: FakeProvider) -> dict[str, Provider]:
+    """The context's providers: the fake under the default route's name (AGENTOS_LAUNCHER)."""
+    return {"github": provider}
 
 
 @dataclass(frozen=True)
@@ -113,7 +123,7 @@ def session_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Session
             seed_test_settings(settings)
 
             # No background loops: tests drive dispatcher.tick / Reaper.tick themselves.
-            app = create_app(settings, launcher=FakeLauncher(), run_loops=False)
+            app = create_app(settings, providers={"github": FakeProvider()}, run_loops=False)
             client = stack.enter_context(TestClient(app, base_url=BASE_URL))
 
         # Every connection is closed after startup, so SQLite has checkpointed its WAL.
@@ -133,13 +143,13 @@ def app(session_server: SessionServer) -> FastAPI:
 
 @pytest.fixture
 def ctx(
-    session_server: SessionServer, settings: Settings, launcher: FakeLauncher
+    session_server: SessionServer, settings: Settings, providers: dict[str, Provider]
 ) -> Iterator[AppContext]:
     """This test's context on the session app: a fresh copy of the template db, built from this
-    test's `settings` and `launcher`."""
+    test's `settings` and `providers`."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(session_server.template_db, settings.db_path)
-    context = build_context(settings, launcher=launcher)
+    context = build_context(settings, providers)
 
     app = session_server.app
     app.state.ctx = context
@@ -236,8 +246,8 @@ def add_run(ctx: AppContext) -> AddRun:
             assert ticket is not None, key
             cursor = conn.execute(
                 "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
-                "launcher, created_by, created_at, started_at, finished_at) "
-                "VALUES (?, ?, ?, ?, 3600, 'local', ?, ?, ?, ?)",
+                "provider, created_by, created_at, started_at, finished_at) "
+                "VALUES (?, ?, ?, ?, 3600, 'github', ?, ?, ?, ?)",
                 (
                     ticket["id"],
                     status,
@@ -271,6 +281,6 @@ def add_run(ctx: AppContext) -> AddRun:
 
 
 @pytest.fixture
-def runs(client: TestClient, ctx: AppContext, launcher: FakeLauncher) -> RunDriver:
+def runs(client: TestClient, ctx: AppContext, provider: FakeProvider) -> RunDriver:
     """Dispatch through the API, tick the dispatcher, bind the job and act as the worker."""
-    return RunDriver(client, ctx, launcher)
+    return RunDriver(client, ctx, provider)

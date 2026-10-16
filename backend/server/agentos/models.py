@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Annotated, Any, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self
 
 from pydantic import (
     AfterValidator,
@@ -436,11 +436,24 @@ class NowInfo(ApiModel):
 
 
 # AGENTOS_LAUNCHER. mailbox: runs travel through a store (design/mailbox.md).
-LauncherName = Literal["local", "github", "mailbox"]
+LauncherName = Literal["github", "mailbox"]
 LogDelivery = Literal["live", "at_end"]
-# Who serves a run: the server's configured launcher, or the dispatching user's own client
-# (`worker.py --client`, which polls for it; stored as `runs.launcher = 'client'`).
+# Who serves a run: the server's route, or the dispatching user's own client (a pull run).
 DispatchTarget = Literal["server", "client"]
+# A run's route, stored on it at dispatch: push (a provider starts its worker) or pull (its
+# owner's client leases it), by live (HTTP) or file (a mailbox) reporting. Pull + file is refused.
+StartMode = Literal["push", "pull"]
+ReportMode = Literal["live", "file"]
+# Why a run (and its job) was asked to stop: a user's cancel, its time budget, or never started.
+StopReason = Literal["cancel", "budget", "never_started"]
+
+
+class Route(NamedTuple):
+    """A run's route (`runs.start`, `provider`, `report`); `provider` is None for pull."""
+
+    start: StartMode
+    provider: str | None
+    report: ReportMode
 
 
 class RunSummary(ApiModel):
@@ -455,12 +468,15 @@ class RunSummary(ApiModel):
     created_at: AwareDatetime
     started_at: AwareDatetime | None
     finished_at: AwareDatetime | None
-    # Set while a running run waits for its worker to acknowledge a cancel (UI: "Cancelling…").
-    cancel_requested_at: AwareDatetime | None
+    # Set once a running run was asked to stop, and why (UI: "Cancelling…", "Over budget…").
+    stop_requested_at: AwareDatetime | None
+    stop_reason: StopReason | None
+    # Why a queued run waits (e.g. for the previous run's worker to stop); null otherwise.
+    queue_reason: str | None
     error: str | None
-    # Informational: a PID (local), the Actions run URL (github), the client's name (client).
+    # Informational: the Actions run URL (github), the client's name (client).
     launch_ref: str | None
-    # The launcher's page for this run (the GitHub Actions run); null for local and client runs.
+    # The provider's page for this run (the GitHub Actions run); null for client runs.
     launch_url: str | None
     # When the run's events arrive: "live" as the worker sends them, or "at_end" (a mailbox run:
     # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).
@@ -815,7 +831,7 @@ class SpaceDoc(ApiModel):
     default_repo: str | None  # a repo catalog name: what a new ticket gets when it names none
     key_prefix: str
     jira_projects: list[str]
-    claim_timeout_s: int  # a dispatched run whose worker never connects fails after this
+    claim_timeout_s: int  # the start timeout: a push job not started by then fails
 
 
 class SpaceSettings(SettingsMeta):
@@ -994,11 +1010,11 @@ class RunnerDoc(ApiModel):
 
 
 class RunnerSettings(SettingsMeta):
-    """`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the
-    server's env and are read-only."""
+    """`launcher` (AGENTOS_LAUNCHER; null = unset) and `token_set` (AGENTOS_GITHUB_TOKEN is set)
+    come from the server's env and are read-only."""
 
     value: RunnerDoc
-    launcher: LauncherName
+    launcher: LauncherName | None
     token_set: bool
 
 
@@ -1585,11 +1601,14 @@ class PushedData(ApiModel):
 
 class LeaseRequest(ApiModel):
     """Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
-    the jobs the client's workers still run."""
+    the jobs the client's workers still run (recorded for display; leaving one out ends
+    nothing). `gone`: the jobs whose worker the client saw end (its process exited, or its lock
+    was released); the server ends exactly those, once, so a repeat or a late one is harmless."""
 
     wait_s: int = Field(default=25, ge=0, le=25)
     take: bool = True
     alive: list[str] = Field(default_factory=list, max_length=100)
+    gone: list[str] = Field(default_factory=list, max_length=100)
 
 
 class LeasedJob(ApiModel):
