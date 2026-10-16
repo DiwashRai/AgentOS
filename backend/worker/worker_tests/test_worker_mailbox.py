@@ -15,7 +15,7 @@ import pytest
 
 import worker
 from worker_tests.worker_support import (
-    DISPATCH_TOKEN,
+    JOB_TOKEN,
     SKILL_DIR,
     agent_stage,
     make_package,
@@ -112,7 +112,7 @@ def test_a_failed_stage_records_a_failed_complete(tmp_path: Path) -> None:
     "extra",
     [
         ["--server", "http://127.0.0.1:8000"],
-        ["--token", DISPATCH_TOKEN],
+        ["--token", JOB_TOKEN],
     ],
 )
 def test_mailbox_mode_refuses_http_options(extra: list[str], tmp_path: Path) -> None:
@@ -188,13 +188,20 @@ def test_an_outbox_write_error_aborts_the_run(
     assert lines(outbox) == [{"outbox": 1, "run_id": 42}], "no complete after the failure"
 
 
-def test_a_closed_recorder_refuses_further_calls(tmp_path: Path) -> None:
-    recorder = worker.Recorder(tmp_path / "outbox.jsonl", 7)
-    assert recorder.call(EVENTS, {"events": []}) is None
-    assert recorder.call(SYNC, {"stage_id": "s", "files": []}) is None
+def record(seq: int, type_: str, data: dict[str, Any]) -> dict[str, Any]:
+    """A journal record of stage `s`."""
+    ts = "2026-10-16T12:00:00+00:00"
+    return {"seq": seq, "ts": ts, "job": "7-1-x", "type": type_, "stage_id": "s", "data": data}
+
+
+def test_a_closed_recorder_refuses_further_records(tmp_path: Path) -> None:
+    recorder: worker.Reporter = worker.Recorder(tmp_path / "outbox.jsonl", 7)
+    assert recorder.send([]) == worker.Ack(0, False, ())
+    assert recorder.send([record(2, "sync", {"files": []})]) == worker.Ack(2, False, ())
     recorder.close()
+    result = {"status": "completed", "failed_stage": None, "error": None, "pr_url": None}
     with pytest.raises(worker.Unreachable):
-        recorder.call(COMPLETE, {"status": "completed", "failed_stage": None, "error": None})
+        recorder.send([record(3, "result", result)])
     assert lines(tmp_path / "outbox.jsonl") == [
         {"outbox": 1, "run_id": 7},
         {"path": SYNC, "body": {"stage_id": "s", "files": []}},

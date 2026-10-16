@@ -26,7 +26,12 @@ import worker
 FAKE_STAGE = Path(__file__).resolve().parent / "worker_fake_stage.py"
 KEY = "AOS-42"
 SKILL_DIR = ".claude/skills/context-aos-42-fix-login-bug"
-DISPATCH_TOKEN = "d" * 43
+JOB_TOKEN = "j" * 43
+JOB = "/api/worker/job"
+JOURNAL = "/api/worker/journal"
+DISPLAY = frozenset(
+    {"stage_started", "stage_finished", "log", "warning", "verdict", "verdict_repair"}
+)
 
 # (path, body) -> (status, body) to override the default answer, or None to keep it.
 Hook = Callable[[str, Any], tuple[int, Any] | None]
@@ -36,17 +41,21 @@ Hook = Callable[[str, Any], tuple[int, Any] | None]
 class Request:
     path: str
     auth: str | None
+    instance: str | None  # X-AgentOS-Instance
     body: Any
 
 
 @dataclass
 class FakeServer:
-    """The worker API, in memory. Records every request; `hook` can override any answer."""
+    """The worker API, in memory. Records every request; `hook` can override any answer. The
+    journal is applied as the server does (`ingest`), per job, into `applied`."""
 
     manifest: dict[str, Any] = field(default_factory=dict)
     cancel: bool = False
     hook: Hook | None = None
     requests: list[Request] = field(default_factory=list)
+    applied: list[dict[str, Any]] = field(default_factory=list)
+    acks: dict[str, int] = field(default_factory=dict)  # job id -> the highest seq applied
     lock: threading.Lock = field(default_factory=threading.Lock)
     url: str = ""
 
@@ -55,17 +64,28 @@ class FakeServer:
             override = self.hook(path, body)
             if override is not None:
                 return override
-        if path == "/api/worker/claim":
-            return 200, {"manifest": self.manifest}
-        if path == "/api/worker/events":
-            return 200, {"cancel": self.cancel}
-        if path == "/api/worker/sync":
-            return 200, {"versions": {f["path"]: 2 for f in body["files"]}, "refused": []}
-        if path == "/api/worker/complete":
-            return 200, None
-        if path.startswith("/api/worker/sync-back?"):
+        if path == JOB:
+            return 200, self.manifest
+        if path == JOURNAL:
+            return 200, self.ingest(body["records"])
+        if path.startswith("/api/worker/jobs/") and "/sync-back?" in path:
             return 204, None
         return 404, {"error": {"code": "not_found", "message": path}}
+
+    def ingest(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        """Apply records as the server does for the manifest's job: in strict seq order from its
+        `journal.first_seq`; a seq held already is skipped, and a gap stops the batch."""
+        job = self.manifest["job"]["id"]
+        with self.lock:
+            ack = self.acks.get(job, self.manifest["journal"]["first_seq"] - 1)
+            for record in records:
+                if record["seq"] > ack + 1:
+                    break
+                if record["seq"] == ack + 1:
+                    self.applied.append(record)
+                    ack += 1
+            self.acks[job] = ack
+        return {"ack": ack, "cancel": self.cancel, "rejected": []}
 
     # ------------------------------------------------------------ views for assertions
 
@@ -79,15 +99,24 @@ class FakeServer:
             return [
                 (dict(parse_qsl(urlsplit(r.path).query)), r.body)
                 for r in self.requests
-                if r.path.startswith("/api/worker/sync-back?")
+                if "/sync-back?" in r.path
             ]
 
+    def records(self, type_: str | None = None) -> list[dict[str, Any]]:
+        """The applied journal (each seq once, in order), or its records of one type."""
+        with self.lock:
+            return [r for r in self.applied if type_ is None or r["type"] == type_]
+
     def events(self) -> list[dict[str, Any]]:
-        return [e for body in self.bodies("/api/worker/events") for e in body["events"]]
+        """The applied display records."""
+        return [r for r in self.records() if r["type"] in DISPLAY]
 
     def complete(self) -> dict[str, Any] | None:
-        done = self.bodies("/api/worker/complete")
-        return done[-1] if done else None
+        """The last `result` record's data, leaving out a null `pr_url`."""
+        done = self.records("result")
+        if not done:
+            return None
+        return {k: v for k, v in done[-1]["data"].items() if k != "pr_url" or v is not None}
 
     def logs(self, stream: str | None = None) -> list[str]:
         return [
@@ -115,6 +144,9 @@ def eventually(condition: Callable[[], bool], what: str, timeout_s: float = 10.0
 
 def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.do_POST(raw=True)
+
         def do_PUT(self) -> None:
             self.do_POST(raw=True)
 
@@ -122,8 +154,12 @@ def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:
             length = int(self.headers.get("Content-Length") or 0)
             data = self.rfile.read(length)
             body = data if raw else json.loads(data or b"null")
+            auth, instance = (
+                self.headers.get("Authorization"),
+                self.headers.get("X-AgentOS-Instance"),
+            )
             with server.lock:
-                server.requests.append(Request(self.path, self.headers.get("Authorization"), body))
+                server.requests.append(Request(self.path, auth, instance, body))
             status, answer = server.answer(self.path, body)
             payload = b"" if answer is None else json.dumps(answer).encode()
             self.send_response(status)
@@ -331,6 +367,16 @@ def make_package(
     repo = repo_url is not None
     return {
         "protocol": 2,
+        "job": {
+            "id": f"{run_id}-1-3f9c0a1be47d2c55",
+            "run_id": run_id,
+            "segment": 1,
+            "segments": 1,
+            "budget_s": 3600,
+            "not_after": "2100-01-01T00:00:00Z",
+        },
+        "journal": {"first_seq": 1},
+        "report": {"mode": "live", "url": None},
         "run_id": run_id,
         "ticket": {"key": KEY, "title": "Fix login bug"},
         "workspace": {
@@ -371,6 +417,4 @@ def make_package(
 
 
 def run_worker(server: FakeServer, workdir: Path) -> int:
-    return worker.main(
-        ["--server", server.url, "--token", DISPATCH_TOKEN, "--workdir", str(workdir)]
-    )
+    return worker.main(["--server", server.url, "--token", JOB_TOKEN, "--workdir", str(workdir)])

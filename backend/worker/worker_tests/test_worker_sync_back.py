@@ -14,7 +14,8 @@ import pytest
 
 import worker
 from worker_tests.worker_support import (
-    DISPATCH_TOKEN,
+    JOB_TOKEN,
+    JOURNAL,
     FakeServer,
     agent_stage,
     error,
@@ -39,8 +40,8 @@ def status_of(server: FakeServer) -> Any:
 
 def cancel_once_started(server: FakeServer) -> None:
     def hook(path: str, body: Any) -> None:
-        if path == "/api/worker/events" and any(
-            e["type"] == "log" and e["data"]["text"] == "started" for e in body["events"]
+        if path == JOURNAL and any(
+            r["type"] == "log" and r["data"]["text"] == "started" for r in body["records"]
         ):
             server.cancel = True
 
@@ -51,7 +52,7 @@ def cancel_once_started(server: FakeServer) -> None:
     ("status", "extra"),
     [("completed", ()), ("failed", ("exit=1",)), ("cancelled", ("sleep=30",))],
 )
-def test_the_folder_is_uploaded_before_complete(
+def test_the_folder_is_uploaded_and_recorded_before_the_result(
     server: FakeServer, tmp_path: Path, status: str, extra: tuple[str, ...]
 ) -> None:
     if status == "cancelled":
@@ -61,12 +62,19 @@ def test_the_folder_is_uploaded_before_complete(
     assert status_of(server) == status
 
     [(query, data)] = server.uploads()
-    assert query == {"sha256": hashlib.sha256(data).hexdigest(), "files": "2"}
+    digest = hashlib.sha256(data).hexdigest()
+    assert query == {"sha256": digest, "files": "2"}
     assert unzip(data) == {"report.md": b"all good", "data/n.txt": b"42"}
-    paths = [r.path.partition("?")[0] for r in server.requests]
-    assert paths.index("/api/worker/sync-back") < paths.index("/api/worker/complete")
-    [upload] = [r for r in server.requests if r.path.startswith("/api/worker/sync-back")]
-    assert upload.auth != f"Bearer {DISPATCH_TOKEN}", "uploads with the worker token"
+    [upload] = [r for r in server.requests if "/sync-back?" in r.path]
+    assert upload.path.startswith(f"/api/worker/jobs/{server.manifest['job']['id']}/sync-back?")
+    assert (upload.auth, upload.instance) == (f"Bearer {JOB_TOKEN}", server.requests[1].instance)
+
+    # The record describing it follows the upload, and comes right before the result.
+    *_, sync_back, result = server.records()
+    assert (sync_back["type"], result["type"]) == ("sync_back", "result")
+    assert sync_back["data"] == {"sha256": digest, "bytes": len(data), "files": 2}
+    before = server.requests[: server.requests.index(upload)]
+    assert not any(r.path == JOURNAL and sync_back in r.body["records"] for r in before)
 
 
 def test_a_link_is_skipped_and_named(
@@ -160,7 +168,7 @@ def test_a_file_far_over_max_bytes_warns_and_sends_nothing(
 def test_a_refused_upload_only_warns_and_a_gone_run_stops(
     server: FakeServer, tmp_path: Path, answer: tuple[int, Any], code: int
 ) -> None:
-    server.hook = lambda path, body: answer if path.startswith("/api/worker/sync-back") else None
+    server.hook = lambda path, body: answer if "/sync-back?" in path else None
     server.manifest = make_package([agent_stage("implement", *WRITES)])
     assert run_worker(server, tmp_path / "ws") == code
     if code:
