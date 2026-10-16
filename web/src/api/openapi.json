@@ -4072,6 +4072,13 @@
       "SyncResponse": {
         "additionalProperties": false,
         "properties": {
+          "refused": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Refused",
+            "type": "array"
+          },
           "versions": {
             "additionalProperties": {
               "type": "integer"
@@ -4081,7 +4088,8 @@
           }
         },
         "required": [
-          "versions"
+          "versions",
+          "refused"
         ],
         "title": "SyncResponse",
         "type": "object"

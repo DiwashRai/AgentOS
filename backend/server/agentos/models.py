@@ -1516,6 +1516,7 @@ class SyncRequest(ApiModel):
 
 class SyncResponse(ApiModel):
     versions: dict[str, int]
+    refused: list[str]  # paths that aren't write context or notes of the run's package
 
 
 class CompleteRequest(ApiModel):

@@ -466,16 +466,18 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
     assert (t.now.actor, t.now.run_id) == (None, run2.id)
     assert t.tasks == TaskProgress(done=2, total=2), e2e.diag(run2.id)
     files = e2e.files(key)
-    for path in (tasks_md, learnings, review_md):
+    for path in (tasks_md, learnings):
         assert files[path].author_run_id == run2.id, (path, e2e.diag(run2.id))
     assert files["AGENTS.md"].author_run_id is None
+    assert review_md not in files  # undeclared: not kept, and the run log names it
+    warnings = [e["data"]["message"] for e in e2e.events(run2.id) if e["type"] == "warning"]
+    assert any(w.startswith("not kept") and review_md in w for w in warnings), warnings
     tasks = e2e.file(key, tasks_md).content
     assert "add a greeting" not in tasks  # the human edit reached the agent
     assert tasks.count("- [x]") == 2
     log = e2e.file(key, learnings).content
     assert f"run {run1.id}: planned" in log
     assert f"run {run2.id}: implemented" in log
-    assert "Looks good." in e2e.file(key, review_md).content
 
     # 4. The remote: code commit(s) on agent/KEY and no manifest files or block text.
     assert_clean_branch(e2e.remote, key)

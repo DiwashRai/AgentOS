@@ -1457,13 +1457,14 @@ class SyncBatch:
         self.updates[path] = content
 
 
-def _walk_files(root: Path, rel_dir: str, warnings: list[str]) -> list[str]:
-    """POSIX paths of the regular files under `rel_dir`. Never follows links."""
+def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
+    """POSIX paths of the regular files under `rel_dir`, and of what was skipped there: links,
+    special files, and folders that can't be listed or have a bad name. Never follows links."""
     top, err = resolve_inside(root, rel_dir)
     if err:
-        warnings.append(f"sync dir {rel_dir} not synced: {err}")
-        return []
+        return [], [rel_dir]
     found: list[str] = []
+    skipped: list[str] = []
     stack = [(rel_dir, top)]
     while stack:
         rel, here = stack.pop()
@@ -1471,8 +1472,8 @@ def _walk_files(root: Path, rel_dir: str, warnings: list[str]) -> list[str]:
             children = sorted(here.iterdir())
         except FileNotFoundError:
             continue
-        except OSError as exc:
-            warnings.append(f"not synced: cannot list {rel}: {exc.strerror}")
+        except OSError:
+            skipped.append(f"{rel}/")
             continue
         for child in children:
             child_rel = f"{rel}/{child.name}"
@@ -1480,27 +1481,22 @@ def _walk_files(root: Path, rel_dir: str, warnings: list[str]) -> list[str]:
                 st = child.lstat()
             except OSError:
                 continue
-            if is_link(st):
-                warnings.append(f"not synced: {child_rel} is a symlink")
-            elif stat.S_ISDIR(st.st_mode):
-                problem = path_error(child_rel)
-                if problem:
-                    warnings.append(f"not synced: {child_rel}/: {problem}")
-                else:
-                    stack.append((child_rel, child))
-            elif stat.S_ISREG(st.st_mode):
+            if stat.S_ISREG(st.st_mode) and not is_link(st):
                 found.append(child_rel)
+            elif stat.S_ISDIR(st.st_mode) and not is_link(st) and not path_error(child_rel):
+                stack.append((child_rel, child))
             else:
-                warnings.append(f"not synced: {child_rel} is not a regular file")
-    return sorted(found)
+                skipped.append(child_rel)
+    return sorted(found), sorted(skipped)
 
 
 class SyncState:
     """What the server holds of this run's context, so sync sends only what changed.
 
-    Every write context entry and note is sent after each stage (block files: only the block).
-    Other files under `workspace.protect` are sent when new or changed, and as `content: null`
-    once they vanish.
+    After each stage it reads exactly the write context entries and the notes (block files: only
+    the block) and sends those that changed since they were last sent; a deleted replace file goes
+    as `content: null`. Nothing else is sent: other files under `workspace.protect` are named in
+    one "not kept" warning.
     """
 
     def __init__(self, package: Package) -> None:
@@ -1509,6 +1505,7 @@ class SyncState:
         self.declared_lower = {f.path.lower() for f in package.files}
         self.known: dict[str, str | None] = {p: f.content for p, f in self.sync_files.items()}
         self.unsynced: set[str] = set()  # declared files that couldn't be written
+        self.rewritten: set[str] = set()  # notes already warned about
 
     def _declared_content(self, f: ContextFile, data: bytes) -> tuple[str, str | None]:
         """(content to sync, why not) for a declared write file's bytes."""
@@ -1528,7 +1525,6 @@ class SyncState:
         return content, None
 
     def collect(self, root: Path) -> SyncBatch:
-        limit = self.package.limits["max_file_bytes"]
         batch = SyncBatch([], {}, [])
         for path, f in self.sync_files.items():
             if path in self.unsynced:
@@ -1547,35 +1543,23 @@ class SyncState:
             if err:
                 batch.warnings.append(f"not synced: {path}: {err}")
                 continue
-            batch.add(path, content, f.mode)
+            if (
+                f.kind == "note"
+                and path not in self.rewritten
+                and not content.startswith(f.content)
+            ):
+                self.rewritten.add(path)
+                batch.warnings.append(f"{path} was rewritten, not appended to")
+            if self.known.get(path) != content:
+                batch.add(path, content, f.mode)
 
-        seen: set[str] = set()
-        for sync_dir in self.package.workspace["protect"]:
-            for path in _walk_files(root, sync_dir, batch.warnings):
-                if path.lower() in self.declared_lower or path in seen:
-                    continue  # declared files are handled above; read entries never sync
-                seen.add(path)
-                problem = path_error(path)
-                if problem:
-                    batch.warnings.append(f"not synced: {path}: {problem}")
-                    continue
-                data, err = read_regular(root, path)
-                if err or data is None:
-                    batch.warnings.append(f"not synced: {path} {err or 'vanished'}")
-                    continue
-                if len(data) > limit:
-                    batch.warnings.append(f"not synced: {path} is over {limit} bytes")
-                    continue
-                text = _decode(data)
-                if text is None:
-                    batch.warnings.append(f"not synced: {path} is not valid UTF-8")
-                    continue
-                if self.known.get(path) != text:
-                    batch.add(path, text, "replace")
-
-        for path, last in self.known.items():
-            if path not in self.sync_files and path not in seen and last is not None:
-                batch.add(path, None, "replace")
+        not_kept: list[str] = []
+        for folder in self.package.workspace["protect"]:
+            files, skipped = _walk_files(root, folder)
+            not_kept += [p for p in files if p.lower() not in self.declared_lower] + skipped
+        if not_kept:
+            more = f" and {len(not_kept) - 20} more" if len(not_kept) > 20 else ""
+            batch.warnings.append(f"not kept: {', '.join(not_kept[:20])}{more}")
         return batch
 
     def accept(self, batch: SyncBatch) -> None:
@@ -2576,11 +2560,14 @@ class Run:
         for warning in batch.warnings:
             self.events.warn(stage_id, warning)
         try:
-            self.api.call("/api/worker/sync", {"stage_id": stage_id, "files": batch.files})
+            answer = self.api.call("/api/worker/sync", {"stage_id": stage_id, "files": batch.files})
         except HttpError as exc:
             self.events.warn(stage_id, f"sync rejected ({exc}): context changes were not saved")
             return
         self.sync.accept(batch)
+        refused = (answer or {}).get("refused")
+        if refused:
+            self.events.warn(stage_id, f"sync refused: {', '.join(refused)}")
 
     def _is_protected(self, path: str) -> bool:
         low = path.lower()

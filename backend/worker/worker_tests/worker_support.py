@@ -59,7 +59,7 @@ class FakeServer:
         if path == "/api/worker/events":
             return 200, {"cancel": self.cancel}
         if path == "/api/worker/sync":
-            return 200, {"versions": {f["path"]: 2 for f in body["files"]}}
+            return 200, {"versions": {f["path"]: 2 for f in body["files"]}, "refused": []}
         if path == "/api/worker/complete":
             return 200, None
         return 404, {"error": {"code": "not_found", "message": path}}

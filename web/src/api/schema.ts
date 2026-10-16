@@ -2490,6 +2490,8 @@ export interface components {
         };
         /** SyncResponse */
         SyncResponse: {
+            /** Refused */
+            refused: string[];
             /** Versions */
             versions: {
                 [key: string]: number;

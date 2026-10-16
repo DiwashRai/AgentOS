@@ -266,21 +266,14 @@ def test_sync_writes_versions_authored_by_the_run(
         "plan",
         [
             {"path": tasks, "content": "# Tasks\n- [x] one\n- [ ] two\n", "mode": "replace"},
-            {"path": f"{d}/notes/new.md", "content": "new", "mode": "replace"},
             {"path": "AGENTS.md", "content": "edited block", "mode": "block"},
             {"path": f"{d}/learnings.log", "content": None, "mode": "replace"},
-            {"path": f"{d}/never-existed.md", "content": None, "mode": "replace"},
         ],
     )
     assert r.status_code == 200, r.text
     assert r.json() == {
-        "versions": {
-            tasks: 2,
-            f"{d}/notes/new.md": 1,
-            "AGENTS.md": 2,
-            f"{d}/learnings.log": 2,
-            f"{d}/never-existed.md": 0,
-        }
+        "versions": {tasks: 2, "AGENTS.md": 2, f"{d}/learnings.log": 2},
+        "refused": [],
     }
     latest = versions(authed, ticket.key, tasks)[-1]
     assert (latest.author, latest.author_run_id) == (None, worker.run_id)
@@ -297,31 +290,38 @@ def test_sync_writes_versions_authored_by_the_run(
     again = worker.sync(
         "plan", [{"path": tasks, "content": "# Tasks\n- [x] one\n- [ ] two\n", "mode": "replace"}]
     )
-    assert again.json() == {"versions": {tasks: 2}}
+    assert again.json() == {"versions": {tasks: 2}, "refused": []}
 
 
 @pytest.mark.parametrize(
-    ("path", "mode", "why"),
+    "path",
     [
-        ("src/app.py", "replace", "not a context file"),
-        ("../escape.md", "replace", "'..'"),
-        (".claude/skills/other/SKILL.md", "replace", "not a context file"),
-        ("AGENTS.md", "replace", "mode"),
-        ("{skill}/.git/config", "replace", ".git"),
-        ("{skill}", "replace", "not a context file"),
+        "{skill}/new.md",  # under workspace.protect, but undeclared
+        "src/app.py",
+        "../escape.md",
+        ".claude/skills/other/SKILL.md",
+        "AGENTS.md",  # declared as a block file, sent as a replace file
+        "{skill}/.git/config",
+        "{skill}",
     ],
 )
-def test_sync_path_rules(
-    authed: TestClient, ticket: TicketDetail, runs: RunDriver, path: str, mode: str, why: str
+def test_sync_refuses_undeclared_paths_and_applies_the_rest(
+    authed: TestClient, ticket: TicketDetail, runs: RunDriver, path: str
 ) -> None:
+    def files() -> dict[str, int]:
+        listed = authed.get(f"/api/tickets/{ticket.key}/files").json()
+        return {f["path"]: f["version"] for f in listed}
+
+    before = files()
     worker = runs.start(ticket.key)
     d = skill_dir(ticket)
-    good = {"path": f"{d}/TASKS.md", "content": "# Tasks\n- [ ] x\n", "mode": "replace"}
-    bad = {"path": path.replace("{skill}", d), "content": "x", "mode": mode}
-    r = worker.sync("plan", [good, bad])
-    assert error(r) == (422, "validation_error")
-    assert why in r.json()["error"]["message"]
-    assert len(versions(authed, ticket.key, f"{d}/TASKS.md")) == 1  # nothing written
+    tasks = f"{d}/TASKS.md"
+    bad = path.replace("{skill}", d)
+    good = {"path": tasks.upper(), "content": "# Tasks\n- [ ] x\n", "mode": "replace"}
+    r = worker.sync("plan", [{"path": bad, "content": "x", "mode": "replace"}, good])
+    assert r.status_code == 200, r.text
+    assert r.json() == {"versions": {tasks: 2}, "refused": [bad]}
+    assert files() == {**before, tasks: 2}
 
 
 def test_a_human_edit_based_on_a_version_before_an_agent_sync_is_stale(
@@ -351,7 +351,7 @@ def test_a_human_edit_based_on_a_version_before_an_agent_sync_is_stale(
 def test_sync_rejects_a_stage_outside_the_run(ticket: TicketDetail, runs: RunDriver) -> None:
     worker = runs.start(ticket.key)
     assert error(worker.sync("review", [])) == (422, "validation_error")
-    assert worker.sync("plan", []).json() == {"versions": {}}
+    assert worker.sync("plan", []).json() == {"versions": {}, "refused": []}
 
 
 # ------------------------------------------------------------------ complete

@@ -95,7 +95,7 @@ def test_no_repo_run_records_header_events_sync_and_complete(
     assert [s["stage_id"] for s in syncs] == ["implement", "lint"]
     first = {f["path"]: f["content"] for f in syncs[0]["files"]}
     assert first[f"{SKILL_DIR}/TASKS.md"] == "# Tasks — ü\n\n- [x] Fix expiry\n"
-    assert first[f"{SKILL_DIR}/notes.md"] == "# Notes\n"
+    assert first[f"{SKILL_DIR}/learnings.log"] == "expiry is computed in minutes\n"
     assert not (tmp_path / "ws").exists(), "the workdir is deleted on completion"
 
 

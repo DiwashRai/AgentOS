@@ -51,7 +51,7 @@ def events(body: EventsRequest, token: RunToken, ctx: Ctx) -> EventsResponse:
 
 @router.post("/api/worker/sync")
 def sync(body: SyncRequest, token: RunToken, ctx: Ctx) -> SyncResponse:
-    return SyncResponse(versions=service.sync(ctx.db, token, body.stage_id, body.files))
+    return service.sync(ctx.db, token, body.stage_id, body.files)
 
 
 @router.post("/api/worker/complete", status_code=204)

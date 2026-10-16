@@ -16,7 +16,6 @@ import pytest
 
 import worker
 from worker_tests.worker_support import (
-    AGENTS_BLOCK,
     DISPATCH_TOKEN,
     KEY,
     SKILL_DIR,
@@ -67,8 +66,10 @@ def test_repo_run_commits_code_and_never_context(
     server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     python_shell(monkeypatch)
+    notes = f"{SKILL_DIR}/notes.md"
     server.manifest = make_package(
-        [agent_stage("implement", "edit", "env"), shell_stage("lint", LINT)], repo_url=origin.url
+        [agent_stage("implement", "edit", f"write={notes}:x", "env"), shell_stage("lint", LINT)],
+        repo_url=origin.url,
     )
     workdir = tmp_path / "ws"
     assert run_worker(server, workdir) == 0
@@ -95,10 +96,13 @@ def test_repo_run_commits_code_and_never_context(
         "replace",
     )
     assert files[f"{SKILL_DIR}/learnings.log"] == ("expiry is computed in minutes\n", "replace")
-    assert files[f"{SKILL_DIR}/notes.md"] == ("# Notes\n", "replace")
-    assert files["AGENTS.md"] == (AGENTS_BLOCK, "block")
-    assert files["CLAUDE.md"] == ("@AGENTS.md", "block")
-    assert f"{SKILL_DIR}/notes.md" not in synced(server, "lint")  # unchanged since
+    assert set(files) == {f"{SKILL_DIR}/TASKS.md", f"{SKILL_DIR}/learnings.log"}  # changed only
+    assert synced(server, "lint") == {}  # unchanged since
+
+    # The new file in the skill folder is neither synced nor committed, and named each stage.
+    warnings = server.warnings()
+    assert len(warnings) == 2
+    assert all(w.startswith("not kept") and notes in w for w in warnings)
 
     # Events: stage lifecycle, seqs, clone output as run-level system logs.
     started = [(e["stage_id"], e["data"]) for e in stage_events(server, "stage_started")]
@@ -114,7 +118,6 @@ def test_repo_run_commits_code_and_never_context(
         e["type"] == "log" and e["stage_id"] is None and e["data"]["stream"] == "system"
         for e in events
     )
-    assert server.warnings() == []
 
     # Tokens: the dispatch token claims; everything else uses the worker's own token.
     claim, *rest = server.requests
@@ -277,7 +280,7 @@ def test_cancel_kills_the_stage_but_still_syncs_and_pushes(
         "reason": "cancelled",
         "round": 1,
     }
-    assert synced(server, "implement")[f"{SKILL_DIR}/notes.md"] == ("# Notes\n", "replace")
+    assert synced(server, "implement")[f"{SKILL_DIR}/TASKS.md"][0].startswith("# Tasks\n\n- [x]")
     assert "src/app.py" in origin.tree(BRANCH)
     assert not workdir.exists(), "the workdir is deleted on cancel"
 
@@ -302,8 +305,41 @@ def test_no_repo_mode(server: FakeServer, tmp_path: Path) -> None:
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
     files = synced(server, "plan")
     assert files[f"{SKILL_DIR}/TASKS.md"][0].startswith("# Tasks\n\n- [x]")
-    assert files["AGENTS.md"] == (AGENTS_BLOCK, "block")
     assert not workdir.exists()
+
+
+def test_deleted_files_go_as_null_and_rewritten_notes_warn_once(
+    server: FakeServer, tmp_path: Path
+) -> None:
+    log = f"{SKILL_DIR}/learnings.log"
+    server.manifest = make_package(
+        [
+            agent_stage("plan", f"rm={SKILL_DIR}/TASKS.md", f"write={log}:new"),
+            agent_stage("build", f"write={log}:newer"),
+        ]
+    )
+    server.manifest["notes"][0]["content"] = "shipped\n"
+    assert run_worker(server, tmp_path / "ws") == 0
+    assert synced(server, "plan") == {
+        f"{SKILL_DIR}/TASKS.md": (None, "replace"),
+        log: ("new", "replace"),
+    }
+    assert synced(server, "build") == {log: ("newer", "replace")}
+    assert len([w for w in server.warnings() if log in w and "rewritten" in w]) == 1
+
+
+def test_refused_paths_become_a_warning(server: FakeServer, tmp_path: Path) -> None:
+    def hook(path: str, body: Any) -> tuple[int, Any] | None:
+        if path == "/api/worker/sync":
+            return 200, {"versions": {}, "refused": [f["path"] for f in body["files"]]}
+        return None
+
+    server.hook = hook
+    server.manifest = make_package([agent_stage("plan", "edit")])
+    assert run_worker(server, tmp_path / "ws") == 0
+    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
+    [refused] = [w for w in server.warnings() if w.startswith("sync refused")]
+    assert f"{SKILL_DIR}/TASKS.md" in refused
 
 
 @pytest.mark.parametrize("status", [409, 410])

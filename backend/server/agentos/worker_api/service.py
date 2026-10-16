@@ -28,11 +28,12 @@ from agentos.files.service import current_bundle, write_version
 from agentos.models import (
     ClientRunAssignment,
     CompleteRequest,
-    ContextEntry,
     JobPackage,
+    Mode,
     RunEvent,
     RunStatus,
     SyncFile,
+    SyncResponse,
     WorkerFinalStatus,
 )
 from agentos.pipeline.manifest import build_package
@@ -43,7 +44,7 @@ from agentos.runs import service as runs
 from agentos.runs.service import TERMINAL, finish, token_hash
 from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
-from agentos.validate import path_key, validate_path, validate_pr_url
+from agentos.validate import path_key, validate_pr_url
 
 log = logging.getLogger(__name__)
 
@@ -296,16 +297,16 @@ def _lock_base_branch(conn: Conn, run: Row) -> None:
     )
 
 
-def sync(
-    db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]
-) -> dict[str, int]:
+def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]) -> SyncResponse:
     """Write the worker's context files back as new versions authored by the run (SPEC §9.4.1).
 
-    Each path must be a write context entry or a note of the run's package (keeping its mode), or
-    lie under a `workspace.protect` folder, and pass `validate_path`. Any invalid entry → 422 for
-    the whole request, nothing written. Returns each path's latest version (0 = absent: deleting
-    a missing file).
+    Only the run package's write context entries and notes are written (matched by `path_key`, in
+    the package's mode). Any other path, or a declared one sent in another mode, is refused:
+    listed in `refused` and logged, while the rest of the batch applies. `versions` holds each
+    written path's latest version (0 = absent: deleting a missing file).
     """
+    versions: dict[str, int] = {}
+    refused: list[str] = []
     with db.tx() as conn:
         run = _live_run(conn, worker_token)
         if stage_id not in json.loads(run["stage_ids"]):
@@ -313,45 +314,30 @@ def sync(
                 422, "validation_error", f"stage_id: {stage_id!r} is not a stage of this run"
             )
         package = JobPackage.model_validate_json(run["manifest"])
-        entries = [_check_sync_entry(package, f) for f in files]
-        versions: dict[str, int] = {}
-        for path, f in entries:
+        declared: dict[str, tuple[str, Mode]] = {
+            path_key(e.path): (e.path, e.mode) for e in package.context if e.access == "write"
+        }
+        declared |= {path_key(n.path): (n.path, "replace") for n in package.notes}
+
+        for f in files:
+            path, mode = declared.get(path_key(f.path), (None, f.mode))
+            if path is None or (f.content is not None and f.mode != mode):
+                refused.append(f.path)
+                continue
             version = write_version(
                 conn,
                 run["ticket_id"],
                 path,
                 f.content,
-                f.mode,
+                mode,
                 author_run_id=run["id"],
                 author_stage=stage_id,
             )
             versions[path] = version or 0
-    return versions
 
-
-def _check_sync_entry(package: JobPackage, f: SyncFile) -> tuple[str, SyncFile]:
-    path = validate_path(f.path, "files.path")
-    key = path_key(path)
-    notes = [
-        ContextEntry(**n.model_dump(), kind="file", mode="replace", block=None, access="write")
-        for n in package.notes
-    ]
-    known = next((e for e in [*package.context, *notes] if path_key(e.path) == key), None)
-    if known is not None:
-        if known.access != "write":
-            raise ApiError(422, "validation_error", f"files.path: {path!r} is read-only (library)")
-        if f.content is not None and f.mode != known.mode:
-            raise ApiError(
-                422,
-                "validation_error",
-                f"files.mode: {path!r} is a {known.mode}-mode file; its mode can't change",
-            )
-        return known.path, f.model_copy(update={"mode": known.mode})
-    if not any(key.startswith(path_key(d) + "/") for d in package.workspace.protect):
-        raise ApiError(
-            422, "validation_error", f"files.path: {path!r} is not a context file of this run"
-        )
-    return path, f
+    if refused:
+        log.warning("run %s: sync refused %s", run["id"], refused)
+    return SyncResponse(versions=versions, refused=refused)
 
 
 def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:
