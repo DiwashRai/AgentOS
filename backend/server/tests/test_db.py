@@ -26,6 +26,7 @@ TABLES = {
     "tickets",
     "file_versions",
     "runs",
+    "jobs",
     "stage_runs",
     "run_events",
     "run_sync_back",

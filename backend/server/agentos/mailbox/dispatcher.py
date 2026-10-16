@@ -1,55 +1,45 @@
 """Mailbox dispatcher (`design/mailbox.md` §3.2): replaces `runs.dispatcher.tick` when
 AGENTOS_LAUNCHER=mailbox.
 
-The runner can't reach the server, so the server claims each queued run itself (the same guarded
-`dispatched → running` claim a worker makes, with a throwaway worker token), sends the manifest
-through the mailbox and stores the Actions run URL. Neither token is kept in plaintext.
+The runner can't reach the server, so the server dispatches each queued run with a file-report
+job, starts it itself (`dispatched → running`, no worker binds to it), sends the job's package
+through the mailbox and stores the Actions run URL. The job token is never kept in plaintext.
 """
 
 from __future__ import annotations
 
 import logging
-import secrets
 
 from agentos.context import AppContext
-from agentos.errors import ApiError
 from agentos.launchers.mailbox import Mailbox, MailboxError, run_folder
 from agentos.mailbox import service
+from agentos.models import ManifestReport
 from agentos.runs import service as runs
-from agentos.worker_api import service as worker_api
 
 log = logging.getLogger(__name__)
 
 INTERVAL_S = 2.0
+_REPORT = ManifestReport(mode="file", url=None)
 
 
 def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
     """Launch every queued mailbox run. Returns the run ids taken from the queue (including ones
-    whose claim or send failed: those runs are failed)."""
+    whose build or send failed: those runs are failed)."""
     launched: list[int] = []
     while True:
-        dispatch_token = secrets.token_urlsafe(32)
-        dispatch_hash = runs.token_hash(dispatch_token)
-        run_id = runs.mark_next_dispatched(ctx.db, service.LAUNCHER, None, dispatch_hash)
-        if run_id is None:
+        dispatched = runs.mark_next_dispatched(ctx.db, service.LAUNCHER, None, _REPORT)
+        if dispatched is None:
             return launched
+        run_id, built = dispatched
         launched.append(run_id)
-        snapshot = ctx.snapshot()
-        try:
-            manifest = worker_api.claim(
-                ctx.db,
-                snapshot.runtimes,
-                snapshot.space,
-                dispatch_token,
-                secrets.token_urlsafe(32),
-            )
-        except ApiError as exc:  # a manifest build failure (the run is failed) or a cancel: 410
-            log.warning("run %s: not launched: %s", run_id, exc.message)
+        # Not built (the run is failed), or cancelled meanwhile.
+        if built is None or (package := runs.start(ctx.db, run_id)) is None:
+            log.warning("run %s: not launched", run_id)
             continue
-        folder = run_folder(run_id, dispatch_hash)
+        folder = run_folder(run_id, built[0][-16:])  # the job id's random hex
         # Outside any transaction: uploads and a GitHub call (bounded by the plugins' timeouts).
         try:
-            ref = mailbox.send(run_id, folder, manifest.model_dump_json().encode("utf-8"))
+            ref = mailbox.send(run_id, folder, package.encode("utf-8"))
         except Exception as exc:
             log.warning("run %s: launch failed: %s", run_id, exc)
             service.end(ctx.db, run_id, "failed", f"launch failed: {exc}")

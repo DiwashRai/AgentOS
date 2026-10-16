@@ -2,8 +2,8 @@
 
 Two layers:
 - Bundle primitives that take a connection, so the caller owns the transaction: `write_version`
-  (any author; no base_version or lock check) and `current_bundle`. The run service uses these for
-  worker sync and for the manifest at claim.
+  (any author; no base_version or lock check) and `current_bundle`. The run services use these for
+  worker sync and for the job package at dispatch.
 - Human routes (`list_files`, `get_file`, `put_file`, `delete_file`, `list_versions`) wrap them
   with the ticket lookup, `base_version` and bundle-lock rules.
 
@@ -292,15 +292,16 @@ def _ticket_id(conn: Conn, key: str) -> int:
 
 
 def _check_unlocked(conn: Conn, ticket_id: int) -> None:
-    """SPEC §6: the bundle is read-only while a run is claimed (`running`). A queued or
-    dispatched server run doesn't lock it (its manifest is built at claim), but a waiting client
-    run does: it runs on its owner's machine, so only what the owner dispatched may reach it."""
+    """SPEC §6: the bundle is read-only from a run's dispatch (its package is built then) until
+    it ends. A queued server run doesn't lock it, but a queued client run does: it runs on its
+    owner's machine, so only what the owner dispatched may reach it."""
     row = conn.execute(
-        "SELECT id FROM runs WHERE ticket_id = ? AND status = 'running'", (ticket_id,)
+        "SELECT id, status FROM runs WHERE ticket_id = ? AND status IN ('dispatched', 'running')",
+        (ticket_id,),
     ).fetchone()
     if row is not None:
         raise ApiError(
-            409, "bundle_locked", f"Context is read-only while run #{row['id']} is running"
+            409, "bundle_locked", f"Context is read-only while run #{row['id']} is {row['status']}"
         )
 
     waiting = waiting_client_run_id(conn, ticket_id)

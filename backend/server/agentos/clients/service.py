@@ -1,10 +1,10 @@
 """Client tokens: a user's own clients (`worker.py --client`), like personal access tokens.
 
 A token is random (`secrets.token_urlsafe(32)`); it is returned once, by `create`, and only its
-SHA-256 hex digest is stored. Revoking deletes the row, so the next poll with it gets 401. A token
+SHA-256 hex digest is stored. Revoking deletes the row, so the next lease with it gets 401. A token
 acts for its user: it reaches only the runs that user dispatched to "My client".
 
-This module is the one definition of "online": a token seen (polled) within ONLINE_WINDOW.
+This module is the one definition of "online": a token seen (it leased) within ONLINE_WINDOW.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def authenticate(db: Database, token: str) -> Client:
 
 
 def touch(db: Database, client_id: int, now: datetime) -> None:
-    """Record that the client was seen (it polled)."""
+    """Record that the client was seen (it leased)."""
     with db.tx() as conn:
         conn.execute(
             "UPDATE client_tokens SET last_seen_at = ? WHERE id = ?", (to_db(now), client_id)
@@ -122,8 +122,8 @@ def has_client(conn: Conn, user_id: int) -> bool:
 
 
 def waiting_client_run_id(conn: Conn, ticket_id: int) -> int | None:
-    """The ticket's client run that is queued or dispatched (its manifest isn't built yet), if
-    any. While one waits, what it will run (the context, the owner) must stay the dispatcher's."""
+    """The ticket's client run that is queued or dispatched (not started yet), if any. While one
+    waits, what it will run (the context, the owner) must stay the dispatcher's."""
     row = conn.execute(
         "SELECT id FROM runs WHERE ticket_id = ? AND launcher = ? "
         "AND status IN ('queued', 'dispatched')",

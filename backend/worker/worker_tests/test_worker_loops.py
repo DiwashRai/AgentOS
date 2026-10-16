@@ -16,6 +16,7 @@ import pytest
 
 import worker
 from worker_tests.worker_support import (
+    JOURNAL,
     KEY,
     FakeServer,
     Origin,
@@ -325,8 +326,8 @@ def test_an_argument_mode_prompt_gets_the_feedback(server: FakeServer, tmp_path:
 
 def test_cancel_in_a_later_round(server: FakeServer, tmp_path: Path) -> None:
     def hook(path: str, body: Any) -> None:
-        if path == "/api/worker/events" and any(
-            e["type"] == "log" and e["data"]["text"] == "started" for e in body["events"]
+        if path == JOURNAL and any(
+            r["type"] == "log" and r["data"]["text"] == "started" for r in body["records"]
         ):
             server.cancel = True
 

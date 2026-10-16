@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from agentos.clock import utcnow
 from agentos.context import AppContext
-from agentos.models import Me, RunSummary, TicketDetail, TicketSummary
-from tests.run_support import CSRF, RunDriver, bearer, event, log_event
+from agentos.models import JobPackage, Me, RunSummary, TicketDetail, TicketSummary
+from agentos.runs.service import BUDGET_GRACE
+from tests.run_support import CSRF, FakeLauncher, RunDriver, bearer, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -102,7 +105,6 @@ def test_dispatch_queues_the_next_segment(
     row = runs.db_run(run.id)
     assert row["time_budget_s"] == 3600
     assert row["launcher"] == "local"
-    assert row["manifest"] is None
     detail = runs.get(run.id)
     assert [(s.stage_id, s.name, s.idx, s.status) for s in detail.stage_runs] == [
         ("plan", "Plan", 0, "pending")
@@ -178,7 +180,7 @@ def test_nothing_to_run_after_the_last_stage(
     t = create_ticket(repo=None)
     worker = runs.start(t.key, "review")  # the last enabled stage (open-pr is disabled)
     worker.run_stage("review")
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     assert runs.get(worker.run_id).status == "succeeded"
     r = runs.dispatch(t.key)
     assert error(r) == (422, "invalid_stage")
@@ -317,14 +319,33 @@ def test_a_waiting_client_run_keeps_what_its_owner_dispatched(
     assert error(patch({"description": "theirs"})) == (409, "run_active")
     assert patch({"priority": "high"}).status_code == 200  # nothing a run renders
 
-    taken = client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(token))
-    assert taken.json()["run"]["run_id"] == run.id  # dispatched, not claimed yet
+    taken = client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(token))
+    assert taken.json()["job"]["run_id"] == run.id  # dispatched, not bound yet
     assert error(put()) == (409, "bundle_locked")
     assert error(patch({"owner_id": bob.id})) == (409, "run_active")
 
     assert client.post(f"/api/runs/{run.id}/cancel", headers=CSRF).status_code == 200
     assert put().status_code == 200
     assert patch({"owner_id": bob.id}).status_code == 200
+
+
+def test_a_client_run_whose_package_cannot_be_built_fails_at_the_take(
+    client: TestClient,
+    login: LoginFn,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
+) -> None:
+    ann = login("ann")
+    token = new_client(client)
+    t = create_ticket(owner_id=ann.id)
+    run = runs.queue(t.key, target="client")
+    with ctx.db.tx() as conn:  # as if the catalog lost the repo while the run waited
+        conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (t.key,))
+
+    taken = client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(token))
+    assert taken.json()["job"] is None
+    assert runs.get(run.id).status == "failed"
 
 
 # ------------------------------------------------------------------ reads
@@ -347,26 +368,36 @@ def test_get_run_404(authed: TestClient) -> None:
         assert error(authed.get(f"/api/runs/999{path}")) == (404, "run_not_found")
 
 
-def test_manifest_is_404_until_claimed(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
+def test_the_package_is_built_at_dispatch(
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    ctx: AppContext,
+    launcher: FakeLauncher,
 ) -> None:
     t = create_ticket()
     run = runs.queue(t.key)
-    r = authed.get(f"/api/runs/{run.id}/manifest")
-    assert error(r) == (404, "not_found")
-    assert "claims" in r.json()["error"]["message"]
+    assert error(authed.get(f"/api/runs/{run.id}/manifest")) == (404, "not_found")
+
+    before = utcnow()
     runs.tick()
-    worker_token = "w" * 43
-    claimed = runs.claim(run.id, worker_token).json()["manifest"]
-    assert authed.get(f"/api/runs/{run.id}/manifest").json() == claimed
+    package = JobPackage.model_validate(authed.get(f"/api/runs/{run.id}/manifest").json())
+    job = package.job
+    assert job.id.startswith(f"{run.id}-1-")
+    assert len(job.id.rsplit("-", 1)[1]) == 16
+    assert (job.run_id, job.segment, job.segments, job.budget_s) == (run.id, 1, 1, 3600)
+    allowance = timedelta(seconds=ctx.space.claim_timeout_s + 3600) + BUDGET_GRACE
+    assert before + allowance <= job.not_after <= utcnow() + allowance
+    assert package.journal.first_seq == 1
+    assert package.report.model_dump() == {
+        "mode": "live",
+        "url": ctx.settings.effective_worker_url,
+    }
 
-
-def test_a_run_stored_under_protocol_1_has_no_package(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
-) -> None:
-    worker = runs.start(create_ticket().key)
-    runs.set_run(worker.run_id, manifest=json.dumps({"protocol": 1, "files": []}))
-    assert error(authed.get(f"/api/runs/{worker.run_id}/manifest")) == (404, "not_found")
+    # The worker's job returns the same package.
+    fetched = runs.client.get("/api/worker/job", headers=bearer(launcher.token(run.id))).json()
+    assert authed.get(f"/api/runs/{run.id}/manifest").json() == fetched
+    assert [r for r, _, _ in launcher.launched] == [run.id]
 
 
 def test_stage_names_fall_back_to_the_id(
@@ -393,19 +424,19 @@ def test_stage_names_fall_back_to_the_id(
 def test_event_paging(authed: TestClient, create_ticket: CreateTicket, runs: RunDriver) -> None:
     t = create_ticket()
     worker = runs.start(t.key)
-    assert worker.events(*(log_event(i, "plan", f"line {i}") for i in range(1, 11))).json() == {
-        "cancel": False
-    }
+    # Seq 1 is the job's `started` record, which is no event.
+    lines = (log_event(i, "plan", f"line {i}") for i in range(2, 11))
+    assert worker.events(*lines).json()["ack"] == 10
 
     def seqs(query: str) -> list[int]:
         r = authed.get(f"/api/runs/{worker.run_id}/events{query}")
         assert r.status_code == 200, r.text
         return [e["seq"] for e in r.json()]
 
-    assert seqs("") == list(range(1, 11))
+    assert seqs("") == list(range(2, 11))
     assert seqs("?limit=3") == [8, 9, 10]
     assert seqs("?after_seq=4&limit=3") == [5, 6, 7]
-    assert seqs("?before_seq=4") == [1, 2, 3]
+    assert seqs("?before_seq=4") == [2, 3]
     assert seqs("?before_seq=8&limit=2") == [6, 7]
     assert seqs("?after_seq=10") == []
     assert authed.get(f"/api/runs/{worker.run_id}/events?limit=1001").status_code == 422
@@ -433,8 +464,7 @@ def test_cancel_running_waits_for_the_worker(
 ) -> None:
     t = create_ticket()
     worker = runs.start(t.key)
-    worker.events(event(1, "stage_started", "plan"))
-    worker.seq = 1
+    worker.events(event(worker.next_seq(), "stage_started", "plan"))
     r = authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF)
     first = RunSummary.model_validate(r.json())
     assert first.status == "running"
@@ -443,8 +473,8 @@ def test_cancel_running_waits_for_the_worker(
         authed.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF).json()
     )
     assert again.cancel_requested_at == first.cancel_requested_at  # set once
-    assert worker.events().json() == {"cancel": True}  # the heartbeat carries it
-    assert worker.complete("cancelled", failed_stage="plan").status_code == 204
+    assert worker.events().json()["cancel"] is True  # the heartbeat carries it
+    assert worker.complete("cancelled", failed_stage="plan").status_code == 200
     detail = runs.get(worker.run_id)
     assert detail.status == "cancelled"
     assert [s.status for s in detail.stage_runs] == ["cancelled"]
@@ -469,7 +499,7 @@ def test_cancel_terminal_is_unchanged(
 # ------------------------------------------------------------------ bundle lock
 
 
-def test_bundle_locked_from_claim_to_complete(
+def test_bundle_locked_from_dispatch_to_complete(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
     t = create_ticket()
@@ -484,21 +514,15 @@ def test_bundle_locked_from_claim_to_complete(
     run = runs.queue(t.key)
     assert put("queued", 0).status_code == 200  # a queued run doesn't lock
     runs.tick()
-    assert put("dispatched", 1).status_code == 200  # nor does a dispatched one
-    worker_token = "k" * 43
-    assert runs.claim(run.id, worker_token).status_code == 200
-    assert error(put("running", 2)) == (409, "bundle_locked")
+    assert error(put("dispatched", 1)) == (409, "bundle_locked")  # its package is built
+    worker = runs.bind(run.id, runs.launcher.token(run.id))
+    assert error(put("running", 1)) == (409, "bundle_locked")
     assert error(put("new", 0, "new.md")) == (409, "bundle_locked")
-    deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=2", headers=CSRF)
+    deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=1", headers=CSRF)
     assert error(deleted) == (409, "bundle_locked")
     assert runs.get(run.id).status == "running"
-    r = authed.post(
-        "/api/worker/complete",
-        json={"status": "completed"},
-        headers={"Authorization": f"Bearer {worker_token}"},
-    )
-    assert r.status_code == 204
-    assert put("after", 2).status_code == 200
+    assert worker.complete().status_code == 200
+    assert put("after", 1).status_code == 200
 
 
 # ------------------------------------------------------------------ the board through a run
@@ -537,7 +561,7 @@ def test_board_through_plan_gate_continue_succeed(
         "current pending skipped pending skipped",
         None,
     )
-    worker = runs.launch_and_claim(run.id)
+    worker = runs.launch_and_bind(run.id)
     worker.events(event(worker.next_seq(), "stage_started", "plan"))
     summary = next(s for s in authed.get("/api/tickets").json() if s["key"] == t.key)
     assert summary["now"]["actor"] == "Plan"
@@ -557,7 +581,7 @@ def test_board_through_plan_gate_continue_succeed(
             reason=None,
         )
     )
-    assert worker.complete().status_code == 204
+    assert worker.complete().status_code == 200
     assert runs.get(run.id).status == "gated"
     assert board(authed, t.key) == (
         "needs_you",
@@ -568,7 +592,7 @@ def test_board_through_plan_gate_continue_succeed(
     )
     cont = runs.queue(t.key)  # Continue = dispatch with the default from_stage
     assert cont.stage_ids == ["implement", "review"]
-    w2 = runs.launch_and_claim(cont.id)
+    w2 = runs.launch_and_bind(cont.id)
     w2.run_stage("implement")
     assert board(authed, t.key)[:4] == (
         "running",
@@ -577,7 +601,7 @@ def test_board_through_plan_gate_continue_succeed(
         "done done skipped current skipped",
     )
     w2.run_stage("review")
-    assert w2.complete().status_code == 204
+    assert w2.complete().status_code == 200
     assert runs.get(cont.id).status == "succeeded"
     assert board(authed, t.key) == (
         "needs_you",
@@ -595,7 +619,7 @@ def test_retry_after_a_failure_starts_at_the_failed_stage(
     worker = runs.start(t.key, "implement")
     worker.run_stage("implement")
     worker.run_stage("review", "failed")
-    assert worker.complete("failed", failed_stage="review").status_code == 204
+    assert worker.complete("failed", failed_stage="review").status_code == 200
     detail = runs.get(worker.run_id)
     assert detail.status == "failed"
     assert detail.error == "stage review failed"

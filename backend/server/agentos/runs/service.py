@@ -3,30 +3,36 @@
 Every transition is a guarded `UPDATE … WHERE id = ? AND status IN (…)`; zero rows means the run
 was elsewhere already (a no-op or a conflict, the caller decides). Terminal side effects
 (`finish`): unfinished stage_runs → `cancelled`, `finished_at` set, the ticket's `updated_at`
-bumped. The dispatcher and the reaper (loops) and the worker API (the client poll included) call
+bumped. The dispatcher and the reaper (loops) and the worker API (the client lease included) call
 the primitives here.
 
-Tokens are never stored in plaintext: `dispatch_token_hash` / `worker_token_hash` are SHA-256
-hex digests, and they are never cleared (a token's validity follows the run's status).
+A run's job is built when it is dispatched (`build_job`). Job tokens are stored only as SHA-256
+digests, never cleared (a token's validity follows the run's status).
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
+import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pydantic import TypeAdapter
 
+from agentos.auth.service import hash_token
 from agentos.clients.service import CLIENT_LAUNCHER, has_client, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError, field_error
+from agentos.files.service import current_bundle
 from agentos.models import (
     DispatchTarget,
     JobPackage,
+    LeasedJob,
+    ManifestJob,
+    ManifestJournal,
+    ManifestReport,
     Me,
     Pipeline,
     RunDetail,
@@ -36,10 +42,11 @@ from agentos.models import (
     StageRunInfo,
     SyncBackInfo,
 )
-from agentos.pipeline.manifest import render_stages
+from agentos.pipeline.manifest import build_package, render_stages
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import check_segment, plan_run
 from agentos.pipeline.space import SpaceConfig
+from agentos.space_store import load_snapshot
 from agentos.templates.service import current_defaults
 from agentos.tickets.board import RunFact, next_stage
 from agentos.tickets.service import (
@@ -81,10 +88,6 @@ _SQL_QUEUED_CLIENT_RUN = (
     "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
     "ORDER BY id LIMIT 1"
 )
-
-
-def token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 # ------------------------------------------------------------------ row → model helpers
@@ -163,7 +166,7 @@ def dispatch(
     """Queue a run (SPEC §8 "Dispatch"), all in one transaction: a 422 leaves no run row.
 
     "Continue" and "Retry" are dispatches with the default `from_stage` (`board.next_stage`);
-    "Run from…" passes one. The manifest is built later, at claim. A ticket whose repo is no
+    "Run from…" passes one. The package is built later, at dispatch. A ticket whose repo is no
     longer in the Space's catalog → 422 `validation_error`; a repo ticket without a base branch
     → 409 `base_branch_missing` (`run_ticket_ref`; the board's `dispatch_block`).
 
@@ -206,7 +209,7 @@ def dispatch(
         run_id = cursor.lastrowid
         if run_id is None:  # pragma: no cover - sqlite always sets it after an INSERT
             raise RuntimeError("INSERT INTO runs returned no rowid")
-        # Validate now (render errors → 422, rolling the run back); the manifest is built at claim.
+        # Validate now (render errors → 422, rolling the run back); the job is built at dispatch.
         render_stages(
             run_id, ref, plan.stages, runtimes, defaults=current_defaults(conn), loops=plan.loops
         )
@@ -215,7 +218,7 @@ def dispatch(
             "UPDATE runs SET stage_ids = ?, time_budget_s = ? WHERE id = ?",
             (json.dumps(ids), plan.time_budget_s(), run_id),
         )
-        # Round 1's stage_runs; later rounds of a loop get theirs when they start (post_events).
+        # Round 1's stage_runs; later rounds of a loop get theirs when they start (ingest).
         conn.executemany(
             "INSERT INTO stage_runs(run_id, idx, stage_id, status) VALUES (?, ?, ?, 'pending')",
             [(run_id, i, stage_id) for i, stage_id in enumerate(ids[ids.index(from_stage) :])],
@@ -241,19 +244,14 @@ def get_run(db: Database, run_id: int) -> RunDetail:
 
 
 def get_manifest(db: Database, run_id: int) -> JobPackage:
-    """The job package exactly as sent to the worker. 404 `not_found` until the run is claimed,
-    and for a run stored under another protocol."""
+    """The run's job package exactly as sent to the worker. 404 `not_found` until the run is
+    dispatched."""
     with db.read() as conn:
-        row = run_row(conn, run_id)
-    if row["manifest"] is None:
-        raise ApiError(
-            404,
-            "not_found",
-            f"Run {run_id} has no package: it is built when a worker claims the run",
-        )
-    if json.loads(row["manifest"]).get("protocol") != 2:
-        raise ApiError(404, "not_found", f"Run {run_id} was sent an older protocol's manifest")
-    return JobPackage.model_validate_json(row["manifest"])
+        run_row(conn, run_id)
+        row = conn.execute("SELECT package FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise ApiError(404, "not_found", f"Run {run_id} has no package until it is dispatched")
+    return JobPackage.model_validate_json(row["package"])
 
 
 def get_sync_back(db: Database, run_id: int) -> bytes:
@@ -303,8 +301,8 @@ def run_events(
 
 
 def cancel(db: Database, run_id: int) -> RunSummary:
-    """queued/dispatched → `cancelled` at once (a late claim gets 410). running → set
-    `cancel_requested_at` once; the worker sees `cancel: true` on its next event post and
+    """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → set
+    `cancel_requested_at` once; the worker sees `cancel: true` on its next journal post and
     completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A terminal run
     is returned unchanged."""
     now = utcnow()
@@ -362,14 +360,76 @@ def finish(
 # ------------------------------------------------------------------ dispatcher primitives
 
 
+def build_job(
+    conn: Conn, run: Row, report: ManifestReport, now: datetime
+) -> tuple[str, str] | None:
+    """Build and store the job of a run just dispatched, in the caller's transaction, from the
+    ticket, its bundle and the Space as they are now. Returns the job id and its token (in
+    plaintext only here; never logged). A build failure (a repo gone from the catalog, a changed
+    pipeline) fails the run through `finish()` and returns None, so the run is never launched."""
+    snapshot = load_snapshot(conn)
+    ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
+    budget_s: int = run["time_budget_s"]
+    job = ManifestJob(
+        id=f"{run['id']}-1-{secrets.token_hex(8)}",
+        run_id=run["id"],
+        segment=1,
+        segments=1,
+        budget_s=budget_s,
+        not_after=now + timedelta(seconds=snapshot.space.claim_timeout_s + budget_s) + BUDGET_GRACE,
+    )
+    journal = ManifestJournal(first_seq=run["journal_seq"] + 1)
+
+    try:
+        plan = plan_run(ticket_pipeline(ticket), run["from_stage"])
+        if [s.id for s in plan.stages] != json.loads(run["stage_ids"]):
+            raise ApiError(
+                422, "invalid_stage", "the pipeline changed since the run was dispatched"
+            )
+        package = build_package(
+            run["id"],
+            run_ticket_ref(ticket, snapshot.space),
+            plan,
+            current_bundle(conn, ticket["id"]),
+            snapshot.runtimes,
+            defaults=current_defaults(conn),
+            job=job,
+            journal=journal,
+            report=report,
+        )
+    except ApiError as exc:
+        error = f"cannot build the manifest: {exc.message}"
+        finish(conn, run["id"], "failed", ("dispatched",), now=now, error=error)
+        return None
+
+    token = secrets.token_urlsafe(32)
+    conn.execute(
+        "INSERT INTO jobs(id, run_id, segment, token_hash, package, first_seq, budget_s, "
+        "not_after, created_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
+        (
+            job.id,
+            run["id"],
+            hash_token(token),
+            package.model_dump_json(),
+            journal.first_seq,
+            budget_s,
+            to_db(job.not_after),
+            to_db(now),
+        ),
+    )
+    return job.id, token
+
+
 def mark_next_dispatched(
     db: Database,
     launcher_name: str,
     max_concurrency: int | None,
-    dispatch_token_hash: str,
-) -> int | None:
-    """Move the launcher's oldest `queued` run to `dispatched` (storing the token hash), unless
-    its active (dispatched|running) runs are already at `max_concurrency`. Returns the run id."""
+    report: ManifestReport,
+) -> tuple[int, tuple[str, str] | None] | None:
+    """Move the launcher's oldest `queued` run to `dispatched` and build its job, unless its
+    active (dispatched|running) runs are already at `max_concurrency`. Returns the run id and
+    `build_job`'s answer."""
+    now = utcnow()
     with db.tx() as conn:
         if max_concurrency is not None:
             active = conn.execute(
@@ -387,42 +447,60 @@ def mark_next_dispatched(
             return None
         run_id: int = row["id"]
         cursor = conn.execute(
-            "UPDATE runs SET status = 'dispatched', dispatch_token_hash = ?, dispatched_at = ? "
+            "UPDATE runs SET status = 'dispatched', dispatched_at = ? "
             "WHERE id = ? AND status = 'queued'",
-            (dispatch_token_hash, to_db(utcnow()), run_id),
+            (to_db(now), run_id),
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
-    return run_id
-
-
-def client_run_queued(db: Database, user_id: int) -> bool:
-    """Whether the user has a `queued` client run: a read, so a waiting poll looks for one
-    without taking the write lock."""
-    with db.read() as conn:
-        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
-    return row is not None
+        return run_id, build_job(conn, run_row(conn, run_id), report, now)
 
 
 def take_client_run(
-    db: Database, user_id: int, dispatch_token_hash: str, launch_ref: str
-) -> int | None:
-    """Hand the user's oldest `queued` client run to their polling client: → `dispatched`, storing
-    the token hash and `launch_ref` (the client's name). From here the claim timeout applies, as
-    for a launched worker. Returns the run id, or None if none is queued."""
+    db: Database, user_id: int, launch_ref: str, server_url: str
+) -> LeasedJob | None:
+    """Hand the user's oldest `queued` client run to their leasing client: → `dispatched`,
+    storing `launch_ref` (the client's name), and build its job (reporting to `server_url`).
+    Returns it, or None if none is queued or the build failed. It reads first and takes the
+    write lock only when a run is queued, so a waiting lease never holds it."""
+    with db.read() as conn:
+        if conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone() is None:
+            return None
+
+    now = utcnow()
     with db.tx() as conn:
         row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
         if row is None:
             return None
         run_id: int = row["id"]
         cursor = conn.execute(
-            "UPDATE runs SET status = 'dispatched', dispatch_token_hash = ?, dispatched_at = ?, "
-            "launch_ref = ? WHERE id = ? AND status = 'queued'",
-            (dispatch_token_hash, to_db(utcnow()), launch_ref, run_id),
+            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, launch_ref = ? "
+            "WHERE id = ? AND status = 'queued'",
+            (to_db(now), launch_ref, run_id),
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
-    return run_id
+        report = ManifestReport(mode="live", url=server_url)
+        built = build_job(conn, run_row(conn, run_id), report, now)
+    if built is None:
+        return None
+    return LeasedJob(job_id=built[0], run_id=run_id, server_url=server_url, job_token=built[1])
+
+
+def start(db: Database, run_id: int) -> str | None:
+    """dispatched → running, for a run the server starts itself (no worker binds to it). Returns
+    its stored package, or None if the run isn't dispatched (any more)."""
+    stamp = to_db(utcnow())
+    with db.tx() as conn:
+        cursor = conn.execute(
+            "UPDATE runs SET status = 'running', started_at = ?, last_seen_at = ? "
+            "WHERE id = ? AND status = 'dispatched'",
+            (stamp, stamp, run_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+        row = conn.execute("SELECT package FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+    return str(row["package"])
 
 
 def set_launch_ref(db: Database, run_id: int, launch_ref: str) -> None:
@@ -481,7 +559,7 @@ def reap(
                 if finish(conn, run_id, status, (was,), now=now, error=error):
                     out.append(Reaped(run_id, status, why))
 
-        # 2. dispatched, never claimed
+        # 2. dispatched, never started
         stale = _ids(
             conn,
             "SELECT id FROM runs WHERE status = 'dispatched' AND dispatched_at < ?",

@@ -1,4 +1,4 @@
-"""Workflows (request 23B): named pipeline presets, edited by admins in Settings > Workflows.
+"""Workflows: named pipeline presets, edited by admins in Settings > Workflows.
 
 Applying one copies its pipeline into a ticket (at creation or a switch, `tickets.service`), and
 the ticket records the workflow's id, name and version then; editing a workflow later never

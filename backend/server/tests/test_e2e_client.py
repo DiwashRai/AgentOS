@@ -42,7 +42,7 @@ from agentos.pipeline.space import RepoSpec, SpaceConfig
 from agentos.runs import dispatcher
 from agentos.runs.reaper import INTERVAL_S as REAPER_INTERVAL_S
 from agentos.runs.reaper import Reaper
-from agentos.worker_api.routes import POLL_RETRY_S
+from agentos.worker_api.routes import LEASE_RETRY_S
 from tests.settings_support import seed_test_settings
 from tests.test_e2e import (
     CSRF,
@@ -75,8 +75,8 @@ class RecordingLauncher:
     def __init__(self) -> None:
         self.launched: list[int] = []
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
-        del server_url, dispatch_token
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
+        del server_url, token
         self.launched.append(run_id)
         return self.url(run_id)
 
@@ -409,7 +409,7 @@ def test_a_client_run_waits_while_the_client_is_offline(world: World, server: Se
     cleo = world.user("cleo")
     token = world.new_token(cleo, "cleo-desktop")
 
-    # Cleo's client was polling and stops: its waiting poll ends with it.
+    # Cleo's client was leasing and stops: its waiting lease ends with it.
     client = world.start_client(cleo, token)
     world.wait_online(cleo, client)
     client.proc.kill()
@@ -420,8 +420,8 @@ def test_a_client_run_waits_while_the_client_is_offline(world: World, server: Se
     run = cleo.dispatch(key, target="client")
     assert run.status == "queued"
 
-    # It stays queued while a poll still waiting on the server would have retried its take.
-    until = time.monotonic() + 3 * POLL_RETRY_S
+    # It stays queued while a lease still waiting on the server would have retried its take.
+    until = time.monotonic() + 3 * LEASE_RETRY_S
     while time.monotonic() < until:
         assert cleo.run(run.id).status == "queued"
         time.sleep(POLL_S)
@@ -457,7 +457,7 @@ def test_revoking_the_token_stops_the_client(world: World) -> None:
 
     assert wait_exit(client) == 1, client.output()
     r = httpx.post(
-        f"{world.server.url}/api/worker/poll",
+        f"{world.server.url}/api/worker/lease",
         json={"wait_s": 0},
         headers={"Authorization": f"Bearer {token.token}"},
     )

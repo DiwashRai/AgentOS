@@ -84,7 +84,9 @@ def test_refuses_non_objects(raw: object) -> None:
         worker.load_package(raw)
 
 
-@pytest.mark.parametrize("missing", ["run_id", "workspace", "stages", "context", "notes"])
+@pytest.mark.parametrize(
+    "missing", ["job", "journal", "report", "run_id", "workspace", "stages", "context", "notes"]
+)
 def test_refuses_a_package_missing_a_section(missing: str) -> None:
     data = fixture()
     del data[missing]

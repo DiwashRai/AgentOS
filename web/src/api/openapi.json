@@ -257,104 +257,9 @@
         "title": "ChatPost",
         "type": "object"
       },
-      "ClaimRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "worker_token": {
-            "maxLength": 256,
-            "minLength": 32,
-            "title": "Worker Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "worker_token"
-        ],
-        "title": "ClaimRequest",
-        "type": "object"
-      },
-      "ClaimResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "manifest": {
-            "$ref": "#/components/schemas/JobPackage"
-          }
-        },
-        "required": [
-          "manifest"
-        ],
-        "title": "ClaimResponse",
-        "type": "object"
-      },
-      "ClientPollRequest": {
-        "additionalProperties": false,
-        "description": "POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:\nfalse` is a busy client's heartbeat: it records last seen (the client stays online) and\nanswers `run: null` at once, never handing out a run.",
-        "properties": {
-          "take": {
-            "default": true,
-            "title": "Take",
-            "type": "boolean"
-          },
-          "wait_s": {
-            "default": 25,
-            "maximum": 25.0,
-            "minimum": 0.0,
-            "title": "Wait S",
-            "type": "integer"
-          }
-        },
-        "title": "ClientPollRequest",
-        "type": "object"
-      },
-      "ClientPollResponse": {
-        "additionalProperties": false,
-        "description": "`run: null` = nothing queued for the client's user within `wait_s`.",
-        "properties": {
-          "run": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ClientRunAssignment"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "run"
-        ],
-        "title": "ClientPollResponse",
-        "type": "object"
-      },
-      "ClientRunAssignment": {
-        "additionalProperties": false,
-        "description": "A run handed to a client: its worker claims it at `server_url` with `dispatch_token`\n(`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker.",
-        "properties": {
-          "dispatch_token": {
-            "title": "Dispatch Token",
-            "type": "string"
-          },
-          "run_id": {
-            "title": "Run Id",
-            "type": "integer"
-          },
-          "server_url": {
-            "title": "Server Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "run_id",
-          "server_url",
-          "dispatch_token"
-        ],
-        "title": "ClientRunAssignment",
-        "type": "object"
-      },
       "ClientToken": {
         "additionalProperties": false,
-        "description": "One of the signed-in user's client tokens (Settings > My client). The token itself is\nshown only once, when it is created. `online`: it polled within the last minute.",
+        "description": "One of the signed-in user's client tokens (Settings > My client). The token itself is\nshown only once, when it is created. `online`: it leased within the last minute.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -435,59 +340,6 @@
           "server_url"
         ],
         "title": "ClientTokenCreated",
-        "type": "object"
-      },
-      "CompleteRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "failed_stage": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failed Stage"
-          },
-          "pr_url": {
-            "anyOf": [
-              {
-                "maxLength": 500,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pr Url"
-          },
-          "status": {
-            "enum": [
-              "completed",
-              "failed",
-              "cancelled"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "title": "CompleteRequest",
         "type": "object"
       },
       "ContextEntry": {
@@ -615,7 +467,7 @@
       },
       "DispatchRequest": {
         "additionalProperties": false,
-        "description": "`target: \"client\"` queues the run for the caller's own client: only the ticket's owner may\n(403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs\npolls; cancel works as for any queued run.",
+        "description": "`target: \"client\"` queues the run for the caller's own client: only the ticket's owner may\n(403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs\nleases it; cancel works as for any queued run.",
         "properties": {
           "from_stage": {
             "anyOf": [
@@ -715,68 +567,6 @@
           "issues"
         ],
         "title": "ErrorDetail",
-        "type": "object"
-      },
-      "EventsRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "events": {
-            "items": {
-              "discriminator": {
-                "mapping": {
-                  "log": "#/components/schemas/LogEvent",
-                  "stage_finished": "#/components/schemas/StageFinishedEvent",
-                  "stage_started": "#/components/schemas/StageStartedEvent",
-                  "verdict": "#/components/schemas/VerdictEvent",
-                  "verdict_repair": "#/components/schemas/VerdictRepairEvent",
-                  "warning": "#/components/schemas/WarningEvent"
-                },
-                "propertyName": "type"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/components/schemas/StageStartedEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/StageFinishedEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/LogEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/WarningEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/VerdictEvent"
-                },
-                {
-                  "$ref": "#/components/schemas/VerdictRepairEvent"
-                }
-              ]
-            },
-            "maxItems": 500,
-            "title": "Events",
-            "type": "array"
-          }
-        },
-        "required": [
-          "events"
-        ],
-        "title": "EventsRequest",
-        "type": "object"
-      },
-      "EventsResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "cancel": {
-            "title": "Cancel",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "cancel"
-        ],
-        "title": "EventsResponse",
         "type": "object"
       },
       "FieldMappingEntry": {
@@ -1506,7 +1296,7 @@
       },
       "JobPackage": {
         "additionalProperties": false,
-        "description": "What a worker receives at claim. `env`: non-secret stage variables (workspace-relative\npaths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.",
+        "description": "What a worker receives for its job. `env`: non-secret stage variables (workspace-relative\npaths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.",
         "properties": {
           "context": {
             "items": {
@@ -1521,6 +1311,12 @@
             },
             "title": "Env",
             "type": "object"
+          },
+          "job": {
+            "$ref": "#/components/schemas/ManifestJob"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/ManifestJournal"
           },
           "limits": {
             "$ref": "#/components/schemas/ManifestLimits"
@@ -1543,6 +1339,9 @@
             "const": 2,
             "title": "Protocol",
             "type": "integer"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ManifestReport"
           },
           "run_id": {
             "title": "Run Id",
@@ -1585,6 +1384,9 @@
         },
         "required": [
           "protocol",
+          "job",
+          "journal",
+          "report",
           "run_id",
           "ticket",
           "workspace",
@@ -1596,6 +1398,191 @@
           "limits"
         ],
         "title": "JobPackage",
+        "type": "object"
+      },
+      "JournalRecord": {
+        "additionalProperties": false,
+        "description": "One record of a run's journal; ingest checks each type's `data` and consumes a bad one.",
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Id"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "ts",
+          "job",
+          "type",
+          "data"
+        ],
+        "title": "JournalRecord",
+        "type": "object"
+      },
+      "JournalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/JournalRecord"
+            },
+            "maxItems": 500,
+            "title": "Records",
+            "type": "array"
+          }
+        },
+        "required": [
+          "records"
+        ],
+        "title": "JournalRequest",
+        "type": "object"
+      },
+      "JournalResponse": {
+        "additionalProperties": false,
+        "description": "`ack`: the highest applied seq; `rejected`: this batch's seqs consumed without applying.",
+        "properties": {
+          "ack": {
+            "title": "Ack",
+            "type": "integer"
+          },
+          "cancel": {
+            "title": "Cancel",
+            "type": "boolean"
+          },
+          "rejected": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Rejected",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ack",
+          "cancel",
+          "rejected"
+        ],
+        "title": "JournalResponse",
+        "type": "object"
+      },
+      "LeaseRequest": {
+        "additionalProperties": false,
+        "description": "Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:\nthe jobs the client's workers still run.",
+        "properties": {
+          "alive": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Alive",
+            "type": "array"
+          },
+          "take": {
+            "default": true,
+            "title": "Take",
+            "type": "boolean"
+          },
+          "wait_s": {
+            "default": 25,
+            "maximum": 25.0,
+            "minimum": 0.0,
+            "title": "Wait S",
+            "type": "integer"
+          }
+        },
+        "title": "LeaseRequest",
+        "type": "object"
+      },
+      "LeaseResponse": {
+        "additionalProperties": false,
+        "description": "`job: null` = nothing queued within `wait_s`. `protocol`, `worker_sha256`: the server's.",
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeasedJob"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protocol": {
+            "const": 2,
+            "title": "Protocol",
+            "type": "integer"
+          },
+          "worker_sha256": {
+            "title": "Worker Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job",
+          "protocol",
+          "worker_sha256"
+        ],
+        "title": "LeaseResponse",
+        "type": "object"
+      },
+      "LeasedJob": {
+        "additionalProperties": false,
+        "description": "A job handed to a client: its worker runs at `server_url`, `job_token` in AGENTOS_TOKEN.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_token": {
+            "title": "Job Token",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "server_url": {
+            "title": "Server Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "run_id",
+          "server_url",
+          "job_token"
+        ],
+        "title": "LeasedJob",
         "type": "object"
       },
       "LogData": {
@@ -1785,6 +1772,61 @@
         "title": "ManifestInvocation",
         "type": "object"
       },
+      "ManifestJob": {
+        "additionalProperties": false,
+        "description": "`id`: `<run_id>-<segment>-<16 hex>`. The worker publishes nothing after `not_after`.",
+        "properties": {
+          "budget_s": {
+            "title": "Budget S",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "not_after": {
+            "format": "date-time",
+            "title": "Not After",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "segment": {
+            "title": "Segment",
+            "type": "integer"
+          },
+          "segments": {
+            "title": "Segments",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "segment",
+          "segments",
+          "budget_s",
+          "not_after"
+        ],
+        "title": "ManifestJob",
+        "type": "object"
+      },
+      "ManifestJournal": {
+        "additionalProperties": false,
+        "properties": {
+          "first_seq": {
+            "title": "First Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "first_seq"
+        ],
+        "title": "ManifestJournal",
+        "type": "object"
+      },
       "ManifestLimits": {
         "additionalProperties": false,
         "properties": {
@@ -1827,6 +1869,36 @@
           "max_rounds"
         ],
         "title": "ManifestLoop",
+        "type": "object"
+      },
+      "ManifestReport": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "live",
+              "file"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "mode",
+          "url"
+        ],
+        "title": "ManifestReport",
         "type": "object"
       },
       "ManifestStage": {
@@ -4042,88 +4114,6 @@
         "title": "SyncBackInfo",
         "type": "object"
       },
-      "SyncFile": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content"
-          },
-          "mode": {
-            "enum": [
-              "replace",
-              "block"
-            ],
-            "title": "Mode",
-            "type": "string"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path",
-          "content",
-          "mode"
-        ],
-        "title": "SyncFile",
-        "type": "object"
-      },
-      "SyncRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "files": {
-            "items": {
-              "$ref": "#/components/schemas/SyncFile"
-            },
-            "title": "Files",
-            "type": "array"
-          },
-          "stage_id": {
-            "title": "Stage Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "stage_id",
-          "files"
-        ],
-        "title": "SyncRequest",
-        "type": "object"
-      },
-      "SyncResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "refused": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Refused",
-            "type": "array"
-          },
-          "versions": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "title": "Versions",
-            "type": "object"
-          }
-        },
-        "required": [
-          "versions",
-          "refused"
-        ],
-        "title": "SyncResponse",
-        "type": "object"
-      },
       "TaskProgress": {
         "additionalProperties": false,
         "properties": {
@@ -5865,7 +5855,7 @@
     },
     "/api/me/clients/{client_id}": {
       "delete": {
-        "description": "Its next poll gets 401. Runs it already started end through their own tokens.",
+        "description": "Its next lease gets 401. Runs it already started end through their own job tokens.",
         "operationId": "revoke_client_api_me_clients__client_id__delete",
         "parameters": [
           {
@@ -8531,25 +8521,16 @@
         ]
       }
     },
-    "/api/worker/claim": {
-      "post": {
-        "operationId": "claim_api_worker_claim_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClaimRequest"
-              }
-            }
-          },
-          "required": true
-        },
+    "/api/worker/job": {
+      "get": {
+        "description": "The job's package, exactly as stored when the run was dispatched.",
+        "operationId": "job_api_worker_job_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClaimResponse"
+                  "$ref": "#/components/schemas/JobPackage"
                 }
               }
             },
@@ -8576,215 +8557,26 @@
             "description": "Server error"
           }
         },
-        "summary": "Claim",
+        "summary": "Job",
         "tags": [
           "worker"
         ]
       }
     },
-    "/api/worker/complete": {
-      "post": {
-        "operationId": "complete_api_worker_complete_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CompleteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "4XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Client error"
-          },
-          "5XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Server error"
-          }
-        },
-        "summary": "Complete",
-        "tags": [
-          "worker"
-        ]
-      }
-    },
-    "/api/worker/events": {
-      "post": {
-        "operationId": "events_api_worker_events_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EventsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "4XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Client error"
-          },
-          "5XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Server error"
-          }
-        },
-        "summary": "Events",
-        "tags": [
-          "worker"
-        ]
-      }
-    },
-    "/api/worker/poll": {
-      "post": {
-        "description": "A client's long poll: the oldest run its user dispatched to \"My client\", waiting up to\n`wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.\n401/403 at once for a bad token. Async, and each db step runs in a thread\nonly while it runs, so idle polls hold no threadpool thread while they wait.",
-        "operationId": "poll_api_worker_poll_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ClientPollRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClientPollResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "4XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Client error"
-          },
-          "5XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Server error"
-          }
-        },
-        "summary": "Poll",
-        "tags": [
-          "worker"
-        ]
-      }
-    },
-    "/api/worker/sync": {
-      "post": {
-        "operationId": "sync_api_worker_sync_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SyncRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "4XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Client error"
-          },
-          "5XX": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Server error"
-          }
-        },
-        "summary": "Sync",
-        "tags": [
-          "worker"
-        ]
-      }
-    },
-    "/api/worker/sync-back": {
+    "/api/worker/jobs/{job_id}/sync-back": {
       "put": {
-        "description": "The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload\nis refused (413) without being held whole; the store runs in a thread.",
-        "operationId": "sync_back_api_worker_sync_back_put",
+        "description": "The job's sync_back zip as the raw body; a `sync_back` record describing it follows. The\ntoken and instance are checked before anything is read. A declared length over the cap is\nrefused unread, and reading stops past the cap, so an oversize upload is refused (413)\nwithout being held whole; the store runs in a thread.",
+        "operationId": "job_sync_back_api_worker_jobs__job_id__sync_back_put",
         "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
           {
             "in": "query",
             "name": "sha256",
@@ -8830,7 +8622,110 @@
             "description": "Server error"
           }
         },
-        "summary": "Sync Back",
+        "summary": "Job Sync Back",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/journal": {
+      "post": {
+        "operationId": "journal_api_worker_journal_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Journal",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/worker/lease": {
+      "post": {
+        "description": "A client's long poll: the job of the oldest run its user dispatched to \"My client\",\nwaiting up to `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it\nand its `alive` jobs were seen. 401/403 at once for a bad token. Async, and each db step runs\nin a thread only while it runs, so idle leases hold no threadpool thread while they wait.",
+        "operationId": "lease_api_worker_lease_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Client error"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "summary": "Lease",
         "tags": [
           "worker"
         ]

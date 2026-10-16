@@ -1,12 +1,14 @@
-"""AgentOS worker: claims a run, executes its stages, syncs context back, then exits.
+"""AgentOS worker: runs one job of a run, reporting it as the run's journal, then exits.
 
 Single file, Python >= 3.11 standard library only (enforced by a test). Served by the server at
 GET /api/worker/worker.py so runners always get the matching version. See SPEC §9.
 
-Flow: claim the job package -> workspace (clone, or `git init` in no-repo mode) -> write its
-context and notes -> emit its warnings -> for each stage execution: run it, sync context files
-back, then (repo mode) commit, pre-push guard, push -> (repo mode) look up the branch's PR with
-`gh` -> flush events -> complete (with `pr_url` if found).
+Flow: fetch the job package -> bind (post `started`, wait for its ack) -> workspace (clone, or
+`git init` in no-repo mode) -> write its context and notes -> emit its warnings -> for each stage
+execution: run it, record a `sync`, then (repo mode) commit, pre-push guard, push, record `pushed`
+-> (repo mode) look up the branch's PR with `gh` -> sync_back -> record the `result`. Records go
+through EventSink, which resends from `ack + 1` with the instance id `started` bound, to a
+Reporter: HttpReporter, or Recorder in mailbox mode.
 
 Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
 each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
@@ -27,23 +29,27 @@ times. Every check runs each round. No failing check ends the block; otherwise t
 calls get the failing checks' notes appended. Still failing after the last round, or a check
 without a valid verdict, fails the run. The worker only appends text to prompts, never substitutes.
 
-Failure paths after the claim:
-- cancel (`{"cancel": true}` on an events post): kill the stage tree, still sync/commit/push,
-  complete `cancelled`.
-- run gone (401/410 on any call): kill the stage tree, no commit, no push, exit 1.
-- server unreachable (network errors / 5xx for RETRY_BUDGET_S): kill the stage tree, commit and
-  push what exists, exit 1 (the reaper fails the run).
+Binding: 409 (another instance holds the job) exits 0; 401/410 or an unusable package exits 1,
+with the workdir untouched. Failure paths after it:
+- cancel (`cancel: true` in a journal answer): kill the stage tree, still sync/commit/push,
+  result `cancelled`.
+- run gone (401/409/410 on any post, or the job's `not_after` passed before a publish): kill the
+  stage tree, no commit, no push, exit 1.
+- server unreachable (network errors / 5xx for RETRY_BUDGET_S, or any other 4xx on the journal):
+  kill the stage tree, commit and push what exists, exit 1 (the reaper fails the run).
+- result rejected (its seq in a journal answer's `rejected`): the run didn't end, so nothing more
+  is published and the workdir is kept; exit 1 (the reaper fails the run).
 
 Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
-server): no claim and no HTTP. The package comes from a file, and every worker API call is
-recorded as one JSONL line in the outbox (see Recorder), which the server replays later. Nothing
+server): no HTTP. The package comes from a file, and the journal is recorded as worker API calls,
+one JSONL line each, in the outbox (see Recorder), which the server replays later. Nothing
 answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
 
 Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
-machine): long-polls POST /api/worker/poll for the runs its user dispatched to their client and
-starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once (see
-run_client). It backs off while the server is unreachable and stops on any 4xx but a transient
-one (401/403 included).
+machine): long-polls POST /api/worker/lease for the jobs of the runs its user dispatched to their
+client and starts this file in HTTP mode as a detached child for each, up to `--max-runs` at once
+(see run_client). It backs off while the server is unreachable and stops on any 4xx but a
+transient one (401/403 included) and on another protocol.
 """
 
 from __future__ import annotations
@@ -90,21 +96,21 @@ BACKOFF_START_S = 0.5
 BACKOFF_CAP_S = 10.0
 FLUSH_INTERVAL_S = 1.0  # pending events are posted at least this often...
 FLUSH_THRESHOLD = 200  # ...or as soon as this many are buffered
-HEARTBEAT_S = 10.0  # an (empty) events post at least this often
+HEARTBEAT_S = 10.0  # an (empty) journal post at least this often
 POLL_S = 0.2  # how often a running stage checks cancel / timeout / server loss
 READER_JOIN_S = 5.0  # after a stage exits, wait this long for its output readers, then abandon
 GIT_TIMEOUT_S = 1800.0
 KILL_TIMEOUT_S = 30.0
 
 # Client mode (see run_client).
-CLIENT_POLL_WAIT_S = 25  # the server holds a poll this long at most while no run is queued
-CLIENT_POLL_TIMEOUT_S = 40.0  # one poll's HTTP timeout: above the server's hold
-CLIENT_BACKOFF_CAP_S = 60.0  # failed polls back off up to this, and are retried forever
+CLIENT_POLL_WAIT_S = 25  # the server holds a lease this long at most while no run is queued
+CLIENT_POLL_TIMEOUT_S = 40.0  # one lease's HTTP timeout: above the server's hold
+CLIENT_BACKOFF_CAP_S = 60.0  # failed leases back off up to this, and are retried forever
 CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this often
-CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take poll this often keeps it online
+CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take lease this often keeps it online
 WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
 CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
-# Poll answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
+# Lease answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
 CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
 
 MAX_EVENTS_PER_POST = 500
@@ -143,7 +149,7 @@ JUNK_PATTERNS = (
 # stage PATH. AGENTOS_PR_LOOKUP=0 in the worker's own environment skips the lookup.
 PR_LOOKUP = ("gh", "pr", "view", "{branch}", "--json", "url", "--jq", ".url")
 PR_LOOKUP_TIMEOUT_S = 30.0
-MAX_PR_URL_CHARS = 500  # the server's CompleteRequest.pr_url max_length
+MAX_PR_URL_CHARS = 500  # the server's ResultData.pr_url max_length
 
 # GitHub API publication on Actions (see api_publish).
 GITHUB_RETRY_BUDGET_S = 300.0  # rate limits, network errors and 5xx are retried this long
@@ -436,7 +442,7 @@ def block_write(existing: bytes | None, key: str, content: str) -> bytes:
 
 
 class PackageError(ValueError):
-    """The claimed package isn't protocol 2, or its loop blocks don't fit its stages."""
+    """The job's package isn't protocol 2, or its loop blocks don't fit its stages."""
 
 
 @dataclass(frozen=True)
@@ -500,6 +506,9 @@ class Package:
     written (resolve_inside), the workspace where it is set up."""
 
     protocol: int
+    job: dict[str, Any]  # id, run_id, segment, segments, budget_s, not_after
+    journal: dict[str, int]  # first_seq: the seq of the job's `started` record
+    report: dict[str, Any]  # mode (live | file), url
     run_id: int
     ticket: dict[str, str]
     workspace: dict[str, Any]  # mode, repo_url, base_branch, branch, protect, blocks
@@ -585,7 +594,7 @@ def _check_loops(p: Package) -> None:
 
 
 def load_package(raw: object) -> Package:
-    """The claim's package, built straight from its JSON. Checks only the protocol and the loop
+    """The job's package, built straight from its JSON. Checks only the protocol and the loop
     shape (_check_loops); anything else malformed is a PackageError too."""
     protocol = raw.get("protocol") if isinstance(raw, dict) else None
     if not isinstance(raw, dict) or protocol != PROTOCOL:
@@ -724,11 +733,20 @@ class HttpError(Exception):
 
 
 class RunGone(Exception):
-    """401/410 after the claim: the run was taken away. Never write to the branch again."""
+    """401/410 from the journal: the run was taken away. Never write to the branch again."""
+
+
+class AlreadyClaimed(RunGone):
+    """409 from the journal: the job is bound to another worker instance."""
+
+
+class ResultRejected(RunGone):
+    """The server consumed the `result` record without applying it: the run didn't end, so the
+    job failed to complete. Like a gone run: nothing more is published, the workdir is kept."""
 
 
 class Unreachable(Exception):
-    """Network errors or 5xx for RETRY_BUDGET_S."""
+    """Network errors or 5xx for RETRY_BUDGET_S (or the journal can't be written any more)."""
 
 
 def _http_error(exc: urllib.error.HTTPError) -> HttpError:
@@ -746,12 +764,14 @@ def _http_error(exc: urllib.error.HTTPError) -> HttpError:
 
 
 class Client:
-    """JSON POSTs and raw PUTs with a bearer token. Retries network errors and 5xx with
-    exponential backoff."""
+    """JSON requests and raw PUTs with a bearer token, plus the worker instance's id when given.
+    Retries network errors and 5xx with exponential backoff."""
 
-    def __init__(self, server: str, token: str) -> None:
+    def __init__(self, server: str, token: str, instance: str = "") -> None:
         self._base = server.rstrip("/")
-        self._token = token
+        self._headers = {"Authorization": f"Bearer {token}"}
+        if instance:
+            self._headers["X-AgentOS-Instance"] = instance
         host = urllib.parse.urlsplit(self._base).hostname or ""
         # A loopback server must never go through a configured proxy.
         handlers = [urllib.request.ProxyHandler({})] if host in _LOOPBACK else []
@@ -771,6 +791,10 @@ class Client:
         data = json.dumps(body).encode("utf-8")
         return self._send("POST", path, data, "application/json", timeout_s, retry_budget_s)
 
+    def get(self, path: str) -> Any:
+        """GET and return the decoded answer, retried like `post`."""
+        return self._send("GET", path, None, "application/json", None, None)
+
     def put(self, path: str, data: bytes) -> Any:
         """PUT raw bytes (a zip), retried like `post`; each attempt gets UPLOAD_TIMEOUT_S."""
         return self._send("PUT", path, data, "application/zip", UPLOAD_TIMEOUT_S, None)
@@ -779,7 +803,7 @@ class Client:
         self,
         method: str,
         path: str,
-        data: bytes,
+        data: bytes | None,
         content_type: str,
         timeout_s: float | None,
         retry_budget_s: float | None,
@@ -792,7 +816,7 @@ class Client:
                 self._base + path,
                 data=data,
                 method=method,
-                headers={"Content-Type": content_type, "Authorization": f"Bearer {self._token}"},
+                headers={**self._headers, "Content-Type": content_type},
             )
             try:
                 with self._opener.open(request, timeout=timeout) as resp:
@@ -813,44 +837,61 @@ class Client:
             delay = min(delay * 2, BACKOFF_CAP_S)
 
 
-class WorkerApi:
-    """Worker-token routes. 401/410 mean the run was taken away (RunGone)."""
+@dataclass(frozen=True)
+class Ack:
+    """A Reporter's answer: the highest seq the destination holds (records after it are sent
+    again), whether a cancel was requested, and the seqs it consumed as invalid."""
 
-    uploads = True  # `put` reaches the server (a Recorder has no upload)
+    seq: int
+    cancel: bool
+    rejected: tuple[int, ...]
+
+
+class Reporter(Protocol):
+    """Where the journal goes: the server (HttpReporter) or the mailbox outbox (Recorder)."""
+
+    def send(self, records: list[dict[str, Any]]) -> Ack:
+        """Deliver records in seq order; [] is a heartbeat. Raises RunGone (AlreadyClaimed
+        included) or Unreachable."""
+        ...
+
+    def close(self) -> None: ...
+
+
+class HttpReporter:
+    """Live mode: posts records to /api/worker/journal. 401/410 raise RunGone, 409
+    AlreadyClaimed; any other 4xx stops reporting as Unreachable, since the server would wait
+    forever at the gap a dropped batch leaves."""
 
     def __init__(self, client: Client) -> None:
         self._client = client
 
-    def call(self, path: str, body: dict[str, Any]) -> Any:
-        return self._gone("POST", path, lambda: self._client.post(path, body))
-
-    def put(self, path: str, data: bytes) -> Any:
-        return self._gone("PUT", path, lambda: self._client.put(path, data))
-
-    @staticmethod
-    def _gone(method: str, path: str, send: Callable[[], Any]) -> Any:
+    def send(self, records: list[dict[str, Any]]) -> Ack:
         try:
-            return send()
+            resp = self._client.post("/api/worker/journal", {"records": records})
         except HttpError as exc:
+            if exc.status == 409:
+                raise AlreadyClaimed(str(exc)) from exc
             if exc.status in (401, 410):
-                raise RunGone(f"{method} {path}: HTTP {exc.status} {exc.code}") from exc
-            raise
+                raise RunGone(str(exc)) from exc
+            raise Unreachable(f"the journal was refused: {exc}") from exc
+        return Ack(resp["ack"], resp["cancel"] is True, tuple(resp["rejected"]))
+
+    def close(self) -> None:
+        """Nothing to release: every post is a request of its own."""
 
 
-class Recorder(WorkerApi):
-    """Mailbox mode: records each call as one outbox line instead of POSTing it.
+class Recorder:
+    """Mailbox mode: writes the journal to the outbox as the worker API calls the server replays.
 
-    Line 1 is `{"outbox": 1, "run_id": N}`, then `{"path": ..., "body": ...}` per call in call
-    order, flushed per line (default json.dumps, so the body is what Client.post would send).
-    Empty event batches (heartbeats) are not recorded. `call` always returns None: no cancel, no
-    RunGone. A failed write raises Unreachable (and every later call too), so the run aborts.
-    Nothing is uploaded: the run warns instead of returning sync_back.
-    """
-
-    uploads = False
+    Line 1 is `{"outbox": 1, "run_id": N}`, then one flushed `{"path", "body"}` line per call:
+    consecutive display records as one events call (events numbered 1..N), `sync` as a sync call,
+    `result` as complete; nothing else is written. Every record is acked at once, never with a
+    cancel. A failed write raises Unreachable (and every later send too), so the run aborts."""
 
     def __init__(self, outbox: Path, run_id: int) -> None:
         self._lock = threading.Lock()
+        self._events = 0  # the last event seq written
         self._fh: IO[bytes] | None = outbox.open("xb")  # never overwrite an earlier recording
         self._closed = "the outbox is closed"
         try:
@@ -864,18 +905,33 @@ class Recorder(WorkerApi):
         fh.write(json.dumps(line).encode("utf-8") + b"\n")
         fh.flush()
 
-    def call(self, path: str, body: dict[str, Any]) -> Any:
-        if path == "/api/worker/events" and not body["events"]:
-            return None
+    def send(self, records: list[dict[str, Any]]) -> Ack:
+        calls: list[dict[str, Any]] = []
+        for record in records:
+            kind, data = record["type"], record["data"]
+            if kind == "sync":
+                body = {"stage_id": record["stage_id"], **data}
+                calls.append({"path": "/api/worker/sync", "body": body})
+            elif kind == "result":
+                body = {k: v for k, v in data.items() if k != "pr_url" or v is not None}
+                calls.append({"path": "/api/worker/complete", "body": body})
+            elif kind not in ("started", "pushed", "sync_back"):
+                if not calls or calls[-1]["path"] != "/api/worker/events":
+                    calls.append({"path": "/api/worker/events", "body": {"events": []}})
+                self._events += 1
+                event = {"seq": self._events, "ts": record["ts"], "stage_id": record["stage_id"]}
+                calls[-1]["body"]["events"].append({**event, "type": kind, "data": data})
+
         with self._lock:
-            if self._fh is None:
-                raise Unreachable(f"record {path}: {self._closed}")
-            try:
-                self._write(self._fh, {"path": path, "body": body})
-            except OSError as exc:
-                self._shut(f"cannot write the outbox: {exc}")
-                raise Unreachable(f"record {path}: {self._closed}") from exc
-        return None
+            for call in calls:
+                if self._fh is None:
+                    raise Unreachable(f"record {call['path']}: {self._closed}")
+                try:
+                    self._write(self._fh, call)
+                except OSError as exc:
+                    self._shut(f"cannot write the outbox: {exc}")
+                    raise Unreachable(f"record {call['path']}: {self._closed}") from exc
+        return Ack(records[-1]["seq"] if records else 0, False, ())
 
     def close(self) -> None:
         with self._lock:
@@ -893,20 +949,21 @@ class Recorder(WorkerApi):
 
 
 class EventSink:
-    """Buffers run events and posts them from a background thread (SPEC §9.1).
+    """Numbers journal records from `seq` on and sends them through a Reporter from a background
+    thread (SPEC §9.1), keeping each until it is acked: every send starts at `ack + 1`.
 
     Batches go out every FLUSH_INTERVAL_S, as soon as FLUSH_THRESHOLD are buffered, and at least
     every HEARTBEAT_S even when empty. `cancel` is set when the server asks for it; `failure`
-    holds RunGone/Unreachable once posting is impossible.
+    holds RunGone/Unreachable once sending is impossible.
     """
 
-    def __init__(self, api: WorkerApi) -> None:
-        self._api = api
+    def __init__(self, reporter: Reporter, job: str, seq: int) -> None:
+        self._reporter = reporter
+        self._job = job
         self._cond = threading.Condition()
-        self._buf: list[dict[str, Any]] = []
-        self._seq = 0
+        self._buf: list[dict[str, Any]] = []  # every record not acked yet, in seq order
+        self._seq = seq - 1  # the last seq given out
         self._logs_dropped = False
-        self._rejected_warned = False
         self._stopping = False
         self._thread = threading.Thread(target=self._loop, name="agentos-events", daemon=True)
         self.cancel = threading.Event()
@@ -924,9 +981,8 @@ class EventSink:
                 type_ = "warning"
                 data = {"message": "too many events in this run: further log output is dropped"}
             self._seq += 1
-            self._buf.append(
-                {"seq": self._seq, "ts": _now(), "stage_id": stage_id, "type": type_, "data": data}
-            )
+            record = {"seq": self._seq, "ts": _now(), "job": self._job, "type": type_}
+            self._buf.append({**record, "stage_id": stage_id, "data": data})
             if len(self._buf) >= FLUSH_THRESHOLD:
                 self._cond.notify_all()
 
@@ -943,12 +999,13 @@ class EventSink:
             raise self.failure
 
     def close(self) -> None:
-        """Flush every buffered event, stop the thread, then raise any posting failure."""
+        """Send what is buffered, stop the thread, close the Reporter, then raise any failure."""
         with self._cond:
             self._stopping = True
             self._cond.notify_all()
         if self._thread.is_alive():
             self._thread.join()
+        self._reporter.close()
         self.check()
 
     def _loop(self) -> None:
@@ -965,25 +1022,26 @@ class EventSink:
                 if stopping:
                     return
                 continue
-            rejected: HttpError | None = None
             try:
-                resp = self._api.call("/api/worker/events", {"events": batch})
+                ack = self._reporter.send(batch)
             except (RunGone, Unreachable) as exc:
                 self.failure = exc
                 return
-            except HttpError as exc:
-                rejected = exc  # a bug, not weather: drop the batch rather than loop on it
-            else:
-                if isinstance(resp, dict) and resp.get("cancel") is True:
-                    self.cancel.set()
+
             last_post = time.monotonic()
+            if ack.cancel:
+                self.cancel.set()
+            if batch and ack.seq < batch[0]["seq"]:  # nothing applied: a resend would loop
+                self.failure = Unreachable(f"record {batch[0]['seq']} is never acked ({ack})")
+                return
+
+            refused = [r for r in batch if r["type"] == "result" and r["seq"] in ack.rejected]
+            if refused:
+                self.failure = ResultRejected(f"the server rejected result {refused[0]['seq']}")
+                return
+
             with self._cond:
-                del self._buf[: len(batch)]
-            if rejected is not None:
-                say(f"events rejected ({rejected}); dropped {len(batch)} events")
-                if not self._rejected_warned:
-                    self._rejected_warned = True
-                    self.emit("warning", None, {"message": f"events rejected: {rejected}"})
+                self._buf = [r for r in self._buf if r["seq"] > ack.seq]
 
 
 # ---------------------------------------------------------------- live echo
@@ -1501,12 +1559,7 @@ def remove_tree(path: Path) -> None:
 @dataclass
 class SyncBatch:
     files: list[dict[str, Any]]
-    updates: dict[str, str | None]  # applied to SyncState.known once the server accepted them
     warnings: list[str]
-
-    def add(self, path: str, content: str | None, mode: str) -> None:
-        self.files.append({"path": path, "content": content, "mode": mode})
-        self.updates[path] = content
 
 
 def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
@@ -1547,7 +1600,7 @@ def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
 
 
 class SyncState:
-    """What the server holds of this run's context, so sync sends only what changed.
+    """What this run has sent of its context (`known`), so sync sends only what changed.
 
     After each stage it reads exactly the write context entries and the notes (block files: only
     the block) and sends those that changed since they were last sent; a deleted replace file goes
@@ -1581,7 +1634,7 @@ class SyncState:
         return content, None
 
     def collect(self, root: Path) -> SyncBatch:
-        batch = SyncBatch([], {}, [])
+        batch = SyncBatch([], [])
         for path, f in self.sync_files.items():
             if path in self.unsynced:
                 continue
@@ -1593,7 +1646,8 @@ class SyncState:
                 if f.mode == "block":
                     batch.warnings.append(f"not synced: {path} is gone, and its agentos block too")
                 elif self.known.get(path) is not None:
-                    batch.add(path, None, "replace")
+                    batch.files.append({"path": path, "content": None, "mode": "replace"})
+                    self.known[path] = None
                 continue
             content, err = self._declared_content(f, data)
             if err:
@@ -1607,7 +1661,8 @@ class SyncState:
                 self.rewritten.add(path)
                 batch.warnings.append(f"{path} was rewritten, not appended to")
             if self.known.get(path) != content:
-                batch.add(path, content, f.mode)
+                batch.files.append({"path": path, "content": content, "mode": f.mode})
+                self.known[path] = content
 
         not_kept: list[str] = []
         for folder in self.package.workspace["protect"]:
@@ -1617,9 +1672,6 @@ class SyncState:
             more = f" and {len(not_kept) - 20} more" if len(not_kept) > 20 else ""
             batch.warnings.append(f"not kept: {', '.join(not_kept[:20])}{more}")
         return batch
-
-    def accept(self, batch: SyncBatch) -> None:
-        self.known.update(batch.updates)
 
 
 def write_entry(root: Path, f: ContextFile) -> str | None:
@@ -2098,11 +2150,14 @@ class GitResult:
 
 
 class Run:
-    """Executes one claimed run: workspace, files, stages, after-stage steps, completion."""
+    """Executes one bound job: workspace, files, stages, after-stage steps, the result. It reports
+    through `events`; `upload` (live mode only) takes the sync_back zip."""
 
-    def __init__(self, api: WorkerApi, events: EventSink, package: Package, workdir: Path) -> None:
-        self.api = api
+    def __init__(
+        self, events: EventSink, package: Package, workdir: Path, upload: Client | None
+    ) -> None:
         self.events = events
+        self.upload = upload
         self.m = package
         self.workdir = workdir
         self.repo = package.workspace["mode"] == "repo"
@@ -2125,6 +2180,8 @@ class Run:
         self.api_mode = self.repo and api_publish(os.environ)  # publish through the GitHub API
         self.github: GitHub | None = None  # set up by _setup_github in API mode
         self.branch_exists = False  # the branch was on the remote at clone or has been published
+        live = package.report["mode"] == "live"  # nothing is published after the job's not_after
+        self.not_after = datetime.fromisoformat(package.job["not_after"]) if live else None
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
@@ -2141,6 +2198,9 @@ class Run:
     def execute(self) -> int:
         try:
             return self._execute()
+        except ResultRejected as exc:
+            say(f"could not complete ({exc}): the workdir is kept, the reaper ends the run")
+            return 1
         except RunGone as exc:
             say(f"the run was taken away ({exc}): no commit, no push")
             return 1
@@ -2242,19 +2302,10 @@ class Run:
         pr_url = self._find_pr()
         if self.ready:
             self._send_sync_back()
+        error = None if error is None else _clip(error)
+        result = {"status": status, "failed_stage": failed_stage, "error": error, "pr_url": pr_url}
+        self.events.emit("result", None, result)
         self.events.close()
-        body: dict[str, Any] = {
-            "status": status,
-            "failed_stage": failed_stage,
-            "error": None if error is None else _clip(error),
-        }
-        if pr_url is not None:
-            body["pr_url"] = pr_url
-        try:
-            self.api.call("/api/worker/complete", body)
-        except HttpError as exc:
-            say(f"complete rejected: {exc}")
-            return 1
         say(f"run {self.m.run_id} {status}" + (f": {error}" if error else ""))
         if status in ("completed", "cancelled") and self.owns_workdir:
             try:
@@ -2265,13 +2316,14 @@ class Run:
 
     def _send_sync_back(self) -> None:
         """Upload the sync_back folder's regular files as one zip, unless it is empty or over
-        `sync_back.max_bytes`. Files stream into the zip in chunks, and zipping stops as soon as
-        the zip passes the cap. Only RunGone escapes; any other failure is a warning."""
+        `sync_back.max_bytes`, then record `sync_back`. Files stream into the zip in chunks, and
+        zipping stops as soon as the zip passes the cap. Only RunGone (401/410) escapes; any
+        other failure is a warning."""
         folder, cap = self.m.sync_back["dir"], self.m.sync_back["max_bytes"]
         files, skipped = _walk_files(self.workdir, folder)
         if not files and not skipped:
             return
-        if not self.api.uploads:
+        if self.upload is None:
             self.events.warn(None, f"{folder} is not returned in mailbox mode")
             return
         if skipped:
@@ -2307,10 +2359,16 @@ class Run:
         data = buf.getvalue()
 
         digest = hashlib.sha256(data).hexdigest()
+        path = f"/api/worker/jobs/{self.m.job['id']}/sync-back?sha256={digest}&files={len(files)}"
         try:
-            self.api.put(f"/api/worker/sync-back?sha256={digest}&files={len(files)}", data)
+            self.upload.put(path, data)
         except (HttpError, Unreachable) as exc:
+            if isinstance(exc, HttpError) and exc.status in (401, 410):
+                raise RunGone(str(exc)) from exc
             self.events.warn(None, f"{folder} not sent: {exc}")
+            return
+        sent = {"sha256": digest, "bytes": len(data), "files": len(files)}
+        self.events.emit("sync_back", None, sent)
 
     # ------------------------------------------------------------ workspace (SPEC §9.2)
 
@@ -2680,15 +2738,7 @@ class Run:
         batch = self.sync.collect(self.workdir)
         for warning in batch.warnings:
             self.events.warn(stage_id, warning)
-        try:
-            answer = self.api.call("/api/worker/sync", {"stage_id": stage_id, "files": batch.files})
-        except HttpError as exc:
-            self.events.warn(stage_id, f"sync rejected ({exc}): context changes were not saved")
-            return
-        self.sync.accept(batch)
-        refused = (answer or {}).get("refused")
-        if refused:
-            self.events.warn(stage_id, f"sync refused: {', '.join(refused)}")
+        self.events.emit("sync", stage_id, {"files": batch.files})
 
     def _is_protected(self, path: str) -> bool:
         low = path.lower()
@@ -2749,12 +2799,18 @@ class Run:
         r = self._git("push", "-u", "origin", self.branch, show=True, stage_id=stage_id)
         if r.code:
             return "push rejected" if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
+        count = self._git("rev-list", "--count", f"{self.pushed_head}..{head}")
+        pushed = {"branch": self.branch, "head": head, "commits": int(count.out or 0)}
+        self.events.emit("pushed", None, {**pushed, "method": "git"})
         self.pushed_head = head
         return None
 
     def _check_gone(self) -> None:
+        """Before every publish: never once the run was taken away, nor after `not_after`."""
         if isinstance(self.events.failure, RunGone):  # taken away while we were committing
             raise self.events.failure
+        if self.not_after is not None and datetime.now(UTC) >= self.not_after:
+            raise RunGone(f"the job's not_after ({self.m.job['not_after']}) has passed")
 
     def _publish(self, stage_id: str | None, github: GitHub) -> str | None:
         """API mode's push: publish through the Git Data API, then make the local branch the
@@ -2768,6 +2824,8 @@ class Run:
             return str(exc)
         self.pushed_head = sha
         self.branch_exists = True
+        pushed = {"branch": branch, "head": sha, "commits": count, "method": "api"}
+        self.events.emit("pushed", None, pushed)
 
         message = (
             f"published {count} commit(s) to {branch} as one through the GitHub API ({sha[:12]})"
@@ -2778,7 +2836,10 @@ class Run:
 
     def _save_offline(self) -> None:
         stage_id = self.current_stage or "setup"
-        problem = self._commit(stage_id) or self._guard() or self._push(None)
+        try:
+            problem = self._commit(stage_id) or self._guard() or self._push(None)
+        except RunGone as exc:  # past not_after
+            problem = str(exc)
         say(f"could not save the work: {problem}" if problem else "work committed and pushed")
 
     # ------------------------------------------------------------ PR lookup (end of a repo run)
@@ -2943,7 +3004,7 @@ def _env_set(env: dict[str, str], key: str, value: str | None) -> None:
 
 
 def child_env(
-    dispatch_token: str, env_file: Mapping[str, str | None], base: Mapping[str, str] | None = None
+    job_token: str, env_file: Mapping[str, str | None], base: Mapping[str, str] | None = None
 ) -> dict[str, str]:
     """A run worker's environment: `base` (default: ours) minus every AGENTOS_* var, then the env
     file's values (None removes the key), then unbuffered UTF-8 output and AGENTOS_TOKEN. The
@@ -2954,7 +3015,7 @@ def child_env(
         _env_set(env, key, value)
     _env_set(env, "PYTHONUNBUFFERED", "1")  # live log
     _env_set(env, "PYTHONIOENCODING", "utf-8")
-    _env_set(env, "AGENTOS_TOKEN", dispatch_token)
+    _env_set(env, "AGENTOS_TOKEN", job_token)
     return env
 
 
@@ -3038,22 +3099,6 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
     return removed
 
 
-def _assignment(resp: object) -> tuple[int, str] | None:
-    """(run id, dispatch token) from a poll answer, or None when it hands out no run. Raises
-    ValueError for an answer that isn't `{"run": null | {"run_id", "dispatch_token", ...}}`."""
-    if not isinstance(resp, dict) or "run" not in resp:
-        raise ValueError("the poll answer has no `run`")
-    run = resp["run"]
-    if run is None:
-        return None
-
-    run_id = run.get("run_id") if isinstance(run, dict) else None
-    token = run.get("dispatch_token") if isinstance(run, dict) else None
-    if type(run_id) is not int or run_id < 1 or not isinstance(token, str) or not token:
-        raise ValueError("the poll answer's run has no valid run_id and dispatch_token")
-    return run_id, token
-
-
 def run_client(
     server: str,
     token: str,
@@ -3062,17 +3107,14 @@ def run_client(
     env_file: Path | None,
     spawn: Spawn,
 ) -> int:
-    """Client mode: poll for this user's runs and start a detached worker for each, at most
-    `max_runs` at once. Takes runs only while a slot is free; while every slot is busy it sends a
-    no-take poll every CLIENT_HEARTBEAT_S, so the server still sees the client online. Network
-    errors, 5xx, transient 4xx (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to
-    CLIENT_BACKOFF_CAP_S) and poll again, forever. Any other 4xx (401/403: token revoked, user
-    disabled, viewer; or a protocol the client doesn't speak) stops the client with exit code 1;
-    started workers keep running, since they hold their own per-run tokens.
+    """Client mode: lease this user's jobs and start a detached worker for each, at most
+    `max_runs` at once, listing the running ones as `alive` on every lease. With every slot busy
+    it sends a no-take lease every CLIENT_HEARTBEAT_S, so the server still sees it online. Network
+    errors, 5xx, CLIENT_TRANSIENT_4XX and malformed answers back off (up to CLIENT_BACKOFF_CAP_S)
+    forever; any other 4xx or another protocol exits 1. Started workers outlive the client.
 
-    Everything the client writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs
-    `worker.py --server <server> --workdir <root>/runs/<run_id>` there, logs to
-    `<root>/runs/<run_id>.log` and gets the dispatch token as AGENTOS_TOKEN (see child_env)."""
+    Everything it writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs there with
+    `--workdir <root>/runs/<run_id>`, logs to `<run_id>.log` and gets its job token in child_env."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -3095,30 +3137,32 @@ def run_client(
         say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
 
     client = Client(server, token)
-    me = str(Path(__file__).resolve())
-    children: list[Child] = []
+    me = Path(__file__).resolve()
+    sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
+    children: dict[str, Child] = {}  # by job id
     delay = BACKOFF_START_S
-    answered = time.monotonic()  # when the server last answered a poll
-    say(f"client: polling {server} for runs, at most {max_runs} at once, in {runs}")
+    answered = time.monotonic()  # when the server last answered a lease
+    say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
     try:
         while True:
-            children = [child for child in children if child.poll() is None]
+            children = {job: child for job, child in children.items() if child.poll() is None}
             busy = len(children) >= max_runs
             if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
                 time.sleep(CLIENT_REAP_S)
                 continue
 
-            take = {"wait_s": CLIENT_POLL_WAIT_S}
-            heartbeat = {"wait_s": 0, "take": False}  # last seen only; never hands out a run
+            wait_s = 0 if busy else CLIENT_POLL_WAIT_S
+            body = {"wait_s": wait_s, "take": not busy, "alive": list(children)}
             try:
                 resp = client.post(
-                    "/api/worker/poll",
-                    heartbeat if busy else take,
-                    timeout_s=CLIENT_POLL_TIMEOUT_S,
-                    retry_budget_s=0,
+                    "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
                 )
                 answered = time.monotonic()
-                assignment = _assignment(resp)
+                if resp["protocol"] != PROTOCOL:
+                    say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
+                    return 1
+                job = resp["job"]
+                leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
             except HttpError as exc:
                 if exc.status not in CLIENT_TRANSIENT_4XX:
                     say(f"the server refused this client ({exc}); stopping")
@@ -3126,30 +3170,29 @@ def run_client(
                 problem = str(exc)
             except (Unreachable, ValueError) as exc:
                 problem = str(exc)
+            except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
+                problem = f"a malformed answer ({exc!r})"
             else:
                 delay = BACKOFF_START_S
-                if assignment is None:
+                if sha256 is not None and resp.get("worker_sha256") != sha256:
+                    say(f"this worker.py differs from the server's ({server}/api/worker/worker.py)")
+                    sha256 = None
+                if not leased:
                     continue
-                run_id, dispatch_token = assignment
-                argv = [
-                    sys.executable,
-                    me,
-                    "--server",
-                    server,
-                    "--workdir",
-                    str(runs / str(run_id)),
-                ]
+                job_id, run_id, job_token = leased
+                workdir = runs / str(run_id)
+                argv = [sys.executable, str(me), "--server", server, "--workdir", str(workdir)]
                 log = runs / f"{run_id}.log"
                 try:
-                    child = spawn(argv, runs, child_env(dispatch_token, env_values), log)
+                    child = spawn(argv, runs, child_env(job_token, env_values), log)
                 except OSError as exc:
                     say(f"run {run_id}: cannot start its worker: {exc}")
                     continue
-                children.append(child)
+                children[job_id] = child
                 say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
                 continue
 
-            say(f"poll failed ({problem}); polling again in {delay:.1f}s")
+            say(f"lease failed ({problem}); leasing again in {delay:.1f}s")
             time.sleep(delay)
             delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
     except KeyboardInterrupt:
@@ -3165,7 +3208,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     client (--client --server, the client token in $AGENTOS_CLIENT_TOKEN)."""
     parser = argparse.ArgumentParser(prog="worker.py", description=__doc__)
     parser.add_argument("--server", help="AgentOS server URL, e.g. http://127.0.0.1:8000")
-    parser.add_argument("--token", help="dispatch token (default: $AGENTOS_TOKEN)")
+    parser.add_argument("--token", help="job token (default: $AGENTOS_TOKEN)")
     parser.add_argument("--workdir", help="workspace directory (default: ./agentos-run-<run_id>)")
     parser.add_argument("--manifest", help="mailbox mode: the run's manifest.json")
     parser.add_argument("--outbox", help="mailbox mode: the outbox.jsonl to create")
@@ -3195,8 +3238,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
             parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
         args.max_runs = 1 if args.max_runs is None else args.max_runs
-        if args.max_runs < 1:
-            parser.error("--max-runs must be at least 1")
+        if not 1 <= args.max_runs <= 100:  # a lease lists at most 100 `alive` jobs
+            parser.error("--max-runs must be between 1 and 100")
         args.workdir_root = args.workdir_root or "~/.agentos/workspaces"
         args.mailbox = False
         return args
@@ -3213,7 +3256,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("the following arguments are required: --server")
     args.token = args.token or os.environ.get("AGENTOS_TOKEN")
     if not args.token:
-        parser.error("a dispatch token is required (--token or AGENTOS_TOKEN)")
+        parser.error("a job token is required (--token or AGENTOS_TOKEN)")
     if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
         parser.error("--server must be an http:// or https:// URL")
     return args
@@ -3229,51 +3272,37 @@ def main(argv: list[str] | None = None) -> int:
         return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
     if args.mailbox:
         return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
-    worker_token = secrets.token_urlsafe(32)
-    say(f"claiming a run from {args.server}")
+
+    # Live mode: fetch the job, then bind it to a new instance id by posting `started` and waiting
+    # for its ack, all before the workdir is touched.
+    client = Client(args.server, args.token, secrets.token_urlsafe(32))
+    reporter = HttpReporter(client)
+    say(f"fetching the job from {args.server}")
     try:
-        resp = Client(args.server, args.token).post(
-            "/api/worker/claim", {"worker_token": worker_token}
-        )
+        package = load_package(client.get("/api/worker/job"))
+        sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        started = {"seq": package.journal["first_seq"], "ts": _now(), "job": package.job["id"]}
+        data = {"protocol": PROTOCOL, "worker_sha256": sha256}
+        reporter.send([{**started, "type": "started", "stage_id": None, "data": data}])
+    except AlreadyClaimed as exc:
+        say(f"nothing to do: {exc}")
+        return 0
     except HttpError as exc:
-        if exc.status in (409, 410):
-            say(f"nothing to do: {exc}")
-            return 0
-        say(f"claim failed: {exc}")
-        return 1
-    except Unreachable as exc:
-        say(f"claim failed: {exc}")
+        say(f"cannot fetch the job: {exc}")
+        return 0 if exc.status == 409 else 1
+    except (PackageError, RunGone, Unreachable) as exc:
+        say(f"cannot start the job: {exc}")
         return 1
 
-    api = WorkerApi(Client(args.server, worker_token))
-    events = EventSink(api)
+    say(f"bound to job {package.job['id']} ({package.key}, {len(package.stages)} stage(s))")
+    events = EventSink(reporter, package.job["id"], package.journal["first_seq"] + 1)
     events.start()
-    raw = resp.get("manifest") if isinstance(resp, dict) else None
-    try:
-        package = load_package(raw)
-    except PackageError as exc:
-        say(f"invalid package: {exc}")
-        try:
-            events.close()
-            api.call(
-                "/api/worker/complete",
-                {
-                    "status": "failed",
-                    "failed_stage": None,
-                    "error": _clip(f"invalid package: {exc}"),
-                },
-            )
-        except (HttpError, RunGone, Unreachable) as again:
-            say(f"could not report the failure: {again}")
-            return 1
-        return 0
-    say(f"claimed run {package.run_id} ({package.key}, {len(package.stages)} stage(s))")
     workdir = Path(args.workdir or f"agentos-run-{package.run_id}").resolve()
-    return Run(api, events, package, workdir).execute()
+    return Run(events, package, workdir, client).execute()
 
 
 def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:
-    """Mailbox mode: the package is a file and every API call goes to the outbox. A package
+    """Mailbox mode: the package is a file and the journal goes to the outbox. A package
     that can't be used exits 1 before the outbox exists (the server then fails the run)."""
     try:
         package = load_package(json.loads(manifest_path.read_bytes()))
@@ -3289,10 +3318,10 @@ def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:
         say(f"cannot create the outbox {outbox}: {exc}")
         return 1
     say(f"mailbox run {package.run_id} ({package.key}, {len(package.stages)} stage(s))")
-    events = EventSink(recorder)
+    events = EventSink(recorder, package.job["id"], package.journal["first_seq"] + 1)
     events.start()
     try:
-        return Run(recorder, events, package, workdir.resolve()).execute()
+        return Run(events, package, workdir.resolve(), None).execute()
     finally:
         recorder.close()
 

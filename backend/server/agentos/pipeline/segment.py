@@ -1,5 +1,4 @@
-"""Segments, run plans, completion mapping and pipeline validation (SPEC §6, §7; loop blocks:
-request 24).
+"""Segments, run plans, completion mapping and pipeline validation (SPEC §6, §7).
 
 Pure. `next_stage` lives in `tickets/board.py` (it needs run history).
 """

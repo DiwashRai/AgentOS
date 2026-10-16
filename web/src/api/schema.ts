@@ -149,7 +149,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke Client
-         * @description Its next poll gets 401. Runs it already started end through their own tokens.
+         * @description Its next lease gets 401. Runs it already started end through their own job tokens.
          */
         delete: operations["revoke_client_api_me_clients__client_id__delete"];
         options?: never;
@@ -790,112 +790,83 @@ export interface paths {
         patch: operations["patch_user_api_users__user_id__patch"];
         trace?: never;
     };
-    "/api/worker/claim": {
+    "/api/worker/job": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Claim */
-        post: operations["claim_api_worker_claim_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Complete */
-        post: operations["complete_api_worker_complete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Events */
-        post: operations["events_api_worker_events_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/poll": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
         /**
-         * Poll
-         * @description A client's long poll: the oldest run its user dispatched to "My client", waiting up to
-         *     `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it was seen.
-         *     401/403 at once for a bad token. Async, and each db step runs in a thread
-         *     only while it runs, so idle polls hold no threadpool thread while they wait.
+         * Job
+         * @description The job's package, exactly as stored when the run was dispatched.
          */
-        post: operations["poll_api_worker_poll_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
+        get: operations["job_api_worker_job_get"];
         put?: never;
-        /** Sync */
-        post: operations["sync_api_worker_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/sync-back": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Sync Back
-         * @description The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload
-         *     is refused (413) without being held whole; the store runs in a thread.
-         */
-        put: operations["sync_back_api_worker_sync_back_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/jobs/{job_id}/sync-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Job Sync Back
+         * @description The job's sync_back zip as the raw body; a `sync_back` record describing it follows. The
+         *     token and instance are checked before anything is read. A declared length over the cap is
+         *     refused unread, and reading stops past the cap, so an oversize upload is refused (413)
+         *     without being held whole; the store runs in a thread.
+         */
+        put: operations["job_sync_back_api_worker_jobs__job_id__sync_back_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Journal */
+        post: operations["journal_api_worker_journal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/lease": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lease
+         * @description A client's long poll: the job of the oldest run its user dispatched to "My client",
+         *     waiting up to `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it
+         *     and its `alive` jobs were seen. 401/403 at once for a bad token. Async, and each db step runs
+         *     in a thread only while it runs, so idle leases hold no threadpool thread while they wait.
+         */
+        post: operations["lease_api_worker_lease_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1071,57 +1042,10 @@ export interface components {
             /** Body */
             body: string;
         };
-        /** ClaimRequest */
-        ClaimRequest: {
-            /** Worker Token */
-            worker_token: string;
-        };
-        /** ClaimResponse */
-        ClaimResponse: {
-            manifest: components["schemas"]["JobPackage"];
-        };
-        /**
-         * ClientPollRequest
-         * @description POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
-         *     false` is a busy client's heartbeat: it records last seen (the client stays online) and
-         *     answers `run: null` at once, never handing out a run.
-         */
-        ClientPollRequest: {
-            /**
-             * Take
-             * @default true
-             */
-            take: boolean;
-            /**
-             * Wait S
-             * @default 25
-             */
-            wait_s: number;
-        };
-        /**
-         * ClientPollResponse
-         * @description `run: null` = nothing queued for the client's user within `wait_s`.
-         */
-        ClientPollResponse: {
-            run: components["schemas"]["ClientRunAssignment"] | null;
-        };
-        /**
-         * ClientRunAssignment
-         * @description A run handed to a client: its worker claims it at `server_url` with `dispatch_token`
-         *     (`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker.
-         */
-        ClientRunAssignment: {
-            /** Dispatch Token */
-            dispatch_token: string;
-            /** Run Id */
-            run_id: number;
-            /** Server Url */
-            server_url: string;
-        };
         /**
          * ClientToken
          * @description One of the signed-in user's client tokens (Settings > My client). The token itself is
-         *     shown only once, when it is created. `online`: it polled within the last minute.
+         *     shown only once, when it is created. `online`: it leased within the last minute.
          */
         ClientToken: {
             /**
@@ -1157,20 +1081,6 @@ export interface components {
             server_url: string;
             /** Token */
             token: string;
-        };
-        /** CompleteRequest */
-        CompleteRequest: {
-            /** Error */
-            error?: string | null;
-            /** Failed Stage */
-            failed_stage?: string | null;
-            /** Pr Url */
-            pr_url?: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "completed" | "failed" | "cancelled";
         };
         /**
          * ContextEntry
@@ -1220,7 +1130,7 @@ export interface components {
          * DispatchRequest
          * @description `target: "client"` queues the run for the caller's own client: only the ticket's owner may
          *     (403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs
-         *     polls; cancel works as for any queued run.
+         *     leases it; cancel works as for any queued run.
          */
         DispatchRequest: {
             /** From Stage */
@@ -1247,16 +1157,6 @@ export interface components {
             issues: components["schemas"]["ValidationIssue"][];
             /** Message */
             message: string;
-        };
-        /** EventsRequest */
-        EventsRequest: {
-            /** Events */
-            events: (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"] | components["schemas"]["VerdictEvent"] | components["schemas"]["VerdictRepairEvent"])[];
-        };
-        /** EventsResponse */
-        EventsResponse: {
-            /** Cancel */
-            cancel: boolean;
         };
         /**
          * FieldMappingEntry
@@ -1559,7 +1459,7 @@ export interface components {
         };
         /**
          * JobPackage
-         * @description What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
+         * @description What a worker receives for its job. `env`: non-secret stage variables (workspace-relative
          *     paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.
          */
         JobPackage: {
@@ -1569,6 +1469,8 @@ export interface components {
             env: {
                 [key: string]: string;
             };
+            job: components["schemas"]["ManifestJob"];
+            journal: components["schemas"]["ManifestJournal"];
             limits: components["schemas"]["ManifestLimits"];
             /** Loops */
             loops?: components["schemas"]["ManifestLoop"][];
@@ -1579,6 +1481,7 @@ export interface components {
              * @constant
              */
             protocol: 2;
+            report: components["schemas"]["ManifestReport"];
             /** Run Id */
             run_id: number;
             /** Stages */
@@ -1590,6 +1493,93 @@ export interface components {
             /** Warnings */
             warnings?: string[];
             workspace: components["schemas"]["ManifestWorkspace"];
+        };
+        /**
+         * JournalRecord
+         * @description One record of a run's journal; ingest checks each type's `data` and consumes a bad one.
+         */
+        JournalRecord: {
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            };
+            /** Job */
+            job: string;
+            /** Seq */
+            seq: number;
+            /** Stage Id */
+            stage_id?: string | null;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /** Type */
+            type: string;
+        };
+        /** JournalRequest */
+        JournalRequest: {
+            /** Records */
+            records: components["schemas"]["JournalRecord"][];
+        };
+        /**
+         * JournalResponse
+         * @description `ack`: the highest applied seq; `rejected`: this batch's seqs consumed without applying.
+         */
+        JournalResponse: {
+            /** Ack */
+            ack: number;
+            /** Cancel */
+            cancel: boolean;
+            /** Rejected */
+            rejected: number[];
+        };
+        /**
+         * LeaseRequest
+         * @description Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
+         *     the jobs the client's workers still run.
+         */
+        LeaseRequest: {
+            /** Alive */
+            alive?: string[];
+            /**
+             * Take
+             * @default true
+             */
+            take: boolean;
+            /**
+             * Wait S
+             * @default 25
+             */
+            wait_s: number;
+        };
+        /**
+         * LeaseResponse
+         * @description `job: null` = nothing queued within `wait_s`. `protocol`, `worker_sha256`: the server's.
+         */
+        LeaseResponse: {
+            job: components["schemas"]["LeasedJob"] | null;
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: 2;
+            /** Worker Sha256 */
+            worker_sha256: string;
+        };
+        /**
+         * LeasedJob
+         * @description A job handed to a client: its worker runs at `server_url`, `job_token` in AGENTOS_TOKEN.
+         */
+        LeasedJob: {
+            /** Job Id */
+            job_id: string;
+            /** Job Token */
+            job_token: string;
+            /** Run Id */
+            run_id: number;
+            /** Server Url */
+            server_url: string;
         };
         /** LogData */
         LogData: {
@@ -1671,6 +1661,32 @@ export interface components {
             /** Tail */
             tail: string;
         };
+        /**
+         * ManifestJob
+         * @description `id`: `<run_id>-<segment>-<16 hex>`. The worker publishes nothing after `not_after`.
+         */
+        ManifestJob: {
+            /** Budget S */
+            budget_s: number;
+            /** Id */
+            id: string;
+            /**
+             * Not After
+             * Format: date-time
+             */
+            not_after: string;
+            /** Run Id */
+            run_id: number;
+            /** Segment */
+            segment: number;
+            /** Segments */
+            segments: number;
+        };
+        /** ManifestJournal */
+        ManifestJournal: {
+            /** First Seq */
+            first_seq: number;
+        };
         /** ManifestLimits */
         ManifestLimits: {
             /** Max File Bytes */
@@ -1689,6 +1705,16 @@ export interface components {
             max_rounds: number;
             /** Start */
             start: string;
+        };
+        /** ManifestReport */
+        ManifestReport: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "live" | "file";
+            /** Url */
+            url: string | null;
         };
         /**
          * ManifestStage
@@ -2517,34 +2543,6 @@ export interface components {
             bytes: number;
             /** Files */
             files: number;
-        };
-        /** SyncFile */
-        SyncFile: {
-            /** Content */
-            content: string | null;
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "replace" | "block";
-            /** Path */
-            path: string;
-        };
-        /** SyncRequest */
-        SyncRequest: {
-            /** Files */
-            files: components["schemas"]["SyncFile"][];
-            /** Stage Id */
-            stage_id: string;
-        };
-        /** SyncResponse */
-        SyncResponse: {
-            /** Refused */
-            refused: string[];
-            /** Versions */
-            versions: {
-                [key: string]: number;
-            };
         };
         /** TaskProgress */
         TaskProgress: {
@@ -5333,18 +5331,14 @@ export interface operations {
             };
         };
     };
-    claim_api_worker_claim_post: {
+    job_api_worker_job_get: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaimRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -5352,7 +5346,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClaimResponse"];
+                    "application/json": components["schemas"]["JobPackage"];
                 };
             };
             /** @description Client error */
@@ -5375,180 +5369,16 @@ export interface operations {
             };
         };
     };
-    complete_api_worker_complete_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CompleteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    events_api_worker_events_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EventsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventsResponse"];
-                };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    poll_api_worker_poll_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClientPollRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClientPollResponse"];
-                };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    sync_api_worker_sync_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SyncRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncResponse"];
-                };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    sync_back_api_worker_sync_back_put: {
+    job_sync_back_api_worker_jobs__job_id__sync_back_put: {
         parameters: {
             query: {
                 sha256: string;
                 files: number;
             };
             header?: never;
-            path?: never;
+            path: {
+                job_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -5559,6 +5389,90 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    journal_api_worker_journal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JournalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalResponse"];
+                };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    lease_api_worker_lease_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LeaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LeaseResponse"];
+                };
             };
             /** @description Client error */
             "4XX": {

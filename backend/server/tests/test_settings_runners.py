@@ -224,11 +224,11 @@ def test_a_manifest_built_after_a_save_uses_the_new_argv(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
     key = create_ticket().key
-    run = runs.queue(key, "plan")  # dispatched before the save; built at claim
+    run = runs.queue(key, "plan")  # queued before the save; built at launch
     fake, claude = entries(authed)
     fake["argv"] = ["python", "fake_agent.py", "--new"]
     assert put_runtimes(authed, [fake, claude]).status_code == 200
-    manifest: JobPackage = runs.launch_and_claim(run.id).manifest
+    manifest: JobPackage = runs.launch_and_bind(run.id).manifest
     assert manifest.stages[0].argv == ["python", "fake_agent.py", "--new"]
 
 

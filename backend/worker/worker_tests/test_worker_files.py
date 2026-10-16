@@ -115,12 +115,12 @@ def test_only_changed_blocks_are_sent(tmp_path: Path) -> None:
     assert sent(batch) == {"AGENTS.md": ("edited", "block")}
 
 
-def test_rejected_sync_is_resent(tmp_path: Path) -> None:
+def test_a_sent_change_is_not_sent_again(tmp_path: Path) -> None:
     m = manifest()
     state = materialise(tmp_path, m)
     (tmp_path / SKILL_DIR / "TASKS.md").write_bytes(b"one\n")
-    state.collect(tmp_path)  # not accepted: the server rejected it
     assert f"{SKILL_DIR}/TASKS.md" in sent(state.collect(tmp_path))
+    assert sent(state.collect(tmp_path)) == {}
 
 
 def test_unreadable_declared_files_are_warnings(tmp_path: Path) -> None:

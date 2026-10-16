@@ -6,7 +6,7 @@ The exception is `defaults` (the Space's default runtime/model/effort): it is re
 current version whenever a run's stages are resolved, so a change reaches every ticket whose
 stages leave them null.
 
-A ticket's pipeline comes from a workflow (request 23B, `agentos.workflows`). The `pipeline`
+A ticket's pipeline comes from a workflow (`agentos.workflows`). The `pipeline`
 column stays: the startup seed fills it and `legacy_pipeline` hands it to the "Standard" workflow
 seed; a template save copies it over unchanged.
 """
@@ -78,7 +78,7 @@ def legacy_pipeline(conn: Conn) -> Pipeline:
 
 def current_defaults(conn: Conn) -> TemplateDefaults:
     """The Space's agent defaults as the admin set them (the current version's). Runs resolve
-    null stage runtimes/models against these at dispatch and claim (`pipeline.manifest`)."""
+    null stage runtimes/models against these at dispatch (`pipeline.manifest`)."""
     row = conn.execute(
         "SELECT defaults FROM templates WHERE name = ? ORDER BY version DESC LIMIT 1",
         (DEFAULT_NAME,),

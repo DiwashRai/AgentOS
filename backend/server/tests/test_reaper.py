@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import secrets
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
-from agentos.models import ClientPollResponse, JobPackage, Me, TicketDetail
+from agentos.models import LeaseResponse, Me, TicketDetail
 from agentos.runs.reaper import Reaper
 from tests.run_support import CSRF, RunDriver, Worker, bearer
 from tests.settings_support import set_space
@@ -197,25 +196,17 @@ class ClientSide:
         return self.runs.queue(key, target="client").id
 
     def take(self) -> tuple[int, str]:
-        r = self.client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(self.token))
-        run = ClientPollResponse.model_validate(r.json()).run
-        assert run is not None, r.text
-        return run.run_id, run.dispatch_token
+        r = self.client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(self.token))
+        job = LeaseResponse.model_validate(r.json()).job
+        assert job is not None, r.text
+        return job.run_id, job.job_token
 
     def start(self, title: str = "T") -> Worker:
-        """Queue, take and claim: the client run is `running`."""
+        """Queue, take and bind: the client run is `running`."""
         run_id = self.queue(title)
-        taken, dispatch_token = self.take()
+        taken, job_token = self.take()
         assert taken == run_id
-        worker_token = secrets.token_urlsafe(32)
-        r = self.client.post(
-            "/api/worker/claim",
-            json={"worker_token": worker_token},
-            headers=bearer(dispatch_token),
-        )
-        assert r.status_code == 200, r.text
-        manifest = JobPackage.model_validate(r.json()["manifest"])
-        return Worker(self.client, run_id, worker_token, manifest)
+        return self.runs.bind(run_id, job_token)
 
 
 @pytest.fixture
@@ -242,7 +233,7 @@ def test_a_queued_client_run_waits_through_every_rule(
     assert mine.take()[0] == run_id  # the client came online
 
 
-def test_a_taken_client_run_must_be_claimed_in_time(
+def test_a_taken_client_run_must_be_started_in_time(
     mine: ClientSide, runs: RunDriver, reaper: Reaper
 ) -> None:
     run_id = mine.queue()
@@ -300,8 +291,8 @@ def test_a_queued_client_run_is_cancelled_at_once(mine: ClientSide, runs: RunDri
     run_id = mine.queue()
     r = mine.client.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
     assert (r.status_code, r.json()["status"]) == (200, "cancelled")
-    poll = mine.client.post("/api/worker/poll", json={"wait_s": 0}, headers=bearer(mine.token))
-    assert poll.json()["run"] is None
+    lease = mine.client.post("/api/worker/lease", json={"wait_s": 0}, headers=bearer(mine.token))
+    assert lease.json()["job"] is None
 
 
 # ------------------------------------------------------------------ rule 6: workspaces

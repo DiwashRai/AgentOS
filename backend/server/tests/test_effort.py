@@ -122,7 +122,7 @@ def test_a_stage_effort_reaches_the_manifest(
     # the runtime has no effort flag yet: no error, no flag
     worker = runs.start(key, "plan")
     assert first_argv(worker.manifest) == FAKE_ARGV
-    assert worker.complete("failed", failed_stage="plan").status_code == 204
+    assert worker.complete("failed", failed_stage="plan").status_code == 200
     give_fake_an_effort_flag(authed)
     set_defaults(authed, effort="low")  # the stage's own effort wins
     assert first_argv(runs.start(key, "plan").manifest) == [*FAKE_ARGV, "--effort", "high"]

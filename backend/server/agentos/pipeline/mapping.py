@@ -1,4 +1,4 @@
-"""Jira field mappings (request 22B): the matcher that turns a field's values into a target value
+"""Jira field mappings: the matcher that turns a field's values into a target value
 through admin-defined rules, and the per-target checks a save runs.
 
 Pure: the import, the Settings re-apply and the preview pass the rules and values in, so all three

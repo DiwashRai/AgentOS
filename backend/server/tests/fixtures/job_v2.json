@@ -1,5 +1,15 @@
 {
   "protocol": 2,
+  "job": {
+    "id": "42-1-3f9c0a1be47d2c55",
+    "run_id": 42,
+    "segment": 1,
+    "segments": 1,
+    "budget_s": 7200,
+    "not_after": "2026-10-15T16:30:00Z"
+  },
+  "journal": { "first_seq": 1 },
+  "report": { "mode": "live", "url": "http://127.0.0.1:8000" },
   "run_id": 42,
   "ticket": { "key": "AOS-42", "title": "Fix login bug: session expires early" },
   "workspace": {

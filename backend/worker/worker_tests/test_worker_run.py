@@ -1,11 +1,13 @@
 """Whole runs through worker.main(): fake server + temp bare repo as origin + fake agent.
 
-Covers the commit procedure (context files and notes never committed, repo edits committed), the
-pre-push guard, abort (410), server loss, cancel, push rejection, no-repo mode and the early exits.
+Covers binding and the journal (every step a record, in seq order, resent from the ack), the
+commit procedure (context files and notes never committed, repo edits committed), the pre-push
+guard, abort (410), server loss, cancel, push rejection, no-repo mode and the early exits.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import time
@@ -16,7 +18,9 @@ import pytest
 
 import worker
 from worker_tests.worker_support import (
-    DISPATCH_TOKEN,
+    JOB,
+    JOB_TOKEN,
+    JOURNAL,
     KEY,
     SKILL_DIR,
     FakeServer,
@@ -24,10 +28,12 @@ from worker_tests.worker_support import (
     agent_stage,
     error,
     git,
+    invocation,
     make_package,
     python_shell,
     run_worker,
     shell_stage,
+    verdict_file,
 )
 
 BRANCH = f"agent/{KEY}"
@@ -35,15 +41,16 @@ LINT = (
     "import pathlib; pathlib.Path('src').mkdir(exist_ok=True); "
     "pathlib.Path('src/lint.txt').write_text('linted')"
 )
+JOURNAL_V2 = Path(__file__).resolve().parents[2] / "server/tests/fixtures/journal_v2.jsonl"
 
 
 def trip_on(kind: str, answer: tuple[int, Any]) -> Any:
-    """A hook that starts answering `answer` to everything once an event of `kind` is posted."""
+    """A hook that starts answering `answer` to everything once a record of `kind` is posted."""
     tripped = False
 
     def hook(path: str, body: Any) -> tuple[int, Any] | None:
         nonlocal tripped
-        if path == "/api/worker/events" and any(e["type"] == kind for e in body["events"]):
+        if path == JOURNAL and any(r["type"] == kind for r in body["records"]):
             tripped = True
         return answer if tripped else None
 
@@ -56,10 +63,94 @@ def stage_events(server: FakeServer, kind: str) -> list[dict[str, Any]]:
 
 def synced(server: FakeServer, stage_id: str) -> dict[str, Any]:
     files: dict[str, Any] = {}
-    for body in server.bodies("/api/worker/sync"):
-        if body["stage_id"] == stage_id:
-            files.update({f["path"]: (f["content"], f["mode"]) for f in body["files"]})
+    for record in server.records("sync"):
+        if record["stage_id"] == stage_id:
+            files.update({f["path"]: (f["content"], f["mode"]) for f in record["data"]["files"]})
     return files
+
+
+def test_a_live_run_journals_every_step_in_seq_order(
+    server: FakeServer, origin: Origin, tmp_path: Path
+) -> None:
+    implement = agent_stage(
+        "implement", "edit", f"write={SKILL_DIR}/notes.md:x", "write=.agentos/sync_back/r.md:ok"
+    )
+    review = agent_stage("review", verdict_file("approved", ""))
+    repair = [invocation(verdict_file("pass", ""))]
+    review.update(check=True, repairs=repair, verdict_from="file", verdict_repairs=1)
+    server.manifest = make_package([implement, review], repo_url=origin.url)
+    server.manifest["loops"] = [{"start": "implement", "end": "review", "max_rounds": 1}]
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    # Bound first, then one record per step, numbered from the package's first_seq with no gap.
+    records = server.records()
+    assert [r["seq"] for r in records] == list(range(1, len(records) + 1))
+    assert {r["job"] for r in records} == {server.manifest["job"]["id"]}
+    steps = [r["type"] for r in records if r["type"] not in ("log", "warning")]
+    assert steps == [
+        "started",
+        *("stage_started", "sync", "pushed", "stage_finished"),
+        *("stage_started", "verdict_repair", "verdict", "sync", "stage_finished"),
+        *("sync_back", "result"),
+    ]
+    sha256 = hashlib.sha256(Path(worker.__file__).read_bytes()).hexdigest()
+    assert records[0]["data"] == {"protocol": 2, "worker_sha256": sha256}
+    [pushed] = server.records("pushed")
+    head = git(origin.bare, "rev-parse", BRANCH).strip()
+    assert pushed["data"] == {"branch": BRANCH, "head": head, "commits": 1, "method": "git"}
+    [(query, data)] = server.uploads()
+    [sync_back] = server.records("sync_back")
+    assert sync_back["data"] == {"sha256": query["sha256"], "bytes": len(data), "files": 1}
+    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
+
+    # Every request carries the job token and one instance id; the package is fetched first.
+    assert server.requests[0].path == JOB
+    assert {r.auth for r in server.requests} == {f"Bearer {JOB_TOKEN}"}
+    assert len({r.instance for r in server.requests}) == 1
+    assert server.requests[0].instance
+
+    # Each record type has the shared fixture's keys.
+    shapes = {r["type"]: r for r in map(json.loads, JOURNAL_V2.read_text("utf-8").splitlines())}
+    assert {r["type"] for r in records} == set(shapes)
+    for record in records:
+        shape = shapes[record["type"]]
+        assert (list(record), set(record["data"])) == (list(shape), set(shape["data"]))
+
+
+def test_a_short_ack_or_a_lost_answer_resends_from_ack_plus_1(
+    server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker, "FLUSH_INTERVAL_S", 0.3)  # a few records per batch
+    tripped: list[list[int]] = []
+
+    def hook(path: str, body: Any) -> tuple[int, Any] | None:
+        records = body["records"] if path == JOURNAL else []
+        if len(tripped) == 2 or not records or records[0]["type"] == "started":
+            return None
+        if not tripped and len(records) < 2:
+            return None
+
+        tripped.append([r["seq"] for r in records])
+        if len(tripped) == 1:  # the server applies only the first record
+            return 200, server.ingest(records[:1])
+        server.ingest(records)  # applied, but the answer is lost
+        return error(503, "internal_error")
+
+    server.hook = hook
+    server.manifest = make_package([agent_stage("plan", "print=a", "print=b", "sleep=0.5")])
+    assert run_worker(server, tmp_path / "ws") == 0
+
+    short, lost = tripped
+    posts = [r.body["records"] for r in server.requests if r.path == JOURNAL]
+    batches = [[record["seq"] for record in post] for post in posts if post]
+    at = batches.index(short)
+    assert lost[0] == short[0] + 1
+    assert batches[at + 1 : at + 3] == [lost, lost], "resent from the ack, then retried as is"
+    assert all(b[0] == lost[-1] + 1 for b in batches[at + 3 : at + 4])
+    seqs = [r["seq"] for r in server.records()]
+    assert seqs == list(range(1, len(seqs) + 1))
+    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
+    assert len({r.instance for r in server.requests if r.path == JOURNAL}) == 1
 
 
 def test_repo_run_commits_code_and_never_context(
@@ -104,7 +195,7 @@ def test_repo_run_commits_code_and_never_context(
     assert len(warnings) == 2
     assert all(w.startswith("not kept") and notes in w for w in warnings)
 
-    # Events: stage lifecycle, seqs, clone output as run-level system logs.
+    # Events: stage lifecycle, clone output as run-level system logs.
     started = [(e["stage_id"], e["data"]) for e in stage_events(server, "stage_started")]
     finished = [(e["stage_id"], e["data"]) for e in stage_events(server, "stage_finished")]
     assert started == [("implement", {"round": 1}), ("lint", {"round": 1})]
@@ -112,20 +203,10 @@ def test_repo_run_commits_code_and_never_context(
         ("implement", {"status": "succeeded", "exit_code": 0, "reason": None, "round": 1}),
         ("lint", {"status": "succeeded", "exit_code": 0, "reason": None, "round": 1}),
     ]
-    events = server.events()
-    assert [e["seq"] for e in events] == list(range(1, len(events) + 1))
     assert any(
         e["type"] == "log" and e["stage_id"] is None and e["data"]["stream"] == "system"
-        for e in events
+        for e in server.events()
     )
-
-    # Tokens: the dispatch token claims; everything else uses the worker's own token.
-    claim, *rest = server.requests
-    assert claim.path == "/api/worker/claim"
-    assert claim.auth == f"Bearer {DISPATCH_TOKEN}"
-    worker_token = claim.body["worker_token"]
-    assert len(worker_token) >= 32
-    assert {r.auth for r in rest} == {f"Bearer {worker_token}"}
 
     # Stage env.
     env = json.loads(next(t for t in server.logs("stdout") if t.startswith("{")))
@@ -223,10 +304,11 @@ def test_failed_stage_still_syncs_commits_and_pushes(
     }
 
 
-def test_run_gone_after_claim_means_no_commit_and_no_push(
-    server: FakeServer, origin: Origin, tmp_path: Path
+@pytest.mark.parametrize(("status", "code"), [(410, "run_gone"), (409, "already_claimed")])
+def test_run_gone_after_binding_means_no_commit_and_no_push(
+    server: FakeServer, origin: Origin, tmp_path: Path, status: int, code: str
 ) -> None:
-    server.hook = trip_on("stage_started", error(410, "run_gone"))
+    server.hook = trip_on("stage_started", error(status, code))
     server.manifest = make_package(
         [agent_stage("implement", "edit", "sleep=30")], repo_url=origin.url
     )
@@ -234,9 +316,19 @@ def test_run_gone_after_claim_means_no_commit_and_no_push(
     assert run_worker(server, tmp_path / "ws") == 1
     assert time.monotonic() - started < 15, "the stage tree was killed"
     assert server.complete() is None
-    assert server.bodies("/api/worker/sync") == []
+    assert server.records("sync") == []
     assert not origin.has_branch(BRANCH)
     assert git(tmp_path / "ws", "log", "--format=%s", "-1").strip() == "init", "nothing committed"
+
+
+def test_nothing_is_published_after_the_jobs_not_after(
+    server: FakeServer, origin: Origin, tmp_path: Path
+) -> None:
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest["job"]["not_after"] = "2000-01-01T00:00:00Z"
+    assert run_worker(server, tmp_path / "ws") == 1
+    assert not origin.has_branch(BRANCH)
+    assert server.complete() is None
 
 
 def test_unreachable_server_saves_the_work_and_exits_1(
@@ -258,8 +350,8 @@ def test_cancel_kills_the_stage_but_still_syncs_and_pushes(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
     def hook(path: str, body: Any) -> None:
-        if path == "/api/worker/events" and any(
-            e["type"] == "log" and e["data"]["text"] == "started" for e in body["events"]
+        if path == JOURNAL and any(
+            r["type"] == "log" and r["data"]["text"] == "started" for r in body["records"]
         ):
             server.cancel = True
 
@@ -308,6 +400,20 @@ def test_no_repo_mode(server: FakeServer, tmp_path: Path) -> None:
     assert not workdir.exists()
 
 
+def test_a_rejected_result_is_a_failure_to_complete(server: FakeServer, tmp_path: Path) -> None:
+    """The run hasn't ended, so the worker must not act as if it had: exit 1, workdir kept."""
+    server.reject = {"result"}
+    server.manifest = make_package([agent_stage("plan", "edit")])
+    workdir = tmp_path / "ws"
+
+    assert run_worker(server, workdir) == 1
+
+    assert server.complete() is None
+    assert workdir.exists()
+    last = [r for r in server.requests if r.path == JOURNAL][-1]
+    assert last.body["records"][-1]["type"] == "result"  # nothing reported after it
+
+
 def test_deleted_files_go_as_null_and_rewritten_notes_warn_once(
     server: FakeServer, tmp_path: Path
 ) -> None:
@@ -328,31 +434,26 @@ def test_deleted_files_go_as_null_and_rewritten_notes_warn_once(
     assert len([w for w in server.warnings() if log in w and "rewritten" in w]) == 1
 
 
-def test_refused_paths_become_a_warning(server: FakeServer, tmp_path: Path) -> None:
-    def hook(path: str, body: Any) -> tuple[int, Any] | None:
-        if path == "/api/worker/sync":
-            return 200, {"versions": {}, "refused": [f["path"] for f in body["files"]]}
-        return None
-
-    server.hook = hook
-    server.manifest = make_package([agent_stage("plan", "edit")])
-    assert run_worker(server, tmp_path / "ws") == 0
-    assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
-    [refused] = [w for w in server.warnings() if w.startswith("sync refused")]
-    assert f"{SKILL_DIR}/TASKS.md" in refused
-
-
-@pytest.mark.parametrize("status", [409, 410])
-def test_claim_conflict_or_gone_exits_0(server: FakeServer, tmp_path: Path, status: int) -> None:
-    server.hook = lambda path, body: error(status, "already_claimed")
-    assert run_worker(server, tmp_path / "ws") == 0
-    assert [r.path for r in server.requests] == ["/api/worker/claim"]
+@pytest.mark.parametrize(
+    ("path", "status", "exit_code"),
+    [
+        (JOB, 409, 0),
+        (JOURNAL, 409, 0),
+        (JOB, 401, 1),
+        (JOURNAL, 401, 1),
+        (JOB, 410, 1),
+        (JOURNAL, 410, 1),
+    ],
+)
+def test_binding_comes_first_and_a_refusal_leaves_the_workdir_untouched(
+    server: FakeServer, tmp_path: Path, path: str, status: int, exit_code: int
+) -> None:
+    server.hook = lambda p, body: error(status, "already_claimed") if p == path else None
+    server.manifest = make_package([agent_stage("plan", "print=x")])
+    assert run_worker(server, tmp_path / "ws") == exit_code
+    calls = [r.path for r in server.requests]
+    assert calls == [JOB, JOURNAL][: calls.index(path) + 1]
     assert not (tmp_path / "ws").exists()
-
-
-def test_claim_with_a_bad_dispatch_token_exits_1(server: FakeServer, tmp_path: Path) -> None:
-    server.hook = lambda path, body: error(401, "unauthorized")
-    assert run_worker(server, tmp_path / "ws") == 1
 
 
 def test_non_empty_workdir_fails_the_run(server: FakeServer, tmp_path: Path) -> None:
@@ -452,16 +553,13 @@ def test_a_shipped_agent_is_written_and_never_committed(
 
 
 @pytest.mark.parametrize("protocol", [1, 3, None])
-def test_another_protocol_fails_the_run_without_touching_git(
+def test_another_protocol_exits_1_before_binding(
     server: FakeServer, origin: Origin, tmp_path: Path, protocol: int | None
 ) -> None:
     server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     server.manifest["protocol"] = protocol
-    assert run_worker(server, tmp_path / "ws") == 0
-    done = server.complete()
-    assert done is not None
-    assert done["status"] == "failed"
-    assert "protocol" in done["error"]
+    assert run_worker(server, tmp_path / "ws") == 1
+    assert [r.path for r in server.requests] == [JOB]
     assert not (tmp_path / "ws").exists(), "no workspace, no clone"
     assert not origin.has_branch(BRANCH)
 
@@ -486,10 +584,10 @@ def test_a_bad_workspace_fails_setup_before_the_clone(
 def test_token_from_env_never_reaches_stages(
     server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("AGENTOS_TOKEN", DISPATCH_TOKEN)
+    monkeypatch.setenv("AGENTOS_TOKEN", JOB_TOKEN)
     server.manifest = make_package([agent_stage("plan", "env")])
     assert worker.main(["--server", server.url, "--workdir", str(tmp_path / "ws")]) == 0
-    assert server.requests[0].auth == f"Bearer {DISPATCH_TOKEN}"
+    assert server.requests[0].auth == f"Bearer {JOB_TOKEN}"
     env = json.loads(next(t for t in server.logs("stdout") if t.startswith("{")))
     assert "AGENTOS_TOKEN" not in env
 

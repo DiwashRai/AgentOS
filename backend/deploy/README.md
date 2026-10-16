@@ -155,11 +155,13 @@ PRs opened with `GITHUB_TOKEN` don't trigger other workflows (e.g. CI). When tha
 GitHub App token or a fine-grained token (one repo; contents + pull requests) from a repo secret
 instead. Registering the runner with `--ephemeral` gives every run a fresh runner.
 
-No `actions/checkout`: the worker clones the ticket's repo itself. Dispatch inputs show in the Actions UI to anyone who can read the repo. The dispatch
-token is single-use: the worker's claim binds its own token. The job masks the token before
+No `actions/checkout`: the worker clones the ticket's repo itself. Dispatch inputs show in the Actions UI to anyone who can read the repo. The
+token input is the run's job token, and the first worker to report with it binds the job to
+itself. The job masks the token before
 anything else and never interpolates inputs into its scripts. Its `timeout-minutes: 720` is
 only a backstop. The real limit is the run's time budget (the sum of its stages' `timeout_s`
-plus 15 min). Past it, the reaper fails the run and the worker stops on its next call.
+plus 15 min). Past it, the reaper fails the run and the worker stops on its next call (and publishes nothing past the job's
+`not_after`).
 
 ### Publication on Actions
 
@@ -324,8 +326,8 @@ copy can fail runs when the worker contract changes.
 
 **2. Create a token** in **Settings › My client** (writers): name the machine. The token is shown
 once, with the lines to paste; only its digest is stored, so a lost token is revoked and
-replaced. The list shows each token's last seen time and whether it's online (polled within the
-last minute). Revoking makes the client's next poll fail and the client exit.
+replaced. The list shows each token's last seen time and whether it's online (leased within the
+last minute). Revoking makes the client's next lease fail and the client exit.
 
 **3. Start the client** with the token in `AGENTOS_CLIENT_TOKEN`. It is never on the command line
 (`--client` refuses `--token`), and run workers never see it.
@@ -353,7 +355,7 @@ Options (client mode only):
 - `--env-file PATH`: `KEY=value` lines added to every run worker's environment.
 
 **Credentials and the env file.** Each run worker gets the client's environment minus every
-`AGENTOS_*` variable, then the env file, then its run's own dispatch token. So your usual agent
+`AGENTOS_*` variable, then the env file, then its run's own job token. So your usual agent
 login and git setup apply as they are; put anything else in the env file, e.g. `GH_TOKEN`, an
 agent API key, git settings via `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0`,
 or `AGENTOS_ECHO=0` / `AGENTOS_PR_LOOKUP=0` (`AGENTOS_*` reach run workers only this way). The
@@ -362,9 +364,9 @@ and a bare `KEY` to unset a variable. **Values are literal**: `${VAR}` is not ex
 outside that subset stops the client from starting. The file is **read once at startup**:
 restart the client after editing it.
 
-**What it does.** It long-polls the server (each poll waits up to 25 s) and, for each run,
-starts a detached worker in its own process group (on Windows, without a console), then polls
-again while it has a free slot. With every slot busy it sends a heartbeat every 30 s that takes
+**What it does.** It leases jobs from the server (each lease waits up to 25 s) and, for each one,
+starts a detached worker in its own process group (on Windows, without a console), then leases
+again while it has a free slot; every lease lists its running jobs as alive. With every slot busy it sends a heartbeat every 30 s that takes
 no run, so it still shows online. The run's progress shows live in the app, as for any worker,
 and the worker also logs to `<workdir-root>/runs/<run id>.log`. While the server is unreachable
 or answers 5xx (or 408/425/429), the client backs off (up to 60 s) and keeps trying.
@@ -376,7 +378,7 @@ My queue and Compact rows always send runs to the server. While a run waits for 
 the ticket's context files, owner, title, description and type can't change (cancel the run
 first), so your machine runs what you dispatched. A run waiting for an offline client
 stays queued ("waiting for <name>'s client") and never times out; cancel it, or start the
-client. Once the client takes it, the usual claim timeout, heartbeat, budget and cancel rules
+client. Once the client takes it, the usual claim timeout (until its worker binds the job), heartbeat, budget and cancel rules
 apply.
 
 **Exit codes:**

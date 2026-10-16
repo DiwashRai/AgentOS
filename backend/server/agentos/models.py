@@ -225,7 +225,7 @@ CLIENT_NAME_MAX = 80
 
 class ClientToken(ApiModel):
     """One of the signed-in user's client tokens (Settings > My client). The token itself is
-    shown only once, when it is created. `online`: it polled within the last minute."""
+    shown only once, when it is created. `online`: it leased within the last minute."""
 
     id: int
     name: str
@@ -466,7 +466,7 @@ class RunSummary(ApiModel):
     # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).
     log_delivery: LogDelivery
     target: DispatchTarget
-    # Client runs: whether the creator has a client token that polled within the last minute.
+    # Client runs: whether the creator has a client token that leased within the last minute.
     # Null for server runs.
     client_online: bool | None
 
@@ -1311,11 +1311,34 @@ class ManifestLimits(ApiModel):
     max_line_bytes: int
 
 
+class ManifestJob(ApiModel):
+    """`id`: `<run_id>-<segment>-<16 hex>`. The worker publishes nothing after `not_after`."""
+
+    id: str
+    run_id: int
+    segment: int
+    segments: int
+    budget_s: int
+    not_after: AwareDatetime
+
+
+class ManifestJournal(ApiModel):
+    first_seq: int  # the seq of the job's first journal record
+
+
+class ManifestReport(ApiModel):
+    mode: Literal["live", "file"]
+    url: str | None  # live: the server's base URL
+
+
 class JobPackage(ApiModel):
-    """What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
+    """What a worker receives for its job. `env`: non-secret stage variables (workspace-relative
     paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself."""
 
     protocol: Literal[2]
+    job: ManifestJob
+    journal: ManifestJournal
+    report: ManifestReport
     run_id: int
     ticket: ManifestTicket
     workspace: ManifestWorkspace
@@ -1341,7 +1364,7 @@ class JobPackage(ApiModel):
 class DispatchRequest(ApiModel):
     """`target: "client"` queues the run for the caller's own client: only the ticket's owner may
     (403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs
-    polls; cancel works as for any queued run."""
+    leases it; cancel works as for any queued run."""
 
     from_stage: str | None = None
     target: DispatchTarget = "server"
@@ -1494,39 +1517,15 @@ RunEvent = Annotated[
 # ------------------------------------------------------------------ worker API
 
 
-class ClaimRequest(ApiModel):
-    worker_token: str = Field(min_length=32, max_length=256)
-
-
-class ClaimResponse(ApiModel):
-    manifest: JobPackage
-
-
-class EventsRequest(ApiModel):
-    events: list[RunEvent] = Field(max_length=500)
-
-
-class EventsResponse(ApiModel):
-    cancel: bool
-
-
 class SyncFile(ApiModel):
     path: str
     content: str | None
     mode: Mode
 
 
-class SyncRequest(ApiModel):
-    stage_id: str
-    files: list[SyncFile]
+class ResultData(ApiModel):
+    """A `result` record's data: how the job ended."""
 
-
-class SyncResponse(ApiModel):
-    versions: dict[str, int]
-    refused: list[str]  # paths that aren't write context or notes of the run's package
-
-
-class CompleteRequest(ApiModel):
     status: WorkerFinalStatus
     failed_stage: str | None = None
     error: str | None = None
@@ -1535,28 +1534,76 @@ class CompleteRequest(ApiModel):
     pr_url: str | None = Field(default=None, max_length=500)
 
 
-CLIENT_POLL_MAX_WAIT_S = 25
+class JournalRecord(ApiModel):
+    """One record of a run's journal; ingest checks each type's `data` and consumes a bad one."""
+
+    seq: int = Field(ge=1)
+    ts: AwareDatetime
+    job: str
+    type: str
+    stage_id: str | None = None
+    data: dict[str, Any]
 
 
-class ClientPollRequest(ApiModel):
-    """POST /api/worker/poll (bearer: a client token). Waits up to `wait_s` for a run. `take:
-    false` is a busy client's heartbeat: it records last seen (the client stays online) and
-    answers `run: null` at once, never handing out a run."""
+class JournalRequest(ApiModel):
+    records: list[JournalRecord] = Field(max_length=500)
 
-    wait_s: int = Field(default=CLIENT_POLL_MAX_WAIT_S, ge=0, le=CLIENT_POLL_MAX_WAIT_S)
+
+class JournalResponse(ApiModel):
+    """`ack`: the highest applied seq; `rejected`: this batch's seqs consumed without applying."""
+
+    ack: int
+    cancel: bool
+    rejected: list[int]
+
+
+class StartedData(ApiModel):
+    """The first record of a job: it binds the posting instance (`X-AgentOS-Instance`)."""
+
+    protocol: Literal[2]
+    worker_sha256: str
+
+
+class SyncData(ApiModel):
+    files: list[SyncFile]
+
+
+class SyncBackData(ApiModel):
+    """Describes the zip uploaded to `PUT /api/worker/jobs/{id}/sync-back` before it."""
+
+    sha256: str
+    bytes: int = Field(ge=1)
+    files: int = Field(ge=1)
+
+
+class PushedData(ApiModel):
+    branch: str
+    head: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    commits: int = Field(ge=0)
+    method: Literal["git", "api"]
+
+
+class LeaseRequest(ApiModel):
+    """Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
+    the jobs the client's workers still run."""
+
+    wait_s: int = Field(default=25, ge=0, le=25)
     take: bool = True
+    alive: list[str] = Field(default_factory=list, max_length=100)
 
 
-class ClientRunAssignment(ApiModel):
-    """A run handed to a client: its worker claims it at `server_url` with `dispatch_token`
-    (`worker.py --server <server_url>`, the token in AGENTOS_TOKEN), as any launched worker."""
+class LeasedJob(ApiModel):
+    """A job handed to a client: its worker runs at `server_url`, `job_token` in AGENTOS_TOKEN."""
 
+    job_id: str
     run_id: int
     server_url: str
-    dispatch_token: str
+    job_token: str
 
 
-class ClientPollResponse(ApiModel):
-    """`run: null` = nothing queued for the client's user within `wait_s`."""
+class LeaseResponse(ApiModel):
+    """`job: null` = nothing queued within `wait_s`. `protocol`, `worker_sha256`: the server's."""
 
-    run: ClientRunAssignment | None
+    job: LeasedJob | None
+    protocol: Literal[2]
+    worker_sha256: str

@@ -1,9 +1,8 @@
 """Mailbox runs in the db: the reaper's queries, `end()` and `replay()` (`design/mailbox.md` §3).
 
-Replay feeds a run's recorded worker calls (the outbox) through the unchanged `worker_api.service`
-functions, so validation, the run state machine and the board work as over HTTP.
-It authenticates like a worker: a fresh worker token is minted and bound to the run (guarded on
-`running` + `launcher = 'mailbox'`) and lives only in memory for that replay.
+Replay turns a run's recorded worker calls (the outbox) into journal records and applies them
+through `worker_api.service.ingest`, so validation, the run state machine and the board work as
+over HTTP. The outbox's seqs count events only, so replay numbers the records itself.
 
 No launcher or store here (plugins stay out of services): the reaper fetches and deletes files.
 """
@@ -12,20 +11,18 @@ from __future__ import annotations
 
 import json
 import logging
-import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from agentos.clock import from_db_opt, utcnow
 from agentos.db import Database
-from agentos.errors import ApiError
-from agentos.models import CompleteRequest, EventsRequest, SyncRequest
-from agentos.runs.service import finish, token_hash
+from agentos.models import JournalRecord
+from agentos.runs.service import finish
 from agentos.worker_api import service as worker_api
 
 log = logging.getLogger(__name__)
@@ -39,6 +36,7 @@ NO_COMPLETE = "the worker stopped without completing (job killed or crashed); se
 _EVENTS = "/api/worker/events"
 _SYNC = "/api/worker/sync"
 _COMPLETE = "/api/worker/complete"
+_DICTS: TypeAdapter[list[dict[str, Any]]] = TypeAdapter(list[dict[str, Any]])
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +44,7 @@ class MailboxRun:
     """A running mailbox run, as the mailbox reaper sees it."""
 
     id: int
-    dispatch_token_hash: str
+    job_hex: str  # the random part of its job id, which names its folder
     launch_ref: str | None
     started_at: datetime | None
     time_budget_s: int
@@ -60,15 +58,15 @@ def running_runs(db: Database) -> list[MailboxRun]:
     """Every `running` mailbox run, oldest first."""
     with db.read() as conn:
         rows = conn.execute(
-            "SELECT id, dispatch_token_hash, launch_ref, started_at, time_budget_s, "
-            "cancel_requested_at FROM runs WHERE launcher = ? AND status = 'running' "
-            "AND dispatch_token_hash IS NOT NULL ORDER BY id",
+            "SELECT r.id, substr(j.id, -16) AS job_hex, r.launch_ref, r.started_at, "
+            "r.time_budget_s, r.cancel_requested_at FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "WHERE r.launcher = ? AND r.status = 'running' ORDER BY r.id",
             (LAUNCHER,),
         ).fetchall()
     return [
         MailboxRun(
             id=r["id"],
-            dispatch_token_hash=r["dispatch_token_hash"],
+            job_hex=r["job_hex"],
             launch_ref=r["launch_ref"],
             started_at=from_db_opt(r["started_at"]),
             time_budget_s=r["time_budget_s"],
@@ -78,14 +76,12 @@ def running_runs(db: Database) -> list[MailboxRun]:
     ]
 
 
-def active_runs(db: Database) -> dict[int, str | None]:
-    """Every dispatched or running run (any launcher: run ids are per server) → its dispatch
-    token hash. What the sweep must keep."""
+def active_runs(db: Database) -> set[int]:
+    """The ids of every dispatched or running run (any launcher: run ids are per server): the
+    sweep keeps their folders."""
     with db.read() as conn:
-        rows = conn.execute(
-            "SELECT id, dispatch_token_hash FROM runs WHERE status IN ('dispatched', 'running')"
-        ).fetchall()
-    return {int(r["id"]): r["dispatch_token_hash"] for r in rows}
+        rows = conn.execute("SELECT id FROM runs WHERE status IN ('dispatched', 'running')")
+        return {int(r["id"]) for r in rows.fetchall()}
 
 
 def is_running(db: Database, run_id: int) -> bool:
@@ -118,17 +114,26 @@ def end(
 def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
     """Replay the outbox at `outbox` into run `run_id` (design §3.4).
 
-    - `gone`: the run was terminal already (before or during the replay); nothing more to do.
+    - `gone`: the run isn't a running mailbox run (before or during the replay); nothing more
+      to do.
     - `completed`: the recorded `complete` was applied.
     - `ended`: the recording had no `complete` (or isn't this run's): the run was ended here,
       `cancelled` if a cancel was requested, else `failed`.
 
-    Idempotent: events are stored on `(run_id, seq)`, stage updates only move pending/running
-    rows, an unchanged sync appends nothing, and a repeated `complete` is a no-op.
+    Each line is one ingest transaction, its records numbered in line order from the job's
+    `first_seq`, so a replay after a crash skips what was applied. Rejected records and refused
+    sync paths are logged by ingest.
     """
-    token = _rebind(db, run_id)
-    if token is None:
+    with db.read() as conn:
+        job = conn.execute(
+            "SELECT j.* FROM jobs j JOIN runs r ON r.id = j.run_id "
+            "WHERE r.id = ? AND r.status = 'running' AND r.launcher = ?",
+            (run_id, LAUNCHER),
+        ).fetchone()
+    if job is None:
         return "gone"
+    seq: int = job["first_seq"]
+
     with outbox.open("rb") as f:
         lines = _lines(f, run_id)
         header = _json(next(lines, None))
@@ -140,26 +145,29 @@ def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
             end(db, run_id, "failed", f"the results belong to run {owner!r}")
             return "ended"
         for number, line in enumerate(lines, start=2):
-            outcome = _apply(db, token, run_id, number, _json(line))
-            if outcome is not None:
-                return outcome
+            records = _records(run_id, number, job["id"], seq, _json(line))
+            if not records:
+                continue
+            seq += len(records)
+
+            with db.tx() as conn:
+                run = conn.execute(
+                    "SELECT * FROM runs WHERE id = ? AND status = 'running' AND launcher = ?",
+                    (run_id, LAUNCHER),
+                ).fetchone()
+                if run is None:
+                    return "gone"
+                rejected = worker_api.ingest(conn, run, job, records, utcnow()).rejected
+
+            last = records[-1]
+            if last.type == "result" and last.seq > run["journal_seq"] and last.seq not in rejected:
+                return "completed"
+
     if _cancel_requested(db, run_id):
         ended = end(db, run_id, "cancelled", None)
     else:
         ended = end(db, run_id, "failed", NO_COMPLETE)
     return "ended" if ended else "gone"
-
-
-def _rebind(db: Database, run_id: int) -> str | None:
-    """Bind a fresh worker token to the running mailbox run. None if it isn't one (any more)."""
-    token = secrets.token_urlsafe(32)
-    with db.tx() as conn:
-        cursor = conn.execute(
-            "UPDATE runs SET worker_token_hash = ? "
-            "WHERE id = ? AND status = 'running' AND launcher = ?",
-            (token_hash(token), run_id, LAUNCHER),
-        )
-    return token if cursor.rowcount else None
 
 
 def _cancel_requested(db: Database, run_id: int) -> bool:
@@ -170,28 +178,30 @@ def _cancel_requested(db: Database, run_id: int) -> bool:
     return row is not None and row["cancel_requested_at"] is not None
 
 
-def _apply(
-    db: Database, token: str, run_id: int, number: int, entry: object
-) -> ReplayResult | None:
-    """One recorded call, as its route would make it. Mirrors the worker: a rejected events
-    batch or sync is logged and skipped; 401/410 means the run went terminal (→ `gone`); a
-    `complete` ends the replay (→ `completed`). None: carry on."""
+def _records(run_id: int, number: int, job_id: str, seq: int, entry: object) -> list[JournalRecord]:
+    """One recorded call as the job's journal records, numbered from `seq`: an events batch → its
+    display records, a sync → `sync`, a complete → `result`. A line that isn't a known, well-formed
+    call is logged and gives none (ingest checks each record's data)."""
     if not isinstance(entry, dict):
         log.warning("mailbox: run %s: outbox line %s is not a call; skipped", run_id, number)
-        return None
-    path, body = entry.get("path"), entry.get("body")
+        return []
+
+    path = entry.get("path")
+    head: dict[str, Any] = {"seq": seq, "ts": utcnow(), "job": job_id}
     try:
+        [body] = _DICTS.validate_python([entry.get("body")])
         if path == _EVENTS:
-            events = EventsRequest.model_validate(body)
-            worker_api.post_events(db, token, events.events)
+            events = _DICTS.validate_python(body.get("events"))
+            raw = [{**e, "seq": seq + i, "job": job_id} for i, e in enumerate(events)]
         elif path == _SYNC:
-            req = SyncRequest.model_validate(body)
-            worker_api.sync(db, token, req.stage_id, req.files)
+            data = {"files": body.get("files")}
+            raw = [head | {"type": "sync", "stage_id": body.get("stage_id"), "data": data}]
         elif path == _COMPLETE:
-            worker_api.complete(db, token, CompleteRequest.model_validate(body))
-            return "completed"
+            raw = [head | {"type": "result", "data": body}]
         else:
             log.warning("mailbox: run %s: outbox line %s: unknown path; skipped", run_id, number)
+            return []
+        return [JournalRecord.model_validate(r) for r in raw]
     except ValidationError as exc:
         log.warning(
             "mailbox: run %s: outbox line %s (%s) is invalid; skipped: %s",
@@ -200,18 +210,7 @@ def _apply(
             path,
             exc.errors(include_url=False, include_input=False),
         )
-    except ApiError as exc:
-        if exc.status in (401, 410):
-            return "gone"
-        log.warning(
-            "mailbox: run %s: outbox line %s (%s) rejected (%s); skipped: %s",
-            run_id,
-            number,
-            path,
-            exc.code,
-            exc.message,
-        )
-    return None
+        return []
 
 
 def _lines(f: BinaryIO, run_id: int) -> Iterator[bytes | None]:

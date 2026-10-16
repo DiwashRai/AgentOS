@@ -436,7 +436,7 @@ def test_dispatch_and_claim_a_loop(ticket: TicketDetail, runs: RunDriver) -> Non
     assert run.stage_ids == ["implement", "review"]
     # 3 rounds of implement + 3 rounds x (1 + 2 repairs) of review, at 3600 s each
     assert runs.db_run(run.id)["time_budget_s"] == (3 + 9) * 3600
-    worker = runs.launch_and_claim(run.id)
+    worker = runs.launch_and_bind(run.id)
     m = worker.manifest
     assert [lp.model_dump() for lp in m.loops] == [
         {"start": "implement", "end": "review", "max_rounds": 3}
@@ -455,7 +455,7 @@ def test_a_run_from_inside_the_block_plans_round_one_from_there(
     run = runs.queue(ticket.key, "review")
     assert (run.from_stage, run.stage_ids) == ("review", ["implement", "review"])
     assert [(s.stage_id, s.idx, s.round) for s in runs.get(run.id).stage_runs] == [("review", 0, 1)]
-    assert runs.launch_and_claim(run.id).manifest.start_stage == "review"
+    assert runs.launch_and_bind(run.id).manifest.start_stage == "review"
 
 
 def test_a_block_without_an_enabled_check_runs_once_with_a_warning(
@@ -541,7 +541,7 @@ def test_each_round_gets_its_own_stage_runs_in_execution_order(
     ]
     events = runs.client.get(f"/api/runs/{w.run_id}/events").json()
     assert events[3] == {
-        "seq": 4,
+        "seq": 5,  # after the `started` record's
         "ts": events[3]["ts"],
         "stage_id": "review",
         "type": "verdict",
@@ -579,7 +579,7 @@ def test_a_lost_loop_blocks_the_ticket_at_its_failing_check(
         batch += [finished(w, "review", n, "succeeded" if n < 3 else "failed")]
     assert w.events(*batch).status_code == 200
     error = "Checks still failing after 3 rounds"
-    assert w.complete("failed", failed_stage="review", error=error).status_code == 204
+    assert w.complete("failed", failed_stage="review", error=error).status_code == 200
     run = runs.get(w.run_id)
     assert (run.status, run.error) == ("failed", error)
     assert [(s.round, s.status) for s in run.stage_runs if s.stage_id == "review"] == [
@@ -594,7 +594,7 @@ def test_a_lost_loop_blocks_the_ticket_at_its_failing_check(
     assert (review.state, review.round, review.max_rounds) == ("failed", 3, 3)
 
 
-def test_the_claim_fails_a_run_whose_pipeline_changed(
+def test_dispatch_fails_a_run_whose_pipeline_changed(
     ctx: AppContext, ticket: TicketDetail, runs: RunDriver
 ) -> None:
     run = runs.queue(ticket.key, "review")
@@ -606,8 +606,9 @@ def test_the_claim_fails_a_run_whose_pipeline_changed(
             "UPDATE tickets SET pipeline = ? WHERE key = ?", (json.dumps(pipeline), ticket.key)
         )
     assert run.id in runs.tick()
-    r = runs.claim(run.id)
-    assert (r.status_code, r.json()["error"]["code"]) == (410, "run_gone")
-    assert runs.get(run.id).error == (
+    assert runs.launcher.launched == []
+    detail = runs.get(run.id)
+    assert detail.status == "failed"
+    assert detail.error == (
         "cannot build the manifest: the pipeline changed since the run was dispatched"
     )

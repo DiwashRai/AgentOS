@@ -272,5 +272,5 @@ def add_run(ctx: AppContext) -> AddRun:
 
 @pytest.fixture
 def runs(client: TestClient, ctx: AppContext, launcher: FakeLauncher) -> RunDriver:
-    """Dispatch through the API, tick the dispatcher, claim and act as the worker."""
+    """Dispatch through the API, tick the dispatcher, bind the job and act as the worker."""
     return RunDriver(client, ctx, launcher)

@@ -12,7 +12,7 @@ next run is checked):
    → cancel + failed.
 6. Past `started_at + time_budget_s + BUDGET_GRACE + claim_timeout_s` → cancel + failed.
 7. The status is unknown and a cancel was requested over CANCEL_GRACE ago → cancelled.
-8. No launch_ref LAUNCH_GRACE after the claim (the server died mid-launch) → failed.
+8. No launch_ref LAUNCH_GRACE after the start (the server died mid-launch) → failed.
 A store error while fetching the outbox leaves only the time rules (6, 7) for that tick. The
 run's folder is deleted after every replay and every end. Once an hour, folders of runs that
 aren't active on this server are deleted (the sweep).
@@ -89,7 +89,7 @@ class MailboxReaper:
     # ------------------------------------------------------------------ one run
 
     def check(self, run: service.MailboxRun, now: datetime) -> Outcome | None:
-        folder = run_folder(run.id, run.dispatch_token_hash)
+        folder = run_folder(run.id, run.job_hex)
         ref = run.launch_ref
         cancel_requested = run.cancel_requested_at is not None
         # 1. a requested cancel reaches GitHub once
@@ -150,7 +150,7 @@ class MailboxReaper:
             and now > run.cancel_requested_at + CANCEL_GRACE
         ):
             return self._end(run.id, folder, "cancelled", None)
-        # 8. the server died between the claim and storing the launch_ref
+        # 8. the server died between the start and storing the launch_ref
         if (
             outbox_known
             and ref is None
@@ -229,13 +229,10 @@ class MailboxReaper:
         except Exception:
             log.exception("mailbox reaper: sweep failed")
             return []
-        keep = {run_folder(i, h) for i, h in active.items() if h is not None}
         deleted: list[str] = []
         for name in folders:
-            if not _FOLDER.fullmatch(name) or name in keep:
-                continue
-            if int(name.split("-", 1)[0]) in active:
-                continue  # an active run's id: never touch it (D9)
+            if not _FOLDER.fullmatch(name) or int(name.split("-", 1)[0]) in active:
+                continue  # not a run folder, or an active run's id: never touch it (D9)
             try:
                 self.mailbox.delete_run(name)
             except MailboxError as exc:

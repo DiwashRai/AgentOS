@@ -1,8 +1,7 @@
-"""Resolve stages to argv/stdin and build the protocol 2 job package (SPEC §7; loop blocks:
-request 24).
+"""Resolve stages to argv/stdin and build the protocol 2 job package (SPEC §7).
 
-Pure. Dispatch validates a run with `render_stages` (same code path as the claim-time build), so
-a run that dispatched can't fail to render at claim unless the ticket changed in between.
+Pure. Queueing validates a run with `render_stages` (same code path as the build at dispatch), so
+a queued run can't fail to render at dispatch unless the ticket changed in between.
 
 A loop block's stages get every call the worker may make rendered here: later rounds and, for
 checks, verdict repairs, with the session ids already in the argv. The worker only appends text
@@ -29,8 +28,11 @@ from agentos.models import (
     JobPackage,
     Loop,
     ManifestInvocation,
+    ManifestJob,
+    ManifestJournal,
     ManifestLimits,
     ManifestLoop,
+    ManifestReport,
     ManifestStage,
     ManifestTicket,
     ManifestWorkspace,
@@ -335,9 +337,12 @@ def build_package(
     runtimes: RuntimesConfig,
     *,
     defaults: TemplateDefaults,
+    job: ManifestJob,
+    journal: ManifestJournal,
+    report: ManifestReport,
     new_session: NewSession = new_session_id,
 ) -> JobPackage:
-    """The job package a worker receives at claim.
+    """The job package a worker receives, built when the run is dispatched.
 
     `bundle` is the ticket's current (non-deleted) files, split into `context` and `notes` by
     `classify`. In no-repo mode the workspace's `repo_url`/`base_branch`/`branch` are null.
@@ -357,6 +362,9 @@ def build_package(
     )
     return JobPackage(
         protocol=2,
+        job=job,
+        journal=journal,
+        report=report,
         run_id=run_id,
         ticket=ManifestTicket(key=ticket.key, title=ticket.title),
         workspace=ManifestWorkspace(
