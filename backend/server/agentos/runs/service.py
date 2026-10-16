@@ -598,14 +598,17 @@ def active_jobs(db: Database) -> list[Row]:
     return rows
 
 
-def end_job(db: Database, run_id: int, job_id: str, now: datetime) -> None:
-    """The job's worker can no longer publish: lift the fence, and its reason on the next run."""
-    with db.tx() as conn:
-        conn.execute("UPDATE jobs SET ended_at = ? WHERE id = ?", (to_db(now), job_id))
-        conn.execute(
-            "UPDATE runs SET queue_reason = NULL WHERE status = 'queued' AND queue_reason = ?",
-            (fence_reason(run_id),),
-        )
+def end_job(conn: Conn, run_id: int, job_id: str, now: datetime) -> None:
+    """The job's worker can no longer publish, in the caller's transaction: lift the fence, and
+    its reason on the next run. Its accepted `result` says so (`worker_api.service.ingest`); the
+    reaper infers it for a worker that never sent one."""
+    conn.execute(
+        "UPDATE jobs SET ended_at = ? WHERE id = ? AND ended_at IS NULL", (to_db(now), job_id)
+    )
+    conn.execute(
+        "UPDATE runs SET queue_reason = NULL WHERE status = 'queued' AND queue_reason = ?",
+        (fence_reason(run_id),),
+    )
 
 
 @dataclass(frozen=True, slots=True)

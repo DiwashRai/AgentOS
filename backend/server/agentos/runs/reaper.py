@@ -18,8 +18,10 @@ cancel is asked once per job per process, best effort. File-report jobs get rule
 mailbox reaper watches them); with no mailbox configured, one past its `not_after` is failed
 UNWATCHED. Queued runs are never touched. A push job's status is polled at most every STATUS_EVERY.
 
-An ended run's job gets `ended_at` once `job_ended` (lifting the fence for the next run). A push
-run cancelled before its worker started is cancelled at its provider first; no other ended one is.
+A job ends (`ended_at`, lifting the fence for the next run) when its `result` is accepted. The
+reaper ends the job of an ended run whose worker sent none (killed, crashed, lost) once
+`job_ended`. A push run cancelled before its worker started is cancelled at its provider first;
+no other ended one is.
 
 `judge` is pure; `Reaper(ctx).tick(now)` is synchronous with an injected clock, and the lifespan
 runs it in a thread. A job whose check raises is logged and the next job is checked.
@@ -114,9 +116,10 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool)
 
 
 def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:
-    """Whether an ended run's job can no longer publish: past its `not_after` (any route); push:
-    its provider says `ended` (`status`); pull: a later lease by its client didn't list it, or
-    that client has been offline HEARTBEAT_TIMEOUT since the result."""
+    """Whether the job of a run that ended without its result can no longer publish: past its
+    `not_after` (any route); push: its provider says `ended` (`status`); pull: a later lease by
+    its client didn't list it, or that client has been offline HEARTBEAT_TIMEOUT since the run
+    ended."""
     if now > job.not_after:
         return True
     if job.start == "push":
@@ -181,7 +184,8 @@ class Reaper:
                     if job.status == "cancelled" and job.start == "push" and not job.bound:
                         self._cancel(job)  # cancelled before its worker started
                     if job_ended(job, now, self._status(job, now)):
-                        service.end_job(self.ctx.db, job.run_id, job.job_id, now)
+                        with self.ctx.db.tx() as conn:
+                            service.end_job(conn, job.run_id, job.job_id, now)
                     continue
                 action = judge(job, now, self._status(job, now), self.ctx.mailbox is not None)
                 if action is not None and (ended := self._apply(job, action, now)):

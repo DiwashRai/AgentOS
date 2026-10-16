@@ -1,6 +1,7 @@
 """The fence: a ticket's next run stays queued, with a reason, until the previous job can no longer
-publish (push: its provider says ended; pull: its client stops listing it or goes offline after
-the result; any route: past `not_after`). Plus tables for `job_ended` and `not_after`."""
+publish: its accepted result says so; for a worker that sent none, push: its provider says ended;
+pull: its client stops listing it or goes offline after the run ended; any route: past
+`not_after`. Plus tables for `job_ended` and `not_after`."""
 
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
-from agentos.runs.reaper import JobFacts, Reaper, job_ended
-from agentos.runs.service import not_after
+from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
+from agentos.runs.service import finish, not_after
 from tests.run_support import CSRF, FakeProvider, RunDriver, bearer
 
 CreateTicket = Callable[..., TicketDetail]
@@ -140,13 +141,23 @@ def reap(ctx: AppContext, now: datetime) -> None:
     reaper.tick(now)
 
 
-def finished_client_run(runs: RunDriver, client: TestClient, key: str, token: str) -> LeasedJob:
-    """A client run leased, started and completed; its worker is still listed as alive."""
+def lose(ctx: AppContext, run_id: int) -> None:
+    """End a running run as the reaper ends a lost worker's: no result, so its job may still
+    publish."""
+    with ctx.db.tx() as conn:
+        assert finish(conn, run_id, "failed", ("running",), now=utcnow(), error=WORKER_LOST)
+
+
+def lost_client_run(
+    runs: RunDriver, ctx: AppContext, client: TestClient, key: str, token: str
+) -> LeasedJob:
+    """A client run leased, started, listed as alive and lost (no result)."""
     runs.queue(key, target="client")
     job = lease(client, token)
     assert job is not None
-    assert runs.bind(job.run_id, job.job_token).complete().status_code == 200
+    runs.bind(job.run_id, job.job_token)
     assert lease(client, token, (job.job_id,), take=False) is None
+    lose(ctx, job.run_id)
     return job
 
 
@@ -155,11 +166,32 @@ def waits_for(runs: RunDriver, run_id: int, earlier: int) -> bool:
     return run.status == "queued" and f"run #{earlier}'s" in (run.queue_reason or "")
 
 
+def test_the_fence_lifts_on_the_accepted_result(
+    key: str, client: TestClient, token: str, runs: RunDriver
+) -> None:
+    first = runs.start(key)
+    assert first.complete(status="failed").status_code == 200
+    second = runs.queue(key).id
+    assert runs.tick() == [second]  # no reaper tick, no provider status
+    worker = runs.bind(second, runs.provider.token(second))
+    assert worker.complete(status="failed").status_code == 200
+
+    # A client run, while its client still lists the finished worker as alive.
+    runs.queue(key, target="client")
+    job = lease(client, token)
+    assert job is not None
+    assert runs.bind(job.run_id, job.job_token).complete(status="failed").status_code == 200
+    third = runs.queue(key, target="client").id
+    taken = lease(client, token, (job.job_id,))
+    assert taken is not None
+    assert taken.run_id == third
+
+
 def test_push_fence_holds_until_the_provider_says_ended(
     key: str, runs: RunDriver, ctx: AppContext, provider: FakeProvider
 ) -> None:
     first = runs.start(key)
-    assert first.complete().status_code == 200
+    lose(ctx, first.run_id)
     second = runs.queue(key).id
 
     assert runs.tick() == []
@@ -176,7 +208,7 @@ def test_push_fence_holds_until_the_provider_says_ended(
 def test_pull_fence_holds_until_the_client_stops_listing_the_job(
     key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
 ) -> None:
-    first = finished_client_run(runs, client, key, token)
+    first = lost_client_run(runs, ctx, client, key, token)
     second = runs.queue(key, target="client").id
 
     assert lease(client, token, (first.job_id,)) is None
@@ -194,7 +226,7 @@ def test_pull_fence_holds_until_the_client_stops_listing_the_job(
 def test_pull_fence_lifts_when_the_client_is_offline_90_s_after_the_result(
     key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
 ) -> None:
-    first = finished_client_run(runs, client, key, token)
+    first = lost_client_run(runs, ctx, client, key, token)
     second = runs.queue(key, target="client").id
     now = utcnow()
 
@@ -214,11 +246,10 @@ def test_the_fence_lifts_once_not_after_has_passed(
     target: str, key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
 ) -> None:
     if target == "client":
-        first = finished_client_run(runs, client, key, token).run_id
+        first = lost_client_run(runs, ctx, client, key, token).run_id
     else:
-        worker = runs.start(key)
-        assert worker.complete().status_code == 200
-        first = worker.run_id
+        first = runs.start(key).run_id
+        lose(ctx, first)
     second = runs.queue(key, target=target).id
     take = (
         runs.tick if target == "server" else lambda: [j.run_id for j in [lease(client, token)] if j]

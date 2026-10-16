@@ -42,7 +42,7 @@ from agentos.models import (
 )
 from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
-from agentos.runs.service import EVENT_ADAPTER, STOPPED, TERMINAL, finish
+from agentos.runs.service import EVENT_ADAPTER, STOPPED, TERMINAL, end_job, finish
 from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import parsed, path_key, pydantic_issues, validate_pr_url
@@ -257,6 +257,8 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
             status, error = STOPPED[run["stop_reason"]]
         if finish(conn, run["id"], status, ("running",), now=now, error=error):
             _store_pr_url(conn, run, result.pr_url)
+        # The result is the worker's last post: it has published all it will, so the fence lifts.
+        end_job(conn, run["id"], record.job, now)
 
     else:
         raise field_error(["type"], f"Unknown record type {record.type!r}.")
