@@ -28,13 +28,6 @@ export function sortFiles<T extends { path: string }>(files: readonly T[]): T[] 
   });
 }
 
-/** `812 B`, `1.2 KB`, `3.4 MB`. */
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /** Who wrote the current version: a person, else the run that synced it back. */
 export function authorLabel(f: Pick<FileInfo, "author" | "author_run_id">): string {
   if (f.author) return f.author.display_name;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { authorLabel, formatSize, isTasksFile, sortFiles, splitPath } from "./files";
+import { authorLabel, isTasksFile, sortFiles, splitPath } from "./files";
 
 describe("sortFiles", () => {
   it("pins TASKS.md first, then root files, then the rest by path", () => {
@@ -44,12 +44,6 @@ describe("paths", () => {
 });
 
 describe("display", () => {
-  it("formatSize", () => {
-    expect(formatSize(812)).toBe("812 B");
-    expect(formatSize(1229)).toBe("1.2 KB");
-    expect(formatSize(3.4 * 1024 * 1024)).toBe("3.4 MB");
-  });
-
   it("authorLabel: person, else run, else template", () => {
     const person = { id: 1, display_name: "Diwash Rai", avatar_url: null };
     expect(authorLabel({ author: person, author_run_id: null })).toBe("Diwash Rai");

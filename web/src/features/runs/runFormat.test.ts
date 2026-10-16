@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { emptyLogText, isActiveRun, launchRef, runMark, spanSeconds, stageMark } from "./runFormat";
+import {
+  emptyLogText,
+  isActiveRun,
+  launchRef,
+  runMark,
+  spanSeconds,
+  stageMark,
+  syncBackLink,
+} from "./runFormat";
 
 describe("log delivery", () => {
   it("says when an empty log will fill", () => {
@@ -46,6 +54,15 @@ describe("marks", () => {
     expect(isActiveRun("running")).toBe(true);
     expect(isActiveRun("gated")).toBe(false);
     expect(isActiveRun(undefined)).toBe(false);
+  });
+});
+
+describe("syncBackLink", () => {
+  it.each([
+    [1, 812, "sync_back.zip · 1 file · 812 B"],
+    [3, 1229, "sync_back.zip · 3 files · 1.2 KB"],
+  ])("%s files, %s bytes → %s", (files, bytes, text) => {
+    expect(syncBackLink(7, { files, bytes })).toEqual({ href: "/api/runs/7/sync-back", text });
   });
 });
 

@@ -6,6 +6,7 @@ import {
   ageParts,
   ago,
   duration,
+  formatSize,
   isOld,
   plural,
   prLabel,
@@ -129,6 +130,12 @@ describe("prLabel", () => {
   ])("%s → %s", (url, expected) => {
     expect(prLabel(url)).toBe(expected);
   });
+});
+
+it("formatSize", () => {
+  expect(formatSize(812)).toBe("812 B");
+  expect(formatSize(1229)).toBe("1.2 KB");
+  expect(formatSize(3.4 * 1024 * 1024)).toBe("3.4 MB");
 });
 
 it("pluralises the word after a count", () => {

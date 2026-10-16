@@ -7,7 +7,7 @@ import { Link as RouterLink, useBlocker, useSearchParams } from "react-router";
 
 import { ApiError } from "../../api/client";
 import { useDeleteFile, useFile, useFiles, useMe, useSaveFile } from "../../api/queries";
-import { age } from "../../domain/format";
+import { age, formatSize } from "../../domain/format";
 import { Button, Chip, cx, Kbd, LinkButton, linkClass, Tag } from "../../ui";
 import { useNow } from "../../ui/useNow";
 import { ticketPath } from "../ticket/model";
@@ -21,7 +21,7 @@ import {
 } from "./agents";
 import s from "./ContextTab.module.css";
 import { LOCKED_TEXT, writeProblem, type WriteProblem } from "./errors";
-import { authorLabel, formatSize, isTasksFile, sortFiles, splitPath, type FileInfo } from "./files";
+import { authorLabel, isTasksFile, sortFiles, splitPath, type FileInfo } from "./files";
 
 /** An edit in progress: the version and text it started from, and the text now. */
 interface Draft {
