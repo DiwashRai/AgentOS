@@ -1,4 +1,4 @@
-// Pure helpers for "How each stage was called" (Runs tab): read a run's manifest, exactly what the
+// Pure helpers for "How each stage was called" (Runs tab): read a run's job package, exactly what the
 // worker received, into display pieces. The argv is the runtime's template already resolved by the
 // server (backend `pipeline/manifest.py` `resolve_agent`: `argv`, then `model_args`, then
 // `agent_args`, then `prompt_args`), so nothing here knows which CLI a runtime runs: the chips
@@ -200,11 +200,18 @@ export function promptLabel(via: "stdin" | "arg"): string {
   return via === "stdin" ? "Prompt (stdin)" : "Prompt";
 }
 
-/** The context files' paths (never their contents), sorted so a path is easy to find. */
-export function filePaths(manifest: Pick<Manifest, "context" | "notes">): string[] {
-  return [...manifest.context, ...manifest.notes]
-    .map((f) => f.path)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+export interface PackageFile {
+  path: string;
+  kind: Manifest["context"][number]["kind"] | "note";
+}
+
+/** The context entries and notes as path and kind (never their contents), sorted by path so a
+ *  file is easy to find. */
+export function packageFiles(manifest: Pick<Manifest, "context" | "notes">): PackageFile[] {
+  return [
+    ...manifest.context.map((f) => ({ path: f.path, kind: f.kind })),
+    ...manifest.notes.map((f) => ({ path: f.path, kind: "note" as const })),
+  ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /** `30s`, `15m`, `2h`, `1h 30m`: a stage's time limit. */

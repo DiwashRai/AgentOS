@@ -30,7 +30,9 @@ const MANIFEST: Manifest = {
       content: "FILE-CONTENT",
     },
   ],
-  notes: [],
+  notes: [
+    { path: ".claude/skills/aos-1/learnings.log", name: "learnings.log", content: "NOTE-CONTENT" },
+  ],
   sync_back: { dir: ".agentos/sync_back", max_bytes: 1 },
   env: {},
   stages: [
@@ -103,9 +105,16 @@ describe("ManifestBody", () => {
     expect(html).not.toContain("REPAIR-PROMPT");
   });
 
-  it("lists file paths without their contents", () => {
-    expect(html).toContain("Files given to the agent (1)");
-    expect(html).toContain(".claude/agents/reviewer.md");
+  it("lists context entries and notes with their kind, without their contents", () => {
+    const list = /<ul[^>]*aria-label="Files given to the agent"[^>]*>(.*?)<\/ul>/.exec(html)?.[1];
+    const items = [...(list ?? "").matchAll(/<li>(.*?)<\/li>/g)].map((m) =>
+      (m[1] ?? "").replace(/<[^>]+>/g, ""),
+    );
+    expect(items).toEqual([
+      ".claude/agents/reviewer.md · agent",
+      ".claude/skills/aos-1/learnings.log · note",
+    ]);
     expect(html).not.toContain("FILE-CONTENT");
+    expect(html).not.toContain("NOTE-CONTENT");
   });
 });

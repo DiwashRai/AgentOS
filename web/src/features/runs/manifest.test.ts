@@ -7,10 +7,10 @@ import {
   commandTokens,
   ERROR_PLACEHOLDER,
   FEEDBACK_PLACEHOLDER,
-  filePaths,
   laterCalls,
   laterLabel,
   manifestErrorText,
+  packageFiles,
   PROMPT_PLACEHOLDER,
   promptIndex,
   shellWord,
@@ -218,18 +218,29 @@ describe("loop stages", () => {
 });
 
 describe("the rest", () => {
-  it("lists file paths only, sorted", () => {
-    const file = (path: string): Manifest["notes"][number] => ({
+  it("lists context entries and notes by path and kind, sorted by path", () => {
+    const entry = (
+      path: string,
+      kind: Manifest["context"][number]["kind"],
+    ): Manifest["context"][number] => ({
       path,
-      name: path,
-      content: "x".repeat(10),
+      kind,
+      name: "n",
+      mode: "replace",
+      block: null,
+      access: "write",
+      content: "x",
     });
     expect(
-      filePaths({
-        context: [],
-        notes: [file("TASKS.md"), file(".claude/agents/reviewer.md"), file("CONTEXT.md")],
+      packageFiles({
+        context: [entry("TASKS.md", "plan"), entry(".claude/agents/reviewer.md", "agent")],
+        notes: [{ path: "learnings.log", name: "learnings.log", content: "x" }],
       }),
-    ).toEqual([".claude/agents/reviewer.md", "CONTEXT.md", "TASKS.md"]);
+    ).toEqual([
+      { path: ".claude/agents/reviewer.md", kind: "agent" },
+      { path: "TASKS.md", kind: "plan" },
+      { path: "learnings.log", kind: "note" },
+    ]);
   });
 
   it("writes a time limit", () => {
