@@ -16,14 +16,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Self
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationInfo,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from agentos.errors import ApiError
 from agentos.models import (
@@ -32,7 +25,6 @@ from agentos.models import (
     GIT_REF_MAX,
     GITHUB_REPO_PATTERN,
     GITHUB_WORKFLOW_PATTERN,
-    INTAKE_QUERY_ID_PATTERN,
     KEY_PREFIX_PATTERN,
     MAX_INTAKE_QUERIES,
     MAX_JIRA_PROJECTS,
@@ -43,7 +35,6 @@ from agentos.models import (
     BaseBranchOrigin,
     BaseBranchSource,
     IntakeDoc,
-    IntakeQuerySpec,
     JiraProjectKey,
     RepoInfo,
     ReposDoc,
@@ -53,26 +44,8 @@ from agentos.models import (
     WorkspaceMode,
     matching,
 )
+from agentos.models import IntakeQuerySpec as IntakeQuerySpec  # re-exported for the settings
 from agentos.validate import base_branch_problem, parsed, repo_url_problem, too_many
-
-__all__ = [
-    "INTAKE_QUERY_ID_PATTERN",
-    "REPO_NAME_PATTERN",
-    "VALUE",
-    "IntakeQuerySpec",
-    "IntakeSection",
-    "RepoSpec",
-    "ResolvedRepo",
-    "RunnerSection",
-    "SpaceConfig",
-    "SpaceSection",
-    "check_intake",
-    "check_repos",
-    "check_runner",
-    "check_space",
-    "query_id",
-    "resolve_base_branch",
-]
 
 # Where a settings document sits in its request body: the checks report issues under it.
 VALUE: tuple[str] = ("value",)

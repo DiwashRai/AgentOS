@@ -7,7 +7,9 @@ Flow: fetch the job package -> bind (post `started`, wait for its ack) -> worksp
 `git init` in no-repo mode) -> write its context and notes -> emit its warnings -> for each stage
 execution: run it, record a `sync`, then (repo mode) commit, pre-push guard, push, record `pushed`
 -> (repo mode) look up the branch's PR with `gh` -> sync_back -> record the `result`. Records go
-through EventSink to a Reporter: HttpReporter, or Recorder in mailbox mode.
+through EventSink to a Reporter: HttpReporter, or Recorder in mailbox mode. EventSink keeps each
+record until it is acked, so every post resends from `ack + 1`, always with this process's
+instance id (X-AgentOS-Instance), the one `started` bound the job to.
 
 Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
 each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
@@ -146,7 +148,7 @@ JUNK_PATTERNS = (
 # stage PATH. AGENTOS_PR_LOOKUP=0 in the worker's own environment skips the lookup.
 PR_LOOKUP = ("gh", "pr", "view", "{branch}", "--json", "url", "--jq", ".url")
 PR_LOOKUP_TIMEOUT_S = 30.0
-MAX_PR_URL_CHARS = 500  # the server's CompleteRequest.pr_url max_length
+MAX_PR_URL_CHARS = 500  # the server's ResultData.pr_url max_length
 
 # GitHub API publication on Actions (see api_publish).
 GITHUB_RETRY_BUDGET_S = 300.0  # rate limits, network errors and 5xx are retried this long
@@ -726,7 +728,6 @@ class HttpError(Exception):
         super().__init__(f"HTTP {status} {code}: {message}")
         self.status = status
         self.code = code
-        self.message = message
 
 
 class RunGone(Exception):
@@ -1033,11 +1034,8 @@ class EventSink:
                 self._buf = [r for r in self._buf if r["seq"] > ack.seq]
 
 
-# ---------------------------------------------------------------- live echo
+# ---------------------------------------------------------------- live echo (see Echo)
 
-# Every agent call's output is also printed on the worker's stderr as it arrives (the Actions job
-# console, the local launcher's log file) in a short readable form; the log events still carry
-# each line as it was. AGENTOS_ECHO=0 in the worker's own environment turns it off.
 ECHO_LINE_CHARS = 200  # a tool call, a tool result, a line nothing recognises
 ECHO_TEXT_CHARS = 2000  # one block of agent text or reasoning
 ECHO_DETAIL_KEYS = (  # the tool argument shown with a tool call, most telling first
@@ -1374,18 +1372,24 @@ class _Job:
         self._handle = None
 
 
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Windows: no console window for git
+
+
+def _own_group() -> dict[str, Any]:
+    """Popen options for a process in its own process group (Windows: also without a console),
+    so it outlives a Ctrl+C in ours and its whole tree can be killed."""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
+    return {"start_new_session": True}
+
+
 def _spawn(
     argv: list[str], cwd: Path, env: dict[str, str], with_stdin: bool
 ) -> subprocess.Popen[bytes]:
     stdin = subprocess.PIPE if with_stdin else subprocess.DEVNULL
     pipe = subprocess.PIPE
-    if sys.platform == "win32":
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        return subprocess.Popen(
-            argv, cwd=cwd, env=env, stdin=stdin, stdout=pipe, stderr=pipe, creationflags=flags
-        )
     return subprocess.Popen(
-        argv, cwd=cwd, env=env, stdin=stdin, stdout=pipe, stderr=pipe, start_new_session=True
+        argv, cwd=cwd, env=env, stdin=stdin, stdout=pipe, stderr=pipe, **_own_group()
     )
 
 
@@ -1548,12 +1552,7 @@ def remove_tree(path: Path) -> None:
 @dataclass
 class SyncBatch:
     files: list[dict[str, Any]]
-    updates: dict[str, str | None]  # applied to SyncState.known once the server accepted them
     warnings: list[str]
-
-    def add(self, path: str, content: str | None, mode: str) -> None:
-        self.files.append({"path": path, "content": content, "mode": mode})
-        self.updates[path] = content
 
 
 def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
@@ -1594,7 +1593,7 @@ def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
 
 
 class SyncState:
-    """What the server holds of this run's context, so sync sends only what changed.
+    """What this run has sent of its context (`known`), so sync sends only what changed.
 
     After each stage it reads exactly the write context entries and the notes (block files: only
     the block) and sends those that changed since they were last sent; a deleted replace file goes
@@ -1628,7 +1627,7 @@ class SyncState:
         return content, None
 
     def collect(self, root: Path) -> SyncBatch:
-        batch = SyncBatch([], {}, [])
+        batch = SyncBatch([], [])
         for path, f in self.sync_files.items():
             if path in self.unsynced:
                 continue
@@ -1640,7 +1639,8 @@ class SyncState:
                 if f.mode == "block":
                     batch.warnings.append(f"not synced: {path} is gone, and its agentos block too")
                 elif self.known.get(path) is not None:
-                    batch.add(path, None, "replace")
+                    batch.files.append({"path": path, "content": None, "mode": "replace"})
+                    self.known[path] = None
                 continue
             content, err = self._declared_content(f, data)
             if err:
@@ -1654,7 +1654,8 @@ class SyncState:
                 self.rewritten.add(path)
                 batch.warnings.append(f"{path} was rewritten, not appended to")
             if self.known.get(path) != content:
-                batch.add(path, content, f.mode)
+                batch.files.append({"path": path, "content": content, "mode": f.mode})
+                self.known[path] = content
 
         not_kept: list[str] = []
         for folder in self.package.workspace["protect"]:
@@ -1664,9 +1665,6 @@ class SyncState:
             more = f" and {len(not_kept) - 20} more" if len(not_kept) > 20 else ""
             batch.warnings.append(f"not kept: {', '.join(not_kept[:20])}{more}")
         return batch
-
-    def accept(self, batch: SyncBatch) -> None:
-        self.known.update(batch.updates)
 
 
 def write_entry(root: Path, f: ContextFile) -> str | None:
@@ -1701,10 +1699,6 @@ def write_entry(root: Path, f: ContextFile) -> str | None:
 
 
 # ---------------------------------------------------------------- GitHub API publication
-#
-# On GitHub Actions (GITHUB_ACTIONS=true, GH_TOKEN set) the branch is published through the Git
-# Data API (blobs, trees, commits, refs) instead of `git push`, because CI may only write to GitHub
-# through the REST API there. Everywhere else the worker pushes with git.
 
 _REPO_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
 _SCP_RE = re.compile(r"(?:[^@/:]+@)?([^@/:]+):(.+)")
@@ -1885,15 +1879,7 @@ class GitHubError(Exception):
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """urllib would forward Authorization to any host it is redirected to: follow nothing."""
 
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: IO[bytes],
-        code: int,
-        msg: str,
-        headers: http.client.HTTPMessage,
-        newurl: str,
-    ) -> urllib.request.Request | None:
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
 
@@ -1902,7 +1888,6 @@ class GitHub:
     purpose: a GitHub failure is a stage failure, never a lost run or an unreachable server."""
 
     def __init__(self, api_url: str, token: str, repo: str) -> None:
-        self.repo = repo
         self._base = f"{api_url.rstrip('/')}/repos/{repo}"
         self._token = token
         self._opener = urllib.request.build_opener(_NoRedirect())
@@ -2157,7 +2142,8 @@ class Run:
         self.workdir = workdir
         self.repo = package.workspace["mode"] == "repo"
         self.branch = str(package.workspace["branch"])
-        self.max_line_bytes = package.limits["max_line_bytes"]
+        self.max_line_bytes = package.limits["max_line_bytes"]  # agent stdout's line cap
+        self.short_cap = min(SHELL_LINE_BYTES, self.max_line_bytes)  # every other stream's
         self.sync = SyncState(package)
         self.owns_workdir = False
         self.ready = False  # workspace set up (offline commit + push is possible)
@@ -2319,12 +2305,8 @@ class Run:
             self.events.warn(None, f"{folder} is not returned in mailbox mode")
             return
         if skipped:
-            self.events.warn(
-                None,
-                _clip(
-                    f"{folder}: skipped (not a regular file, or a bad name): {', '.join(skipped)}"
-                ),
-            )
+            problem = f"{folder}: skipped (not a regular file, or a bad name): {', '.join(skipped)}"
+            self.events.warn(None, _clip(problem))
         if not files:
             return
 
@@ -2474,13 +2456,8 @@ class Run:
             else:
                 skip.append(hit)
         if skip:
-            r = self._git(
-                "update-index",
-                "--skip-worktree",
-                "-z",
-                "--stdin",
-                stdin=b"\0".join(p.encode() for p in skip),
-            )
+            paths = b"\0".join(p.encode() for p in skip)
+            r = self._git("update-index", "--skip-worktree", "-z", "--stdin", stdin=paths)
             if r.code:
                 self.events.warn(None, f"git update-index --skip-worktree failed: {r.tail()}")
         lines = "".join(f"/{p}\n" for p in [*exclude, *self.m.workspace["protect"]])
@@ -2522,11 +2499,8 @@ class Run:
             else:
                 reason = f"{reason}; {problem}" if reason else problem
         reason = None if reason is None else _clip(reason)
-        self.events.emit(
-            "stage_finished",
-            stage.id,
-            {"status": status, "exit_code": exit_code, "reason": reason, "round": round_},
-        )
+        data = {"status": status, "exit_code": exit_code, "reason": reason, "round": round_}
+        self.events.emit("stage_finished", stage.id, data)
         say(f"stage {stage.id} {status}" + (f": {reason}" if reason else ""))
         return status, reason, verdict
 
@@ -2569,24 +2543,22 @@ class Run:
         argv, problem = self._resolve(stage.kind, argv)
         if problem:
             return "failed", None, problem
-        stage_id = stage.id
-        echo = Echo(stage_id) if self.echo and stage.kind == "agent" else None
+        echo = Echo(stage.id) if self.echo and stage.kind == "agent" else None
 
         def on_line(stream: str, text: str, truncated: bool) -> None:
-            self.events.log(stage_id, stream, text, truncated)
+            self.events.log(stage.id, stream, text, truncated)
             if collect is not None:
                 collect(stream, text, truncated)
             if echo is not None:
                 echo(stream, text, truncated)
 
-        short = min(SHELL_LINE_BYTES, self.max_line_bytes)
         result = run_process(
             argv,
             cwd=self.workdir,
             env=self.stage_env,
             stdin=stdin,
             timeout_s=stage.timeout_s,
-            caps=(self.max_line_bytes if stage.kind == "agent" else short, short),
+            caps=(self.max_line_bytes if stage.kind == "agent" else self.short_cap, self.short_cap),
             on_line=on_line,
             interrupt=self._interrupt,
         )
@@ -2695,27 +2667,14 @@ class Run:
     ) -> tuple[str, int | None, str | None, Verdict | None]:
         """Emit a check's valid verdict. A "fail" fails the stage only in the last round (the
         board blames that check); either way the round's other checks still run."""
-        self.events.emit(
-            "verdict",
-            stage.id,
-            {
-                "round": round_,
-                "verdict": verdict.verdict,
-                "notes": verdict.notes,
-                "source": source,
-                "repairs": repairs,
-            },
-        )
+        data = {"round": round_, "verdict": verdict.verdict, "notes": verdict.notes}
+        self.events.emit("verdict", stage.id, {**data, "source": source, "repairs": repairs})
         if verdict.verdict == "pass":
             return "succeeded", code, None, verdict
         if round_ < max_rounds:
             return "succeeded", code, f"verdict: fail (round {round_} of {max_rounds})", verdict
-        return (
-            "failed",
-            code,
-            f"verdict: fail in the last round ({round_} of {max_rounds})",
-            verdict,
-        )
+        reason = f"verdict: fail in the last round ({round_} of {max_rounds})"
+        return "failed", code, reason, verdict
 
     # ------------------------------------------------------------ after each stage (SPEC §9.4)
 
@@ -2731,7 +2690,6 @@ class Run:
         for warning in batch.warnings:
             self.events.warn(stage_id, warning)
         self.events.emit("sync", stage_id, {"files": batch.files})
-        self.sync.accept(batch)
 
     def _is_protected(self, path: str) -> bool:
         low = path.lower()
@@ -2865,14 +2823,13 @@ class Run:
             if text.strip():
                 (out if stream == "stdout" else err).append(text.strip())
 
-        cap = min(SHELL_LINE_BYTES, self.max_line_bytes)
         result = run_process(
             [program, *argv[1:]],
             cwd=self.workdir,
             env=self.stage_env,
             stdin=None,
             timeout_s=PR_LOOKUP_TIMEOUT_S,
-            caps=(cap, cap),
+            caps=(self.short_cap, self.short_cap),
             on_line=on_line,
             interrupt=lambda: "abort" if self.events.failure is not None else None,
         )
@@ -2890,46 +2847,29 @@ class Run:
         """Run git in the workdir. `show` (and any failure) streams its output as system logs."""
         cmd = ["git", "-c", "core.quotePath=false", *args]
         try:
-            if sys.platform == "win32":
-                p = subprocess.run(
-                    cmd,
-                    cwd=self.workdir,
-                    env=self.git_env,
-                    input=stdin,
-                    stdin=None if stdin is not None else subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=GIT_TIMEOUT_S,
-                    check=False,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-            else:
-                p = subprocess.run(
-                    cmd,
-                    cwd=self.workdir,
-                    env=self.git_env,
-                    input=stdin,
-                    stdin=None if stdin is not None else subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=GIT_TIMEOUT_S,
-                    check=False,
-                )
+            p = subprocess.run(
+                cmd,
+                cwd=self.workdir,
+                env=self.git_env,
+                input=stdin,
+                stdin=None if stdin is not None else subprocess.DEVNULL,
+                capture_output=True,
+                timeout=GIT_TIMEOUT_S,
+                check=False,
+                creationflags=_NO_WINDOW,
+            )
             result = GitResult(p.returncode, p.stdout, p.stderr)
         except (OSError, subprocess.TimeoutExpired) as exc:
             result = GitResult(-1, b"", str(exc).encode())
         if show or result.code:
-            cap = min(SHELL_LINE_BYTES, self.max_line_bytes)
             for raw in (result.out + b"\n" + result.err).splitlines():
                 if raw.strip() and b"\0" not in raw:
-                    text = raw[:cap].decode("utf-8", "replace")
-                    self.events.log(stage_id, "system", text, len(raw) > cap)
+                    text = raw[: self.short_cap].decode("utf-8", "replace")
+                    self.events.log(stage_id, "system", text, len(raw) > self.short_cap)
         return result
 
 
 # ---------------------------------------------------------------- client mode
-#
-# `--client` runs on a user's own machine: it long-polls the server for the runs its user
-# dispatched to "My client" and starts this same file as a detached worker for each, the way the
-# server's local launcher does (agentos.launchers.local).
 
 _ENV_PREFIX = "AGENTOS_"
 _ENV_BLANK_RE = re.compile(r"[ \t]*(?:#[^\r\n]*)?(?:\r?\n|\Z)")
@@ -3030,17 +2970,6 @@ def spawn_detached(
     stderr appended to `log`, so it outlives this process and a Ctrl+C in its console."""
     with log.open("ab") as out:
         # The child gets its own copy of the log handle; ours closes when this block exits.
-        if sys.platform == "win32":
-            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-            return subprocess.Popen(
-                argv,
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                creationflags=flags,
-            )
         return subprocess.Popen(
             argv,
             cwd=cwd,
@@ -3048,7 +2977,7 @@ def spawn_detached(
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **_own_group(),
         )
 
 
@@ -3101,17 +3030,13 @@ def run_client(
     spawn: Spawn,
 ) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
-    `max_runs` at once, listing the running ones as `alive` on every lease. Takes jobs only while
-    a slot is free; while every slot is busy it sends a no-take lease every CLIENT_HEARTBEAT_S, so
-    the server still sees the client online. Network errors, 5xx, transient 4xx
-    (CLIENT_TRANSIENT_4XX) and malformed answers back off (up to CLIENT_BACKOFF_CAP_S) and lease
-    again, forever. Any other 4xx (401/403: token revoked, user disabled, viewer) or another
-    protocol stops the client with exit code 1; started workers keep running on their own job
-    tokens. A server whose worker.py differs is mentioned once.
+    `max_runs` at once, listing the running ones as `alive` on every lease. With every slot busy
+    it sends a no-take lease every CLIENT_HEARTBEAT_S, so the server still sees it online. Network
+    errors, 5xx, CLIENT_TRANSIENT_4XX and malformed answers back off (up to CLIENT_BACKOFF_CAP_S)
+    forever; any other 4xx or another protocol exits 1. Started workers outlive the client.
 
-    Everything the client writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs
-    `worker.py --server <server> --workdir <root>/runs/<run_id>` there, logs to
-    `<root>/runs/<run_id>.log` and gets its job token as AGENTOS_TOKEN (see child_env)."""
+    Everything it writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs there with
+    `--workdir <root>/runs/<run_id>`, logs to `<run_id>.log` and gets its job token in child_env."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -3177,14 +3102,8 @@ def run_client(
                 if not leased:
                     continue
                 job_id, run_id, job_token = leased
-                argv = [
-                    sys.executable,
-                    str(me),
-                    "--server",
-                    server,
-                    "--workdir",
-                    str(runs / str(run_id)),
-                ]
+                workdir = runs / str(run_id)
+                argv = [sys.executable, str(me), "--server", server, "--workdir", str(workdir)]
                 log = runs / f"{run_id}.log"
                 try:
                     child = spawn(argv, runs, child_env(job_token, env_values), log)
@@ -3229,6 +3148,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--env-file", help="client mode: KEY=value lines added to every run worker's environment"
     )
     args = parser.parse_args(argv)
+    scheme = urllib.parse.urlsplit(args.server or "").scheme
+    if args.server is not None and scheme not in ("http", "https"):
+        parser.error("--server must be an http:// or https:// URL")
     client_only = (args.max_runs, args.workdir_root, args.env_file)
     if args.client:
         used = [args.token, args.workdir, args.manifest, args.outbox]
@@ -3236,8 +3158,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--client can't be used with --token, --workdir, --manifest or --outbox")
         if args.server is None:
             parser.error("--client needs --server")
-        if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
-            parser.error("--server must be an http:// or https:// URL")
         if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
             parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
         args.max_runs = 1 if args.max_runs is None else args.max_runs
@@ -3260,8 +3180,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args.token = args.token or os.environ.get("AGENTOS_TOKEN")
     if not args.token:
         parser.error("a job token is required (--token or AGENTOS_TOKEN)")
-    if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
-        parser.error("--server must be an http:// or https:// URL")
     return args
 
 

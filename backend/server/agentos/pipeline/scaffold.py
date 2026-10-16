@@ -83,8 +83,6 @@ def default_pipeline(*, lint: bool = False) -> Pipeline:
     )
 
 
-SKILL_MD_PATH = "{{paths.skill_md}}"
-
 # The description names the ticket by key only (a long title would crowd it); the body keeps the
 # title. `tojson` is agentos' YAML-safe variant (see render.py), so the frontmatter stays valid.
 SKILL_MD = (
@@ -96,7 +94,7 @@ SKILL_MD = (
 )
 
 DEFAULT_SCAFFOLD = [
-    FileEntry(path=SKILL_MD_PATH, content=SKILL_MD),
+    FileEntry(path="{{paths.skill_md}}", content=SKILL_MD),
     FileEntry(path="{{paths.tasks_md}}", content="# Tasks\n"),
     FileEntry(path="{{paths.learnings}}", content=""),
     FileEntry(path="{{paths.swarm}}", content=""),

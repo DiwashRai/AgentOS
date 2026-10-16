@@ -149,7 +149,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke Client
-         * @description Its next poll gets 401. Runs it already started end through their own tokens.
+         * @description Its next lease gets 401. Runs it already started end through their own job tokens.
          */
         delete: operations["revoke_client_api_me_clients__client_id__delete"];
         options?: never;
@@ -1045,7 +1045,7 @@ export interface components {
         /**
          * ClientToken
          * @description One of the signed-in user's client tokens (Settings > My client). The token itself is
-         *     shown only once, when it is created. `online`: it polled within the last minute.
+         *     shown only once, when it is created. `online`: it leased within the last minute.
          */
         ClientToken: {
             /**
@@ -1130,7 +1130,7 @@ export interface components {
          * DispatchRequest
          * @description `target: "client"` queues the run for the caller's own client: only the ticket's owner may
          *     (403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs
-         *     polls; cancel works as for any queued run.
+         *     leases it; cancel works as for any queued run.
          */
         DispatchRequest: {
             /** From Stage */

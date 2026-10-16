@@ -26,5 +26,5 @@ def create_client(body: ClientTokenCreate, user: Writer, ctx: Ctx) -> ClientToke
 
 @router.delete("/{client_id}", status_code=204)
 def revoke_client(client_id: int, user: CurrentUser, ctx: Ctx) -> None:
-    """Its next poll gets 401. Runs it already started end through their own tokens."""
+    """Its next lease gets 401. Runs it already started end through their own job tokens."""
     service.revoke_own(ctx.db, user.id, client_id)

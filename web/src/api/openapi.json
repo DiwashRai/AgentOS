@@ -259,7 +259,7 @@
       },
       "ClientToken": {
         "additionalProperties": false,
-        "description": "One of the signed-in user's client tokens (Settings > My client). The token itself is\nshown only once, when it is created. `online`: it polled within the last minute.",
+        "description": "One of the signed-in user's client tokens (Settings > My client). The token itself is\nshown only once, when it is created. `online`: it leased within the last minute.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -467,7 +467,7 @@
       },
       "DispatchRequest": {
         "additionalProperties": false,
-        "description": "`target: \"client\"` queues the run for the caller's own client: only the ticket's owner may\n(403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs\npolls; cancel works as for any queued run.",
+        "description": "`target: \"client\"` queues the run for the caller's own client: only the ticket's owner may\n(403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs\nleases it; cancel works as for any queued run.",
         "properties": {
           "from_stage": {
             "anyOf": [
@@ -5855,7 +5855,7 @@
     },
     "/api/me/clients/{client_id}": {
       "delete": {
-        "description": "Its next poll gets 401. Runs it already started end through their own tokens.",
+        "description": "Its next lease gets 401. Runs it already started end through their own job tokens.",
         "operationId": "revoke_client_api_me_clients__client_id__delete",
         "parameters": [
           {

@@ -12,6 +12,6 @@ CREATE TABLE jobs(id TEXT PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES runs O
 ALTER TABLE runs ADD COLUMN journal_seq INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN head_commit TEXT;
 
--- The package moved to `jobs`. `dispatch_token_hash` stays unused: SQLite can't drop a UNIQUE
--- column without rebuilding `runs` and every table that references it.
+-- The package moved to `jobs`. `dispatch_token_hash` and `worker_token_hash` stay unused: SQLite
+-- can't drop a UNIQUE column without rebuilding `runs` and every table that references it.
 ALTER TABLE runs DROP COLUMN manifest;

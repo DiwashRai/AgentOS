@@ -49,13 +49,6 @@ def _invalid(field: str, why: str) -> ApiError:
     return ApiError(422, "validation_error", f"{field}: {why}")
 
 
-def _valid_at(field: str, value: str, problem: str | None) -> str:
-    """`value`, or a 422 with one issue at `field`."""
-    if problem is not None:
-        raise field_error([field], problem)
-    return value
-
-
 # ------------------------------------------------------------------ pydantic errors → issues
 
 
@@ -169,14 +162,13 @@ def validate_path(path: str, field: str = "path") -> str:
     silently rename the few characters NFC maps to ASCII (U+212A KELVIN SIGN → 'K'), which the
     worker rejects; fixtures/path_cases.json keeps the two validators in step.
     """
-    p = path
-    if not p:
+    if not path:
         raise _invalid(field, "must not be empty")
-    if len(p) > MAX_PATH_CHARS:
+    if len(path) > MAX_PATH_CHARS:
         raise _invalid(field, f"longer than {MAX_PATH_CHARS} characters")
-    if p.startswith("/"):
+    if path.startswith("/"):
         raise _invalid(field, "must be relative")
-    for seg in p.split("/"):
+    for seg in path.split("/"):
         if not seg:
             raise _invalid(field, "empty path segment")
         if seg == "..":
@@ -190,7 +182,7 @@ def validate_path(path: str, field: str = "path") -> str:
         # Windows ignores spaces before the extension: "CON .txt" is CON.
         if seg.split(".", 1)[0].rstrip(" ").upper() in _RESERVED:
             raise _invalid(field, f"segment {seg!r} is a reserved Windows name")
-    return p
+    return path
 
 
 def path_key(path: str) -> str:
@@ -321,7 +313,9 @@ def base_branch_problem(branch: str) -> str | None:
 
 def validate_base_branch(branch: str) -> str:
     """`branch`, or a 422 with one issue at `base_branch` (`base_branch_problem`)."""
-    return _valid_at("base_branch", branch, base_branch_problem(branch))
+    if problem := base_branch_problem(branch):
+        raise field_error(["base_branch"], problem)
+    return branch
 
 
 # ------------------------------------------------------------------ content

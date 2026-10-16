@@ -52,18 +52,6 @@ IntakeCache = TtlCache[str, JiraSearch | str]
 JiraFieldsCache = TtlCache[str, list[JiraField]]
 
 
-def _login_limiter() -> RateLimiter:
-    return RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60.0)
-
-
-def _intake_cache() -> IntakeCache:
-    return TtlCache(INTAKE_CACHE_TTL_S)
-
-
-def _jira_fields_cache() -> JiraFieldsCache:
-    return TtlCache(JIRA_FIELDS_CACHE_TTL_S)
-
-
 @dataclass
 class AppContext:
     settings: Settings
@@ -72,9 +60,13 @@ class AppContext:
     # The Jira REST client when AGENTOS_JIRA_URL is set (tests swap in a MockTransport one).
     jira: JiraClient | None = None
     # Jira login attempts per (client IP, submitted email/username).
-    login_limiter: RateLimiter = field(default_factory=_login_limiter)
-    intake_cache: IntakeCache = field(default_factory=_intake_cache)
-    jira_fields_cache: JiraFieldsCache = field(default_factory=_jira_fields_cache)
+    login_limiter: RateLimiter = field(
+        default_factory=lambda: RateLimiter(LOGIN_ATTEMPTS_PER_MINUTE, 60.0)
+    )
+    intake_cache: IntakeCache = field(default_factory=lambda: TtlCache(INTAKE_CACHE_TTL_S))
+    jira_fields_cache: JiraFieldsCache = field(
+        default_factory=lambda: TtlCache(JIRA_FIELDS_CACHE_TTL_S)
+    )
 
     # The settings areas (db `settings`, edited in the app) are read from the db on each access,
     # so a save applies at once. A caller that needs several areas takes one `snapshot()`.
@@ -177,9 +169,21 @@ def runner_target(db: Database) -> Callable[[], GitHubTarget]:
 def _launcher(settings: Settings, db: Database) -> Launcher:
     if settings.launcher == "local":
         return LocalProcessLauncher.from_settings(settings, WORKER_PATH)
-    github = _github_launcher(settings, db)
+
+    if settings.github_token is None:  # pragma: no cover - startup_checks requires it
+        raise ConfigError([f"AGENTOS_LAUNCHER={settings.launcher} needs AGENTOS_GITHUB_TOKEN"])
+    try:
+        github = GitHubActionsLauncher(
+            target=runner_target(db),
+            token=settings.github_token.get_secret_value(),
+            api_url=settings.github_api_url,
+            api_version=settings.github_api_version,
+        )
+    except ValueError as exc:
+        raise ConfigError([f"AGENTOS_GITHUB_*: {exc}"]) from None
     if settings.launcher == "github":
         return github
+
     url, user, password = (
         settings.artifactory_url,
         settings.artifactory_user,
@@ -189,17 +193,3 @@ def _launcher(settings: Settings, db: Database) -> Launcher:
         raise ConfigError(["AGENTOS_LAUNCHER=mailbox needs the AGENTOS_ARTIFACTORY_* vars"])
     artifactory = ArtifactoryStore(base_url=url, user=user, password=password.get_secret_value())
     return MailboxLauncher(github=github, store=artifactory, worker_path=WORKER_PATH)
-
-
-def _github_launcher(settings: Settings, db: Database) -> GitHubActionsLauncher:
-    if settings.github_token is None:  # pragma: no cover - startup_checks requires it
-        raise ConfigError([f"AGENTOS_LAUNCHER={settings.launcher} needs AGENTOS_GITHUB_TOKEN"])
-    try:
-        return GitHubActionsLauncher(
-            target=runner_target(db),
-            token=settings.github_token.get_secret_value(),
-            api_url=settings.github_api_url,
-            api_version=settings.github_api_version,
-        )
-    except ValueError as exc:
-        raise ConfigError([f"AGENTOS_GITHUB_*: {exc}"]) from None

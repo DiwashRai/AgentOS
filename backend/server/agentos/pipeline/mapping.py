@@ -1,4 +1,4 @@
-"""Jira field mappings (request 22B): the matcher that turns a field's values into a target value
+"""Jira field mappings: the matcher that turns a field's values into a target value
 through admin-defined rules, and the per-target checks a save runs.
 
 Pure: the import, the Settings re-apply and the preview pass the rules and values in, so all three
@@ -117,8 +117,7 @@ def check_mappings(
     for i, entry in enumerate(doc.mappings):
         if entry.target in seen:
             loc: list[str | int] = [*prefix, "mappings", i, "target"]
-            message = "This target has a mapping already."
-            issues.append(ValidationIssue(loc=loc, message=message))
+            issues.append(ValidationIssue(loc=loc, message="This target has a mapping already."))
         seen.add(entry.target)
 
         mapping, problems = check_mapping(entry, (*prefix, "mappings", i))
@@ -141,16 +140,10 @@ def check_mapping(
         loc: list[str | int] = [*prefix, "rules", j, "value"]
         if tuple(loc) in reported:
             continue
-        if problem := _value_problem(entry.target, rule.value.strip()):
+        if entry.target == "base_branch" and (problem := base_branch_problem(rule.value.strip())):
             issues.append(ValidationIssue(loc=loc, message=problem))
 
     return (None if issues else mapping), issues
-
-
-def _value_problem(target: MappingTarget, value: str) -> str | None:
-    if target == "base_branch":
-        return base_branch_problem(value)
-    return None
 
 
 def _and(items: Sequence[str]) -> str:

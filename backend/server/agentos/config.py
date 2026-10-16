@@ -26,13 +26,6 @@ class ConfigError(Exception):
         super().__init__("Invalid configuration:\n" + "\n".join(f"  - {p}" for p in problems))
 
 
-def _split_csv(value: object) -> object:
-    """`a, b,,c` → ["a", "b", "c"]; lists (from code) pass through."""
-    if isinstance(value, str):
-        return [part.strip() for part in value.split(",") if part.strip()]
-    return value
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENTOS_",
@@ -88,7 +81,10 @@ class Settings(BaseSettings):
     @field_validator("admins", mode="before")
     @classmethod
     def _csv(cls, value: object) -> object:
-        return _split_csv(value)
+        """`a, b,,c` → ["a", "b", "c"]; lists (from code) pass through."""
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
 
     @field_validator("local_max_concurrency", mode="before")
     @classmethod

@@ -20,7 +20,7 @@ Mailbox mode (`launchers/mailbox.py`) also uses `dispatch()` (its own inputs), `
 launch_ref and must name a run of the current target repo; the request always goes to the
 configured API URL.
 
-Neither the GitHub token nor the dispatch token ever appears in a raised message.
+Neither the GitHub token nor the job token ever appears in a raised message.
 """
 
 from __future__ import annotations
@@ -121,12 +121,12 @@ class GitHubActionsLauncher:
         """The workflow's run list in the web UI (the launch_ref when GitHub returns no run)."""
         return f"{web_url(self.api_url)}/{target.repo}/actions/workflows/{target.workflow}"
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
         """Dispatch the workflow for `run_id` to the current target. Returns the Actions run URL
         (or the workflow's runs page when GitHub doesn't return the run). Raises LaunchError if
         no repo is set or GitHub refuses."""
-        inputs = {"server": server_url, "token": dispatch_token, "run_id": str(run_id)}
-        return self._dispatch(inputs, (self._token, dispatch_token))
+        inputs = {"server": server_url, "token": token, "run_id": str(run_id)}
+        return self._dispatch(inputs, (self._token, token))
 
     def dispatch(self, inputs: dict[str, str]) -> str:
         """Dispatch the current target's workflow with `inputs` (none of them secret). Returns

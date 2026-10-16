@@ -229,13 +229,10 @@ class MailboxReaper:
         except Exception:
             log.exception("mailbox reaper: sweep failed")
             return []
-        keep = {run_folder(i, h) for i, h in active.items() if h is not None}
         deleted: list[str] = []
         for name in folders:
-            if not _FOLDER.fullmatch(name) or name in keep:
-                continue
-            if int(name.split("-", 1)[0]) in active:
-                continue  # an active run's id: never touch it (D9)
+            if not _FOLDER.fullmatch(name) or int(name.split("-", 1)[0]) in active:
+                continue  # not a run folder, or an active run's id: never touch it (D9)
             try:
                 self.mailbox.delete_run(name)
             except MailboxError as exc:

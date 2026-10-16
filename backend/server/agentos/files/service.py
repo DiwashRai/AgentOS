@@ -66,14 +66,6 @@ _SQL_CURRENT_CONTENTS = (
     "WHERE fv.owner_type = 'ticket' AND fv.owner_id = ? AND fv.content IS NOT NULL "
     "ORDER BY fv.path"
 )
-_SQL_CURRENT_SIZES = (
-    "SELECT fv.path, length(CAST(fv.content AS BLOB)) AS size "
-    "FROM file_versions fv "
-    "JOIN (SELECT path, MAX(version) AS version FROM file_versions "
-    "      WHERE owner_type = 'ticket' AND owner_id = ? GROUP BY path) cur "
-    "  ON cur.path = fv.path AND cur.version = fv.version "
-    "WHERE fv.owner_type = 'ticket' AND fv.owner_id = ? AND fv.content IS NOT NULL"
-)
 # Versions of one path. Parameters: (ticket_id, path).
 _SQL_PATH_VERSIONS = (
     "SELECT fv.path, fv.version, fv.content IS NULL AS deleted, fv.mode, "
@@ -164,7 +156,7 @@ def _check_fits(conn: Conn, ticket_id: int, path: str, size: int) -> None:
     """422 on a case-insensitive clash with another current path; 413 if the bundle would grow
     past MAX_BUNDLE_BYTES with this file's new content."""
     total = size
-    for r in conn.execute(_SQL_CURRENT_SIZES, (ticket_id, ticket_id)).fetchall():
+    for r in conn.execute(_SQL_CURRENT_INFOS, (ticket_id, ticket_id)).fetchall():
         if r["path"] == path:
             continue
         if path_key(r["path"]) == path_key(path):
@@ -231,7 +223,8 @@ def put_file(db: Database, key: str, path: str, body: FileWrite, user: Me) -> Fi
         ticket_id = _ticket_id(conn, key)
         path = validate_path(path)
         _check_unlocked(conn, ticket_id)
-        current = _current_version(conn, ticket_id, path)
+        latest = _latest(conn, ticket_id, path)
+        current = 0 if latest is None or latest["deleted"] else latest["version"]
         if body.base_version != current:
             why = "already exists" if body.base_version == 0 else "was changed by someone else"
             raise ApiError(409, "stale_version", f"{path} {why} (current version {current})")
@@ -314,15 +307,6 @@ def _check_unlocked(conn: Conn, ticket_id: int) -> None:
 def _latest(conn: Conn, ticket_id: int, path: str) -> Row | None:
     row: Row | None = conn.execute(_SQL_LATEST, (ticket_id, path)).fetchone()
     return row
-
-
-def _current_version(conn: Conn, ticket_id: int, path: str) -> int:
-    """The current version number, or 0 when the file is absent (never written or deleted)."""
-    latest = _latest(conn, ticket_id, path)
-    if latest is None or latest["deleted"]:
-        return 0
-    version: int = latest["version"]
-    return version
 
 
 def _author(row: Row) -> Person | None:

@@ -6,7 +6,7 @@ The exception is `defaults` (the Space's default runtime/model/effort): it is re
 current version whenever a run's stages are resolved, so a change reaches every ticket whose
 stages leave them null.
 
-A ticket's pipeline comes from a workflow (request 23B, `agentos.workflows`). The `pipeline`
+A ticket's pipeline comes from a workflow (`agentos.workflows`). The `pipeline`
 column stays: the startup seed fills it and `legacy_pipeline` hands it to the "Standard" workflow
 seed; a template save copies it over unchanged.
 """
@@ -18,7 +18,7 @@ import json
 from pydantic import TypeAdapter
 
 from agentos.clock import to_db, utcnow
-from agentos.db import Conn, Database
+from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
 from agentos.models import FileEntry, Me, Pipeline, Template, TemplateDefaults, TemplateUpdate
 from agentos.pipeline.render import check_scaffold
@@ -48,15 +48,20 @@ def seed_default(db: Database) -> None:
         )
 
 
-def current(conn: Conn) -> Template:
-    """The current default template. Seeded at startup, so a missing row is a server bug."""
-    row = conn.execute(
-        "SELECT version, scaffold, defaults FROM templates WHERE name = ? "
+def _current_row(conn: Conn) -> Row:
+    """The current version's row. Seeded at startup, so a missing row is a server bug."""
+    row: Row | None = conn.execute(
+        "SELECT version, pipeline, scaffold, defaults FROM templates WHERE name = ? "
         "ORDER BY version DESC LIMIT 1",
         (DEFAULT_NAME,),
     ).fetchone()
     if row is None:
         raise RuntimeError("the default template is missing (seed_default did not run)")
+    return row
+
+
+def current(conn: Conn) -> Template:
+    row = _current_row(conn)
     return Template(
         scaffold=_SCAFFOLD.validate_json(row["scaffold"]),
         defaults=TemplateDefaults.model_validate_json(row["defaults"]),
@@ -67,25 +72,13 @@ def current(conn: Conn) -> Template:
 def legacy_pipeline(conn: Conn) -> Pipeline:
     """The current version's stored pipeline: what tickets copied before workflows, and what the
     "Standard" workflow is seeded from."""
-    row = conn.execute(
-        "SELECT pipeline FROM templates WHERE name = ? ORDER BY version DESC LIMIT 1",
-        (DEFAULT_NAME,),
-    ).fetchone()
-    if row is None:
-        raise RuntimeError("the default template is missing (seed_default did not run)")
-    return Pipeline.model_validate_json(row["pipeline"])
+    return Pipeline.model_validate_json(_current_row(conn)["pipeline"])
 
 
 def current_defaults(conn: Conn) -> TemplateDefaults:
     """The Space's agent defaults as the admin set them (the current version's). Runs resolve
     null stage runtimes/models against these at dispatch (`pipeline.manifest`)."""
-    row = conn.execute(
-        "SELECT defaults FROM templates WHERE name = ? ORDER BY version DESC LIMIT 1",
-        (DEFAULT_NAME,),
-    ).fetchone()
-    if row is None:
-        raise RuntimeError("the default template is missing (seed_default did not run)")
-    return TemplateDefaults.model_validate_json(row["defaults"])
+    return TemplateDefaults.model_validate_json(_current_row(conn)["defaults"])
 
 
 def get_template(db: Database) -> Template:
@@ -105,7 +98,7 @@ def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
     same transaction, so a concurrent runtime removal can't slip by."""
     check_scaffold(body.scaffold)
     with db.tx() as conn:
-        runtimes = _runtime_names(conn)
+        runtimes = {e.name for e in runtime_entries_of(read_area(conn, "runtimes"))}
         runtime = None if body.defaults is None else body.defaults.runtime
         if runtime is not None and runtime not in runtimes:
             raise ApiError(
@@ -129,7 +122,3 @@ def put_template(db: Database, actor: Me, body: TemplateUpdate) -> Template:
             ),
         )
         return current(conn)
-
-
-def _runtime_names(conn: Conn) -> frozenset[str]:
-    return frozenset(e.name for e in runtime_entries_of(read_area(conn, "runtimes")))

@@ -75,8 +75,8 @@ class RecordingLauncher:
     def __init__(self) -> None:
         self.launched: list[int] = []
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
-        del server_url, dispatch_token
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
+        del server_url, token
         self.launched.append(run_id)
         return self.url(run_id)
 

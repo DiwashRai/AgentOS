@@ -76,15 +76,12 @@ def running_runs(db: Database) -> list[MailboxRun]:
     ]
 
 
-def active_runs(db: Database) -> dict[int, str | None]:
-    """Every dispatched or running run (any launcher: run ids are per server) → the random part
-    of its job id (None without a job). What the sweep must keep."""
+def active_runs(db: Database) -> set[int]:
+    """The ids of every dispatched or running run (any launcher: run ids are per server): the
+    sweep keeps their folders."""
     with db.read() as conn:
-        rows = conn.execute(
-            "SELECT r.id, substr(j.id, -16) AS job_hex FROM runs r "
-            "LEFT JOIN jobs j ON j.run_id = r.id WHERE r.status IN ('dispatched', 'running')"
-        ).fetchall()
-    return {int(r["id"]): r["job_hex"] for r in rows}
+        rows = conn.execute("SELECT id FROM runs WHERE status IN ('dispatched', 'running')")
+        return {int(r["id"]) for r in rows.fetchall()}
 
 
 def is_running(db: Database, run_id: int) -> bool:

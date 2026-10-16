@@ -106,9 +106,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
-            ctx = build_context(
-                settings if settings is not None else load_settings(), launcher=launcher
-            )
+            ctx = build_context(settings or load_settings(), launcher=launcher)
         except (ConfigError, MigrationError) as exc:
             log.critical("AgentOS cannot start. %s", exc)  # fail fast with the readable message
             raise

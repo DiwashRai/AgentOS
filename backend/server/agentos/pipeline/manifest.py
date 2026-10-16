@@ -1,5 +1,4 @@
-"""Resolve stages to argv/stdin and build the protocol 2 job package (SPEC §7; loop blocks:
-request 24).
+"""Resolve stages to argv/stdin and build the protocol 2 job package (SPEC §7).
 
 Pure. Queueing validates a run with `render_stages` (same code path as the build at dispatch), so
 a queued run can't fail to render at dispatch unless the ticket changed in between.
@@ -122,15 +121,12 @@ def _agent(stage: Stage, runtimes: RuntimesConfig, defaults: TemplateDefaults) -
 def resolve_agent(
     stage: Stage, prompt: str, runtimes: RuntimesConfig, *, defaults: TemplateDefaults
 ) -> tuple[list[str], str | None]:
-    """Final argv + stdin for an agent stage: `argv`, then `model_args` (if a model resolves),
-    then `effort_args` (if an effort resolves), then `agent_args` (if `stage.agent`), then
-    `prompt_args` (if `prompt_via = "arg"`). With `prompt_via = "stdin"` the prompt is the stdin.
-    Unknown runtime → 422 `invalid_stage`.
+    """Final argv + stdin for an agent stage: `argv`, then `model_args`, `effort_args`,
+    `agent_args` (each if its value resolves), then `prompt_args` (if `prompt_via = "arg"`, else
+    the prompt is the stdin). Unknown runtime → 422 `invalid_stage`.
 
-    A null `stage.runtime` / `stage.model` / `stage.effort` takes the Space default
-    (`space_defaults`: the template's `defaults`, else the config's `default_runtime` / no model /
-    no effort). The Space model and effort belong to the Space runtime, so a stage on another
-    runtime without its own gets none. A runtime with empty `effort_args` passes no effort."""
+    A null `stage.runtime` / `model` / `effort` takes the Space default (`space_defaults`). The
+    Space model and effort belong to the Space runtime: a stage on another runtime gets none."""
     argv, stdin, _ = _agent(stage, runtimes, defaults).call(prompt)
     return argv, stdin
 
@@ -221,17 +217,12 @@ def _maker(
     later: list[ManifestInvocation] = []
     for n in range(2, rounds + 1):
         if session:
-            later.append(
-                agent.invocation(
-                    f"Round {n} of {rounds}. {FOLLOW_UP}\n\n",
-                    _with_session(spec.resume_args, session),
-                    "",
-                )
-            )
+            extra = _with_session(spec.resume_args, session)
+            head = f"Round {n} of {rounds}. {FOLLOW_UP}\n\n"
         else:
-            later.append(
-                agent.invocation(f"{prompt}\n\n## Round {n} of {rounds}\n{FOLLOW_UP}\n\n", [], "")
-            )
+            extra = []
+            head = f"{prompt}\n\n## Round {n} of {rounds}\n{FOLLOW_UP}\n\n"
+        later.append(agent.invocation(head, extra, ""))
     return ManifestStage(
         id=stage.id,
         name=stage.name,

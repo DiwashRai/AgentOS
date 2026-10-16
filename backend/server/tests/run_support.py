@@ -35,10 +35,10 @@ class FakeLauncher:
         self.launched: list[tuple[int, str, str]] = []  # (run_id, server_url, job_token)
         self.fail: Exception | None = None
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
         if self.fail is not None:
             raise self.fail
-        self.launched.append((run_id, server_url, dispatch_token))
+        self.launched.append((run_id, server_url, token))
         return f"fake-{run_id}"
 
     def token(self, run_id: int) -> str:

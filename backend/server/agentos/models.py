@@ -225,7 +225,7 @@ CLIENT_NAME_MAX = 80
 
 class ClientToken(ApiModel):
     """One of the signed-in user's client tokens (Settings > My client). The token itself is
-    shown only once, when it is created. `online`: it polled within the last minute."""
+    shown only once, when it is created. `online`: it leased within the last minute."""
 
     id: int
     name: str
@@ -466,7 +466,7 @@ class RunSummary(ApiModel):
     # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).
     log_delivery: LogDelivery
     target: DispatchTarget
-    # Client runs: whether the creator has a client token that polled within the last minute.
+    # Client runs: whether the creator has a client token that leased within the last minute.
     # Null for server runs.
     client_online: bool | None
 
@@ -1327,11 +1327,8 @@ class ManifestJournal(ApiModel):
     first_seq: int  # the seq of the job's first journal record
 
 
-ReportMode = Literal["live", "file"]
-
-
 class ManifestReport(ApiModel):
-    mode: ReportMode
+    mode: Literal["live", "file"]
     url: str | None  # live: the server's base URL
 
 
@@ -1369,7 +1366,7 @@ class JobPackage(ApiModel):
 class DispatchRequest(ApiModel):
     """`target: "client"` queues the run for the caller's own client: only the ticket's owner may
     (403 `forbidden` otherwise, and for an unowned ticket). It waits until a client of theirs
-    polls; cancel works as for any queued run."""
+    leases it; cancel works as for any queued run."""
 
     from_stage: str | None = None
     target: DispatchTarget = "server"
@@ -1591,15 +1588,12 @@ class PushedData(ApiModel):
     method: Literal["git", "api"]
 
 
-CLIENT_LEASE_MAX_WAIT_S = 25
-
-
 class LeaseRequest(ApiModel):
     """POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:
     false` (a busy client's heartbeat) answers `job: null` at once. Every lease records the
     client as seen and stamps `alive`, the jobs its workers still run (its user's only)."""
 
-    wait_s: int = Field(default=CLIENT_LEASE_MAX_WAIT_S, ge=0, le=CLIENT_LEASE_MAX_WAIT_S)
+    wait_s: int = Field(default=25, ge=0, le=25)
     take: bool = True
     alive: list[str] = Field(default_factory=list, max_length=100)
 

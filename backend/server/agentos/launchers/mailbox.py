@@ -31,8 +31,8 @@ _FOLDER = re.compile(RUN_FOLDER_PATTERN)
 log = logging.getLogger(__name__)
 
 
-def run_folder(run_id: int, dispatch_token_hash: str) -> str:
-    return f"{run_id}-{dispatch_token_hash[:16]}"
+def run_folder(run_id: int, job_hex: str) -> str:
+    return f"{run_id}-{job_hex[:16]}"
 
 
 class MailboxError(RuntimeError):
@@ -92,7 +92,7 @@ class MailboxLauncher:
         self.store = store
         self.worker_path = worker_path
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
         raise MailboxError("mailbox runs are launched by the mailbox dispatcher")
 
     def send(self, run_id: int, folder: str, manifest_json: bytes) -> str:

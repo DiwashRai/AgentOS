@@ -22,6 +22,7 @@ from datetime import datetime
 
 from pydantic import ValidationError
 
+from agentos.auth.service import hash_token
 from agentos.clients import service as clients
 from agentos.clients.service import CLIENT_LAUNCHER
 from agentos.clock import to_db, utcnow
@@ -47,7 +48,7 @@ from agentos.models import (
 )
 from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
-from agentos.runs.service import EVENT_ADAPTER, TERMINAL, finish, token_hash
+from agentos.runs.service import EVENT_ADAPTER, TERMINAL, finish
 from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import parsed, path_key, pydantic_issues, validate_pr_url
@@ -81,14 +82,14 @@ def _job_run(conn: Conn, job_token: str, instance: str) -> tuple[Row, Row]:
     `already_claimed` when the job is bound to another instance, or its run was started without
     one (a mailbox run, started by the server)."""
     job: Row | None = conn.execute(
-        "SELECT * FROM jobs WHERE token_hash = ?", (token_hash(job_token),)
+        "SELECT * FROM jobs WHERE token_hash = ?", (hash_token(job_token),)
     ).fetchone()
     if job is None:
         raise ApiError(401, "unauthorized", "Unknown job token")
 
     run: Row = conn.execute("SELECT * FROM runs WHERE id = ?", (job["run_id"],)).fetchone()
     bound = job["instance_hash"]
-    if (bound is None and run["status"] == "running") or bound not in (None, token_hash(instance)):
+    if (bound is None and run["status"] == "running") or bound not in (None, hash_token(instance)):
         raise ApiError(409, "already_claimed", f"Job {job['id']} is bound to another worker")
     return job, run
 
@@ -100,8 +101,7 @@ def job_package(db: Database, job_token: str, instance: str) -> str:
         job, run = _job_run(conn, job_token, instance)
     if run["status"] in TERMINAL:
         raise _gone(run["id"], run["status"])
-    package: str = job["package"]
-    return package
+    return str(job["package"])
 
 
 def post_journal(
@@ -139,7 +139,7 @@ def post_journal(
                 raise validation_error(issues)
             conn.execute(
                 "UPDATE jobs SET instance_hash = ? WHERE id = ? AND instance_hash IS NULL",
-                (token_hash(instance), job["id"]),
+                (hash_token(instance), job["id"]),
             )
 
         response = ingest(conn, run, job, records, now)
@@ -247,9 +247,8 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
             status = completion_status(ticket_pipeline(ticket), json.loads(run["stage_ids"]))
         elif result.status == "failed":
             status = "failed"
-            if not error:
-                failed = result.failed_stage
-                error = f"stage {failed} failed" if failed else "the run failed"
+            failed = result.failed_stage
+            error = error or (f"stage {failed} failed" if failed else "the run failed")
         else:
             status = "cancelled"
         if finish(conn, run["id"], status, ("running",), now=now, error=error):
@@ -303,20 +302,13 @@ def _store_events(conn: Conn, run: Row, events: Sequence[RunEvent], now: datetim
             _start_stage(conn, run_id, ev.stage_id, ev.data.round, at)
         elif ev.type == "stage_finished":
             # The running stage_run of that stage (else a pending one: a missed start).
+            data = ev.data
             conn.execute(
                 "UPDATE stage_runs SET status = ?, exit_code = ?, reason = ?, finished_at = ? "
                 "WHERE run_id = ? AND idx = (SELECT idx FROM stage_runs "
                 "  WHERE run_id = ? AND stage_id = ? AND status IN ('running', 'pending') "
                 "  ORDER BY status = 'running' DESC, idx LIMIT 1)",
-                (
-                    ev.data.status,
-                    ev.data.exit_code,
-                    ev.data.reason,
-                    at,
-                    run_id,
-                    run_id,
-                    ev.stage_id,
-                ),
+                (data.status, data.exit_code, data.reason, at, run_id, run_id, ev.stage_id),
             )
         elif ev.type == "verdict":
             conn.execute(
@@ -367,16 +359,12 @@ def _lock_base_branch(conn: Conn, run: Row) -> None:
     """Lock the base branch of the run's ticket on the run's first stored `stage_started`, if no
     run locked it before.
 
-    Why then: the worker emits `stage_started` only after `_setup_workspace` succeeded, i.e. the
-    ticket branch was checked out from `origin/{base_branch}` (or from an existing
-    `origin/agent/{KEY}`). From then on work exists on top of that base, so changing it (or the
-    repo) would strand it. A run that fails at checkout (a wrong base branch) never sends one, so
-    the owner can still fix the base. Mailbox runs replay their outbox through `ingest`, so the
-    same moment applies. A no-repo ticket has no base branch: nothing to lock. The ticket's
-    `repo` can't change while the run is active (409 `run_active`), so it is the run's.
-
-    A ticket that followed the repo default is pinned to the branch the run started from (its
-    job's package), so a later change to the repo's `default_branch` doesn't move locked work.
+    The worker emits `stage_started` only after the ticket branch was checked out from
+    `origin/{base_branch}` (or an existing `origin/agent/{KEY}`): from then on work sits on that
+    base, so changing it (or the repo) would strand it, while a run that fails at checkout leaves
+    the base fixable. A no-repo ticket has nothing to lock; the ticket's `repo` can't change while
+    the run is active (409 `run_active`). A ticket that followed the repo default is pinned to the
+    branch its job's package starts from, so a later `default_branch` change doesn't move it.
     """
     conn.execute(
         "UPDATE tickets SET base_branch_locked_by_run = ?, base_branch = COALESCE(base_branch, "
@@ -395,9 +383,7 @@ def _sync(conn: Conn, run: Row, stage_id: str | None, files: Sequence[SyncFile])
     rest of the batch applies, then a 422 names the refused paths. A stage outside the run → 422.
     """
     if stage_id not in json.loads(run["stage_ids"]):
-        raise ApiError(
-            422, "validation_error", f"stage_id: {stage_id!r} is not a stage of this run"
-        )
+        raise field_error(["stage_id"], f"{stage_id!r} is not a stage of this run.")
     package = JobPackage.model_validate_json(
         conn.execute("SELECT package FROM jobs WHERE run_id = ?", (run["id"],)).fetchone()[0]
     )
@@ -434,8 +420,7 @@ def check_upload(db: Database, job_token: str, instance: str, job_id: str) -> in
         raise ApiError(404, "not_found", f"No job {job_id} for this token")
     if run["status"] != "running":
         raise _gone(run["id"], run["status"])
-    run_id: int = run["id"]
-    return run_id
+    return int(run["id"])
 
 
 def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: int) -> None:

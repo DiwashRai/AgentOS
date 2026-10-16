@@ -522,27 +522,8 @@ def _check_runtimes_unused(conn: Conn, removed: list[str]) -> None:
 
 
 def _runtime_settings(row: AreaRow) -> RuntimeSettings:
-    return RuntimeSettings(
-        runtimes=[
-            RuntimeEntry(
-                name=e.name,
-                argv=e.argv,
-                model_args=e.model_args,
-                effort_args=e.effort_args,
-                agent_args=e.agent_args,
-                prompt_via=e.prompt_via,
-                prompt_args=e.prompt_args,
-                session_args=e.session_args,
-                resume_args=e.resume_args,
-                verdict_args=e.verdict_args,
-                verdict_from=e.verdict_from,
-            )
-            for e in runtime_entries_of(row)
-        ],
-        version=row.version,
-        updated_at=row.updated_at,
-        updated_by=row.updated_by,
-    )
+    entries = [RuntimeEntry.model_validate(e.model_dump()) for e in runtime_entries_of(row)]
+    return RuntimeSettings(runtimes=entries, **_meta(row))
 
 
 # ------------------------------------------------------------------ helpers

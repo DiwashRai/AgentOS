@@ -1,5 +1,4 @@
-"""Segments, run plans, completion mapping and pipeline validation (SPEC §6, §7; loop blocks:
-request 24).
+"""Segments, run plans, completion mapping and pipeline validation (SPEC §6, §7).
 
 Pure. `next_stage` lives in `tickets/board.py` (it needs run history).
 """
@@ -150,17 +149,17 @@ def validate_pipeline(pipeline: Pipeline, *, runtimes: Collection[str]) -> None:
     seen: set[str] = set()
     for stage in pipeline.stages:
         if stage.id in seen:
-            raise ApiError(422, "invalid_pipeline", f"stage {stage.id}: duplicate stage id")
+            raise _invalid_pipeline(f"stage {stage.id}: duplicate stage id")
         seen.add(stage.id)
         if stage.kind == "shell" and stage.enabled and not stage.command.strip():
-            raise ApiError(
-                422, "invalid_pipeline", f"stage {stage.id}: an enabled shell stage needs a command"
-            )
+            raise _invalid_pipeline(f"stage {stage.id}: an enabled shell stage needs a command")
         if stage.kind == "agent" and stage.runtime is not None and stage.runtime not in runtimes:
-            raise ApiError(
-                422, "invalid_pipeline", f"stage {stage.id}: unknown runtime {stage.runtime!r}"
-            )
+            raise _invalid_pipeline(f"stage {stage.id}: unknown runtime {stage.runtime!r}")
     _check_loops(pipeline)
+
+
+def _invalid_pipeline(message: str) -> ApiError:
+    return ApiError(422, "invalid_pipeline", message)
 
 
 def _check_loops(pipeline: Pipeline) -> None:
@@ -173,33 +172,27 @@ def _check_loops(pipeline: Pipeline) -> None:
         where = f"loops.{n}"
         for stage_id in (loop.start, loop.end):
             if stage_id not in pos:
-                raise ApiError(422, "invalid_pipeline", f"{where}: no stage {stage_id!r}")
+                raise _invalid_pipeline(f"{where}: no stage {stage_id!r}")
         start, end = pos[loop.start], pos[loop.end]
         if start > end:
-            raise ApiError(422, "invalid_pipeline", f"{where}: {loop.start} comes after {loop.end}")
+            raise _invalid_pipeline(f"{where}: {loop.start} comes after {loop.end}")
         block = pipeline.stages[start : end + 1]
         if not any(is_check(s) for s in block):
-            raise ApiError(
-                422,
-                "invalid_pipeline",
-                f"{where}: the block needs a check (a shell stage, or an agent stage with check)",
+            raise _invalid_pipeline(
+                f"{where}: the block needs a check (a shell stage, or an agent stage with check)"
             )
         if all(is_check(s) for s in block):
-            raise ApiError(
-                422,
-                "invalid_pipeline",
+            raise _invalid_pipeline(
                 f"{where}: the block needs an agent stage that isn't a check, to fix what the "
-                "checks find",
+                "checks find"
             )
         gated = next((s.id for s in block[:-1] if s.gate_after), None)
         if gated is not None:
-            raise ApiError(
-                422,
-                "invalid_pipeline",
-                f"stage {gated}: only the last stage of a loop block ({loop.end}) may have a gate",
+            raise _invalid_pipeline(
+                f"stage {gated}: only the last stage of a loop block ({loop.end}) may have a gate"
             )
         spans.append((start, end, n))
     spans.sort()
     for (_, end, first), (start, _, second) in pairwise(spans):
         if start <= end:
-            raise ApiError(422, "invalid_pipeline", f"loops.{second}: overlaps loops.{first}")
+            raise _invalid_pipeline(f"loops.{second}: overlaps loops.{first}")

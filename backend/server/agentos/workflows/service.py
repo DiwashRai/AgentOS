@@ -1,4 +1,4 @@
-"""Workflows (request 23B): named pipeline presets, edited by admins in Settings > Workflows.
+"""Workflows: named pipeline presets, edited by admins in Settings > Workflows.
 
 Applying one copies its pipeline into a ticket (at creation or a switch, `tickets.service`), and
 the ticket records the workflow's id, name and version then; editing a workflow later never
@@ -96,17 +96,6 @@ def get_default_id(db: Database) -> int:
         return default_id(conn)
 
 
-def set_default(conn: Conn, workflow_id: int) -> bool:
-    """Make `workflow_id` the default (inside the caller's transaction). 404 `not_found` if there
-    is no such workflow. Returns whether the default changed."""
-    get(conn, workflow_id)
-    if default_id(conn) == workflow_id:
-        return False
-    conn.execute("UPDATE workflows SET is_default = 0 WHERE is_default = 1")
-    conn.execute("UPDATE workflows SET is_default = 1 WHERE id = ?", (workflow_id,))
-    return True
-
-
 def runtime_uses(conn: Conn, names: Collection[str]) -> dict[str, list[str]]:
     """For each runtime in `names`, the workflows with an agent stage pinned to it (by name)."""
     uses: dict[str, list[str]] = {}
@@ -126,7 +115,7 @@ def runtime_uses(conn: Conn, names: Collection[str]) -> dict[str, list[str]]:
 def create_workflow(db: Database, actor: Me, body: WorkflowCreate) -> Workflow:
     """422 `validation_error` (a name in use, ignoring case) / `invalid_pipeline` /
     `render_error`."""
-    _check_pipeline_renders(body.pipeline)
+    check_prompts(body.pipeline.stages)
     with db.tx() as conn:
         _check_pipeline(conn, body.pipeline)
         _check_name(conn, body.name, None)
@@ -157,7 +146,7 @@ def create_workflow(db: Database, actor: Me, body: WorkflowCreate) -> Workflow:
 def update_workflow(db: Database, actor: Me, workflow_id: int, body: WorkflowUpdate) -> Workflow:
     """Replace name, description and pipeline; version + 1. 404 `not_found`, 409 `stale_version`,
     422 like create. Tickets copied from it keep their pipeline."""
-    _check_pipeline_renders(body.pipeline)
+    check_prompts(body.pipeline.stages)
     with db.tx() as conn:
         current = get(conn, workflow_id)
         if body.base_version != current.version:
@@ -186,7 +175,9 @@ def make_default(db: Database, workflow_id: int) -> Workflow:
     """Make `workflow_id` the default; the one before stops being it. Its version is unchanged
     (the default is not part of the workflow's content). 404 `not_found`."""
     with db.tx() as conn:
-        if set_default(conn, workflow_id):
+        if not get(conn, workflow_id).default:
+            conn.execute("UPDATE workflows SET is_default = 0 WHERE is_default = 1")
+            conn.execute("UPDATE workflows SET is_default = 1 WHERE id = ?", (workflow_id,))
             log.info("Workflows: %d is the default now", workflow_id)
         return get(conn, workflow_id)
 
@@ -206,10 +197,6 @@ def delete_workflow(db: Database, workflow_id: int) -> None:
 
 
 # ------------------------------------------------------------------ helpers
-
-
-def _check_pipeline_renders(pipeline: Pipeline) -> None:
-    check_prompts(pipeline.stages)
 
 
 def _check_pipeline(conn: Conn, pipeline: Pipeline) -> None:

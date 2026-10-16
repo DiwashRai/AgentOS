@@ -14,7 +14,6 @@ status).
 
 from __future__ import annotations
 
-import hashlib
 import json
 import secrets
 from collections.abc import Sequence
@@ -23,6 +22,7 @@ from datetime import datetime, timedelta
 
 from pydantic import TypeAdapter
 
+from agentos.auth.service import hash_token
 from agentos.clients.service import CLIENT_LAUNCHER, has_client, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
@@ -90,10 +90,6 @@ _SQL_QUEUED_CLIENT_RUN = (
     "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
     "ORDER BY id LIMIT 1"
 )
-
-
-def token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 # ------------------------------------------------------------------ row → model helpers
@@ -420,7 +416,7 @@ def build_job(conn: Conn, run: Row, report: ManifestReport, now: datetime) -> st
         (
             job.id,
             run["id"],
-            token_hash(token),
+            hash_token(token),
             package.model_dump_json(),
             journal.first_seq,
             budget_s,

@@ -15,6 +15,6 @@ class Launcher(Protocol):
     # The dispatcher counts active runs itself.
     max_concurrency: int | None
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
-        """Start a worker for the run. Returns an informational launch_ref."""
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
+        """Start a worker for the run with its job token. Returns an informational launch_ref."""
         ...

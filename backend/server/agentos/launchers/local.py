@@ -61,14 +61,14 @@ class LocalProcessLauncher:
             max_concurrency=settings.local_max_concurrency,
         )
 
-    def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
+    def launch(self, run_id: int, server_url: str, token: str) -> str:
         """Spawn the worker for `run_id` and return its PID. Raises if the spawn fails."""
         with self._lock:
             self._children = [child for child in self._children if child.poll() is None]
 
         self.workspaces_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
-        env = self.child_env(dispatch_token)
+        env = self.child_env(token)
         # The worker creates the workdir itself (it must not exist or be empty, SPEC §9.2).
         argv = [
             self.python,
@@ -101,7 +101,7 @@ class LocalProcessLauncher:
             self._children.append(child)
         return str(child.pid)
 
-    def child_env(self, dispatch_token: str) -> dict[str, str]:
+    def child_env(self, token: str) -> dict[str, str]:
         """Server env minus every AGENTOS_* var, then WORKER_ENV_FILE, then the token (SPEC §12).
 
         A key listed in the env file without a value (`FOO`) removes FOO from the child env.
@@ -114,7 +114,7 @@ class LocalProcessLauncher:
                 _env_set(env, key, value)
         _env_set(env, "PYTHONUNBUFFERED", "1")  # live log
         _env_set(env, "PYTHONIOENCODING", "utf-8")
-        _env_set(env, "AGENTOS_TOKEN", dispatch_token)  # never on the command line
+        _env_set(env, "AGENTOS_TOKEN", token)  # never on the command line
         return env
 
 
