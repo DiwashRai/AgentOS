@@ -31,6 +31,10 @@ class FakeChild:
     def poll(self) -> int | None:
         return 0 if self.done.is_set() else None
 
+    def wait(self) -> int:
+        self.done.wait()
+        return 0
+
 
 @dataclass
 class Spawned:
@@ -232,19 +236,21 @@ def test_a_busy_client_sends_heartbeats_that_take_nothing(
 
 
 def test_running_workers_are_listed_as_alive_until_they_finish(
-    server: FakeServer, spawn: FakeSpawn, tmp_path: Path
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spawn.finish = False
-    answers = [assigned(5, "d" * 43), assigned(6, "e" * 43), NOTHING, NOTHING]
 
-    def hook(path: str, body: Any) -> tuple[int, Any] | None:
-        if path != LEASE:
-            return None
-        if len(answers) == 2:  # the third lease: worker 5 finishes after it
+    def spawn_then_finish_the_first(*args: Any) -> FakeChild:
+        child = spawn(*args)
+        if spawn.count() == 3:  # worker 5 finishes while worker 7 starts
             spawn.calls[0].child.done.set()
-        return answers.pop(0) if answers else error(401, "unauthorized")
+        return child
 
-    server.hook = hook
+    monkeypatch.setattr(worker, "spawn_detached", spawn_then_finish_the_first)
+    answer_leases(
+        server,
+        [assigned(5, "d" * 43), assigned(6, "e" * 43), assigned(7, "f" * 43), NOTHING, NOTHING],
+    )
 
     assert run_client(server, tmp_path / "ws", "--max-runs", "3") == 1
 
@@ -252,8 +258,48 @@ def test_running_workers_are_listed_as_alive_until_they_finish(
         [],
         [job_id(5)],
         [job_id(5), job_id(6)],
-        [job_id(6)],
-        [job_id(6)],
+        [job_id(6), job_id(7)],
+        [job_id(6), job_id(7)],
+        [job_id(6), job_id(7)],
+    ]
+
+
+def test_a_worker_that_exits_during_a_long_poll_is_reported_at_once(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path
+) -> None:
+    spawn.finish = False
+    held, release = threading.Event(), threading.Event()
+    answers = [assigned(5, "d" * 43)]
+
+    def hook(path: str, body: Any) -> tuple[int, Any] | None:
+        if path != LEASE:
+            return None
+        if answers:
+            return answers.pop(0)
+        if not body["take"]:
+            release.set()  # the report: let the held lease end the client
+            return NOTHING
+        held.set()
+        release.wait(10)
+        return error(401, "unauthorized")
+
+    server.hook = hook
+    result: list[int] = []
+    thread = threading.Thread(
+        target=lambda: result.append(run_client(server, tmp_path / "ws", "--max-runs", "2"))
+    )
+    thread.start()
+    try:
+        assert held.wait(10)  # the second lease waits on the server
+        spawn.calls[0].child.done.set()
+        thread.join(10)
+    finally:
+        release.set()
+    assert result == [1]
+    assert server.bodies(LEASE) == [
+        TAKE,
+        {"wait_s": 25, "take": True, "alive": [job_id(5)]},
+        {"wait_s": 0, "take": False, "alive": []},
     ]
 
 

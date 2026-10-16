@@ -81,7 +81,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -3046,8 +3046,53 @@ class Child(Protocol):
 
     def poll(self) -> int | None: ...
 
+    def wait(self) -> int: ...
+
 
 Spawn = Callable[[list[str], Path, dict[str, str], Path], Child]  # (argv, cwd, env, log file)
+
+
+class Children:
+    """The client's started workers that still run, by job id. A thread per worker waits on its
+    process: one that exits while the client loop waits (`waiting`: a lease in flight, or a busy
+    client's pause) is reported at once by `report` (the job ids still running), so the server
+    hears it ended without waiting for the next lease."""
+
+    def __init__(self, report: Callable[[list[str]], object]) -> None:
+        self._report = report
+        self._lock = threading.Lock()
+        self._running: dict[str, Child] = {}
+        self._waiting = False
+
+    def add(self, job_id: str, child: Child) -> None:
+        with self._lock:
+            self._running[job_id] = child
+        threading.Thread(target=self._watch, args=(job_id, child), daemon=True).start()
+
+    @contextlib.contextmanager
+    def waiting(self) -> Iterator[list[str]]:
+        """Drop the exited workers and yield the running ones' job ids; until the block ends,
+        each exit is reported as it happens."""
+        with self._lock:
+            self._running = {job: c for job, c in self._running.items() if c.poll() is None}
+            self._waiting = True
+            alive = list(self._running)
+        try:
+            yield alive
+        finally:
+            with self._lock:
+                self._waiting = False
+
+    def _watch(self, job_id: str, child: Child) -> None:
+        child.wait()
+        with self._lock:
+            if not self._waiting or self._running.pop(job_id, None) is None:
+                return  # the loop's next lease leaves it out
+            alive = list(self._running)
+        try:
+            self._report(alive)
+        except (HttpError, Unreachable, ValueError) as exc:
+            say(f"could not report the end of job {job_id} ({exc}); the next lease will")
 
 
 def spawn_detached(
@@ -3128,7 +3173,8 @@ def run_client(
     spawn: Spawn,
 ) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
-    `max_runs` at once, listing the running ones as `alive` on every lease. With every slot busy
+    `max_runs` at once, listing the running ones as `alive` on every lease; a worker that exits
+    while a lease waits is reported at once by a no-take lease (`Children`). With every slot busy
     it sends a no-take lease every CLIENT_HEARTBEAT_S, so the server still sees it online. Network
     errors, 5xx, CLIENT_TRANSIENT_4XX and malformed answers back off (up to CLIENT_BACKOFF_CAP_S)
     forever; any other 4xx or another protocol exits 1. Started workers outlive the client.
@@ -3159,40 +3205,46 @@ def run_client(
     client = Client(server, token)
     me = Path(__file__).resolve()
     sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
-    children: dict[str, Child] = {}  # by job id
+    children = Children(
+        lambda alive: client.post(
+            "/api/worker/lease", {"wait_s": 0, "take": False, "alive": alive}, retry_budget_s=0
+        )
+    )
     delay = BACKOFF_START_S
     answered = time.monotonic()  # when the server last answered a lease
     say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
     try:
         while True:
-            children = {job: child for job, child in children.items() if child.poll() is None}
-            busy = len(children) >= max_runs
-            if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
-                time.sleep(CLIENT_REAP_S)
-                continue
+            problem: str | None = None
+            with children.waiting() as alive:
+                busy = len(alive) >= max_runs
+                if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
+                    time.sleep(CLIENT_REAP_S)
+                    continue
 
-            wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-            body = {"wait_s": wait_s, "take": not busy, "alive": list(children)}
-            try:
-                resp = client.post(
-                    "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
-                )
-                answered = time.monotonic()
-                if resp["protocol"] != PROTOCOL:
-                    say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
-                    return 1
-                job = resp["job"]
-                leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
-            except HttpError as exc:
-                if exc.status not in CLIENT_TRANSIENT_4XX:
-                    say(f"the server refused this client ({exc}); stopping")
-                    return 1
-                problem = str(exc)
-            except (Unreachable, ValueError) as exc:
-                problem = str(exc)
-            except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
-                problem = f"a malformed answer ({exc!r})"
-            else:
+                wait_s = 0 if busy else CLIENT_POLL_WAIT_S
+                body = {"wait_s": wait_s, "take": not busy, "alive": alive}
+                try:
+                    resp = client.post(
+                        "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
+                    )
+                    answered = time.monotonic()
+                    if resp["protocol"] != PROTOCOL:
+                        say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
+                        return 1
+                    job = resp["job"]
+                    leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
+                except HttpError as exc:
+                    if exc.status not in CLIENT_TRANSIENT_4XX:
+                        say(f"the server refused this client ({exc}); stopping")
+                        return 1
+                    problem = str(exc)
+                except (Unreachable, ValueError) as exc:
+                    problem = str(exc)
+                except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
+                    problem = f"a malformed answer ({exc!r})"
+
+            if problem is None:
                 delay = BACKOFF_START_S
                 if sha256 is not None and resp.get("worker_sha256") != sha256:
                     say(f"this worker.py differs from the server's ({server}/api/worker/worker.py)")
@@ -3208,7 +3260,7 @@ def run_client(
                 except OSError as exc:
                     say(f"run {run_id}: cannot start its worker: {exc}")
                     continue
-                children[job_id] = child
+                children.add(job_id, child)
                 say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
                 continue
 
