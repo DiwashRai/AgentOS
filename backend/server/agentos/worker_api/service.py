@@ -342,6 +342,13 @@ def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFil
     return SyncResponse(versions=versions, refused=refused)
 
 
+def check_live_run(db: Database, worker_token: str) -> None:
+    """401 for an unknown worker token, 410 when its run has ended. The upload route calls it
+    before it reads a body."""
+    with db.read() as conn:
+        _live_run(conn, worker_token)
+
+
 def store_sync_back(db: Database, worker_token: str, data: bytes, sha256: str, files: int) -> None:
     """Store the run's sync_back zip while the run is running. A repeat upload replaces it, so a
     retry is safe. 413 `too_large` over MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex)

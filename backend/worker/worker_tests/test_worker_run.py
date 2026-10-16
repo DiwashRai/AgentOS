@@ -398,13 +398,15 @@ def ship_agent(origin: Origin) -> dict[str, Any]:
     return package
 
 
+@pytest.mark.parametrize("theirs", [AGENT, ".claude/agents/X.md", ".Claude/Agents/x.md"])
 def test_a_shipped_agent_the_repo_already_has_fails_setup(
-    server: FakeServer, origin: Origin, tmp_path: Path
+    server: FakeServer, origin: Origin, tmp_path: Path, theirs: str
 ) -> None:
+    """Matched ignoring case, as a case-sensitive runner would otherwise miss it."""
     seed = tmp_path / "seed"
     git(tmp_path, "clone", "-q", origin.url, str(seed))
-    (seed / ".claude" / "agents").mkdir(parents=True)
-    (seed / AGENT).write_bytes(b"# theirs\n")
+    (seed / theirs).parent.mkdir(parents=True)
+    (seed / theirs).write_bytes(b"# theirs\n")
     git(seed, "add", "-A")
     git(seed, "commit", "-q", "-m", "agent")
     git(seed, "push", "-q", "origin", "main")
@@ -415,9 +417,19 @@ def test_a_shipped_agent_the_repo_already_has_fails_setup(
     done = server.complete()
     assert done is not None
     assert (done["status"], done["failed_stage"]) == ("failed", None)
-    assert AGENT in done["error"]
+    assert theirs in done["error"]
     assert git(tmp_path / "ws", "status", "--porcelain", "--untracked-files=all") == ""
     assert not origin.has_branch(BRANCH)
+
+
+def test_a_dangling_symlink_counts_as_an_existing_entry(tmp_path: Path) -> None:
+    (tmp_path / ".claude" / "agents").mkdir(parents=True)
+    try:
+        (tmp_path / ".claude" / "agents" / "X.md").symlink_to(tmp_path / "missing.md")
+    except OSError:
+        pytest.skip("symlinks need a privilege here")
+    assert worker.existing_entry(tmp_path, AGENT) == ".claude/agents/X.md"
+    assert worker.existing_entry(tmp_path, ".claude/agents/y.md") is None
 
 
 def test_a_shipped_agent_is_written_and_never_committed(

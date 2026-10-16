@@ -393,6 +393,17 @@ def test_sync_back_refuses_a_bad_upload(
     assert worker.sync_back(b"x" * 8).status_code == 204
 
 
+def test_sync_back_checks_the_token_before_the_body(
+    ticket: TicketDetail, runs: RunDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = runs.start(ticket.key)
+    monkeypatch.setattr(worker_service, "MAX_SYNC_BACK_BYTES", 8)
+    worker.token += "-wrong"
+
+    assert error(worker.sync_back(b"junk", sha256="0" * 64)) == (401, "unauthorized")
+    assert error(worker.sync_back(b"x" * 9)) == (401, "unauthorized")
+
+
 # ------------------------------------------------------------------ complete
 
 

@@ -301,6 +301,29 @@ def resolve_inside(root: Path, rel: str) -> tuple[Path, str | None]:
     return root.joinpath(*parts), None
 
 
+def existing_entry(root: Path, rel: str) -> str | None:
+    """The path of whatever already sits at `rel` under `root`, matched ignoring case at every
+    level as on a case-insensitive filesystem, or None. Any entry counts, a dangling symlink
+    included; only real folders are descended into."""
+    here, found = root, []
+    parts = rel.split("/")
+    for i, part in enumerate(parts):
+        try:
+            with os.scandir(here) as entries:
+                match = next((e for e in entries if e.name.lower() == part.lower()), None)
+        except OSError:
+            return None
+        if match is None:
+            return None
+        found.append(match.name)
+        if i == len(parts) - 1:
+            return "/".join(found)
+        if not match.is_dir(follow_symlinks=False):
+            return None
+        here = Path(match.path)
+    return None
+
+
 def read_regular(root: Path, rel: str, limit: int | None = None) -> tuple[bytes | None, str | None]:
     """(content, error) of a regular file of at most `limit` bytes. (None, None) when the file
     doesn't exist."""
@@ -1488,7 +1511,8 @@ class SyncBatch:
 
 def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
     """POSIX paths of the regular files under `rel_dir`, and of what was skipped there: links,
-    special files, and folders that can't be listed or have a bad name. Never follows links."""
+    special files, folders that can't be listed, and files or folders whose path breaks the path
+    rules. Never follows links."""
     top, err = resolve_inside(root, rel_dir)
     if err:
         return [], [rel_dir]
@@ -1510,9 +1534,12 @@ def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
                 st = child.lstat()
             except OSError:
                 continue
-            if stat.S_ISREG(st.st_mode) and not is_link(st):
+            if path_error(child_rel) or is_link(st):
+                # A name that isn't valid UTF-8 is shown escaped, so the warning can be sent.
+                skipped.append(child_rel.encode("utf-8", "backslashreplace").decode("utf-8"))
+            elif stat.S_ISREG(st.st_mode):
                 found.append(child_rel)
-            elif stat.S_ISDIR(st.st_mode) and not is_link(st) and not path_error(child_rel):
+            elif stat.S_ISDIR(st.st_mode):
                 stack.append((child_rel, child))
             else:
                 skipped.append(child_rel)
@@ -2138,7 +2165,9 @@ class Run:
         if problem:
             return self._finish("failed", None, problem)
         clash = [
-            f.path for f in self.m.files if f.kind == "agent" and (self.workdir / f.path).exists()
+            theirs
+            for f in self.m.files
+            if f.kind == "agent" and (theirs := existing_entry(self.workdir, f.path)) is not None
         ]
         if clash:
             return self._finish("failed", None, f"the repo already has agent {', '.join(clash)}")
@@ -2247,7 +2276,10 @@ class Run:
             return
         if skipped:
             self.events.warn(
-                None, _clip(f"{folder}: skipped (not a regular file): {', '.join(skipped)}")
+                None,
+                _clip(
+                    f"{folder}: skipped (not a regular file, or a bad name): {', '.join(skipped)}"
+                ),
             )
         if not files:
             return
@@ -2266,8 +2298,8 @@ class Run:
                             dst.write(chunk)
                     if buf.tell() > cap:
                         break
-        except OSError as exc:
-            self.events.warn(None, f"{folder} not sent: {exc}")
+        except (OSError, ValueError) as exc:  # ValueError: e.g. a name zipfile can't encode
+            self.events.warn(None, _clip(f"{folder} not sent: {exc!r}"))
             return
         if buf.tell() > cap:
             self.events.warn(None, f"{folder} not sent: the zip is over {cap} bytes")

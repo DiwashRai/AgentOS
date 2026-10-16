@@ -92,6 +92,35 @@ def test_a_link_is_skipped_and_named(
     assert any(link in w for w in server.warnings())
 
 
+# (the path as a Python literal for the stage to create, how the warning shows it)
+BAD_NAMES = [
+    pytest.param(f"'{SYNC_BACK}/a#b.txt'", "a#b.txt", id="outside-the-path-rules"),
+    pytest.param(
+        f"b'{SYNC_BACK}/\\xff.txt'",
+        "\\udcff.txt",
+        id="not-utf-8",
+        marks=pytest.mark.skipif(sys.platform == "win32", reason="Windows names are UTF-16"),
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "shown"), BAD_NAMES)
+def test_a_bad_file_name_is_skipped_and_named_and_the_run_completes(
+    server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, shown: str
+) -> None:
+    python_shell(monkeypatch)
+    bad = f"open({name}, 'wb').write(b'x')"
+    good = f"open('{SYNC_BACK}/a.txt', 'w').write('a')"
+    server.manifest = make_package([shell_stage("names", f"{bad}; {good}")])
+    assert run_worker(server, tmp_path / "ws") == 0
+    assert status_of(server) == "completed"
+
+    [(query, data)] = server.uploads()
+    assert query["files"] == "1"
+    assert unzip(data) == {"a.txt": b"a"}
+    assert any(f"{SYNC_BACK}/{shown}" in w for w in server.warnings())
+
+
 def test_an_empty_folder_sends_nothing(server: FakeServer, tmp_path: Path) -> None:
     server.manifest = make_package([agent_stage("implement", "print=nothing to return")])
     assert run_worker(server, tmp_path / "ws") == 0
