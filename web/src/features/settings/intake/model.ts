@@ -5,7 +5,6 @@ import type { FieldPath, SentKeys } from "../../../editor/issues";
 import { keyed, keysOf, newKey, unkeyed, type Keyed } from "../../../editor/list";
 import { describeSaveError } from "../../../editor/save";
 
-export type IntakeRead = Schemas["IntakeSettings"];
 export type IntakeDoc = Schemas["IntakeDoc"];
 export type QueryEntry = Schemas["IntakeQueryEntry"];
 export type IntakePreview = Schemas["IntakePreview"];

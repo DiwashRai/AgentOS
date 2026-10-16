@@ -1,4 +1,4 @@
-"""Resolve stages to argv/stdin and build the protocol-v1 manifest (SPEC §7; loop blocks:
+"""Resolve stages to argv/stdin and build the protocol 2 job package (SPEC §7; loop blocks:
 request 24).
 
 Pure. Dispatch validates a run with `render_stages` (same code path as the claim-time build), so
@@ -16,31 +16,41 @@ import json
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from agentos.errors import ApiError
 from agentos.models import (
     VERDICT_FILE,
     VERDICT_NOTES_MAX,
     VERDICT_SCHEMA,
+    ContextEntry,
+    ContextKind,
     FileEntry,
+    JobPackage,
     Loop,
-    Manifest,
-    ManifestFile,
     ManifestInvocation,
     ManifestLimits,
     ManifestLoop,
     ManifestStage,
     ManifestTicket,
     ManifestWorkspace,
+    NoteEntry,
     Stage,
+    SyncBack,
     TemplateDefaults,
     VerdictFrom,
 )
 from agentos.pipeline.render import TicketRef, render_prompt
 from agentos.pipeline.runtime import RuntimesConfig, RuntimeSpec, space_defaults
-from agentos.pipeline.scaffold import names
+from agentos.pipeline.scaffold import names, skill_dir
 from agentos.pipeline.segment import RunPlan, loops_by_stage
-from agentos.validate import MAX_AGENT_LINE_BYTES, MAX_FILE_BYTES
+from agentos.validate import (
+    MAX_AGENT_LINE_BYTES,
+    MAX_FILE_BYTES,
+    MAX_SYNC_BACK_BYTES,
+    SYNC_BACK_DIR,
+    path_key,
+)
 
 VERDICT_SCHEMA_JSON = json.dumps(VERDICT_SCHEMA, separators=(",", ":"))
 FOLLOW_UP = "The checks found problems with the last change. Address every point, then stop."
@@ -284,7 +294,40 @@ def render_stages(
     return out
 
 
-def build_manifest(
+def classify(f: FileEntry, key: str) -> ContextEntry | NoteEntry:
+    """A ticket file as a note or a typed context entry. The first rule that matches wins (paths
+    compared by `path_key`): the ticket skill's `learnings.log` / `swarm.log` → a note; its
+    `TASKS.md` → `plan`; a block-mode file → `instructions` (the block is the ticket key);
+    `.claude/agents/**` → `agent`; the ticket skill's `out/**` → `file`; `.claude/skills/<n>/**` →
+    `skill` named `<n>`; anything else → `file`. Every ticket file is `access: write`."""
+    p = PurePosixPath(f.path)
+    k = path_key(f.path)
+    d = path_key(skill_dir(key))
+    if k in (f"{d}/learnings.log", f"{d}/swarm.log"):
+        return NoteEntry(path=f.path, name=p.stem, content=f.content)
+
+    kind: ContextKind = "file"
+    name, block = p.name, None
+    if k == f"{d}/tasks.md":
+        kind, name = "plan", p.stem
+    elif f.mode == "block":
+        kind, name, block = "instructions", key, key
+    elif k.startswith(".claude/agents/"):
+        kind, name = "agent", p.stem
+    elif k.startswith(".claude/skills/") and not k.startswith(f"{d}/out/") and len(p.parts) > 3:
+        kind, name = "skill", p.parts[2]
+    return ContextEntry(
+        path=f.path,
+        kind=kind,
+        name=name,
+        mode=f.mode,
+        block=block,
+        access="write",
+        content=f.content,
+    )
+
+
+def build_package(
     run_id: int,
     ticket: TicketRef,
     plan: RunPlan,
@@ -293,14 +336,15 @@ def build_manifest(
     *,
     defaults: TemplateDefaults,
     new_session: NewSession = new_session_id,
-) -> Manifest:
-    """The manifest a worker receives at claim.
+) -> JobPackage:
+    """The job package a worker receives at claim.
 
-    `bundle` is the ticket's current (non-deleted) files → `sync=True`. In no-repo mode the
-    workspace's `repo_url`/`base_branch`/`branch` are null.
+    `bundle` is the ticket's current (non-deleted) files, split into `context` and `notes` by
+    `classify`. In no-repo mode the workspace's `repo_url`/`base_branch`/`branch` are null.
     """
     n = names(ticket.key, ticket.workspace_mode)
-    files = [ManifestFile(path=f.path, content=f.content, mode=f.mode, sync=True) for f in bundle]
+    entries = [classify(f, ticket.key) for f in bundle]
+    context = [e for e in entries if isinstance(e, ContextEntry)]
     repo = ticket.workspace_mode == "repo"
     stages = render_stages(
         run_id,
@@ -311,7 +355,8 @@ def build_manifest(
         loops=plan.loops,
         new_session=new_session,
     )
-    return Manifest(
+    return JobPackage(
+        protocol=2,
         run_id=run_id,
         ticket=ManifestTicket(key=ticket.key, title=ticket.title),
         workspace=ManifestWorkspace(
@@ -319,9 +364,13 @@ def build_manifest(
             repo_url=ticket.repo_url if repo else None,
             base_branch=ticket.base_branch if repo else None,
             branch=n.branch,
+            protect=[n.skill_dir],
+            blocks=list(dict.fromkeys(e.block for e in context if e.block is not None)),
         ),
-        files=files,
-        sync_dirs=[n.skill_dir],
+        context=context,
+        notes=[e for e in entries if isinstance(e, NoteEntry)],
+        sync_back=SyncBack(dir=SYNC_BACK_DIR, max_bytes=MAX_SYNC_BACK_BYTES),
+        env={"AGENTOS_SKILL_DIR": n.skill_dir, "AGENTOS_SYNC_BACK": SYNC_BACK_DIR},
         stages=stages,
         limits=ManifestLimits(max_file_bytes=MAX_FILE_BYTES, max_line_bytes=MAX_AGENT_LINE_BYTES),
         loops=[

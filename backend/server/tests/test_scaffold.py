@@ -37,18 +37,19 @@ def test_names_repo_mode() -> None:
     d = ".claude/skills/context-aos-42"
     assert n.skill_name == "context-aos-42"
     assert n.skill_dir == d == skill_dir("AOS-42")
-    assert (n.skill_md, n.tasks_md, n.learnings, n.swarm, n.out) == (
+    assert (n.skill_md, n.tasks_md, n.learnings, n.swarm, n.sync_back) == (
         f"{d}/SKILL.md",
         f"{d}/TASKS.md",
         f"{d}/learnings.log",
         f"{d}/swarm.log",
-        f"{d}/out",
+        ".agentos/sync_back",
     )
     assert n.branch == "agent/AOS-42"
 
 
-def test_names_no_repo_mode_has_no_branch() -> None:
-    assert names("AOS-42", "none").branch is None
+def test_names_no_repo_mode_has_no_branch_and_the_same_sync_back() -> None:
+    n = names("AOS-42", "none")
+    assert (n.branch, n.sync_back) == (None, ".agentos/sync_back")
 
 
 def test_default_pipeline_seed() -> None:

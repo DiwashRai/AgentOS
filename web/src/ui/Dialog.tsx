@@ -43,7 +43,8 @@ export function dialogOpen(): boolean {
   return stack.length > 0;
 }
 
-function reducedMotion(): boolean {
+/** The user asked the system for reduced motion. */
+export function reducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 

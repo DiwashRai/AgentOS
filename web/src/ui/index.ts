@@ -18,7 +18,7 @@ export {
   type DataColumn,
   type KeyHint,
 } from "./DataList";
-export { Dialog, dialogOpen, DialogTitle } from "./Dialog";
+export { Dialog, dialogOpen, DialogTitle, reducedMotion } from "./Dialog";
 export { EmptyState } from "./EmptyState";
 export { Faces } from "./Faces";
 export { Fold } from "./Fold";

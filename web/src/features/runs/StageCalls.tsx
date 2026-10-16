@@ -1,14 +1,14 @@
-// Runs tab · "How each stage was called": the selected run's manifest, exactly what the worker
-// received. Closed by default; the manifest (which carries every context file) is fetched only once
+// Runs tab · "How each stage was called": the selected run's job package, exactly what the worker
+// received. Closed by default; the package (which carries every context file) is fetched only once
 // the section is opened. Logic lives in `manifest.ts`.
 import { useEffect, useRef, useState } from "react";
 
 import { useManifest } from "../../api/queries";
 import { cx, EmptyState, Fold, Inline, Stack, StatusLine, Tag, text } from "../../ui";
 import {
-  filePaths,
   laterLabel,
   manifestErrorText,
+  packageFiles,
   promptLabel,
   stageCall,
   timeoutText,
@@ -19,7 +19,7 @@ import {
   type TokenKind,
 } from "./manifest";
 import s from "./RunsTab.module.css";
-import type { RunStatus } from "./runFormat";
+import { isActiveRun, type RunStatus } from "./runFormat";
 
 const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
   program: s.tProgram,
@@ -111,9 +111,9 @@ function LaterCalls({ calls }: { calls: LaterCall[] }) {
   );
 }
 
-/** The manifest's stages and file list. Pure: props in, markup out. */
+/** The package's stages and file list. Pure: props in, markup out. */
 export function ManifestBody({ manifest }: { manifest: Manifest }) {
-  const paths = filePaths(manifest);
+  const files = packageFiles(manifest);
   return (
     <Stack gap={6}>
       {(manifest.warnings ?? []).map((w, i) => (
@@ -126,11 +126,13 @@ export function ManifestBody({ manifest }: { manifest: Manifest }) {
           <CallItem key={st.id} call={stageCall(st)} />
         ))}
       </ol>
-      {paths.length > 0 ? (
-        <Fold summary={`Files given to the agent (${String(paths.length)})`}>
-          <ul className={cx(s.pre, s.paths)}>
-            {paths.map((p) => (
-              <li key={p}>{p}</li>
+      {files.length > 0 ? (
+        <Fold summary={`Files given to the agent (${String(files.length)})`}>
+          <ul className={cx(s.pre, s.paths)} aria-label="Files given to the agent">
+            {files.map((f) => (
+              <li key={f.path}>
+                {f.path} <span className={s.fileKind}>· {f.kind}</span>
+              </li>
             ))}
           </ul>
         </Fold>
@@ -154,7 +156,7 @@ function ManifestLoader({ runId, status }: { runId: number; status: RunStatus })
 
   if (q.isPending) return <StatusLine>Loading</StatusLine>;
   if (q.isError) {
-    const e = manifestErrorText(q.error);
+    const e = manifestErrorText(q.error, isActiveRun(status));
     return <StatusLine error={!e.quiet}>{e.text}</StatusLine>;
   }
   return <ManifestBody manifest={q.data} />;

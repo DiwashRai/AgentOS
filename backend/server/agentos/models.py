@@ -1211,7 +1211,9 @@ class ChatPost(ApiModel):
     body: str = Field(min_length=1, max_length=4000)
 
 
-# ------------------------------------------------------------------ manifest (protocol v1)
+# ------------------------------------------------------------------ job package (protocol 2)
+
+ContextKind = Literal["skill", "plan", "instructions", "agent", "file"]
 
 
 class ManifestTicket(ApiModel):
@@ -1220,17 +1222,44 @@ class ManifestTicket(ApiModel):
 
 
 class ManifestWorkspace(ApiModel):
+    """`protect`: folders kept out of git besides the declared files (the ticket skill dir; the
+    worker always adds `.agentos/`). `blocks`: every block name in `context`, all of which the
+    pre-push marker scan looks for."""
+
     mode: WorkspaceMode
     repo_url: str | None
     base_branch: str | None
     branch: str | None
+    protect: list[str]
+    blocks: list[str]
 
 
-class ManifestFile(ApiModel):
+class ContextEntry(ApiModel):
+    """A context file. `name`: the skill, block, agent or file it belongs to. `block`: the block
+    name in block mode (`content` is then the block's). `access: write` entries are synced back."""
+
     path: str
-    content: str
+    kind: ContextKind
+    name: str
     mode: Mode
-    sync: bool
+    block: str | None
+    access: Literal["write", "read"]
+    content: str
+
+
+class NoteEntry(ApiModel):
+    """An append-only log (`learnings.log`, `swarm.log`), shipped and synced like write context."""
+
+    path: str
+    name: str
+    content: str
+
+
+class SyncBack(ApiModel):
+    """The workspace folder the agent returns files through, as one zip of at most `max_bytes`."""
+
+    dir: str
+    max_bytes: int
 
 
 class ManifestInvocation(ApiModel):
@@ -1270,7 +1299,7 @@ class ManifestStage(ApiModel):
 
 
 class ManifestLoop(ApiModel):
-    """A loop block over the manifest's `stages` (ids, `start` at or before `end`)."""
+    """A loop block over the package's `stages` (ids, `start` at or before `end`)."""
 
     start: str
     end: str
@@ -1282,13 +1311,18 @@ class ManifestLimits(ApiModel):
     max_line_bytes: int
 
 
-class Manifest(ApiModel):
-    protocol: Literal[1] = 1
+class JobPackage(ApiModel):
+    """What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
+    paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself."""
+
+    protocol: Literal[2]
     run_id: int
     ticket: ManifestTicket
     workspace: ManifestWorkspace
-    files: list[ManifestFile]
-    sync_dirs: list[str]
+    context: list[ContextEntry]
+    notes: list[NoteEntry]
+    sync_back: SyncBack
+    env: dict[str, str]
     stages: list[ManifestStage]
     limits: ManifestLimits
     # Loop blocks over `stages`, in order and not overlapping (request 24).
@@ -1354,9 +1388,16 @@ class StageRunInfo(ApiModel):
     finished_at: AwareDatetime | None
 
 
+class SyncBackInfo(ApiModel):
+    files: int
+    bytes: int
+
+
 class RunDetail(RunSummary):
     # The manifest (can be MiBs) is served separately: GET /api/runs/{id}/manifest.
     stage_runs: list[StageRunInfo]
+    # The zip the worker returned from sync_back; download: GET /api/runs/{id}/sync-back.
+    sync_back: SyncBackInfo | None
 
 
 class StageStartedData(ApiModel):
@@ -1458,7 +1499,7 @@ class ClaimRequest(ApiModel):
 
 
 class ClaimResponse(ApiModel):
-    manifest: Manifest
+    manifest: JobPackage
 
 
 class EventsRequest(ApiModel):
@@ -1482,6 +1523,7 @@ class SyncRequest(ApiModel):
 
 class SyncResponse(ApiModel):
     versions: dict[str, int]
+    refused: list[str]  # paths that aren't write context or notes of the run's package
 
 
 class CompleteRequest(ApiModel):

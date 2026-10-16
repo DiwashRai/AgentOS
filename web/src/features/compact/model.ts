@@ -5,7 +5,7 @@
 import type { Schemas } from "../../api/client";
 import { type CountKey, counts, shippedThisWeek } from "../../domain/counts";
 import { age, repoShort } from "../../domain/format";
-import { since } from "../../domain/groups";
+import { longestFirst, newestFirst, sinceMs } from "../../domain/groups";
 import type { Outcome } from "../../domain/outcome";
 import {
   type Attention,
@@ -152,14 +152,6 @@ type GroupTicket = Pick<
   "key" | "attention" | "attention_since" | "owner" | "repo_name" | "state" | "resolution"
 >;
 
-function sinceMs(t: GroupTicket): number {
-  const ms = Date.parse(since(t));
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
-const byKey = (a: GroupTicket, b: GroupTicket) => a.key.localeCompare(b.key);
-const longestFirst = (a: GroupTicket, b: GroupTicket) => sinceMs(a) - sinceMs(b) || byKey(a, b);
-const newestFirst = (a: GroupTicket, b: GroupTicket) => sinceMs(b) - sinceMs(a) || byKey(a, b);
 /** Alphabetical by repo (no repo last), then longest wait first. */
 const byRepo = (a: GroupTicket, b: GroupTicket) => {
   const ra = a.repo_name ?? "";

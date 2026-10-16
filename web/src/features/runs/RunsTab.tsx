@@ -13,6 +13,7 @@ import {
   EmptyState,
   Fold,
   Inline,
+  Link,
   Stack,
   StatusLine,
   StatusMark,
@@ -31,7 +32,14 @@ import {
   type StageRun,
 } from "./rounds";
 import { RunLog } from "./RunLog";
-import { isActiveRun, launchRef, runMark, spanSeconds, type MarkInfo } from "./runFormat";
+import {
+  isActiveRun,
+  launchRef,
+  runMark,
+  spanSeconds,
+  syncBackLink,
+  type MarkInfo,
+} from "./runFormat";
 import s from "./RunsTab.module.css";
 import { StageCalls } from "./StageCalls";
 import { useNow } from "../../ui/useNow";
@@ -239,6 +247,19 @@ function StageList({ detail, now, active }: { detail: RunDetail; now: number; ac
   );
 }
 
+/** The files the run returned, as a zip download; nothing when it returned none. */
+export function SyncBackLine({ run }: { run: Pick<RunDetail, "id" | "sync_back"> }) {
+  if (!run.sync_back) return null;
+  const link = syncBackLink(run.id, run.sync_back);
+  return (
+    <div className={text.meta}>
+      <Link href={link.href} download>
+        {link.text}
+      </Link>
+    </div>
+  );
+}
+
 function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
   const detailQ = useRun(summary.id, isActiveRun(summary.status));
   // The detail polls every second while active, so it is fresher than the 3 s list. If the list
@@ -273,6 +294,7 @@ function RunPanel({ summary, now }: { summary: RunSummary; now: number }) {
       ) : detailQ.data ? (
         <StageList detail={detailQ.data} now={now} active={active} />
       ) : null}
+      {detailQ.data ? <SyncBackLine run={detailQ.data} /> : null}
       <StageCalls runId={run.id} status={run.status} />
       <RunLog
         key={run.id}

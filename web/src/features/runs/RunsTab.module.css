@@ -307,6 +307,11 @@
   list-style: none;
 }
 
+/* a file's kind after its path */
+.fileKind {
+  color: var(--ink-3);
+}
+
 /* ---------------------------------------------------------------- log */
 
 /* a link inside a sentence (the empty log's "Watch it live on GitHub"): 500, and it wraps with the

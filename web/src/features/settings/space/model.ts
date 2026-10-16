@@ -5,9 +5,7 @@ import type { Schemas } from "../../../api/client";
 import type { FieldPath, SentKeys } from "../../../editor/issues";
 import { keysOf, newKey } from "../../../editor/list";
 
-export type SpaceRead = Schemas["SpaceSettings"];
 export type SpaceDoc = Schemas["SpaceDoc"];
-export type ReposRead = Schemas["RepoSettings"];
 export type ReposDoc = Schemas["ReposDoc"];
 
 // ------------------------------------------------------------------ Space

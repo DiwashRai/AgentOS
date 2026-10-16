@@ -6,7 +6,7 @@ import {
   ageParts,
   ago,
   duration,
-  isOld,
+  formatSize,
   plural,
   prLabel,
   repoShort,
@@ -53,13 +53,6 @@ describe("ageParts", () => {
   it("keeps text without a number+unit pair whole", () => {
     expect(ageParts("now")).toEqual([{ n: "now", unit: "" }]);
     expect(ageParts("3h ago")).toEqual([{ n: "3h ago", unit: "" }]);
-  });
-});
-
-describe("isOld", () => {
-  it("turns on at 90 minutes", () => {
-    expect(isOld(minAgo(89), now)).toBe(false);
-    expect(isOld(minAgo(90), now)).toBe(true);
   });
 });
 
@@ -129,6 +122,12 @@ describe("prLabel", () => {
   ])("%s → %s", (url, expected) => {
     expect(prLabel(url)).toBe(expected);
   });
+});
+
+it("formatSize", () => {
+  expect(formatSize(812)).toBe("812 B");
+  expect(formatSize(1229)).toBe("1.2 KB");
+  expect(formatSize(3.4 * 1024 * 1024)).toBe("3.4 MB");
 });
 
 it("pluralises the word after a count", () => {

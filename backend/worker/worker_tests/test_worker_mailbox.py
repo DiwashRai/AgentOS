@@ -18,7 +18,7 @@ from worker_tests.worker_support import (
     DISPATCH_TOKEN,
     SKILL_DIR,
     agent_stage,
-    make_manifest,
+    make_package,
     python_shell,
     shell_stage,
 )
@@ -56,13 +56,13 @@ def test_no_repo_run_records_header_events_sync_and_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     python_shell(monkeypatch)
-    manifest = make_manifest(
+    manifest = make_package(
         [
             agent_stage("implement", "edit", "sleep=0.6"),  # > HEARTBEAT_S: heartbeats happen
             shell_stage("lint", "print('lint ok')"),
         ]
     )
-    manifest["files"][2]["content"] = "# Tasks — ü\n\n- [ ] Fix expiry\n"
+    manifest["context"][2]["content"] = "# Tasks — ü\n\n- [ ] Fix expiry\n"
     code, outbox = run_mailbox(tmp_path, manifest)
     assert code == 0
 
@@ -95,12 +95,12 @@ def test_no_repo_run_records_header_events_sync_and_complete(
     assert [s["stage_id"] for s in syncs] == ["implement", "lint"]
     first = {f["path"]: f["content"] for f in syncs[0]["files"]}
     assert first[f"{SKILL_DIR}/TASKS.md"] == "# Tasks — ü\n\n- [x] Fix expiry\n"
-    assert first[f"{SKILL_DIR}/notes.md"] == "# Notes\n"
+    assert first[f"{SKILL_DIR}/learnings.log"] == "expiry is computed in minutes\n"
     assert not (tmp_path / "ws").exists(), "the workdir is deleted on completion"
 
 
 def test_a_failed_stage_records_a_failed_complete(tmp_path: Path) -> None:
-    code, outbox = run_mailbox(tmp_path, make_manifest([agent_stage("implement", "exit=3")]))
+    code, outbox = run_mailbox(tmp_path, make_package([agent_stage("implement", "exit=3")]))
     assert code == 0
     assert lines(outbox)[-1] == {
         "path": COMPLETE,
@@ -144,7 +144,7 @@ def test_mailbox_args(tmp_path: Path) -> None:
 def test_an_existing_outbox_is_refused(tmp_path: Path) -> None:
     outbox = tmp_path / "outbox.jsonl"
     outbox.write_bytes(b"earlier\n")
-    code, _ = run_mailbox(tmp_path, make_manifest([agent_stage("implement", "print=hi")]))
+    code, _ = run_mailbox(tmp_path, make_package([agent_stage("implement", "print=hi")]))
     assert code == 1
     assert outbox.read_bytes() == b"earlier\n"
     assert not (tmp_path / "ws").exists(), "nothing ran"
@@ -152,7 +152,7 @@ def test_an_existing_outbox_is_refused(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "manifest",
-    [b"{not json", b"\xff\xfe", {"run_id": 42}, {**make_manifest([]), "protocol": 2}],
+    [b"{not json", b"\xff\xfe", {"run_id": 42}, {**make_package([]), "protocol": 1}],
 )
 def test_a_bad_manifest_exits_1_without_an_outbox(tmp_path: Path, manifest: Any) -> None:
     code, outbox = run_mailbox(tmp_path, manifest)
@@ -182,7 +182,7 @@ def test_an_outbox_write_error_aborts_the_run(
 
     monkeypatch.setattr(worker.Recorder, "_write", staticmethod(write))
     started = time.monotonic()
-    code, outbox = run_mailbox(tmp_path, make_manifest([agent_stage("implement", "sleep=30")]))
+    code, outbox = run_mailbox(tmp_path, make_package([agent_stage("implement", "sleep=30")]))
     assert code == 1
     assert time.monotonic() - started < 20
     assert lines(outbox) == [{"outbox": 1, "run_id": 42}], "no complete after the failure"

@@ -7,6 +7,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button, ChevronIcon, cx, IconButton, text } from "../ui";
 import { moveRow } from "./list";
 import s from "./ListEditor.module.css";
+import { sameJson } from "./useDocument";
 
 /** What a row's render props know about the row. */
 export interface ListRowContext {
@@ -336,10 +337,6 @@ type Ran<I, R> =
   | { input: I; status: "pending" }
   | { input: I; status: "done"; result: R }
   | { input: I; status: "failed"; error: unknown };
-
-function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
 
 /**
  * A live preview ("Test query", "Try it") for one input. Its result and error show only while the

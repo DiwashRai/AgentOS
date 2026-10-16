@@ -248,16 +248,7 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
         facts.latest[run["ticket_id"]] = run
     run_ids = json.dumps([run["id"] for run in facts.latest.values()])
     for sr in conn.execute(_SQL_STAGE_RUNS, (run_ids,)).fetchall():
-        facts.stage_runs[sr["run_id"]].append(
-            StageRunFact(
-                idx=sr["idx"],
-                stage_id=sr["stage_id"],
-                status=sr["status"],
-                started_at=from_db_opt(sr["started_at"]),
-                finished_at=from_db_opt(sr["finished_at"]),
-                round=sr["round"],
-            )
-        )
+        facts.stage_runs[sr["run_id"]].append(stage_run_fact(sr))
     for ev in conn.execute(_SQL_EVER_SUCCEEDED, (ids,)).fetchall():
         facts.ever[ev["ticket_id"]].add(ev["stage_id"])
     # TASKS.md content is only read by the "now" line of a running ticket (its next task), and by
@@ -283,13 +274,24 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
     return facts
 
 
-def _person(id_: int | None, name: str | None, avatar: str | None) -> Person | None:
+def person(id_: int | None, name: str | None, avatar: str | None) -> Person | None:
     if id_ is None or name is None:
         return None
     return Person(id=id_, display_name=name, avatar_url=avatar)
 
 
-def _run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
+def stage_run_fact(sr: Row) -> StageRunFact:
+    return StageRunFact(
+        idx=sr["idx"],
+        stage_id=sr["stage_id"],
+        status=sr["status"],
+        started_at=from_db_opt(sr["started_at"]),
+        finished_at=from_db_opt(sr["finished_at"]),
+        round=sr["round"],
+    )
+
+
+def run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
     return RunFact(
         id=run["id"],
         status=run["status"],
@@ -304,14 +306,14 @@ def _run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
     )
 
 
-def _run_summary(run: Row, ticket_key: str, online: set[int]) -> RunSummary:
+def run_summary(run: Row, ticket_key: str, online: set[int]) -> RunSummary:
     return RunSummary(
         id=run["id"],
         ticket_key=ticket_key,
         status=run["status"],
         from_stage=run["from_stage"],
         stage_ids=json.loads(run["stage_ids"]),
-        created_by=_person(run["created_by"], run["creator_name"], run["creator_avatar"]),
+        created_by=person(run["created_by"], run["creator_name"], run["creator_avatar"]),
         created_at=from_db(run["created_at"]),
         started_at=from_db_opt(run["started_at"]),
         finished_at=from_db_opt(run["finished_at"]),
@@ -371,7 +373,7 @@ def _source(row: Row) -> SourceLink | None:
 def _resolution(row: Row) -> Resolution | None:
     """From the `resolution_*` columns (and the resolver's name, joined in `_SELECT_TICKETS`).
     A resolver whose user row is gone (never expected: users are disabled, not deleted) → None."""
-    by = _person(row["resolved_by"], row["resolver_name"], row["resolver_avatar"])
+    by = person(row["resolved_by"], row["resolver_name"], row["resolver_avatar"])
     if row["resolution_outcome"] is None or by is None:
         return None
     return Resolution(
@@ -388,10 +390,10 @@ def _summary_fields(
     """TicketSummary fields, plus `next_stage` and `active_run_id` for the detail."""
     pipeline = ticket_pipeline(row)
     run = facts.latest.get(row["id"])
-    latest = _run_fact(run, facts.stage_runs.get(run["id"], [])) if run is not None else None
+    latest = run_fact(run, facts.stage_runs.get(run["id"], [])) if run is not None else None
     tasks = _tasks(row)
     plan = facts.plans.get(row["id"])
-    owner = _person(row["owner_id"], row["owner_name"], row["owner_avatar"])
+    owner = person(row["owner_id"], row["owner_name"], row["owner_avatar"])
     workspace = resolve_workspace(row, space)
     board = derive(
         TicketFacts(
@@ -426,7 +428,7 @@ def _summary_fields(
         "now": view.now,
         "tasks": tasks,
         "chat_count": facts.chat.get(row["id"], 0),
-        "latest_run": _run_summary(run, row["key"], facts.online) if run is not None else None,
+        "latest_run": run_summary(run, row["key"], facts.online) if run is not None else None,
         "source": _source(row),
         "repo_name": row["repo"],
         "pr_url": row["pr_url"],
@@ -490,7 +492,7 @@ def _base_branch_info(row: Row, repo: ResolvedRepo) -> BaseBranchInfo | None:
         source_value=row["base_branch_source_value"],
         reason=reason,
         set_by=(
-            _person(row["base_branch_set_by"], row["base_setter_name"], row["base_setter_avatar"])
+            person(row["base_branch_set_by"], row["base_setter_name"], row["base_setter_avatar"])
             if repo.origin == "manual"
             else None
         ),

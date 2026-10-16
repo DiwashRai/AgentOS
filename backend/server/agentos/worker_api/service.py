@@ -1,5 +1,5 @@
-"""The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, complete, and
-the client poll.
+"""The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, the sync_back
+upload, complete, and the client poll.
 
 Claim authenticates with the dispatch token, every other route with the worker token the worker
 generated and bound at claim. Tokens are looked up by their SHA-256 hash. Worker-token runs are
@@ -13,6 +13,7 @@ above, unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
@@ -23,19 +24,20 @@ from agentos.clients import service as clients
 from agentos.clients.service import Client
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
-from agentos.errors import ApiError
+from agentos.errors import ApiError, field_error
 from agentos.files.service import current_bundle, write_version
 from agentos.models import (
     ClientRunAssignment,
     CompleteRequest,
-    Manifest,
-    ManifestFile,
+    JobPackage,
+    Mode,
     RunEvent,
     RunStatus,
     SyncFile,
+    SyncResponse,
     WorkerFinalStatus,
 )
-from agentos.pipeline.manifest import build_manifest
+from agentos.pipeline.manifest import build_package
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status, plan_run
 from agentos.pipeline.space import SpaceConfig
@@ -43,7 +45,8 @@ from agentos.runs import service as runs
 from agentos.runs.service import TERMINAL, finish, token_hash
 from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
-from agentos.validate import path_key, validate_path, validate_pr_url
+from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
+from agentos.validate import path_key, validate_pr_url
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +73,7 @@ def _unauthorized(what: str) -> ApiError:
 
 @dataclass(frozen=True, slots=True)
 class _Claim:
-    manifest: Manifest | None = None
+    manifest: JobPackage | None = None
     error: ApiError | None = None
 
 
@@ -80,7 +83,7 @@ def claim(
     space: SpaceConfig,
     dispatch_token: str,
     worker_token: str,
-) -> Manifest:
+) -> JobPackage:
     """dispatched → running, binding the worker token and building the manifest from the bundle
     as it is now (the bundle locks from here). A safe retry with the same worker token returns
     the stored manifest; another worker token → 409 `already_claimed`; terminal → 410."""
@@ -107,7 +110,7 @@ def _claim(
         if run["status"] == "running":
             if run["worker_token_hash"] != worker_hash:
                 raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-            return _Claim(manifest=Manifest.model_validate_json(run["manifest"]))
+            return _Claim(manifest=JobPackage.model_validate_json(run["manifest"]))
         if run["status"] != "dispatched":
             raise _gone(run["id"], run["status"])
         try:
@@ -130,7 +133,7 @@ def _claim(
         return _Claim(manifest=manifest)
 
 
-def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
+def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> JobPackage:
     """The run's plan comes from the ticket's current pipeline: it is locked while the run is
     active, so it is the one validated at dispatch (the plan must still cover the run's stages).
     The workspace's repo URL and base branch are resolved from the Space's catalog now; a repo
@@ -140,7 +143,7 @@ def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -
     plan = plan_run(ticket_pipeline(ticket), run["from_stage"])
     if [s.id for s in plan.stages] != json.loads(run["stage_ids"]):
         raise ApiError(422, "invalid_stage", "the pipeline changed since the run was dispatched")
-    return build_manifest(
+    return build_package(
         run["id"],
         run_ticket_ref(ticket, space),
         plan,
@@ -296,57 +299,77 @@ def _lock_base_branch(conn: Conn, run: Row) -> None:
     )
 
 
-def sync(
-    db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]
-) -> dict[str, int]:
+def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]) -> SyncResponse:
     """Write the worker's context files back as new versions authored by the run (SPEC §9.4.1).
 
-    Each path must be a `sync=true` manifest file (keeping its mode) or lie under a manifest
-    `sync_dirs` entry, and pass `validate_path`. Any invalid entry → 422 for the whole request,
-    nothing written. Returns each path's latest version (0 = absent: deleting a missing file).
+    Only the run package's write context entries and notes are written (matched by `path_key`, in
+    the package's mode). Any other path, or a declared one sent in another mode, is refused:
+    listed in `refused` and logged, while the rest of the batch applies. `versions` holds each
+    written path's latest version (0 = absent: deleting a missing file).
     """
+    versions: dict[str, int] = {}
+    refused: list[str] = []
     with db.tx() as conn:
         run = _live_run(conn, worker_token)
         if stage_id not in json.loads(run["stage_ids"]):
             raise ApiError(
                 422, "validation_error", f"stage_id: {stage_id!r} is not a stage of this run"
             )
-        manifest = Manifest.model_validate_json(run["manifest"])
-        entries = [_check_sync_entry(manifest, f) for f in files]
-        versions: dict[str, int] = {}
-        for path, f in entries:
+        package = JobPackage.model_validate_json(run["manifest"])
+        declared: dict[str, tuple[str, Mode]] = {
+            path_key(e.path): (e.path, e.mode) for e in package.context if e.access == "write"
+        }
+        declared |= {path_key(n.path): (n.path, "replace") for n in package.notes}
+
+        for f in files:
+            path, mode = declared.get(path_key(f.path), (None, f.mode))
+            if path is None or (f.content is not None and f.mode != mode):
+                refused.append(f.path)
+                continue
             version = write_version(
                 conn,
                 run["ticket_id"],
                 path,
                 f.content,
-                f.mode,
+                mode,
                 author_run_id=run["id"],
                 author_stage=stage_id,
             )
             versions[path] = version or 0
-    return versions
+
+    if refused:
+        log.warning("run %s: sync refused %s", run["id"], refused)
+    return SyncResponse(versions=versions, refused=refused)
 
 
-def _check_sync_entry(manifest: Manifest, f: SyncFile) -> tuple[str, SyncFile]:
-    path = validate_path(f.path, "files.path")
-    key = path_key(path)
-    known: ManifestFile | None = next((m for m in manifest.files if path_key(m.path) == key), None)
-    if known is not None:
-        if not known.sync:
-            raise ApiError(422, "validation_error", f"files.path: {path!r} is read-only (library)")
-        if f.content is not None and f.mode != known.mode:
-            raise ApiError(
-                422,
-                "validation_error",
-                f"files.mode: {path!r} is a {known.mode}-mode file; its mode can't change",
-            )
-        return known.path, f.model_copy(update={"mode": known.mode})
-    if not any(key.startswith(path_key(d) + "/") for d in manifest.sync_dirs):
-        raise ApiError(
-            422, "validation_error", f"files.path: {path!r} is not a context file of this run"
+def check_live_run(db: Database, worker_token: str) -> None:
+    """401 for an unknown worker token, 410 when its run has ended. The upload route calls it
+    before it reads a body."""
+    with db.read() as conn:
+        _live_run(conn, worker_token)
+
+
+def store_sync_back(db: Database, worker_token: str, data: bytes, sha256: str, files: int) -> None:
+    """Store the run's sync_back zip while the run is running. A repeat upload replaces it, so a
+    retry is safe. 413 `too_large` over MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex)
+    doesn't match the bytes. The token is checked first, as on the other worker routes."""
+    with db.read() as conn:
+        _live_run(conn, worker_token)
+
+    if len(data) > MAX_SYNC_BACK_BYTES:
+        raise ApiError(413, "too_large", f"sync_back: over {MAX_SYNC_BACK_BYTES} bytes")
+    if not data:
+        raise field_error([], "The zip is empty.")
+    if hashlib.sha256(data).hexdigest() != sha256.lower():
+        raise field_error(["sha256"], "Doesn't match the upload.")
+
+    with db.tx() as conn:
+        run = _live_run(conn, worker_token)
+        conn.execute(
+            "INSERT OR REPLACE INTO run_sync_back(run_id, sha256, bytes, files, data, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run["id"], sha256.lower(), len(data), files, data, to_db(utcnow())),
         )
-    return path, f
 
 
 def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:

@@ -2,7 +2,7 @@
 dispatcher and reaper loops on), the real LocalProcessLauncher, the real worker.py and a temp bare
 git repo as the remote, driven only through the HTTP API. Agent stages run `fake_agent.py`.
 
-The remote is the catalog repo `remote`. Its `https://` URL (validate_repo_url accepts no file://)
+The remote is the catalog repo `remote`. Its `https://` URL (repo_url_problem accepts no file://)
 is what the worker's git rewrites to the bare repo's file:// URL with `url.<file-url>.insteadOf`,
 set via GIT_CONFIG_* in the worker env file (AGENTOS_WORKER_ENV_FILE). No server escape hatch.
 
@@ -12,6 +12,7 @@ Skip with `pytest -m "not e2e"`.
 from __future__ import annotations
 
 import ctypes
+import io
 import os
 import re
 import socket
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +45,7 @@ from agentos.models import (
 from agentos.pipeline.runtime import NamedRuntime
 from agentos.pipeline.space import RepoSpec, SpaceConfig
 from agentos.runs import dispatcher
+from tests.fake_agent import BLOCK_LINE, SYNC_BACK_FILE
 from tests.settings_support import seed_test_settings
 
 pytestmark = pytest.mark.e2e
@@ -74,12 +77,15 @@ def git(*args: str, cwd: Path | None = None) -> str:
     return p.stdout.decode("utf-8", "replace")
 
 
-# The nasty cases from SPEC §14: a tracked AGENTS.md (a block-mode manifest file) and a
-# .gitignore whose `!*.md` overrides the worker's info/exclude for CLAUDE.md.
+# The nasty cases from SPEC §14: a tracked AGENTS.md (a block-mode context file) and a
+# .gitignore whose `!*.md` overrides the worker's info/exclude for CLAUDE.md. The repo's own agent
+# is what a ticket shipping the same path clashes with.
+REPO_AGENT = ".claude/agents/repo-reviewer.md"
 SEED = {
     "AGENTS.md": "# Repo rules\n\nKeep it simple.\n",
     ".gitignore": "*.tmp\n!*.md\n",
     "README.md": "# remote\n",
+    REPO_AGENT: "# The repo's reviewer\n",
 }
 
 
@@ -88,6 +94,7 @@ def make_remote(root: Path) -> Path:
     seed, bare = root / "seed", root / "remote.git"
     git("-c", "init.defaultBranch=main", "init", "-q", str(seed))
     for path, content in SEED.items():
+        (seed / path).parent.mkdir(parents=True, exist_ok=True)
         (seed / path).write_bytes(content.encode())
     git("add", "-A", cwd=seed)
     git(
@@ -397,6 +404,7 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
     assert [(s.stage_id, s.status, s.exit_code) for s in detail.stage_runs] == [
         ("plan", "succeeded", 0)
     ], e2e.diag(run1.id)
+    assert detail.sync_back is None  # plan leaves the sync_back folder empty
 
     t = e2e.ticket(key)
     assert t.attention == "needs_you"
@@ -466,18 +474,31 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
     assert (t.now.actor, t.now.run_id) == (None, run2.id)
     assert t.tasks == TaskProgress(done=2, total=2), e2e.diag(run2.id)
     files = e2e.files(key)
-    for path in (tasks_md, learnings, review_md):
+    for path in (tasks_md, learnings, "AGENTS.md"):
         assert files[path].author_run_id == run2.id, (path, e2e.diag(run2.id))
-    assert files["AGENTS.md"].author_run_id is None
+    assert BLOCK_LINE in e2e.file(key, "AGENTS.md").content
+    assert review_md not in files  # undeclared: not kept, and the run log names it
+    warnings = [e["data"]["message"] for e in e2e.events(run2.id) if e["type"] == "warning"]
+    assert any(w.startswith("not kept") and review_md in w for w in warnings), warnings
     tasks = e2e.file(key, tasks_md).content
     assert "add a greeting" not in tasks  # the human edit reached the agent
     assert tasks.count("- [x]") == 2
     log = e2e.file(key, learnings).content
     assert f"run {run1.id}: planned" in log
     assert f"run {run2.id}: implemented" in log
-    assert "Looks good." in e2e.file(key, review_md).content
 
-    # 4. The remote: code commit(s) on agent/KEY and no manifest files or block text.
+    # 4. The sync_back folder came back as one zip, served as an attachment.
+    assert detail.sync_back is not None, e2e.diag(run2.id)
+    assert detail.sync_back.files == 1
+    r = e2e.http.get(f"/api/runs/{run2.id}/sync-back")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert len(r.content) == detail.sync_back.bytes
+    with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+        assert archive.namelist() == [SYNC_BACK_FILE]
+        assert archive.read(SYNC_BACK_FILE) == f"run {run2.id} implemented {key}\n".encode()
+
+    # 5. The remote: code commit(s) on agent/KEY and no manifest files or block text.
     assert_clean_branch(e2e.remote, key)
     subjects = git("--git-dir", str(e2e.remote), "log", "--format=%s", f"main..agent/{key}")
     assert subjects.splitlines() == [f"{key} [implement] wip"]
@@ -554,3 +575,19 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
     # No process left behind: the stage tree is killed and the worker exits after completing.
     e2e.wait("the fake agent to exit", lambda: not pid_alive(pid), run.id)
     e2e.wait("the worker to exit", lambda: not pid_alive(worker_pid), run.id)
+
+
+def test_shipped_agent_the_repo_already_has_fails_setup(e2e: E2E) -> None:
+    key = e2e.create_ticket("Clash with the repo's agent").key
+    e2e.configure(key, {"plan": "plan"})
+    body = {"content": "# The ticket's reviewer\n", "mode": "replace", "base_version": 0}
+    e2e.send("PUT", f"/api/tickets/{key}/files/{REPO_AGENT}", body)
+
+    run = e2e.dispatch(key)
+    detail = e2e.wait_run(run.id, "failed")
+
+    assert REPO_AGENT in (detail.error or ""), e2e.diag(run.id)
+    assert [s.status for s in detail.stage_runs] == ["cancelled"], e2e.diag(run.id)
+    assert e2e.files(key)[REPO_AGENT].author_run_id is None
+    branches = git("--git-dir", str(e2e.remote), "branch", "--list", f"agent/{key}")
+    assert branches.strip() == ""

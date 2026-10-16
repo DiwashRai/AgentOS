@@ -39,11 +39,6 @@ export function ageParts(text: string): { n: string; unit: string }[] {
   return parts.map((m) => ({ n: m?.[1] ?? "", unit: m?.[2] ?? "" }));
 }
 
-/** An age of 90 minutes or more is shown strong (`.is-old`). */
-export function isOld(from: Instant, now: Instant): boolean {
-  return minutesBetween(from, now) >= 90;
-}
-
 /** "just now" under a minute, else the age plus "ago": "5m ago", "3h 10m ago", "2d ago". */
 export function ago(from: Instant, now: Instant): string {
   const a = age(from, now);
@@ -88,6 +83,13 @@ export function prLabel(url: string): string {
 /** The word after a count: "ticket" for 1, else "tickets". */
 export function plural(n: number, one: string): string {
   return n === 1 ? one : `${one}s`;
+}
+
+/** `812 B`, `1.2 KB`, `3.4 MB`. */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** A person's short name for captions and titles: `Sam Lee` → `Sam`. */

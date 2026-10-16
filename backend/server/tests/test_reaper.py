@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
-from agentos.models import ClientPollResponse, Manifest, Me, TicketDetail
+from agentos.models import ClientPollResponse, JobPackage, Me, TicketDetail
 from agentos.runs.reaper import Reaper
 from tests.run_support import CSRF, RunDriver, Worker, bearer
 from tests.settings_support import set_space
@@ -214,7 +214,7 @@ class ClientSide:
             headers=bearer(dispatch_token),
         )
         assert r.status_code == 200, r.text
-        manifest = Manifest.model_validate(r.json()["manifest"])
+        manifest = JobPackage.model_validate(r.json()["manifest"])
         return Worker(self.client, run_id, worker_token, manifest)
 
 

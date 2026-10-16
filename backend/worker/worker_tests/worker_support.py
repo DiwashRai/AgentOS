@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
@@ -59,9 +60,11 @@ class FakeServer:
         if path == "/api/worker/events":
             return 200, {"cancel": self.cancel}
         if path == "/api/worker/sync":
-            return 200, {"versions": {f["path"]: 2 for f in body["files"]}}
+            return 200, {"versions": {f["path"]: 2 for f in body["files"]}, "refused": []}
         if path == "/api/worker/complete":
             return 200, None
+        if path.startswith("/api/worker/sync-back?"):
+            return 204, None
         return 404, {"error": {"code": "not_found", "message": path}}
 
     # ------------------------------------------------------------ views for assertions
@@ -69,6 +72,15 @@ class FakeServer:
     def bodies(self, path: str) -> list[Any]:
         with self.lock:
             return [r.body for r in self.requests if r.path == path]
+
+    def uploads(self) -> list[tuple[dict[str, str], bytes]]:
+        """Every sync_back PUT: (its query, its raw body)."""
+        with self.lock:
+            return [
+                (dict(parse_qsl(urlsplit(r.path).query)), r.body)
+                for r in self.requests
+                if r.path.startswith("/api/worker/sync-back?")
+            ]
 
     def events(self) -> list[dict[str, Any]]:
         return [e for body in self.bodies("/api/worker/events") for e in body["events"]]
@@ -103,9 +115,13 @@ def eventually(condition: Callable[[], bool], what: str, timeout_s: float = 10.0
 
 def _handler(server: FakeServer) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
+        def do_PUT(self) -> None:
+            self.do_POST(raw=True)
+
+        def do_POST(self, raw: bool = False) -> None:
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length) or b"null")
+            data = self.rfile.read(length)
+            body = data if raw else json.loads(data or b"null")
             with server.lock:
                 server.requests.append(Request(self.path, self.headers.get("Authorization"), body))
             status, answer = server.answer(self.path, body)
@@ -301,31 +317,20 @@ AGENTS_BLOCK = (
 )
 
 
-def make_manifest(
+def context(path: str, content: str, kind: str, name: str, **extra: Any) -> dict[str, Any]:
+    """A package context entry (write access, replace mode unless `extra` says otherwise)."""
+    entry = {"path": path, "kind": kind, "name": name, "mode": "replace", "block": None}
+    return {**entry, "access": "write", "content": content, **extra}
+
+
+def make_package(
     stages: list[dict[str, Any]], *, repo_url: str | None = None, run_id: int = 42
 ) -> dict[str, Any]:
-    """A protocol v1 manifest shaped like the server's (fixtures/manifest_v1.json)."""
-    files: list[dict[str, Any]] = [
-        {
-            "path": ".claude/skills/review-checklist/SKILL.md",
-            "content": "# Review checklist\n",
-            "mode": "replace",
-            "sync": False,
-        },
-        {"path": f"{SKILL_DIR}/SKILL.md", "content": "# AOS-42\n", "mode": "replace", "sync": True},
-        {
-            "path": f"{SKILL_DIR}/TASKS.md",
-            "content": "# Tasks\n\n- [ ] Fix expiry\n- [ ] Add test\n",
-            "mode": "replace",
-            "sync": True,
-        },
-        {"path": f"{SKILL_DIR}/learnings.log", "content": "", "mode": "replace", "sync": True},
-        {"path": "AGENTS.md", "content": AGENTS_BLOCK, "mode": "block", "sync": True},
-        {"path": "CLAUDE.md", "content": "@AGENTS.md", "mode": "block", "sync": True},
-    ]
+    """A protocol 2 job package shaped like the server's (fixtures/job_v2.json)."""
+    block = {"mode": "block", "block": KEY}
     repo = repo_url is not None
     return {
-        "protocol": 1,
+        "protocol": 2,
         "run_id": run_id,
         "ticket": {"key": KEY, "title": "Fix login bug"},
         "workspace": {
@@ -333,11 +338,35 @@ def make_manifest(
             "repo_url": repo_url,
             "base_branch": "main" if repo else None,
             "branch": f"agent/{KEY}" if repo else None,
+            "protect": [SKILL_DIR],
+            "blocks": [KEY],
         },
-        "files": files,
-        "sync_dirs": [SKILL_DIR],
+        "context": [
+            context(
+                ".claude/skills/review-checklist/SKILL.md",
+                "# Review checklist\n",
+                "skill",
+                "review-checklist",
+                access="read",
+            ),
+            context(f"{SKILL_DIR}/SKILL.md", "# AOS-42\n", "skill", SKILL_DIR.split("/")[-1]),
+            context(
+                f"{SKILL_DIR}/TASKS.md",
+                "# Tasks\n\n- [ ] Fix expiry\n- [ ] Add test\n",
+                "plan",
+                "TASKS",
+            ),
+            context("AGENTS.md", AGENTS_BLOCK, "instructions", KEY, **block),
+            context("CLAUDE.md", "@AGENTS.md", "instructions", KEY, **block),
+        ],
+        "notes": [{"path": f"{SKILL_DIR}/learnings.log", "name": "learnings", "content": ""}],
+        "sync_back": {"dir": ".agentos/sync_back", "max_bytes": 20 * 1024 * 1024},
+        "env": {"AGENTOS_SKILL_DIR": SKILL_DIR, "AGENTOS_SYNC_BACK": ".agentos/sync_back"},
         "stages": stages,
         "limits": {"max_file_bytes": 1048576, "max_line_bytes": 262144},
+        "loops": [],
+        "start_stage": None,
+        "warnings": [],
     }
 
 

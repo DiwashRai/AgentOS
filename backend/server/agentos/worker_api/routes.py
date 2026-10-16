@@ -4,11 +4,12 @@ token), not cookies."""
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from agentos.errors import ERROR_RESPONSES
+from agentos.errors import ERROR_RESPONSES, ApiError
 from agentos.http_deps import Ctx
 from agentos.launchers.local import WORKER_PATH
 from agentos.models import (
@@ -51,7 +52,29 @@ def events(body: EventsRequest, token: RunToken, ctx: Ctx) -> EventsResponse:
 
 @router.post("/api/worker/sync")
 def sync(body: SyncRequest, token: RunToken, ctx: Ctx) -> SyncResponse:
-    return SyncResponse(versions=service.sync(ctx.db, token, body.stage_id, body.files))
+    return service.sync(ctx.db, token, body.stage_id, body.files)
+
+
+@router.put("/api/worker/sync-back", status_code=204)
+async def sync_back(
+    sha256: str, files: Annotated[int, Query(ge=1)], token: RunToken, ctx: Ctx, request: Request
+) -> None:
+    """The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload
+    is refused (413) without being held whole; the store runs in a thread."""
+    # The token is checked before anything is read, and a declared length over the cap is
+    # refused unread.
+    await asyncio.to_thread(service.check_live_run, ctx.db, token)
+
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > service.MAX_SYNC_BACK_BYTES:
+        raise ApiError(413, "too_large", f"sync_back: over {service.MAX_SYNC_BACK_BYTES} bytes")
+
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > service.MAX_SYNC_BACK_BYTES:
+            break
+    await asyncio.to_thread(service.store_sync_back, ctx.db, token, bytes(data), sha256, files)
 
 
 @router.post("/api/worker/complete", status_code=204)

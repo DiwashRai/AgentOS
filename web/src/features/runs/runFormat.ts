@@ -1,6 +1,7 @@
 // Pure display helpers for the Runs tab. They map server statuses to marks and words and format
 // times; they never derive run or board state.
 import type { Schemas } from "../../api/client";
+import { formatSize, plural } from "../../domain/format";
 import type { MarkKind } from "../../ui";
 
 export type RunStatus = Schemas["RunSummary"]["status"];
@@ -70,6 +71,18 @@ export function emptyLogText(o: {
   }
   if (o.queued) return "Queued. The log starts when a worker picks it up.";
   return o.active ? "Waiting for output" : "No output";
+}
+
+/** The download link for the files a run returned: `sync_back.zip · 3 files · 1.2 KB`. */
+export function syncBackLink(
+  runId: number,
+  syncBack: Schemas["SyncBackInfo"],
+): { href: string; text: string } {
+  const files = `${String(syncBack.files)} ${plural(syncBack.files, "file")}`;
+  return {
+    href: `/api/runs/${String(runId)}/sync-back`,
+    text: ["sync_back.zip", files, formatSize(syncBack.bytes)].join(" · "),
+  };
 }
 
 /** Where a run was launched: the launcher's link (`launch_url`: a GitHub Actions run, or the

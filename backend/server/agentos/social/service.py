@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from agentos.clock import from_db, to_db, utcnow
-from agentos.db import Conn, Database, Row
+from agentos.db import Database, Row
 from agentos.errors import ApiError
 from agentos.models import ChatMessage, Me, Person
+from agentos.tickets.service import get_ticket_row
 
 _SELECT = (
     "SELECT c.id, c.body, c.created_at, c.user_id, u.display_name, u.avatar_url "
@@ -23,7 +24,7 @@ def list_chat(
     """Oldest first. `after_id` → the next `limit` messages after it; `before_id` → the `limit`
     messages just before it; neither → the latest `limit`. `after_id` wins if both are given."""
     with db.read() as conn:
-        ticket_id = _ticket_id(conn, key)
+        ticket_id = get_ticket_row(conn, key)["id"]
         if after_id is not None:
             rows = conn.execute(_SQL_AFTER, (ticket_id, after_id, limit)).fetchall()
         elif before_id is not None:
@@ -38,21 +39,13 @@ def post_chat(db: Database, key: str, user: Me, body: str) -> ChatMessage:
     if not body.strip():
         raise ApiError(422, "validation_error", "body: must not be blank")
     with db.tx() as conn:
-        ticket_id = _ticket_id(conn, key)
+        ticket_id = get_ticket_row(conn, key)["id"]
         cursor = conn.execute(
             "INSERT INTO chat_messages(ticket_id, user_id, body, created_at) VALUES (?, ?, ?, ?)",
             (ticket_id, user.id, body, to_db(utcnow())),
         )
         row = conn.execute(_SQL_ONE, (cursor.lastrowid,)).fetchone()
     return _message(row, key)
-
-
-def _ticket_id(conn: Conn, key: str) -> int:
-    row = conn.execute("SELECT id FROM tickets WHERE key = ?", (key,)).fetchone()
-    if row is None:
-        raise ApiError(404, "ticket_not_found", f"No ticket {key}")
-    ticket_id: int = row["id"]
-    return ticket_id
 
 
 def _message(row: Row, key: str) -> ChatMessage:

@@ -1,8 +1,8 @@
 """A fake agent for worker tests: `python worker_fake_stage.py ACTION[=ARG] ...`, run in the
 workspace (cwd). Actions run in order:
 
-  edit            tick TASKS.md, append to learnings.log, write src/app.py, add notes.md to the
-                  skill dir, and edit AGENTS.md outside the agentos block
+  edit            tick TASKS.md, append to learnings.log, write src/app.py, and edit AGENTS.md
+                  outside the agentos block
   write=P:TEXT    write TEXT to path P            rm=P            delete path P
   selfcommit      force-add CLAUDE.md and commit it (an agent ignoring the rules)
   forcecommit=P   force-add path P and commit it
@@ -38,7 +38,6 @@ def _edit() -> None:
     tasks.write_bytes(tasks.read_bytes().replace(b"- [ ]", b"- [x]", 1))
     with (skill / "learnings.log").open("ab") as fh:
         fh.write(b"expiry is computed in minutes\n")
-    (skill / "notes.md").write_bytes(b"# Notes\n")
     Path("src").mkdir(exist_ok=True)
     Path("src/app.py").write_bytes(b"EXPIRY_DAYS = 14\n")
     with Path("AGENTS.md").open("ab") as fh:

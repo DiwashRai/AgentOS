@@ -172,4 +172,4 @@ What every editable page shares. `editor/index.ts` lists it; check there before 
 ## Not built on purpose
 - Never: presence, online dots or typing indicators. One carve-out: a client's online state describes a machine, not a person. It is shown as a word (`onlineWords`), never a dot, and only in Settings › My client, the dispatch choice, and a client run that hasn't started yet. Likewise a client's name is the one runner name drawn.
 - Not in our model, so not drawn even where the design pack shows them: watchers and a "Watching" rack, reviewers, reactions, a runner pool gauge, queue positions, runner names, acceptance criteria (the TASKS.md plan stands in for them).
-- Not yet: the Activity tab, Context diff, the Manifest view, row glides.
+- Not yet: the Activity tab, Context diff, the job package view, row glides.

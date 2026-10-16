@@ -1,4 +1,4 @@
-"""Writing manifest files and collecting the context to sync (SPEC §9.3 / §9.4.1)."""
+"""Writing the package's context and notes, and collecting what to sync (SPEC §9.3 / §9.4.1)."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from typing import Literal
 import pytest
 
 import worker
-from worker_tests.worker_support import AGENTS_BLOCK, KEY, SKILL_DIR, make_manifest
+from worker_tests.worker_support import AGENTS_BLOCK, KEY, SKILL_DIR, make_package
 
 
-def manifest() -> worker.Manifest:
-    return worker.parse_manifest(make_manifest([]))
+def manifest() -> worker.Package:
+    return worker.load_package(make_package([]))
 
 
-def materialise(root: Path, m: worker.Manifest) -> worker.SyncState:
+def materialise(root: Path, m: worker.Package) -> worker.SyncState:
     state = worker.SyncState(m)
     for f in m.files:
-        problem = worker.write_entry(root, f, m.key)
+        problem = worker.write_entry(root, f)
         if problem:
             state.unsynced.add(f.path)
     return state
@@ -97,81 +97,57 @@ def test_write_skips_a_symlinked_target(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     root.mkdir()
     make_link("file", root / "CLAUDE.md", outside)
-    entry = worker.ManifestFile("CLAUDE.md", "@AGENTS.md", "block", True)
-    assert worker.write_entry(root, entry, KEY) == "CLAUDE.md is a symlink"
+    entry = worker.ContextFile("CLAUDE.md", KEY, "@AGENTS.md", "instructions", "block", KEY)
+    assert worker.write_entry(root, entry) == "CLAUDE.md is a symlink"
     assert outside.read_bytes() == b"precious\n"
 
 
-def test_first_sync_sends_every_sync_file_and_blocks_only(tmp_path: Path) -> None:
+def test_only_changed_blocks_are_sent(tmp_path: Path) -> None:
     m = manifest()
     state = materialise(tmp_path, m)
-    (tmp_path / "AGENTS.md").write_bytes(
-        b"# Repo\n" + (tmp_path / "AGENTS.md").read_bytes() + b"agent note\n"
-    )
+    agents = tmp_path / "AGENTS.md"
+    agents.write_bytes(b"# Repo\n" + agents.read_bytes() + b"agent note\n")
+    assert sent(state.collect(tmp_path)) == {}  # outside the block only
+
+    agents.write_bytes(worker.block_write(agents.read_bytes(), KEY, "edited"))
     batch = state.collect(tmp_path)
     assert batch.warnings == []
-    assert sent(batch) == {
-        f"{SKILL_DIR}/SKILL.md": ("# AOS-42\n", "replace"),
-        f"{SKILL_DIR}/TASKS.md": ("# Tasks\n\n- [ ] Fix expiry\n- [ ] Add test\n", "replace"),
-        f"{SKILL_DIR}/learnings.log": ("", "replace"),
-        "AGENTS.md": (AGENTS_BLOCK, "block"),
-        "CLAUDE.md": ("@AGENTS.md", "block"),
-    }
-
-
-def test_new_changed_and_vanished_files_under_sync_dirs(tmp_path: Path) -> None:
-    m = manifest()
-    state = materialise(tmp_path, m)
-    skill = tmp_path / SKILL_DIR
-    (skill / "notes.md").write_bytes(b"one\n")
-    (skill / "sub").mkdir()
-    (skill / "sub" / "deep.txt").write_bytes(b"deep\n")
-    first = state.collect(tmp_path)
-    state.accept(first)
-    assert sent(first)[f"{SKILL_DIR}/notes.md"] == ("one\n", "replace")
-    assert sent(first)[f"{SKILL_DIR}/sub/deep.txt"] == ("deep\n", "replace")
-
-    unchanged = state.collect(tmp_path)
-    state.accept(unchanged)
-    assert f"{SKILL_DIR}/notes.md" not in sent(unchanged)
-    assert f"{SKILL_DIR}/TASKS.md" in sent(unchanged)  # sync=true files always go
-
-    (skill / "notes.md").write_bytes(b"two\n")
-    (skill / "sub" / "deep.txt").unlink()
-    (skill / "TASKS.md").unlink()
-    changed = state.collect(tmp_path)
-    state.accept(changed)
-    assert sent(changed)[f"{SKILL_DIR}/notes.md"] == ("two\n", "replace")
-    assert sent(changed)[f"{SKILL_DIR}/sub/deep.txt"] == (None, "replace")
-    assert sent(changed)[f"{SKILL_DIR}/TASKS.md"] == (None, "replace")
-
-    again = state.collect(tmp_path)
-    assert f"{SKILL_DIR}/sub/deep.txt" not in sent(again)  # a deletion is sent once
-    assert f"{SKILL_DIR}/TASKS.md" not in sent(again)
+    assert sent(batch) == {"AGENTS.md": ("edited", "block")}
 
 
 def test_rejected_sync_is_resent(tmp_path: Path) -> None:
     m = manifest()
     state = materialise(tmp_path, m)
-    (tmp_path / SKILL_DIR / "notes.md").write_bytes(b"one\n")
+    (tmp_path / SKILL_DIR / "TASKS.md").write_bytes(b"one\n")
     state.collect(tmp_path)  # not accepted: the server rejected it
-    assert f"{SKILL_DIR}/notes.md" in sent(state.collect(tmp_path))
+    assert f"{SKILL_DIR}/TASKS.md" in sent(state.collect(tmp_path))
 
 
-def test_skipped_files_are_warnings(tmp_path: Path) -> None:
+def test_unreadable_declared_files_are_warnings(tmp_path: Path) -> None:
     m = manifest()
     state = materialise(tmp_path, m)
     skill = tmp_path / SKILL_DIR
-    (skill / "big.md").write_bytes(b"x" * (m.max_file_bytes + 1))
-    (skill / "binary.bin").write_bytes(b"\xff\xfe\x00")
-    (skill / "café.md").write_bytes(b"bad name\n")
+    (skill / "TASKS.md").write_bytes(b"x" * (m.limits["max_file_bytes"] + 1))
+    (skill / "SKILL.md").write_bytes(b"\xff\xfe\x00")
     (tmp_path / "CLAUDE.md").write_bytes(b"markers removed by the agent\n")
     batch = state.collect(tmp_path)
-    paths = sent(batch)
-    assert not any(p.endswith(("big.md", "binary.bin", "café.md")) for p in paths)
-    assert "CLAUDE.md" not in paths
-    assert len(batch.warnings) == 4
+    assert sent(batch) == {}
+    assert len(batch.warnings) == 3
     assert any("CLAUDE.md" in w and "missing" in w for w in batch.warnings)
+
+
+def test_not_kept_names_at_most_20_files(tmp_path: Path) -> None:
+    state = materialise(tmp_path, manifest())
+    skill = tmp_path / SKILL_DIR
+    (skill / "sub").mkdir()
+    for i in range(25):
+        (skill / "sub" / f"f{i:02}.class").write_bytes(b"\xca\xfe")
+    batch = state.collect(tmp_path)
+    assert sent(batch) == {}
+    [warning] = batch.warnings
+    assert f"{SKILL_DIR}/sub/f19.class" in warning
+    assert f"{SKILL_DIR}/sub/f20.class" not in warning
+    assert warning.endswith("5 more")
 
 
 def test_unwritten_manifest_files_are_not_synced_as_deleted(tmp_path: Path) -> None:
@@ -182,7 +158,7 @@ def test_unwritten_manifest_files_are_not_synced_as_deleted(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize("kind", LINK_KINDS)
-def test_links_in_sync_dirs_are_skipped(tmp_path: Path, kind: LinkKind) -> None:
+def test_links_in_protected_folders_are_skipped(tmp_path: Path, kind: LinkKind) -> None:
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (secrets / "key.md").write_bytes(b"secret\n")
@@ -193,7 +169,9 @@ def test_links_in_sync_dirs_are_skipped(tmp_path: Path, kind: LinkKind) -> None:
     batch = state.collect(root)
     assert not any(p.startswith(f"{SKILL_DIR}/link") for p in sent(batch))
     assert all("secret" not in str(f["content"]) for f in batch.files)
-    assert batch.warnings == [f"not synced: {SKILL_DIR}/link is a symlink"]
+    [warning] = batch.warnings
+    assert warning.startswith("not kept")
+    assert f"{SKILL_DIR}/link" in warning
 
 
 def test_a_linked_sync_dir_is_not_followed(tmp_path: Path) -> None:
@@ -206,7 +184,7 @@ def test_a_linked_sync_dir_is_not_followed(tmp_path: Path) -> None:
     state = worker.SyncState(manifest())
     batch = state.collect(root)
     assert all("secret" not in str(f["content"]) for f in batch.files)
-    assert any("is a symlink" in w for w in batch.warnings)
+    assert any(w.startswith("not kept") and SKILL_DIR in w for w in batch.warnings)
 
 
 def test_a_symlinked_manifest_sync_file_is_neither_read_nor_deleted(tmp_path: Path) -> None:

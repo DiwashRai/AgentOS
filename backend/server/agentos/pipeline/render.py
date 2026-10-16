@@ -88,7 +88,7 @@ def render_context(
             "tasks_md": n.tasks_md,
             "learnings": n.learnings,
             "swarm": n.swarm,
-            "out": n.out,
+            "sync_back": n.sync_back,
         },
     }
     if stage is not None:

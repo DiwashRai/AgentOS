@@ -18,7 +18,7 @@ import worker
 from worker_tests.worker_support import (
     FakeServer,
     agent_stage,
-    make_manifest,
+    make_package,
     python_shell,
     run_worker,
     shell_stage,
@@ -291,7 +291,7 @@ def test_a_run_echoes_agent_output_during_the_stage(
 ) -> None:
     python_shell(monkeypatch)
     prompt = jsonl(stream) + "plain words\n"
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "stdin", stdin=prompt), shell_stage("lint", "print('lint ok')")]
     )
     assert run_worker(server, tmp_path / "ws") == 0
@@ -319,7 +319,7 @@ def test_agentos_echo_0_turns_it_off(
 ) -> None:
     monkeypatch.setenv("AGENTOS_ECHO", "0")
     prompt = jsonl(CLAUDE)
-    server.manifest = make_manifest([agent_stage("implement", "stdin", stdin=prompt)])
+    server.manifest = make_package([agent_stage("implement", "stdin", stdin=prompt)])
     assert run_worker(server, tmp_path / "ws") == 0
 
     err = capsys.readouterr().err
@@ -330,7 +330,7 @@ def test_agentos_echo_0_turns_it_off(
 
 def test_mailbox_mode_echoes_too(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     manifest_path = tmp_path / "manifest.json"
-    manifest = make_manifest([agent_stage("implement", "stdin", stdin=jsonl(COPILOT))])
+    manifest = make_package([agent_stage("implement", "stdin", stdin=jsonl(COPILOT))])
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     args = ["--manifest", str(manifest_path), "--outbox", str(tmp_path / "outbox.jsonl")]
     assert worker.main([*args, "--workdir", str(tmp_path / "ws")]) == 0

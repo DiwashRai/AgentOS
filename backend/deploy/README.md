@@ -215,14 +215,15 @@ Inside WSL2, `127.0.0.1` means the WSL VM, not Windows, unless WSL uses mirrored
 
 Use it when the GitHub Actions runners reach GitHub and Artifactory but **not** the AgentOS
 server (`AGENTOS_WORKER_URL` would be unreachable). Nothing dials back: for each run the server
-uploads `runs/<run>/manifest.json` (the run, with every bundle file) and `runs/<run>/worker.py` to
+uploads `runs/<run>/manifest.json` (the run's job package, with every context file) and `runs/<run>/worker.py` to
 an Artifactory generic folder and dispatches `github/agentos-mailbox.yml`. Its three jobs:
 **fetch** (Artifactory secret) downloads and checksums both files; **work** (no Artifactory
 secret) runs the worker, which runs the agent, publishes the branch (through the GitHub API, see
 [Publication on Actions](#publication-on-actions)) and records its results to
 `outbox.jsonl`; **publish** (Artifactory secret) uploads `runs/<run>/outbox.jsonl`. The server
 polls the Actions run, downloads the outbox, replays it through the same checks as HTTP mode, and
-deletes the run's folder. `<run>` is `<run id>-<16 hex>`, unique per run.
+deletes the run's folder. `<run>` is `<run id>-<16 hex>`, unique per run. This mode doesn't
+return a run's `.agentos/sync_back/` folder yet: the worker logs a warning if it isn't empty.
 
 **1. Server env** (`.env.container`; `AGENTOS_WORKER_URL` is unused in this mode):
 

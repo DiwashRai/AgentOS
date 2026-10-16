@@ -1,4 +1,4 @@
-"""Runtime resolution and manifest building (SPEC §7)."""
+"""Runtime resolution and job package building (SPEC §7)."""
 
 from __future__ import annotations
 
@@ -8,13 +8,26 @@ from pathlib import Path
 import pytest
 
 from agentos.errors import ApiError
-from agentos.models import FileEntry, Manifest, Stage, TemplateDefaults
-from agentos.pipeline.manifest import build_manifest, render_stages, resolve_agent
+from agentos.models import (
+    ContextEntry,
+    FileEntry,
+    JobPackage,
+    Mode,
+    NoteEntry,
+    Stage,
+    TemplateDefaults,
+)
+from agentos.pipeline.manifest import build_package, classify, render_stages, resolve_agent
 from agentos.pipeline.render import TicketRef, render_scaffold
 from agentos.pipeline.runtime import RuntimesConfig, RuntimeSpec
 from agentos.pipeline.scaffold import DEFAULT_SCAFFOLD, default_pipeline
 from agentos.pipeline.segment import plan_run
-from agentos.validate import MAX_AGENT_LINE_BYTES, MAX_FILE_BYTES
+from agentos.validate import (
+    MAX_AGENT_LINE_BYTES,
+    MAX_FILE_BYTES,
+    MAX_SYNC_BACK_BYTES,
+    SYNC_BACK_DIR,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLAUDE_ARGV = ["claude", "-p", "--output-format", "stream-json", "--verbose"]
@@ -200,31 +213,29 @@ def _bundle(ticket: TicketRef = TICKET) -> list[FileEntry]:
     return render_scaffold(DEFAULT_SCAFFOLD, ticket)
 
 
-def test_build_manifest_default_ticket() -> None:
+def test_build_package_default_ticket() -> None:
     p = default_pipeline()
-    m = build_manifest(42, TICKET, plan_run(p, "implement"), _bundle(), RUNTIMES, defaults=NONE)
-    assert Manifest.model_validate_json(m.model_dump_json()) == m
-    assert m.protocol == 1
-    assert m.run_id == 42
-    assert m.ticket.model_dump() == {
-        "key": "AOS-42",
-        "title": TICKET.title,
-    }
+    m = build_package(42, TICKET, plan_run(p, "implement"), _bundle(), RUNTIMES, defaults=NONE)
+    assert JobPackage.model_validate_json(m.model_dump_json()) == m
+    assert (m.protocol, m.run_id) == (2, 42)
+    assert m.ticket.model_dump() == {"key": "AOS-42", "title": TICKET.title}
     assert m.workspace.model_dump() == {
         "mode": "repo",
         "repo_url": "https://github.com/example/app.git",
         "base_branch": "main",
         "branch": "agent/AOS-42",
+        "protect": [D],
+        "blocks": ["AOS-42"],
     }
-    assert [(f.path, f.mode, f.sync) for f in m.files] == [
-        (f"{D}/SKILL.md", "replace", True),
-        (f"{D}/TASKS.md", "replace", True),
-        (f"{D}/learnings.log", "replace", True),
-        (f"{D}/swarm.log", "replace", True),
-        ("AGENTS.md", "block", True),
-        ("CLAUDE.md", "block", True),
+    assert [(e.path, e.kind, e.mode) for e in m.context] == [
+        (f"{D}/SKILL.md", "skill", "replace"),
+        (f"{D}/TASKS.md", "plan", "replace"),
+        ("AGENTS.md", "instructions", "block"),
+        ("CLAUDE.md", "instructions", "block"),
     ]
-    assert m.sync_dirs == [D]
+    assert [n.path for n in m.notes] == [f"{D}/learnings.log", f"{D}/swarm.log"]
+    assert m.sync_back.model_dump() == {"dir": SYNC_BACK_DIR, "max_bytes": MAX_SYNC_BACK_BYTES}
+    assert m.env == {"AGENTOS_SKILL_DIR": D, "AGENTOS_SYNC_BACK": SYNC_BACK_DIR}
     assert [s.id for s in m.stages] == ["implement", "review", "open-pr"]
     assert all(s.argv and s.argv[0] == "claude" and s.stdin for s in m.stages)
     assert m.stages[2].stdin is not None
@@ -235,31 +246,57 @@ def test_build_manifest_default_ticket() -> None:
     }
 
 
-def test_build_manifest_no_repo_nulls_workspace() -> None:
+def test_build_package_no_repo_nulls_workspace() -> None:
     t = replace(TICKET, workspace_mode="none")
-    m = build_manifest(
+    m = build_package(
         1, t, plan_run(default_pipeline(), "plan"), _bundle(t), RUNTIMES, defaults=NONE
     )
-    assert m.workspace.model_dump() == {
-        "mode": "none",
-        "repo_url": None,
-        "base_branch": None,
-        "branch": None,
-    }
-    agents = next(f for f in m.files if f.path == "AGENTS.md")
-    assert agents.content.endswith(f"Put deliverables in {D}/out/.")
+    ws = m.workspace
+    assert (ws.mode, ws.repo_url, ws.base_branch, ws.branch) == ("none", None, None, None)
+    agents = next(e for e in m.context if e.path == "AGENTS.md")
+    assert agents.content.endswith(" in .agentos/sync_back/.")
+
+
+@pytest.mark.parametrize(
+    ("path", "mode", "kind", "name", "block"),
+    [
+        (f"{D}/learnings.log", "replace", "note", "learnings", None),
+        (f"{D}/swarm.log", "replace", "note", "swarm", None),
+        (f"{D}/TASKS.md", "replace", "plan", "TASKS", None),
+        (".claude/skills/CONTEXT-AOS-42/tasks.md", "replace", "plan", "tasks", None),
+        (f"{D}/SKILL.md", "replace", "skill", "context-aos-42", None),
+        (f"{D}/refs/api.md", "replace", "skill", "context-aos-42", None),
+        (".claude/skills/review/SKILL.md", "replace", "skill", "review", None),
+        ("AGENTS.md", "block", "instructions", "AOS-42", "AOS-42"),
+        ("docs/AGENTS.md", "block", "instructions", "AOS-42", "AOS-42"),
+        (".claude/agents/reviewer.md", "replace", "agent", "reviewer", None),
+        (f"{D}/out/report.md", "replace", "file", "report.md", None),
+        (".claude/skills/loose.md", "replace", "file", "loose.md", None),
+        ("docs/notes.txt", "replace", "file", "notes.txt", None),
+        ("learnings.log", "replace", "file", "learnings.log", None),
+    ],
+)
+def test_classify(path: str, mode: Mode, kind: str, name: str, block: str | None) -> None:
+    e = classify(FileEntry(path=path, content="x", mode=mode), "AOS-42")
+    if kind == "note":
+        assert e == NoteEntry(path=path, name=name, content="x")
+        return
+    assert isinstance(e, ContextEntry)
+    assert (e.kind, e.name, e.mode, e.block, e.access) == (kind, name, mode, block, "write")
 
 
 def test_fixture_shape_matches_builder() -> None:
     """The builder emits every field the shared fixture has (same keys at every level)."""
-    fixture = Manifest.model_validate_json((FIXTURES / "manifest_v1.json").read_text("utf-8"))
+    fixture = JobPackage.model_validate_json((FIXTURES / "job_v2.json").read_text("utf-8"))
     # The fixture exercises both file modes and both stage kinds in the worker suite too.
-    assert {f.mode for f in fixture.files} == {"replace", "block"}
+    assert {e.mode for e in fixture.context} == {"replace", "block"}
     assert {s.kind for s in fixture.stages} == {"agent", "shell"}
-    built = build_manifest(
+    built = build_package(
         42, TICKET, plan_run(default_pipeline(), "implement"), _bundle(), RUNTIMES, defaults=NONE
     )
     assert set(built.model_dump()) == set(fixture.model_dump())
+    assert set(built.context[0].model_dump()) == set(fixture.context[0].model_dump())
+    assert set(built.notes[0].model_dump()) == set(fixture.notes[0].model_dump())
     assert built.ticket == fixture.ticket
     assert built.workspace == fixture.workspace
-    assert built.sync_dirs == fixture.sync_dirs
+    assert (built.sync_back, built.env) == (fixture.sync_back, fixture.env)

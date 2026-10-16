@@ -237,9 +237,29 @@ export interface paths {
         };
         /**
          * Get Manifest
-         * @description Exactly what was sent to the worker (prompts + files). Can be large; fetch on demand.
+         * @description Exactly what was sent to the worker (the job package). Can be large; fetch on demand.
          */
         get: operations["get_manifest_api_runs__run_id__manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/sync-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sync Back
+         * @description The run's sync_back zip, as a download.
+         */
+        get: operations["get_sync_back_api_runs__run_id__sync_back_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -861,6 +881,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/worker/sync-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sync Back
+         * @description The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload
+         *     is refused (413) without being held whole; the store runs in a thread.
+         */
+        put: operations["sync_back_api_worker_sync_back_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/worker/worker.py": {
         parameters: {
             query?: never;
@@ -1037,7 +1078,7 @@ export interface components {
         };
         /** ClaimResponse */
         ClaimResponse: {
-            manifest: components["schemas"]["Manifest"];
+            manifest: components["schemas"]["JobPackage"];
         };
         /**
          * ClientPollRequest
@@ -1130,6 +1171,36 @@ export interface components {
              * @enum {string}
              */
             status: "completed" | "failed" | "cancelled";
+        };
+        /**
+         * ContextEntry
+         * @description A context file. `name`: the skill, block, agent or file it belongs to. `block`: the block
+         *     name in block mode (`content` is then the block's). `access: write` entries are synced back.
+         */
+        ContextEntry: {
+            /**
+             * Access
+             * @enum {string}
+             */
+            access: "write" | "read";
+            /** Block */
+            block: string | null;
+            /** Content */
+            content: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skill" | "plan" | "instructions" | "agent" | "file";
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "replace" | "block";
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
         };
         /**
          * DispatchBlock
@@ -1486,6 +1557,40 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * JobPackage
+         * @description What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
+         *     paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.
+         */
+        JobPackage: {
+            /** Context */
+            context: components["schemas"]["ContextEntry"][];
+            /** Env */
+            env: {
+                [key: string]: string;
+            };
+            limits: components["schemas"]["ManifestLimits"];
+            /** Loops */
+            loops?: components["schemas"]["ManifestLoop"][];
+            /** Notes */
+            notes: components["schemas"]["NoteEntry"][];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: 2;
+            /** Run Id */
+            run_id: number;
+            /** Stages */
+            stages: components["schemas"]["ManifestStage"][];
+            /** Start Stage */
+            start_stage?: string | null;
+            sync_back: components["schemas"]["SyncBack"];
+            ticket: components["schemas"]["ManifestTicket"];
+            /** Warnings */
+            warnings?: string[];
+            workspace: components["schemas"]["ManifestWorkspace"];
+        };
         /** LogData */
         LogData: {
             /**
@@ -1549,46 +1654,6 @@ export interface components {
             /** Start */
             start: string;
         };
-        /** Manifest */
-        Manifest: {
-            /** Files */
-            files: components["schemas"]["ManifestFile"][];
-            limits: components["schemas"]["ManifestLimits"];
-            /** Loops */
-            loops?: components["schemas"]["ManifestLoop"][];
-            /**
-             * Protocol
-             * @default 1
-             * @constant
-             */
-            protocol: 1;
-            /** Run Id */
-            run_id: number;
-            /** Stages */
-            stages: components["schemas"]["ManifestStage"][];
-            /** Start Stage */
-            start_stage?: string | null;
-            /** Sync Dirs */
-            sync_dirs: string[];
-            ticket: components["schemas"]["ManifestTicket"];
-            /** Warnings */
-            warnings?: string[];
-            workspace: components["schemas"]["ManifestWorkspace"];
-        };
-        /** ManifestFile */
-        ManifestFile: {
-            /** Content */
-            content: string;
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "replace" | "block";
-            /** Path */
-            path: string;
-            /** Sync */
-            sync: boolean;
-        };
         /**
          * ManifestInvocation
          * @description Another call of a loop stage's agent: a later round, or a verdict repair (request 24). The
@@ -1615,7 +1680,7 @@ export interface components {
         };
         /**
          * ManifestLoop
-         * @description A loop block over the manifest's `stages` (ids, `start` at or before `end`).
+         * @description A loop block over the package's `stages` (ids, `start` at or before `end`).
          */
         ManifestLoop: {
             /** End */
@@ -1678,10 +1743,17 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** ManifestWorkspace */
+        /**
+         * ManifestWorkspace
+         * @description `protect`: folders kept out of git besides the declared files (the ticket skill dir; the
+         *     worker always adds `.agentos/`). `blocks`: every block name in `context`, all of which the
+         *     pre-push marker scan looks for.
+         */
         ManifestWorkspace: {
             /** Base Branch */
             base_branch: string | null;
+            /** Blocks */
+            blocks: string[];
             /** Branch */
             branch: string | null;
             /**
@@ -1689,6 +1761,8 @@ export interface components {
              * @enum {string}
              */
             mode: "repo" | "none";
+            /** Protect */
+            protect: string[];
             /** Repo Url */
             repo_url: string | null;
         };
@@ -1781,6 +1855,18 @@ export interface components {
              * @enum {string}
              */
             role: "pending" | "viewer" | "writer" | "admin";
+        };
+        /**
+         * NoteEntry
+         * @description An append-only log (`learnings.log`, `swarm.log`), shipped and synced like write context.
+         */
+        NoteEntry: {
+            /** Content */
+            content: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
         };
         /**
          * NowInfo
@@ -2020,6 +2106,7 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "dispatched" | "running" | "succeeded" | "gated" | "failed" | "cancelled";
+            sync_back: components["schemas"]["SyncBackInfo"] | null;
             /**
              * Target
              * @enum {string}
@@ -2414,6 +2501,23 @@ export interface components {
              */
             type: "stage_started";
         };
+        /**
+         * SyncBack
+         * @description The workspace folder the agent returns files through, as one zip of at most `max_bytes`.
+         */
+        SyncBack: {
+            /** Dir */
+            dir: string;
+            /** Max Bytes */
+            max_bytes: number;
+        };
+        /** SyncBackInfo */
+        SyncBackInfo: {
+            /** Bytes */
+            bytes: number;
+            /** Files */
+            files: number;
+        };
         /** SyncFile */
         SyncFile: {
             /** Content */
@@ -2435,6 +2539,8 @@ export interface components {
         };
         /** SyncResponse */
         SyncResponse: {
+            /** Refused */
+            refused: string[];
             /** Versions */
             versions: {
                 [key: string]: number;
@@ -3468,8 +3574,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Manifest"];
+                    "application/json": components["schemas"]["JobPackage"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_sync_back_api_runs__run_id__sync_back_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {
@@ -5376,6 +5520,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SyncResponse"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    sync_back_api_worker_sync_back_put: {
+        parameters: {
+            query: {
+                sha256: string;
+                files: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
-from agentos.models import FileVersionInfo, Manifest, TicketDetail
+from agentos.models import FileVersionInfo, JobPackage, TicketDetail
 from agentos.worker_api import service as worker_service
 from tests.run_support import CSRF, RunDriver, Worker, bearer, event, finished, log_event
 
@@ -42,20 +42,26 @@ def test_claim_returns_the_manifest_and_starts_the_run(
     runs.tick()
     r = runs.claim(run.id, "a" * 43)
     assert r.status_code == 200, r.text
-    m = Manifest.model_validate(r.json()["manifest"])
-    assert m.run_id == run.id
+    m = JobPackage.model_validate(r.json()["manifest"])
+    assert (m.protocol, m.run_id) == (2, run.id)
     assert m.ticket.key == ticket.key
     assert m.workspace.mode == "repo"
     assert m.workspace.repo_url == REPO
     assert m.workspace.base_branch == "main"
     assert m.workspace.branch == f"agent/{ticket.key}"
-    assert m.sync_dirs == [skill_dir(ticket)]
+    assert (m.workspace.protect, m.workspace.blocks) == ([skill_dir(ticket)], [ticket.key])
     assert [s.id for s in m.stages] == ["plan"]
     assert m.stages[0].argv == ["python", "fake_agent.py"]  # the test runtime
     assert m.stages[0].stdin is not None
     assert ticket.key in m.stages[0].stdin
-    assert all(f.sync for f in m.files)
-    assert f"{skill_dir(ticket)}/TASKS.md" in {f.path for f in m.files}
+    d = skill_dir(ticket)
+    assert [(e.path, e.kind, e.access) for e in m.context] == [
+        (f"{d}/SKILL.md", "skill", "write"),
+        (f"{d}/TASKS.md", "plan", "write"),
+        ("AGENTS.md", "instructions", "write"),
+        ("CLAUDE.md", "instructions", "write"),
+    ]
+    assert [n.path for n in m.notes] == [f"{d}/learnings.log", f"{d}/swarm.log"]
     row = runs.db_run(run.id)
     assert row["status"] == "running"
     assert row["started_at"] is not None
@@ -112,8 +118,8 @@ def test_manifest_is_the_bundle_at_claim_time(
     put("while-dispatched.md", "d")
     r = authed.delete(f"/api/tickets/{ticket.key}/files/CLAUDE.md?base_version=1", headers=CSRF)
     assert r.status_code == 204, r.text
-    m = Manifest.model_validate(runs.claim(run.id).json()["manifest"])
-    files = {f.path: f.content for f in m.files}
+    m = JobPackage.model_validate(runs.claim(run.id).json()["manifest"])
+    files = {e.path: e.content for e in m.context}
     assert files["while-queued.md"] == "q"
     assert files["while-dispatched.md"] == "d"
     assert "CLAUDE.md" not in files  # deleted files are not in the bundle
@@ -260,21 +266,14 @@ def test_sync_writes_versions_authored_by_the_run(
         "plan",
         [
             {"path": tasks, "content": "# Tasks\n- [x] one\n- [ ] two\n", "mode": "replace"},
-            {"path": f"{d}/notes/new.md", "content": "new", "mode": "replace"},
             {"path": "AGENTS.md", "content": "edited block", "mode": "block"},
             {"path": f"{d}/learnings.log", "content": None, "mode": "replace"},
-            {"path": f"{d}/never-existed.md", "content": None, "mode": "replace"},
         ],
     )
     assert r.status_code == 200, r.text
     assert r.json() == {
-        "versions": {
-            tasks: 2,
-            f"{d}/notes/new.md": 1,
-            "AGENTS.md": 2,
-            f"{d}/learnings.log": 2,
-            f"{d}/never-existed.md": 0,
-        }
+        "versions": {tasks: 2, "AGENTS.md": 2, f"{d}/learnings.log": 2},
+        "refused": [],
     }
     latest = versions(authed, ticket.key, tasks)[-1]
     assert (latest.author, latest.author_run_id) == (None, worker.run_id)
@@ -291,31 +290,38 @@ def test_sync_writes_versions_authored_by_the_run(
     again = worker.sync(
         "plan", [{"path": tasks, "content": "# Tasks\n- [x] one\n- [ ] two\n", "mode": "replace"}]
     )
-    assert again.json() == {"versions": {tasks: 2}}
+    assert again.json() == {"versions": {tasks: 2}, "refused": []}
 
 
 @pytest.mark.parametrize(
-    ("path", "mode", "why"),
+    "path",
     [
-        ("src/app.py", "replace", "not a context file"),
-        ("../escape.md", "replace", "'..'"),
-        (".claude/skills/other/SKILL.md", "replace", "not a context file"),
-        ("AGENTS.md", "replace", "mode"),
-        ("{skill}/.git/config", "replace", ".git"),
-        ("{skill}", "replace", "not a context file"),
+        "{skill}/new.md",  # under workspace.protect, but undeclared
+        "src/app.py",
+        "../escape.md",
+        ".claude/skills/other/SKILL.md",
+        "AGENTS.md",  # declared as a block file, sent as a replace file
+        "{skill}/.git/config",
+        "{skill}",
     ],
 )
-def test_sync_path_rules(
-    authed: TestClient, ticket: TicketDetail, runs: RunDriver, path: str, mode: str, why: str
+def test_sync_refuses_undeclared_paths_and_applies_the_rest(
+    authed: TestClient, ticket: TicketDetail, runs: RunDriver, path: str
 ) -> None:
+    def files() -> dict[str, int]:
+        listed = authed.get(f"/api/tickets/{ticket.key}/files").json()
+        return {f["path"]: f["version"] for f in listed}
+
+    before = files()
     worker = runs.start(ticket.key)
     d = skill_dir(ticket)
-    good = {"path": f"{d}/TASKS.md", "content": "# Tasks\n- [ ] x\n", "mode": "replace"}
-    bad = {"path": path.replace("{skill}", d), "content": "x", "mode": mode}
-    r = worker.sync("plan", [good, bad])
-    assert error(r) == (422, "validation_error")
-    assert why in r.json()["error"]["message"]
-    assert len(versions(authed, ticket.key, f"{d}/TASKS.md")) == 1  # nothing written
+    tasks = f"{d}/TASKS.md"
+    bad = path.replace("{skill}", d)
+    good = {"path": tasks.upper(), "content": "# Tasks\n- [ ] x\n", "mode": "replace"}
+    r = worker.sync("plan", [{"path": bad, "content": "x", "mode": "replace"}, good])
+    assert r.status_code == 200, r.text
+    assert r.json() == {"versions": {tasks: 2}, "refused": [bad]}
+    assert files() == {**before, tasks: 2}
 
 
 def test_a_human_edit_based_on_a_version_before_an_agent_sync_is_stale(
@@ -345,7 +351,57 @@ def test_a_human_edit_based_on_a_version_before_an_agent_sync_is_stale(
 def test_sync_rejects_a_stage_outside_the_run(ticket: TicketDetail, runs: RunDriver) -> None:
     worker = runs.start(ticket.key)
     assert error(worker.sync("review", [])) == (422, "validation_error")
-    assert worker.sync("plan", []).json() == {"versions": {}}
+    assert worker.sync("plan", []).json() == {"versions": {}, "refused": []}
+
+
+# ------------------------------------------------------------------ sync_back
+
+
+def test_sync_back_shows_on_the_run_and_downloads_as_an_attachment(
+    ticket: TicketDetail, runs: RunDriver
+) -> None:
+    worker = runs.start(ticket.key)
+    url = f"/api/runs/{worker.run_id}/sync-back"
+    assert runs.get(worker.run_id).sync_back is None
+    assert error(runs.client.get(url)) == (404, "not_found")
+
+    assert worker.sync_back(b"first zip", files=3).status_code == 204
+    zip_bytes = bytes(range(256)) * 4
+    assert worker.sync_back(zip_bytes, files=2).status_code == 204  # a repeat replaces it
+    assert worker.complete().status_code == 204
+
+    info = runs.get(worker.run_id).sync_back
+    assert info is not None
+    assert (info.files, info.bytes) == (2, len(zip_bytes))
+    download = runs.client.get(url)
+    assert download.status_code == 200
+    assert download.content == zip_bytes
+    assert download.headers["content-type"] == "application/zip"
+    assert download.headers["content-disposition"] == 'attachment; filename="sync_back.zip"'
+
+
+def test_sync_back_refuses_a_bad_upload(
+    ticket: TicketDetail, runs: RunDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = runs.start(ticket.key)
+    monkeypatch.setattr(worker_service, "MAX_SYNC_BACK_BYTES", 8)
+
+    assert error(worker.sync_back(b"zip", sha256="0" * 64)) == (422, "validation_error")
+    assert error(worker.sync_back(b"zip", files=0)) == (422, "validation_error")
+    assert error(worker.sync_back(b"")) == (422, "validation_error")
+    assert error(worker.sync_back(b"x" * 9)) == (413, "too_large")
+    assert worker.sync_back(b"x" * 8).status_code == 204
+
+
+def test_sync_back_checks_the_token_before_the_body(
+    ticket: TicketDetail, runs: RunDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = runs.start(ticket.key)
+    monkeypatch.setattr(worker_service, "MAX_SYNC_BACK_BYTES", 8)
+    worker.token += "-wrong"
+
+    assert error(worker.sync_back(b"junk", sha256="0" * 64)) == (401, "unauthorized")
+    assert error(worker.sync_back(b"x" * 9)) == (401, "unauthorized")
 
 
 # ------------------------------------------------------------------ complete
@@ -458,6 +514,7 @@ def gone_routes(worker: Worker, other_status: str = "failed") -> list[Any]:
     return [
         worker.events(log_event(99, "plan", "late")),
         worker.sync("plan", []),
+        worker.sync_back(b"zip"),
         worker.complete(other_status),
     ]
 
@@ -490,4 +547,4 @@ def test_unknown_worker_token_is_401(ticket: TicketDetail, runs: RunDriver) -> N
 def test_worker_source_is_served(client: TestClient) -> None:
     response = client.get("/api/worker/worker.py")
     assert response.status_code == 200
-    assert "PROTOCOL = 1" in response.text
+    assert "PROTOCOL = 2" in response.text

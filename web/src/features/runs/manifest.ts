@@ -1,11 +1,11 @@
-// Pure helpers for "How each stage was called" (Runs tab): read a run's manifest, exactly what the
+// Pure helpers for "How each stage was called" (Runs tab): read a run's job package, exactly what the
 // worker received, into display pieces. The argv is the runtime's template already resolved by the
 // server (backend `pipeline/manifest.py` `resolve_agent`: `argv`, then `model_args`, then
 // `agent_args`, then `prompt_args`), so nothing here knows which CLI a runtime runs: the chips
 // are picked out by flag name on any program.
 import { ApiError, type Schemas } from "../../api/client";
 
-export type Manifest = Schemas["Manifest"];
+export type Manifest = Schemas["JobPackage"];
 export type ManifestStage = Schemas["ManifestStage"];
 
 /** The flags worth a chip, in chip order: flag → label. Add a row to pick out another flag. */
@@ -200,9 +200,13 @@ export function promptLabel(via: "stdin" | "arg"): string {
   return via === "stdin" ? "Prompt (stdin)" : "Prompt";
 }
 
-/** The context files' paths (never their contents), sorted so a path is easy to find. */
-export function filePaths(manifest: Pick<Manifest, "files">): string[] {
-  return manifest.files.map((f) => f.path).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+/** The context entries and notes as path and kind (never their contents), sorted by path so a
+ *  file is easy to find. */
+export function packageFiles(manifest: Pick<Manifest, "context" | "notes">) {
+  return [
+    ...manifest.context.map((f) => ({ path: f.path, kind: f.kind })),
+    ...manifest.notes.map((f) => ({ path: f.path, kind: "note" as const })),
+  ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /** `30s`, `15m`, `2h`, `1h 30m`: a stage's time limit. */
@@ -217,9 +221,11 @@ export function timeoutText(seconds: number): string {
 
 /** What the section says when the manifest can't be shown. The server answers 404 `not_found`
  *  until a worker claims the run (backend `runs/service.py` `get_manifest`). */
-export function manifestErrorText(error: Error): { text: string; quiet: boolean } {
+export function manifestErrorText(error: Error, active: boolean): { text: string; quiet: boolean } {
   if (error instanceof ApiError && error.status === 404 && error.code === "not_found") {
-    return { text: "Built when a worker picks the run up", quiet: true };
+    // A finished run without one was never claimed, or was stored under an older protocol.
+    const text = active ? "Built when a worker picks the run up" : "Not recorded for this run";
+    return { text, quiet: true };
   }
   return { text: `Can't load how the stages were called · ${error.message}`, quiet: false };
 }

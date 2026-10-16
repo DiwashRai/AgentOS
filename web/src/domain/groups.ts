@@ -26,14 +26,16 @@ export function since(t: Pick<GroupTicket, "attention_since">): string {
   return t.attention_since;
 }
 
-function sinceMs(t: GroupTicket): number {
+export function sinceMs(t: GroupTicket): number {
   const ms = Date.parse(since(t));
   return Number.isNaN(ms) ? 0 : ms;
 }
 
 const byKey = (a: GroupTicket, b: GroupTicket) => a.key.localeCompare(b.key);
-const longestFirst = (a: GroupTicket, b: GroupTicket) => sinceMs(a) - sinceMs(b) || byKey(a, b);
-const newestFirst = (a: GroupTicket, b: GroupTicket) => sinceMs(b) - sinceMs(a) || byKey(a, b);
+export const longestFirst = (a: GroupTicket, b: GroupTicket) =>
+  sinceMs(a) - sinceMs(b) || byKey(a, b);
+export const newestFirst = (a: GroupTicket, b: GroupTicket) =>
+  sinceMs(b) - sinceMs(a) || byKey(a, b);
 
 export function groups<T extends GroupTicket>(tickets: readonly T[], me: MeRef): Groups<T> {
   const g: Groups<T> = { needYou: [], atWork: [], readyMine: [], doneMine: [] };

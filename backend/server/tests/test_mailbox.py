@@ -266,13 +266,19 @@ def test_a_truncated_last_line_is_ignored(
     assert counts(runs.ctx, run_id, tasks_path(ticket))[0] == 3
 
 
-def test_rejected_and_unknown_lines_are_skipped(
-    ticket: TicketDetail, runs: RunDriver, mailbox: FakeMailbox, reaper: MailboxReaper
+def test_refused_paths_rejected_and_unknown_lines_are_skipped(
+    ticket: TicketDetail,
+    runs: RunDriver,
+    mailbox: FakeMailbox,
+    reaper: MailboxReaper,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     run_id = launch(runs, mailbox, ticket.key)
+    tasks = {"path": tasks_path(ticket), "content": "# Tasks\n- [x] one\n", "mode": "replace"}
     outbox = (
         Outbox(run_id)
-        .sync("plan", [{"path": "../escape.md", "content": "x", "mode": "replace"}])  # 422
+        .sync("plan", [{"path": "../escape.md", "content": "x", "mode": "replace"}, tasks])
+        .sync("nope", [tasks])  # 422: not a stage of the run
         .call("events", {"events": "nope"})  # invalid body
         .call("claim", {"worker_token": "x"})  # not a recorded call
         .raw("[1, 2]")
@@ -282,6 +288,8 @@ def test_rejected_and_unknown_lines_are_skipped(
     mailbox.put_outbox(run_id, outbox.data())
     assert reaper.tick(utcnow()) == {run_id: "replayed"}
     assert runs.get(run_id).status == "gated"
+    assert counts(runs.ctx, run_id, tasks_path(ticket))[1] == 2  # the rest of the batch applied
+    assert any("../escape.md" in r.getMessage() for r in caplog.records)
 
 
 def test_an_over_long_line_is_skipped(

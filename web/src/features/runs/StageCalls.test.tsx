@@ -7,15 +7,34 @@ import { ManifestBody } from "./StageCalls";
 const PROMPT = "Review the change.\nSECRET-LOOKING-PROMPT-BODY";
 
 const MANIFEST: Manifest = {
-  protocol: 1,
+  protocol: 2,
   run_id: 7,
   ticket: { key: "AOS-1", title: "A ticket" },
-  workspace: { mode: "repo", repo_url: null, branch: null, base_branch: null },
+  workspace: {
+    mode: "repo",
+    repo_url: null,
+    branch: null,
+    base_branch: null,
+    protect: [],
+    blocks: [],
+  },
   limits: { max_file_bytes: 1, max_line_bytes: 1 },
-  sync_dirs: [],
-  files: [
-    { path: ".claude/agents/reviewer.md", content: "FILE-CONTENT", mode: "replace", sync: false },
+  context: [
+    {
+      path: ".claude/agents/reviewer.md",
+      kind: "agent",
+      name: "reviewer",
+      mode: "replace",
+      block: null,
+      access: "write",
+      content: "FILE-CONTENT",
+    },
   ],
+  notes: [
+    { path: ".claude/skills/aos-1/learnings.log", name: "learnings.log", content: "NOTE-CONTENT" },
+  ],
+  sync_back: { dir: ".agentos/sync_back", max_bytes: 1 },
+  env: {},
   stages: [
     {
       id: "review",
@@ -86,9 +105,16 @@ describe("ManifestBody", () => {
     expect(html).not.toContain("REPAIR-PROMPT");
   });
 
-  it("lists file paths without their contents", () => {
-    expect(html).toContain("Files given to the agent (1)");
-    expect(html).toContain(".claude/agents/reviewer.md");
+  it("lists context entries and notes with their kind, without their contents", () => {
+    const list = /<ul[^>]*aria-label="Files given to the agent"[^>]*>(.*?)<\/ul>/.exec(html)?.[1];
+    const items = [...(list ?? "").matchAll(/<li>(.*?)<\/li>/g)].map((m) =>
+      (m[1] ?? "").replace(/<[^>]+>/g, ""),
+    );
+    expect(items).toEqual([
+      ".claude/agents/reviewer.md · agent",
+      ".claude/skills/aos-1/learnings.log · note",
+    ]);
     expect(html).not.toContain("FILE-CONTENT");
+    expect(html).not.toContain("NOTE-CONTENT");
   });
 });

@@ -18,7 +18,6 @@ export const keys = {
   // Everything below hangs off its ticket, so invalidating a ticket refreshes all of it.
   files: (key: string) => [...keys.ticket(key), "files"] as const,
   file: (key: string, path: string) => [...keys.files(key), path] as const,
-  versions: (key: string, path: string) => [...keys.files(key), path, "versions"] as const,
   chat: (key: string) => [...keys.ticket(key), "chat"] as const,
   runs: (key: string) => [...keys.ticket(key), "runs"] as const,
   run: (id: number) => [...keys.all, "run", id] as const,
@@ -594,19 +593,6 @@ export function useFile(key: string, path: string | null) {
     queryFn: () =>
       unwrap(
         api.GET("/api/tickets/{key}/files/{path}", {
-          params: { path: { key, path: path ?? "" } },
-        }),
-      ),
-    enabled: path !== null,
-  });
-}
-
-export function useFileVersions(key: string, path: string | null) {
-  return useQuery({
-    queryKey: keys.versions(key, path ?? ""),
-    queryFn: () =>
-      unwrap(
-        api.GET("/api/tickets/{key}/versions/{path}", {
           params: { path: { key, path: path ?? "" } },
         }),
       ),

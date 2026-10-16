@@ -249,7 +249,7 @@ export function StageRow(props: StageRowProps) {
               <Field
                 label="Prompt"
                 error={issues.prompt}
-                hint="A Jinja template: {{ticket.key}}, {{ticket.title}}, {{paths.skill_md}}, {{paths.tasks_md}}…"
+                hint="A Jinja template: {{ticket.key}}, {{ticket.title}}, {{paths.skill_md}}, {{paths.tasks_md}}, {{paths.sync_back}}…"
               >
                 {({ id, describedBy, invalid }) => (
                   <textarea

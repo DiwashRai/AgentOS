@@ -6,13 +6,14 @@ no background loops, so every transition happens when a test asks for it.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agentos.context import AppContext
-from agentos.models import Manifest, RunDetail, RunSummary
+from agentos.models import JobPackage, RunDetail, RunSummary
 from agentos.runs import dispatcher
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ class Worker:
     client: TestClient
     run_id: int
     token: str
-    manifest: Manifest
+    manifest: JobPackage
     seq: int = field(default=0)
 
     def post(self, path: str, body: dict[str, Any]) -> Response:
@@ -96,6 +97,16 @@ class Worker:
 
     def sync(self, stage_id: str, files: list[dict[str, Any]]) -> Response:
         return self.post("sync", {"stage_id": stage_id, "files": files})
+
+    def sync_back(self, data: bytes, files: int = 1, sha256: str | None = None) -> Response:
+        """Upload `data` as the run's sync_back zip; `sha256` defaults to the data's own."""
+        digest = sha256 or hashlib.sha256(data).hexdigest()
+        r: Response = self.client.put(
+            f"/api/worker/sync-back?sha256={digest}&files={files}",
+            content=data,
+            headers=bearer(self.token),
+        )
+        return r
 
     def complete(self, status: str = "completed", **extra: Any) -> Response:
         return self.post("complete", {"status": status, **extra})
@@ -145,7 +156,7 @@ class RunDriver:
         r = self.claim(run_id, worker_token)
         assert r.status_code == 200, r.text
         return Worker(
-            self.client, run_id, worker_token, Manifest.model_validate(r.json()["manifest"])
+            self.client, run_id, worker_token, JobPackage.model_validate(r.json()["manifest"])
         )
 
     def get(self, run_id: int) -> RunDetail:

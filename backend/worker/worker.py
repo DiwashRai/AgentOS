@@ -3,10 +3,10 @@
 Single file, Python >= 3.11 standard library only (enforced by a test). Served by the server at
 GET /api/worker/worker.py so runners always get the matching version. See SPEC §9.
 
-Flow: claim -> workspace (clone, or `git init` in no-repo mode) -> write the manifest files ->
-emit the manifest's warnings -> for each stage execution: run it, sync context files back, then
-(repo mode) commit, pre-push guard, push -> (repo mode) look up the branch's PR with `gh` -> flush
-events -> complete (with `pr_url` if found).
+Flow: claim the job package -> workspace (clone, or `git init` in no-repo mode) -> write its
+context and notes -> emit its warnings -> for each stage execution: run it, sync context files
+back, then (repo mode) commit, pre-push guard, push -> (repo mode) look up the branch's PR with
+`gh` -> flush events -> complete (with `pr_url` if found).
 
 Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
 each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
@@ -35,7 +35,7 @@ Failure paths after the claim:
   push what exists, exit 1 (the reaper fails the run).
 
 Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
-server): no claim and no HTTP. The manifest comes from a file, and every worker API call is
+server): no claim and no HTTP. The package comes from a file, and every worker API call is
 recorded as one JSONL line in the outbox (see Recorder), which the server replays later. Nothing
 answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
 
@@ -52,7 +52,9 @@ import argparse
 import base64
 import contextlib
 import ctypes
+import hashlib
 import http.client
+import io
 import json
 import os
 import re
@@ -70,6 +72,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -77,10 +80,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, Protocol
 
-PROTOCOL = 1
+PROTOCOL = 2
 
 # ---------------------------------------------------------------- tunables (tests shrink these)
 HTTP_TIMEOUT_S = 30.0  # per request
+UPLOAD_TIMEOUT_S = 300.0  # per attempt of the sync_back upload (up to sync_back.max_bytes)
 RETRY_BUDGET_S = 300.0  # network errors and 5xx are retried this long; then "unreachable"
 BACKOFF_START_S = 0.5
 BACKOFF_CAP_S = 10.0
@@ -187,7 +191,6 @@ _RESERVED = frozenset(
     | {f"LPT{i}" for i in range(1, 10)}
 )
 _BRANCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
-_KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 def path_error(path: str) -> str | None:
@@ -298,6 +301,29 @@ def resolve_inside(root: Path, rel: str) -> tuple[Path, str | None]:
     return root.joinpath(*parts), None
 
 
+def existing_entry(root: Path, rel: str) -> str | None:
+    """The path of whatever already sits at `rel` under `root`, matched ignoring case at every
+    level as on a case-insensitive filesystem, or None. Any entry counts, a dangling symlink
+    included; only real folders are descended into."""
+    here, found = root, []
+    parts = rel.split("/")
+    for i, part in enumerate(parts):
+        try:
+            with os.scandir(here) as entries:
+                match = next((e for e in entries if e.name.lower() == part.lower()), None)
+        except OSError:
+            return None
+        if match is None:
+            return None
+        found.append(match.name)
+        if i == len(parts) - 1:
+            return "/".join(found)
+        if not match.is_dir(follow_symlinks=False):
+            return None
+        here = Path(match.path)
+    return None
+
+
 def read_regular(root: Path, rel: str, limit: int | None = None) -> tuple[bytes | None, str | None]:
     """(content, error) of a regular file of at most `limit` bytes. (None, None) when the file
     doesn't exist."""
@@ -406,19 +432,24 @@ def block_write(existing: bytes | None, key: str, content: str) -> bytes:
     return data + b"\n" + block if data else block
 
 
-# ---------------------------------------------------------------- manifest (protocol v1)
+# ---------------------------------------------------------------- the job package (protocol 2)
 
 
-class ManifestError(ValueError):
-    """The claimed manifest doesn't match protocol v1."""
+class PackageError(ValueError):
+    """The claimed package isn't protocol 2, or its loop blocks don't fit its stages."""
 
 
 @dataclass(frozen=True)
-class ManifestFile:
+class ContextFile:
+    """A `context` entry, or a note (a write-access replace file)."""
+
     path: str
+    name: str
     content: str
-    mode: str  # "replace" | "block"
-    sync: bool
+    kind: str = "note"  # "skill" | "plan" | "instructions" | "agent" | "file" | "note"
+    mode: str = "replace"  # "replace" | "block"
+    block: str | None = None  # block mode: the block's name
+    access: str = "write"  # "write" (synced back) | "read"
 
 
 @dataclass(frozen=True)
@@ -426,7 +457,7 @@ class Invocation:
     """Another call of a loop stage's agent: a later round, or a verdict repair. The prompt is
     `argv[prompt_arg]`, or `stdin` when `prompt_arg` is None."""
 
-    argv: tuple[str, ...]
+    argv: list[str]
     stdin: str | None
     prompt_arg: int | None
     tail: str
@@ -441,12 +472,12 @@ class Invocation:
 
 
 @dataclass(frozen=True)
-class ManifestStage:
+class Stage:
     id: str
     name: str
     kind: str  # "agent" | "shell"
     timeout_s: int
-    argv: tuple[str, ...] | None  # agent: round 1's call (with stdin), used exactly as given
+    argv: list[str] | None  # agent: round 1's call (with stdin), used exactly as given
     stdin: str | None
     command: str | None  # shell: every round's call
     check: bool = False  # in a loop block: the stage decides the round
@@ -457,305 +488,135 @@ class ManifestStage:
 
 
 @dataclass(frozen=True)
-class ManifestLoop:
+class Loop:
     start: str  # stage ids; the block is every stage from start to end
     end: str
     max_rounds: int
 
 
 @dataclass(frozen=True)
-class Manifest:
+class Package:
+    """A protocol 2 job package (agentos.models.JobPackage). Paths are checked where they are
+    written (resolve_inside), the workspace where it is set up."""
+
+    protocol: int
     run_id: int
-    key: str
-    title: str
-    mode: str  # "repo" | "none"
-    repo_url: str | None
-    base_branch: str | None
-    branch: str | None
-    files: tuple[ManifestFile, ...]
-    sync_dirs: tuple[str, ...]
-    stages: tuple[ManifestStage, ...]
-    max_file_bytes: int
-    max_line_bytes: int
-    loops: tuple[ManifestLoop, ...] = ()
+    ticket: dict[str, str]
+    workspace: dict[str, Any]  # mode, repo_url, base_branch, branch, protect, blocks
+    context: tuple[ContextFile, ...]
+    notes: tuple[ContextFile, ...]
+    sync_back: dict[str, Any]
+    env: dict[str, str]
+    stages: tuple[Stage, ...]
+    limits: dict[str, int]
+    loops: tuple[Loop, ...] = ()
     start_stage: str | None = None  # where round 1 starts; None = the first stage
     warnings: tuple[str, ...] = ()  # emitted as warning events once the workspace is ready
 
+    @property
+    def key(self) -> str:
+        return self.ticket["key"]
 
-def _fields(
-    value: object, where: str, required: tuple[str, ...], optional: tuple[str, ...] = ()
-) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ManifestError(f"{where}: expected an object")
-    missing = [k for k in required if k not in value]
-    if missing:
-        raise ManifestError(f"{where}: missing {', '.join(missing)}")
-    extra = sorted(str(k) for k in value if k not in required and k not in optional)
-    if extra:
-        raise ManifestError(f"{where}: unexpected {', '.join(extra)}")
-    return value
+    @property
+    def files(self) -> tuple[ContextFile, ...]:
+        return (*self.context, *self.notes)
 
 
-def _str(value: object, where: str) -> str:
-    if not isinstance(value, str):
-        raise ManifestError(f"{where}: expected a string")
-    return value
-
-
-def _opt_str(value: object, where: str) -> str | None:
-    return None if value is None else _str(value, where)
-
-
-def _int(value: object, where: str, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ManifestError(f"{where}: expected an integer")
-    if value < minimum:
-        raise ManifestError(f"{where}: must be >= {minimum}")
-    return value
-
-
-def _list(value: object, where: str) -> list[Any]:
-    if not isinstance(value, list):
-        raise ManifestError(f"{where}: expected a list")
-    return value
-
-
-def _valid_path(value: object, where: str) -> str:
-    path = _str(value, where)
-    err = path_error(path)
-    if err:
-        raise ManifestError(f"{where}: invalid path {path!r}: {err}")
-    return path
-
-
-# A stage's optional keys: its call, then the loop block ones.
-_STAGE_OPTIONAL = (
-    "argv",
-    "stdin",
-    "command",
-    "check",
-    "rounds",
-    "repairs",
-    "verdict_from",
-    "verdict_repairs",
-)
-
-
-def _argv(value: object, where: str) -> tuple[str, ...]:
-    return tuple(_str(a, f"{where}[{j}]") for j, a in enumerate(_list(value, where)))
-
-
-def _invocation(value: object, where: str) -> Invocation:
-    v = _fields(value, where, ("argv", "stdin", "prompt_arg", "tail"))
-    argv = _argv(v["argv"], f"{where}.argv")
-    if not argv:
-        raise ManifestError(f"{where}.argv: must not be empty")
-    stdin = _opt_str(v["stdin"], f"{where}.stdin")
-    raw_arg = v["prompt_arg"]
-    prompt_arg = None if raw_arg is None else _int(raw_arg, f"{where}.prompt_arg", 0)
-    if (stdin is None) == (prompt_arg is None):
-        raise ManifestError(f"{where}: exactly one of stdin and prompt_arg holds the prompt")
-    if prompt_arg is not None and prompt_arg >= len(argv):
-        raise ManifestError(f"{where}.prompt_arg: {prompt_arg} is past the end of argv")
-    return Invocation(argv, stdin, prompt_arg, _str(v["tail"], f"{where}.tail"))
-
-
-def _check_loop_stage(stage: ManifestStage, loop: ManifestLoop, where: str) -> None:
+def _check_loop_stage(stage: Stage, loop: Loop, where: str) -> None:
     """A loop block stage's calls must cover every round (and every repair)."""
     if stage.kind == "shell":
         if stage.rounds or stage.repairs:
-            raise ManifestError(f"{where}: a shell stage takes no rounds or repairs")
+            raise PackageError(f"{where}: a shell stage takes no rounds or repairs")
         return
     if len(stage.rounds) != loop.max_rounds - 1:
-        raise ManifestError(
+        raise PackageError(
             f"{where}.rounds: expected {loop.max_rounds - 1} (max_rounds - 1), "
             f"got {len(stage.rounds)}"
         )
     if not stage.check:
         if stage.repairs:
-            raise ManifestError(f"{where}.repairs: only an agent check is repaired")
+            raise PackageError(f"{where}.repairs: only an agent check is repaired")
         return
     if stage.verdict_from is None:
-        raise ManifestError(f"{where}.verdict_from: an agent check needs structured_output or file")
+        raise PackageError(f"{where}.verdict_from: an agent check needs structured_output or file")
     if len(stage.repairs) not in (0, loop.max_rounds):
-        raise ManifestError(
+        raise PackageError(
             f"{where}.repairs: expected 0 or {loop.max_rounds} (max_rounds), "
             f"got {len(stage.repairs)}"
         )
 
 
-def _parse_loops(raw: object, stages: list[ManifestStage]) -> tuple[ManifestLoop, ...]:
-    """Loop blocks: known stage ids, in order, not overlapping; extras only on block stages."""
+def _check_loops(p: Package) -> None:
+    """The shape the stage loop relies on: unique stage ids; loop blocks over known stages, in
+    order and not overlapping; loop extras only on block stages; a start stage that is the first
+    stage or inside the block that starts there."""
+    stages = p.stages
     index = {s.id: i for i, s in enumerate(stages)}
-    loops: list[ManifestLoop] = []
+    if len(index) != len(stages):
+        raise PackageError("stages: duplicate stage ids")
     covered: set[int] = set()
     after = 0  # the first stage index the next block may start at
-    for i, item in enumerate(_list(raw, "loops")):
+    for i, loop in enumerate(p.loops):
         where = f"loops[{i}]"
-        f = _fields(item, where, ("start", "end", "max_rounds"))
-        loop = ManifestLoop(
-            start=_str(f["start"], f"{where}.start"),
-            end=_str(f["end"], f"{where}.end"),
-            max_rounds=_int(f["max_rounds"], f"{where}.max_rounds", 1),
-        )
+        if type(loop.max_rounds) is not int or loop.max_rounds < 1:
+            raise PackageError(f"{where}.max_rounds: expected an integer >= 1")
         for name, stage_id in (("start", loop.start), ("end", loop.end)):
             if stage_id not in index:
-                raise ManifestError(f"{where}.{name}: no stage {stage_id!r}")
+                raise PackageError(f"{where}.{name}: no stage {stage_id!r}")
         first, last = index[loop.start], index[loop.end]
         if first > last:
-            raise ManifestError(f"{where}: start {loop.start!r} comes after end {loop.end!r}")
+            raise PackageError(f"{where}: start {loop.start!r} comes after end {loop.end!r}")
         if first < after:
-            raise ManifestError(f"{where}: overlaps or comes before the previous loop")
+            raise PackageError(f"{where}: overlaps or comes before the previous loop")
         after = last + 1
         for j in range(first, last + 1):
             _check_loop_stage(stages[j], loop, f"stages[{j}]")
             covered.add(j)
-        loops.append(loop)
     for j, stage in enumerate(stages):
         if j not in covered and (stage.check or stage.rounds or stage.repairs):
-            raise ManifestError(f"stages[{j}]: check, rounds and repairs need a loop block")
-    return tuple(loops)
+            raise PackageError(f"stages[{j}]: check, rounds and repairs need a loop block")
+
+    if p.start_stage is not None:
+        at = index.get(p.start_stage)
+        if at is None:
+            raise PackageError(f"start_stage: no stage {p.start_stage!r}")
+        if at and not any(index[lp.start] == 0 and at <= index[lp.end] for lp in p.loops):
+            raise PackageError("start_stage: must be the first stage, or in a block from there")
 
 
-def parse_manifest(raw: object) -> Manifest:
-    """Validate a protocol v1 manifest by hand (mirrors agentos.models.Manifest, extra=forbid)."""
-    m = _fields(
-        raw,
-        "manifest",
-        ("run_id", "ticket", "workspace", "files", "sync_dirs", "stages", "limits"),
-        ("protocol", "loops", "start_stage", "warnings"),
-    )
-    protocol = m.get("protocol", PROTOCOL)
-    if isinstance(protocol, bool) or protocol != PROTOCOL:
-        raise ManifestError(f"manifest: unsupported protocol {protocol!r} (worker speaks 1)")
-    run_id = _int(m["run_id"], "run_id", 1)
+def load_package(raw: object) -> Package:
+    """The claim's package, built straight from its JSON. Checks only the protocol and the loop
+    shape (_check_loops); anything else malformed is a PackageError too."""
+    protocol = raw.get("protocol") if isinstance(raw, dict) else None
+    if not isinstance(raw, dict) or protocol != PROTOCOL:
+        raise PackageError(f"unsupported protocol {protocol!r} (worker speaks {PROTOCOL})")
 
-    ticket = _fields(m["ticket"], "ticket", ("key", "title"))
-    key = _str(ticket["key"], "ticket.key")
-    if not _KEY_RE.fullmatch(key):
-        raise ManifestError(f"ticket.key: invalid key {key!r}")
-
-    ws = _fields(m["workspace"], "workspace", ("mode", "repo_url", "base_branch", "branch"))
-    mode = _str(ws["mode"], "workspace.mode")
-    if mode not in ("repo", "none"):
-        raise ManifestError(f"workspace.mode: expected repo or none, got {mode!r}")
-    repo_url = _opt_str(ws["repo_url"], "workspace.repo_url")
-    base_branch = _opt_str(ws["base_branch"], "workspace.base_branch")
-    branch = _opt_str(ws["branch"], "workspace.branch")
-    if mode == "repo":
-        if not repo_url or repo_url.startswith("-"):
-            raise ManifestError("workspace.repo_url: required in repo mode, must not start with -")
-        for name, value in (("base_branch", base_branch), ("branch", branch)):
-            problem = "required in repo mode" if value is None else branch_error(value)
-            if problem:
-                raise ManifestError(f"workspace.{name}: {problem}")
-
-    files: list[ManifestFile] = []
-    for i, item in enumerate(_list(m["files"], "files")):
-        where = f"files[{i}]"
-        f = _fields(item, where, ("path", "content", "mode", "sync"))
-        fmode = _str(f["mode"], f"{where}.mode")
-        if fmode not in ("replace", "block"):
-            raise ManifestError(f"{where}.mode: expected replace or block, got {fmode!r}")
-        if not isinstance(f["sync"], bool):
-            raise ManifestError(f"{where}.sync: expected a boolean")
-        files.append(
-            ManifestFile(
-                path=_valid_path(f["path"], f"{where}.path"),
-                content=_str(f["content"], f"{where}.content"),
-                mode=fmode,
-                sync=f["sync"],
+    try:
+        stages = tuple(
+            Stage(
+                **{
+                    **s,
+                    "rounds": tuple(Invocation(**c) for c in s.get("rounds", ())),
+                    "repairs": tuple(Invocation(**c) for c in s.get("repairs", ())),
+                }
             )
+            for s in raw["stages"]
         )
-
-    sync_dirs = tuple(
-        _valid_path(d, f"sync_dirs[{i}]") for i, d in enumerate(_list(m["sync_dirs"], "sync_dirs"))
-    )
-
-    stages: list[ManifestStage] = []
-    for i, item in enumerate(_list(m["stages"], "stages")):
-        where = f"stages[{i}]"
-        s = _fields(item, where, ("id", "name", "kind", "timeout_s"), _STAGE_OPTIONAL)
-        kind = _str(s["kind"], f"{where}.kind")
-        if kind not in ("agent", "shell"):
-            raise ManifestError(f"{where}.kind: expected agent or shell, got {kind!r}")
-        raw_argv = s.get("argv")
-        argv = None if raw_argv is None else _argv(raw_argv, f"{where}.argv")
-        command = _opt_str(s.get("command"), f"{where}.command")
-        if kind == "agent" and not argv:
-            raise ManifestError(f"{where}: an agent stage needs a non-empty argv")
-        if kind == "shell" and not command:
-            raise ManifestError(f"{where}: a shell stage needs a non-empty command")
-        stage_id = _str(s["id"], f"{where}.id")
-        if not stage_id:
-            raise ManifestError(f"{where}.id: must not be empty")
-        if any(st.id == stage_id for st in stages):
-            raise ManifestError(f"{where}.id: duplicate stage id {stage_id!r}")
-        check = s.get("check", False)
-        if not isinstance(check, bool):
-            raise ManifestError(f"{where}.check: expected a boolean")
-        verdict_from = _opt_str(s.get("verdict_from"), f"{where}.verdict_from")
-        if verdict_from not in (None, "structured_output", "file"):
-            raise ManifestError(
-                f"{where}.verdict_from: expected structured_output or file, got {verdict_from!r}"
-            )
-        calls = {
-            name: tuple(
-                _invocation(x, f"{where}.{name}[{j}]")
-                for j, x in enumerate(_list(s.get(name, []), f"{where}.{name}"))
-            )
-            for name in ("rounds", "repairs")
-        }
-        stages.append(
-            ManifestStage(
-                id=stage_id,
-                name=_str(s["name"], f"{where}.name"),
-                kind=kind,
-                timeout_s=_int(s["timeout_s"], f"{where}.timeout_s", 1),
-                argv=argv,
-                stdin=_opt_str(s.get("stdin"), f"{where}.stdin"),
-                command=command,
-                check=check,
-                rounds=calls["rounds"],
-                repairs=calls["repairs"],
-                verdict_from=verdict_from,
-                verdict_repairs=_int(s.get("verdict_repairs", 0), f"{where}.verdict_repairs", 0),
-            )
+        package = Package(
+            **{
+                **raw,
+                "context": tuple(ContextFile(**e) for e in raw["context"]),
+                "notes": tuple(ContextFile(**n) for n in raw["notes"]),
+                "stages": stages,
+                "loops": tuple(Loop(**lp) for lp in raw.get("loops", ())),
+                "warnings": tuple(raw.get("warnings", ())),
+            }
         )
+    except (KeyError, TypeError) as exc:
+        raise PackageError(f"malformed package: {exc!r}") from exc
 
-    loops = _parse_loops(m.get("loops", []), stages)
-    start_stage = _opt_str(m.get("start_stage"), "start_stage")
-    if start_stage is not None:
-        ids = [s.id for s in stages]
-        if start_stage not in ids:
-            raise ManifestError(f"start_stage: no stage {start_stage!r}")
-        at = ids.index(start_stage)
-        if at and not any(lp.start == ids[0] and at <= ids.index(lp.end) for lp in loops):
-            raise ManifestError(
-                "start_stage: must be the first stage, or in a loop block that starts there"
-            )
-    warnings = tuple(
-        _str(w, f"warnings[{i}]") for i, w in enumerate(_list(m.get("warnings", []), "warnings"))
-    )
-
-    limits = _fields(m["limits"], "limits", ("max_file_bytes", "max_line_bytes"))
-    return Manifest(
-        run_id=run_id,
-        key=key,
-        title=_str(ticket["title"], "ticket.title"),
-        mode=mode,
-        repo_url=repo_url,
-        base_branch=base_branch,
-        branch=branch,
-        files=tuple(files),
-        sync_dirs=sync_dirs,
-        stages=tuple(stages),
-        max_file_bytes=_int(limits["max_file_bytes"], "limits.max_file_bytes", 1),
-        max_line_bytes=_int(limits["max_line_bytes"], "limits.max_line_bytes", 1),
-        loops=loops,
-        start_stage=start_stage,
-        warnings=warnings,
-    )
+    _check_loops(package)
+    return package
 
 
 # ---------------------------------------------------------------- verdicts (loop block checks)
@@ -885,7 +746,8 @@ def _http_error(exc: urllib.error.HTTPError) -> HttpError:
 
 
 class Client:
-    """JSON POSTs with a bearer token. Retries network errors and 5xx with exponential backoff."""
+    """JSON POSTs and raw PUTs with a bearer token. Retries network errors and 5xx with
+    exponential backoff."""
 
     def __init__(self, server: str, token: str) -> None:
         self._base = server.rstrip("/")
@@ -907,6 +769,21 @@ class Client:
         each attempt; failures are retried for `retry_budget_s` (default RETRY_BUDGET_S, 0 = one
         attempt), then raise Unreachable. A 4xx raises HttpError at once."""
         data = json.dumps(body).encode("utf-8")
+        return self._send("POST", path, data, "application/json", timeout_s, retry_budget_s)
+
+    def put(self, path: str, data: bytes) -> Any:
+        """PUT raw bytes (a zip), retried like `post`; each attempt gets UPLOAD_TIMEOUT_S."""
+        return self._send("PUT", path, data, "application/zip", UPLOAD_TIMEOUT_S, None)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        data: bytes,
+        content_type: str,
+        timeout_s: float | None,
+        retry_budget_s: float | None,
+    ) -> Any:
         timeout = HTTP_TIMEOUT_S if timeout_s is None else timeout_s
         deadline = time.monotonic() + (RETRY_BUDGET_S if retry_budget_s is None else retry_budget_s)
         delay = BACKOFF_START_S
@@ -914,11 +791,8 @@ class Client:
             request = urllib.request.Request(  # noqa: S310 -- the scheme is checked in parse_args
                 self._base + path,
                 data=data,
-                method="POST",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._token}",
-                },
+                method=method,
+                headers={"Content-Type": content_type, "Authorization": f"Bearer {self._token}"},
             )
             try:
                 with self._opener.open(request, timeout=timeout) as resp:
@@ -933,8 +807,8 @@ class Client:
                 problem = f"{type(exc).__name__}: {exc}"
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise Unreachable(f"POST {path}: {problem}")
-            say(f"POST {path} failed ({problem}); retrying in {delay:.1f}s")
+                raise Unreachable(f"{method} {path}: {problem}")
+            say(f"{method} {path} failed ({problem}); retrying in {delay:.1f}s")
             time.sleep(min(delay, remaining))
             delay = min(delay * 2, BACKOFF_CAP_S)
 
@@ -942,15 +816,24 @@ class Client:
 class WorkerApi:
     """Worker-token routes. 401/410 mean the run was taken away (RunGone)."""
 
+    uploads = True  # `put` reaches the server (a Recorder has no upload)
+
     def __init__(self, client: Client) -> None:
         self._client = client
 
     def call(self, path: str, body: dict[str, Any]) -> Any:
+        return self._gone("POST", path, lambda: self._client.post(path, body))
+
+    def put(self, path: str, data: bytes) -> Any:
+        return self._gone("PUT", path, lambda: self._client.put(path, data))
+
+    @staticmethod
+    def _gone(method: str, path: str, send: Callable[[], Any]) -> Any:
         try:
-            return self._client.post(path, body)
+            return send()
         except HttpError as exc:
             if exc.status in (401, 410):
-                raise RunGone(f"POST {path}: HTTP {exc.status} {exc.code}") from exc
+                raise RunGone(f"{method} {path}: HTTP {exc.status} {exc.code}") from exc
             raise
 
 
@@ -961,7 +844,10 @@ class Recorder(WorkerApi):
     order, flushed per line (default json.dumps, so the body is what Client.post would send).
     Empty event batches (heartbeats) are not recorded. `call` always returns None: no cancel, no
     RunGone. A failed write raises Unreachable (and every later call too), so the run aborts.
+    Nothing is uploaded: the run warns instead of returning sync_back.
     """
+
+    uploads = False
 
     def __init__(self, outbox: Path, run_id: int) -> None:
         self._lock = threading.Lock()
@@ -1623,13 +1509,15 @@ class SyncBatch:
         self.updates[path] = content
 
 
-def _walk_files(root: Path, rel_dir: str, warnings: list[str]) -> list[str]:
-    """POSIX paths of the regular files under `rel_dir`. Never follows links."""
+def _walk_files(root: Path, rel_dir: str) -> tuple[list[str], list[str]]:
+    """POSIX paths of the regular files under `rel_dir`, and of what was skipped there: links,
+    special files, folders that can't be listed, and files or folders whose path breaks the path
+    rules. Never follows links."""
     top, err = resolve_inside(root, rel_dir)
     if err:
-        warnings.append(f"sync dir {rel_dir} not synced: {err}")
-        return []
+        return [], [rel_dir]
     found: list[str] = []
+    skipped: list[str] = []
     stack = [(rel_dir, top)]
     while stack:
         rel, here = stack.pop()
@@ -1637,8 +1525,8 @@ def _walk_files(root: Path, rel_dir: str, warnings: list[str]) -> list[str]:
             children = sorted(here.iterdir())
         except FileNotFoundError:
             continue
-        except OSError as exc:
-            warnings.append(f"not synced: cannot list {rel}: {exc.strerror}")
+        except OSError:
+            skipped.append(f"{rel}/")
             continue
         for child in children:
             child_rel = f"{rel}/{child.name}"
@@ -1646,43 +1534,41 @@ def _walk_files(root: Path, rel_dir: str, warnings: list[str]) -> list[str]:
                 st = child.lstat()
             except OSError:
                 continue
-            if is_link(st):
-                warnings.append(f"not synced: {child_rel} is a symlink")
-            elif stat.S_ISDIR(st.st_mode):
-                problem = path_error(child_rel)
-                if problem:
-                    warnings.append(f"not synced: {child_rel}/: {problem}")
-                else:
-                    stack.append((child_rel, child))
+            if path_error(child_rel) or is_link(st):
+                # A name that isn't valid UTF-8 is shown escaped, so the warning can be sent.
+                skipped.append(child_rel.encode("utf-8", "backslashreplace").decode("utf-8"))
             elif stat.S_ISREG(st.st_mode):
                 found.append(child_rel)
+            elif stat.S_ISDIR(st.st_mode):
+                stack.append((child_rel, child))
             else:
-                warnings.append(f"not synced: {child_rel} is not a regular file")
-    return sorted(found)
+                skipped.append(child_rel)
+    return sorted(found), sorted(skipped)
 
 
 class SyncState:
     """What the server holds of this run's context, so sync sends only what changed.
 
-    Every sync=true manifest file is sent after each stage (block files: only the block). Other
-    files under sync_dirs are sent when new or changed, and as `content: null` once they vanish.
+    After each stage it reads exactly the write context entries and the notes (block files: only
+    the block) and sends those that changed since they were last sent; a deleted replace file goes
+    as `content: null`. Nothing else is sent: other files under `workspace.protect` are named in
+    one "not kept" warning.
     """
 
-    def __init__(self, manifest: Manifest) -> None:
-        last: dict[str, ManifestFile] = {}
-        for f in manifest.files:  # the bundle comes after library files and wins
-            last[f.path] = f
-        self.manifest = manifest
-        self.sync_files = {p: f for p, f in last.items() if f.sync}
-        self.manifest_lower = {p.lower() for p in last}
+    def __init__(self, package: Package) -> None:
+        self.package = package
+        self.sync_files = {f.path: f for f in package.files if f.access == "write"}
+        self.declared_lower = {f.path.lower() for f in package.files}
         self.known: dict[str, str | None] = {p: f.content for p, f in self.sync_files.items()}
-        self.unsynced: set[str] = set()  # manifest files that couldn't be written
+        self.unsynced: set[str] = set()  # declared files that couldn't be written
+        self.rewritten: set[str] = set()  # notes already warned about
 
-    def _manifest_content(self, f: ManifestFile, data: bytes) -> tuple[str, str | None]:
-        """(content to sync, why not) for a sync=true manifest file's bytes."""
+    def _declared_content(self, f: ContextFile, data: bytes) -> tuple[str, str | None]:
+        """(content to sync, why not) for a declared write file's bytes."""
+        limit = self.package.limits["max_file_bytes"]
         if f.mode == "block":
             try:
-                content = block_read(data, self.manifest.key)
+                content = block_read(data, str(f.block))
             except BlockError as exc:
                 return "", str(exc)
         else:
@@ -1690,12 +1576,11 @@ class SyncState:
             if decoded is None:
                 return "", "is not valid UTF-8"
             content = decoded
-        if len(content.encode("utf-8")) > self.manifest.max_file_bytes:
-            return "", f"is over {self.manifest.max_file_bytes} bytes"
+        if len(content.encode("utf-8")) > limit:
+            return "", f"is over {limit} bytes"
         return content, None
 
     def collect(self, root: Path) -> SyncBatch:
-        m = self.manifest
         batch = SyncBatch([], {}, [])
         for path, f in self.sync_files.items():
             if path in self.unsynced:
@@ -1710,47 +1595,35 @@ class SyncState:
                 elif self.known.get(path) is not None:
                     batch.add(path, None, "replace")
                 continue
-            content, err = self._manifest_content(f, data)
+            content, err = self._declared_content(f, data)
             if err:
                 batch.warnings.append(f"not synced: {path}: {err}")
                 continue
-            batch.add(path, content, f.mode)
+            if (
+                f.kind == "note"
+                and path not in self.rewritten
+                and not content.startswith(f.content)
+            ):
+                self.rewritten.add(path)
+                batch.warnings.append(f"{path} was rewritten, not appended to")
+            if self.known.get(path) != content:
+                batch.add(path, content, f.mode)
 
-        seen: set[str] = set()
-        for sync_dir in m.sync_dirs:
-            for path in _walk_files(root, sync_dir, batch.warnings):
-                if path.lower() in self.manifest_lower or path in seen:
-                    continue  # manifest files are handled above; library files never sync
-                seen.add(path)
-                problem = path_error(path)
-                if problem:
-                    batch.warnings.append(f"not synced: {path}: {problem}")
-                    continue
-                data, err = read_regular(root, path)
-                if err or data is None:
-                    batch.warnings.append(f"not synced: {path} {err or 'vanished'}")
-                    continue
-                if len(data) > m.max_file_bytes:
-                    batch.warnings.append(f"not synced: {path} is over {m.max_file_bytes} bytes")
-                    continue
-                text = _decode(data)
-                if text is None:
-                    batch.warnings.append(f"not synced: {path} is not valid UTF-8")
-                    continue
-                if self.known.get(path) != text:
-                    batch.add(path, text, "replace")
-
-        for path, last in self.known.items():
-            if path not in self.sync_files and path not in seen and last is not None:
-                batch.add(path, None, "replace")
+        not_kept: list[str] = []
+        for folder in self.package.workspace["protect"]:
+            files, skipped = _walk_files(root, folder)
+            not_kept += [p for p in files if p.lower() not in self.declared_lower] + skipped
+        if not_kept:
+            more = f" and {len(not_kept) - 20} more" if len(not_kept) > 20 else ""
+            batch.warnings.append(f"not kept: {', '.join(not_kept[:20])}{more}")
         return batch
 
     def accept(self, batch: SyncBatch) -> None:
         self.known.update(batch.updates)
 
 
-def write_entry(root: Path, f: ManifestFile, key: str) -> str | None:
-    """Materialise one manifest file (SPEC §9.3). Returns why it was skipped, or None."""
+def write_entry(root: Path, f: ContextFile) -> str | None:
+    """Materialise one context file or note (SPEC §9.3). Returns why it was skipped, or None."""
     target, err = resolve_inside(root, f.path)
     if err:
         return err
@@ -1767,7 +1640,9 @@ def write_entry(root: Path, f: ManifestFile, key: str) -> str | None:
                 existing = target.read_bytes()
         try:
             data = (
-                block_write(existing, key, f.content) if f.mode == "block" else f.content.encode()
+                block_write(existing, str(f.block), f.content)
+                if f.mode == "block"
+                else f.content.encode()
             )
         except BlockError as exc:
             return str(exc)
@@ -1787,7 +1662,6 @@ def write_entry(root: Path, f: ManifestFile, key: str) -> str | None:
 _REPO_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
 _SCP_RE = re.compile(r"(?:[^@/:]+@)?([^@/:]+):(.+)")
 _DIFF_META_RE = re.compile(r":([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([AMDT])")
-_NULL_SHA_RE = re.compile(r"0+")
 _BLOB_MODES = frozenset({"100644", "100755", "120000"})
 _SUBMODULE_MODE = "160000"
 
@@ -2226,24 +2100,24 @@ class GitResult:
 class Run:
     """Executes one claimed run: workspace, files, stages, after-stage steps, completion."""
 
-    def __init__(
-        self, api: WorkerApi, events: EventSink, manifest: Manifest, workdir: Path
-    ) -> None:
+    def __init__(self, api: WorkerApi, events: EventSink, package: Package, workdir: Path) -> None:
         self.api = api
         self.events = events
-        self.m = manifest
+        self.m = package
         self.workdir = workdir
-        self.repo = manifest.mode == "repo"
-        self.sync = SyncState(manifest)
+        self.repo = package.workspace["mode"] == "repo"
+        self.branch = str(package.workspace["branch"])
+        self.max_line_bytes = package.limits["max_line_bytes"]
+        self.sync = SyncState(package)
         self.owns_workdir = False
         self.ready = False  # workspace set up (offline commit + push is possible)
         self.start_head = ""
         self.pushed_head = ""
         self.current_stage: str | None = None
-        self.index = {s.id: i for i, s in enumerate(manifest.stages)}
+        self.index = {s.id: i for i, s in enumerate(package.stages)}
         self.protected = [
-            *dict.fromkeys(f.path for f in manifest.files),
-            *manifest.sync_dirs,
+            *dict.fromkeys(f.path for f in package.files),
+            *package.workspace["protect"],
             AGENTOS_DIR,
         ]
         self._protected_lower = [p.lower() for p in self.protected]
@@ -2257,11 +2131,10 @@ class Run:
         self.git_env = base
         self.stage_env = {
             **base,
-            "AGENTOS_RUN_ID": str(manifest.run_id),
-            "AGENTOS_TICKET_KEY": manifest.key,
+            **package.env,
+            "AGENTOS_RUN_ID": str(package.run_id),
+            "AGENTOS_TICKET_KEY": package.key,
         }
-        if manifest.sync_dirs:
-            self.stage_env["AGENTOS_SKILL_DIR"] = manifest.sync_dirs[0]
 
     # ------------------------------------------------------------ top level
 
@@ -2291,7 +2164,22 @@ class Run:
         problem = self._setup_workspace()
         if problem:
             return self._finish("failed", None, problem)
+        clash = [
+            theirs
+            for f in self.m.files
+            if f.kind == "agent" and (theirs := existing_entry(self.workdir, f.path)) is not None
+        ]
+        if clash:
+            return self._finish("failed", None, f"the repo already has agent {', '.join(clash)}")
         self._write_files()
+        sync_back, problem = resolve_inside(self.workdir, self.m.sync_back["dir"])
+        try:
+            if not problem:
+                sync_back.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            problem = str(exc)
+        if problem:
+            self.events.warn(None, f"cannot create {self.m.sync_back['dir']}: {problem}")
         if self.repo:
             self._protect()
         self.ready = True
@@ -2314,12 +2202,12 @@ class Run:
                 return done
         return self._finish("completed", None, None)
 
-    def _run_loop(self, loop: ManifestLoop, first: int, last: int, entry: int) -> int | None:
+    def _run_loop(self, loop: Loop, first: int, last: int, entry: int) -> int | None:
         """Run a loop block in rounds until no check fails. Round 1 starts at `entry`, later
         rounds at the block start. The finished run's exit code, or None to carry on after it."""
         feedback = ""
         for round_ in range(1, loop.max_rounds + 1):
-            failing: list[tuple[ManifestStage, str]] = []
+            failing: list[tuple[Stage, str]] = []
             for stage in self.m.stages[(entry if round_ == 1 else first) : last + 1]:
                 done, verdict = self._step(stage, round_, loop, feedback)
                 if done is not None:
@@ -2337,7 +2225,7 @@ class Run:
         return None
 
     def _step(
-        self, stage: ManifestStage, round_: int, loop: ManifestLoop | None, feedback: str
+        self, stage: Stage, round_: int, loop: Loop | None, feedback: str
     ) -> tuple[int | None, Verdict | None]:
         """One stage execution. (exit code, None) once the run is finished, else (None, the
         check's verdict if it gave one)."""
@@ -2352,6 +2240,8 @@ class Run:
 
     def _finish(self, status: str, failed_stage: str | None, error: str | None) -> int:
         pr_url = self._find_pr()
+        if self.ready:
+            self._send_sync_back()
         self.events.close()
         body: dict[str, Any] = {
             "status": status,
@@ -2372,6 +2262,55 @@ class Run:
             except OSError as exc:
                 say(f"could not delete the workdir {self.workdir}: {exc}")
         return 0
+
+    def _send_sync_back(self) -> None:
+        """Upload the sync_back folder's regular files as one zip, unless it is empty or over
+        `sync_back.max_bytes`. Files stream into the zip in chunks, and zipping stops as soon as
+        the zip passes the cap. Only RunGone escapes; any other failure is a warning."""
+        folder, cap = self.m.sync_back["dir"], self.m.sync_back["max_bytes"]
+        files, skipped = _walk_files(self.workdir, folder)
+        if not files and not skipped:
+            return
+        if not self.api.uploads:
+            self.events.warn(None, f"{folder} is not returned in mailbox mode")
+            return
+        if skipped:
+            self.events.warn(
+                None,
+                _clip(
+                    f"{folder}: skipped (not a regular file, or a bad name): {', '.join(skipped)}"
+                ),
+            )
+        if not files:
+            return
+
+        buf = io.BytesIO()
+        try:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as zf:
+                for path in files:
+                    src = self.workdir / path
+                    info = zipfile.ZipInfo.from_file(
+                        src, path[len(folder) + 1 :], strict_timestamps=False
+                    )
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    with src.open("rb") as fh, zf.open(info, "w") as dst:
+                        while (chunk := fh.read(1 << 20)) and buf.tell() <= cap:
+                            dst.write(chunk)
+                    if buf.tell() > cap:
+                        break
+        except (OSError, ValueError) as exc:  # ValueError: e.g. a name zipfile can't encode
+            self.events.warn(None, _clip(f"{folder} not sent: {exc!r}"))
+            return
+        if buf.tell() > cap:
+            self.events.warn(None, f"{folder} not sent: the zip is over {cap} bytes")
+            return
+        data = buf.getvalue()
+
+        digest = hashlib.sha256(data).hexdigest()
+        try:
+            self.api.put(f"/api/worker/sync-back?sha256={digest}&files={len(files)}", data)
+        except (HttpError, Unreachable) as exc:
+            self.events.warn(None, f"{folder} not sent: {exc}")
 
     # ------------------------------------------------------------ workspace (SPEC §9.2)
 
@@ -2396,9 +2335,14 @@ class Run:
         if not self.repo:
             r = self._git("init", "-q", show=True)
             return f"git init failed: {r.tail()}" if r.code else None
-        repo_url, base_branch, branch = self.m.repo_url, self.m.base_branch, self.m.branch
-        if repo_url is None or base_branch is None or branch is None:  # parse_manifest ensures
-            return "repo mode needs repo_url, base_branch and branch"
+        ws = self.m.workspace
+        repo_url, base_branch, branch = ws["repo_url"], ws["base_branch"], ws["branch"]
+        if not repo_url or repo_url.startswith("-"):
+            return "workspace.repo_url: required in repo mode, must not start with -"
+        for name, value in (("base_branch", base_branch), ("branch", branch)):
+            problem = "required in repo mode" if value is None else branch_error(value)
+            if problem:
+                return f"workspace.{name}: {problem}"
         if self.api_mode:
             problem = self._setup_github(repo_url)
             if problem:
@@ -2457,13 +2401,13 @@ class Run:
 
     def _write_files(self) -> None:
         for f in self.m.files:
-            problem = write_entry(self.workdir, f, self.m.key)
+            problem = write_entry(self.workdir, f)
             if problem:
                 self.sync.unsynced.add(f.path)
                 self.events.warn(None, f"skipped {f.path}: {problem}")
 
     def _protect(self) -> None:
-        """Keep manifest files, sync dirs and `.agentos/` out of `git add` (SPEC §9.3)."""
+        """Keep context files, notes, `workspace.protect` and `.agentos/` out of `git add`."""
         r = self._git("ls-files", "-z")
         if r.code:
             self.events.warn(None, f"git ls-files failed: {r.tail()}")
@@ -2489,7 +2433,7 @@ class Run:
             )
             if r.code:
                 self.events.warn(None, f"git update-index --skip-worktree failed: {r.tail()}")
-        lines = "".join(f"/{p}\n" for p in [*exclude, *self.m.sync_dirs])
+        lines = "".join(f"/{p}\n" for p in [*exclude, *self.m.workspace["protect"]])
         junk = "".join(f"{p}\n" for p in JUNK_PATTERNS)
         try:
             info = self.workdir / ".git" / "info"
@@ -2505,7 +2449,7 @@ class Run:
     # ------------------------------------------------------------ stages (SPEC §9.3)
 
     def _run_stage(
-        self, stage: ManifestStage, round_: int, loop: ManifestLoop | None, feedback: str
+        self, stage: Stage, round_: int, loop: Loop | None, feedback: str
     ) -> tuple[str, str | None, Verdict | None]:
         """One stage execution: its call(s), then the after-stage steps. (status, reason, the
         check's verdict); the verdict is dropped when the after-stage steps fail the stage."""
@@ -2536,9 +2480,7 @@ class Run:
         say(f"stage {stage.id} {status}" + (f": {reason}" if reason else ""))
         return status, reason, verdict
 
-    def _call(
-        self, stage: ManifestStage, round_: int, feedback: str
-    ) -> tuple[list[str], str | None]:
+    def _call(self, stage: Stage, round_: int, feedback: str) -> tuple[list[str], str | None]:
         """(argv, stdin) of `stage` in `round_`: round 1 as given, later rounds with feedback."""
         if stage.kind == "shell":
             return [*shell_prefix(), stage.command or ""], None
@@ -2566,7 +2508,7 @@ class Run:
 
     def _exec(
         self,
-        stage: ManifestStage,
+        stage: Stage,
         argv: list[str],
         stdin: str | None,
         collect: OnLine | None = None,
@@ -2587,14 +2529,14 @@ class Run:
             if echo is not None:
                 echo(stream, text, truncated)
 
-        short = min(SHELL_LINE_BYTES, self.m.max_line_bytes)
+        short = min(SHELL_LINE_BYTES, self.max_line_bytes)
         result = run_process(
             argv,
             cwd=self.workdir,
             env=self.stage_env,
             stdin=stdin,
             timeout_s=stage.timeout_s,
-            caps=(self.m.max_line_bytes if stage.kind == "agent" else short, short),
+            caps=(self.max_line_bytes if stage.kind == "agent" else short, short),
             on_line=on_line,
             interrupt=self._interrupt,
         )
@@ -2613,7 +2555,7 @@ class Run:
     # ------------------------------------------------------------ loop block checks
 
     def _exec_check(
-        self, stage: ManifestStage, round_: int, max_rounds: int, feedback: str
+        self, stage: Stage, round_: int, max_rounds: int, feedback: str
     ) -> tuple[str, int | None, str | None, Verdict | None]:
         """A check's call(s) and verdict: (status, exit code, reason, verdict). No verdict means
         the stage failed or was cancelled: an invalid verdict is never a pass, nor a fail."""
@@ -2651,7 +2593,7 @@ class Run:
         return "failed", code, f"{stage.name} gave no valid verdict{after}: {error}", None
 
     def _verdict_call(
-        self, stage: ManifestStage, argv: list[str], stdin: str | None
+        self, stage: Stage, argv: list[str], stdin: str | None
     ) -> tuple[str, int | None, str | None, Verdict | str]:
         """One call of an agent check, and its valid verdict or why there is none. The status and
         reason are the call's, for when it didn't run to its end (exit code None)."""
@@ -2693,7 +2635,7 @@ class Run:
 
     def _decided(
         self,
-        stage: ManifestStage,
+        stage: Stage,
         round_: int,
         max_rounds: int,
         verdict: Verdict,
@@ -2739,11 +2681,14 @@ class Run:
         for warning in batch.warnings:
             self.events.warn(stage_id, warning)
         try:
-            self.api.call("/api/worker/sync", {"stage_id": stage_id, "files": batch.files})
+            answer = self.api.call("/api/worker/sync", {"stage_id": stage_id, "files": batch.files})
         except HttpError as exc:
             self.events.warn(stage_id, f"sync rejected ({exc}): context changes were not saved")
             return
         self.sync.accept(batch)
+        refused = (answer or {}).get("refused")
+        if refused:
+            self.events.warn(stage_id, f"sync refused: {', '.join(refused)}")
 
     def _is_protected(self, path: str) -> bool:
         low = path.lower()
@@ -2787,7 +2732,7 @@ class Run:
         r = self._git("log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", span)
         if r.code:
             return f"pre-push guard: git log failed: {r.tail()}"
-        if f"agentos:begin {self.m.key}".encode() in r.out:
+        if any(f"agentos:begin {b}".encode() in r.out for b in self.m.workspace["blocks"]):
             return "pre-push guard: commits contain the agentos context block"
         return None
 
@@ -2801,7 +2746,7 @@ class Run:
         self._check_gone()
         if self.github is not None:
             return self._publish(stage_id, self.github)
-        r = self._git("push", "-u", "origin", str(self.m.branch), show=True, stage_id=stage_id)
+        r = self._git("push", "-u", "origin", self.branch, show=True, stage_id=stage_id)
         if r.code:
             return "push rejected" if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
         self.pushed_head = head
@@ -2814,7 +2759,7 @@ class Run:
     def _publish(self, stage_id: str | None, github: GitHub) -> str | None:
         """API mode's push: publish through the Git Data API, then make the local branch the
         published one. A GitHub failure is the stage's failure reason."""
-        branch = str(self.m.branch)
+        branch = self.branch
         try:
             sha, count = publish_branch(
                 self._git, github, branch, self.pushed_head, self.branch_exists, self._check_gone
@@ -2852,7 +2797,7 @@ class Run:
         return url
 
     def _lookup_pr(self) -> tuple[str | None, str]:
-        branch = str(self.m.branch)
+        branch = self.branch
         argv = [arg.replace("{branch}", branch) for arg in PR_LOOKUP]
         program = shutil.which(argv[0], path=self.stage_env.get("PATH"))
         if program is None:
@@ -2866,7 +2811,7 @@ class Run:
             if text.strip():
                 (out if stream == "stdout" else err).append(text.strip())
 
-        cap = min(SHELL_LINE_BYTES, self.m.max_line_bytes)
+        cap = min(SHELL_LINE_BYTES, self.max_line_bytes)
         result = run_process(
             [program, *argv[1:]],
             cwd=self.workdir,
@@ -2918,7 +2863,7 @@ class Run:
         except (OSError, subprocess.TimeoutExpired) as exc:
             result = GitResult(-1, b"", str(exc).encode())
         if show or result.code:
-            cap = min(SHELL_LINE_BYTES, self.m.max_line_bytes)
+            cap = min(SHELL_LINE_BYTES, self.max_line_bytes)
             for raw in (result.out + b"\n" + result.err).splitlines():
                 if raw.strip() and b"\0" not in raw:
                     text = raw[:cap].decode("utf-8", "replace")
@@ -3305,9 +3250,9 @@ def main(argv: list[str] | None = None) -> int:
     events.start()
     raw = resp.get("manifest") if isinstance(resp, dict) else None
     try:
-        manifest = parse_manifest(raw)
-    except ManifestError as exc:
-        say(f"invalid manifest: {exc}")
+        package = load_package(raw)
+    except PackageError as exc:
+        say(f"invalid package: {exc}")
         try:
             events.close()
             api.call(
@@ -3315,39 +3260,39 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "status": "failed",
                     "failed_stage": None,
-                    "error": _clip(f"invalid manifest: {exc}"),
+                    "error": _clip(f"invalid package: {exc}"),
                 },
             )
         except (HttpError, RunGone, Unreachable) as again:
             say(f"could not report the failure: {again}")
             return 1
         return 0
-    say(f"claimed run {manifest.run_id} ({manifest.key}, {len(manifest.stages)} stage(s))")
-    workdir = Path(args.workdir or f"agentos-run-{manifest.run_id}").resolve()
-    return Run(api, events, manifest, workdir).execute()
+    say(f"claimed run {package.run_id} ({package.key}, {len(package.stages)} stage(s))")
+    workdir = Path(args.workdir or f"agentos-run-{package.run_id}").resolve()
+    return Run(api, events, package, workdir).execute()
 
 
 def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:
-    """Mailbox mode: the manifest is a file and every API call goes to the outbox. A manifest
+    """Mailbox mode: the package is a file and every API call goes to the outbox. A package
     that can't be used exits 1 before the outbox exists (the server then fails the run)."""
     try:
-        manifest = parse_manifest(json.loads(manifest_path.read_bytes()))
-    except (OSError, ValueError) as exc:  # ValueError: bad JSON, bad UTF-8 or a ManifestError
-        say(f"invalid manifest {manifest_path}: {exc}")
+        package = load_package(json.loads(manifest_path.read_bytes()))
+    except (OSError, ValueError) as exc:  # ValueError: bad JSON, bad UTF-8 or a PackageError
+        say(f"invalid package {manifest_path}: {exc}")
         return 1
     try:
-        recorder = Recorder(outbox, manifest.run_id)
+        recorder = Recorder(outbox, package.run_id)
     except FileExistsError:
         say(f"the outbox {outbox} already exists: refusing to overwrite it")
         return 1
     except OSError as exc:
         say(f"cannot create the outbox {outbox}: {exc}")
         return 1
-    say(f"mailbox run {manifest.run_id} ({manifest.key}, {len(manifest.stages)} stage(s))")
+    say(f"mailbox run {package.run_id} ({package.key}, {len(package.stages)} stage(s))")
     events = EventSink(recorder)
     events.start()
     try:
-        return Run(recorder, events, manifest, workdir.resolve()).execute()
+        return Run(recorder, events, package, workdir.resolve()).execute()
     finally:
         recorder.close()
 
