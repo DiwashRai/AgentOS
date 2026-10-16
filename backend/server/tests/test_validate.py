@@ -16,7 +16,6 @@ from agentos.validate import (
     MAX_BUNDLE_BYTES,
     MAX_FILE_BYTES,
     base_branch_problem,
-    block_markers,
     check_bundle_size,
     check_file_size,
     check_unique_paths,
@@ -27,7 +26,6 @@ from agentos.validate import (
     validate_key,
     validate_path,
     validate_pr_url,
-    validate_repo_url,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -169,7 +167,6 @@ def test_invalid_keys(key: str) -> None:
 )
 def test_valid_repo_urls(url: str) -> None:
     assert repo_url_problem(url) is None
-    assert validate_repo_url(url) == url
 
 
 @pytest.mark.parametrize(
@@ -210,7 +207,6 @@ def test_invalid_repo_urls(url: str) -> None:
 @pytest.mark.parametrize(
     ("check", "value", "field"),
     [
-        (validate_repo_url, "file:///x", "repo_url"),
         (validate_base_branch, "a..b", "base_branch"),
     ],
 )
@@ -301,10 +297,6 @@ def test_invalid_branches(branch: str) -> None:
 
 
 # ------------------------------------------------------------------ block content & sizes
-
-
-def test_block_markers_format() -> None:
-    assert block_markers("AOS-1") == ("<!-- agentos:begin AOS-1 -->", "<!-- agentos:end AOS-1 -->")
 
 
 @pytest.mark.parametrize(

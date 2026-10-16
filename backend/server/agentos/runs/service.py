@@ -28,7 +28,6 @@ from agentos.models import (
     DispatchTarget,
     JobPackage,
     Me,
-    Person,
     Pipeline,
     RunDetail,
     RunEvent,
@@ -42,15 +41,14 @@ from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import check_segment, plan_run
 from agentos.pipeline.space import SpaceConfig
 from agentos.templates.service import current_defaults
-from agentos.tickets.board import RunFact, StageRunFact, next_stage
+from agentos.tickets.board import RunFact, next_stage
 from agentos.tickets.service import (
     active_run_id,
-    client_online,
     get_ticket_row,
-    launch_url,
-    log_delivery,
-    run_target,
+    run_fact,
+    run_summary,
     run_ticket_ref,
+    stage_run_fact,
     ticket_pipeline,
 )
 
@@ -92,12 +90,6 @@ def token_hash(token: str) -> str:
 # ------------------------------------------------------------------ row → model helpers
 
 
-def _person(id_: int | None, name: str | None, avatar: str | None) -> Person | None:
-    if id_ is None or name is None:
-        return None
-    return Person(id=id_, display_name=name, avatar_url=avatar)
-
-
 def run_row(conn: Conn, run_id: int) -> Row:
     """The `runs` row plus `ticket_key`, `ticket_pipeline` and the creator. 404 `run_not_found`."""
     row: Row | None = conn.execute(_SQL_RUN, (run_id,)).fetchone()
@@ -114,32 +106,11 @@ def _summaries(conn: Conn, rows: Sequence[Row]) -> list[RunSummary]:
         if r["launcher"] == CLIENT_LAUNCHER and r["created_by"] is not None
     ]
     online = online_user_ids(conn, creators, utcnow()) if creators else set()
-    return [_summary_of(r, online) for r in rows]
+    return [run_summary(r, r["ticket_key"], online) for r in rows]
 
 
 def _summary(conn: Conn, row: Row) -> RunSummary:
     return _summaries(conn, [row])[0]
-
-
-def _summary_of(row: Row, online: set[int]) -> RunSummary:
-    return RunSummary(
-        id=row["id"],
-        ticket_key=row["ticket_key"],
-        status=row["status"],
-        from_stage=row["from_stage"],
-        stage_ids=json.loads(row["stage_ids"]),
-        created_by=_person(row["created_by"], row["creator_name"], row["creator_avatar"]),
-        created_at=from_db(row["created_at"]),
-        started_at=from_db_opt(row["started_at"]),
-        finished_at=from_db_opt(row["finished_at"]),
-        cancel_requested_at=from_db_opt(row["cancel_requested_at"]),
-        error=row["error"],
-        launch_ref=row["launch_ref"],
-        launch_url=launch_url(row["launcher"], row["launch_ref"]),
-        log_delivery=log_delivery(row["launcher"]),
-        target=run_target(row["launcher"]),
-        client_online=client_online(row["launcher"], row["created_by"], online),
-    )
 
 
 def _detail(conn: Conn, row: Row) -> RunDetail:
@@ -169,34 +140,11 @@ def _detail(conn: Conn, row: Row) -> RunDetail:
 
 
 def _latest_run_fact(conn: Conn, ticket_id: int) -> RunFact | None:
-    run = conn.execute(
-        "SELECT id, status, from_stage, stage_ids, created_at, started_at, finished_at "
-        "FROM runs WHERE ticket_id = ? ORDER BY id DESC LIMIT 1",
-        (ticket_id,),
-    ).fetchone()
+    run = conn.execute(_SQL_TICKET_RUNS + " LIMIT 1", (ticket_id,)).fetchone()
     if run is None:
         return None
-    stage_runs = tuple(
-        StageRunFact(
-            idx=sr["idx"],
-            stage_id=sr["stage_id"],
-            status=sr["status"],
-            started_at=from_db_opt(sr["started_at"]),
-            finished_at=from_db_opt(sr["finished_at"]),
-            round=sr["round"],
-        )
-        for sr in conn.execute(_SQL_STAGE_RUNS, (run["id"],)).fetchall()
-    )
-    return RunFact(
-        id=run["id"],
-        status=run["status"],
-        from_stage=run["from_stage"],
-        stage_ids=tuple(json.loads(run["stage_ids"])),
-        stage_runs=stage_runs,
-        created_at=from_db(run["created_at"]),
-        started_at=from_db_opt(run["started_at"]),
-        finished_at=from_db_opt(run["finished_at"]),
-    )
+    stage_runs = conn.execute(_SQL_STAGE_RUNS, (run["id"],)).fetchall()
+    return run_fact(run, [stage_run_fact(sr) for sr in stage_runs])
 
 
 # ------------------------------------------------------------------ dispatch

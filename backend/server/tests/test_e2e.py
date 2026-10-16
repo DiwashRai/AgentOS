@@ -2,7 +2,7 @@
 dispatcher and reaper loops on), the real LocalProcessLauncher, the real worker.py and a temp bare
 git repo as the remote, driven only through the HTTP API. Agent stages run `fake_agent.py`.
 
-The remote is the catalog repo `remote`. Its `https://` URL (validate_repo_url accepts no file://)
+The remote is the catalog repo `remote`. Its `https://` URL (repo_url_problem accepts no file://)
 is what the worker's git rewrites to the bare repo's file:// URL with `url.<file-url>.insteadOf`,
 set via GIT_CONFIG_* in the worker env file (AGENTOS_WORKER_ENV_FILE). No server escape hatch.
 

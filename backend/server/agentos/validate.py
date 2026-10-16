@@ -39,17 +39,10 @@ MAX_SYNC_BACK_BYTES = 20 * 1024 * 1024  # the run's sync_back zip, compressed
 SYNC_BACK_DIR = ".agentos/sync_back"
 
 # ------------------------------------------------------------------ block markers (SPEC §6)
-# The worker mirrors these (it is stdlib-only and can't import them).
-
-BLOCK_BEGIN = "<!-- agentos:begin {key} -->"
-BLOCK_END = "<!-- agentos:end {key} -->"
-# Any line that looks like a marker, for any key, with any spacing. Block content must not contain
-# one, or reading the block back would stop early or match the wrong block.
+# The worker writes the markers (`<!-- agentos:begin KEY -->`, `<!-- agentos:end KEY -->`). Any
+# line that looks like one, for any key, with any spacing, is refused in block content, or reading
+# the block back would stop early or match the wrong block.
 MARKER_RE = re.compile(r"<!--\s*agentos:(?:begin|end)\b", re.IGNORECASE)
-
-
-def block_markers(key: str) -> tuple[str, str]:
-    return BLOCK_BEGIN.format(key=key), BLOCK_END.format(key=key)
 
 
 def _invalid(field: str, why: str) -> ApiError:
@@ -277,11 +270,6 @@ def repo_url_problem(url: str) -> str | None:
     if parts.path.strip("/") == "":
         return "Include the repository path."
     return None
-
-
-def validate_repo_url(url: str) -> str:
-    """`url`, or a 422 with one issue at `repo_url` (`repo_url_problem`)."""
-    return _valid_at("repo_url", url, repo_url_problem(url))
 
 
 def validate_pr_url(url: str) -> str:

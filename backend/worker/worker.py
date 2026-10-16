@@ -1635,7 +1635,6 @@ def write_entry(root: Path, f: ContextFile) -> str | None:
 _REPO_PART_RE = re.compile(r"[A-Za-z0-9._-]+")
 _SCP_RE = re.compile(r"(?:[^@/:]+@)?([^@/:]+):(.+)")
 _DIFF_META_RE = re.compile(r":([0-7]{6}) ([0-7]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([AMDT])")
-_NULL_SHA_RE = re.compile(r"0+")
 _BLOB_MODES = frozenset({"100644", "100755", "120000"})
 _SUBMODULE_MODE = "160000"
 
