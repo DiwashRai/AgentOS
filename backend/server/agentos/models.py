@@ -1388,9 +1388,16 @@ class StageRunInfo(ApiModel):
     finished_at: AwareDatetime | None
 
 
+class SyncBackInfo(ApiModel):
+    files: int
+    bytes: int
+
+
 class RunDetail(RunSummary):
     # The manifest (can be MiBs) is served separately: GET /api/runs/{id}/manifest.
     stage_runs: list[StageRunInfo]
+    # The zip the worker returned from sync_back; download: GET /api/runs/{id}/sync-back.
+    sync_back: SyncBackInfo | None
 
 
 class StageStartedData(ApiModel):

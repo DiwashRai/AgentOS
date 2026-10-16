@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from agentos.auth.deps import CurrentUser, Writer
 from agentos.errors import ERROR_RESPONSES
@@ -44,6 +44,16 @@ def get_run(run_id: int, _: CurrentUser, ctx: Ctx) -> RunDetail:
 def get_manifest(run_id: int, _: CurrentUser, ctx: Ctx) -> JobPackage:
     """Exactly what was sent to the worker (the job package). Can be large; fetch on demand."""
     return service.get_manifest(ctx.db, run_id)
+
+
+@router.get("/runs/{run_id}/sync-back", response_class=Response)
+def get_sync_back(run_id: int, _: CurrentUser, ctx: Ctx) -> Response:
+    """The run's sync_back zip, as a download."""
+    return Response(
+        service.get_sync_back(ctx.db, run_id),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="sync_back.zip"'},
+    )
 
 
 @router.post("/runs/{run_id}/cancel")

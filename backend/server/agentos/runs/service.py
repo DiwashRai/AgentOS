@@ -35,6 +35,7 @@ from agentos.models import (
     RunStatus,
     RunSummary,
     StageRunInfo,
+    SyncBackInfo,
 )
 from agentos.pipeline.manifest import render_stages
 from agentos.pipeline.runtime import RuntimesConfig
@@ -160,7 +161,11 @@ def _detail(conn: Conn, row: Row) -> RunDetail:
         )
         for sr in conn.execute(_SQL_STAGE_RUNS, (row["id"],)).fetchall()
     ]
-    return RunDetail(**_summary(conn, row).model_dump(), stage_runs=stage_runs)
+    archive = conn.execute(
+        "SELECT files, bytes FROM run_sync_back WHERE run_id = ?", (row["id"],)
+    ).fetchone()
+    sync_back = SyncBackInfo(files=archive["files"], bytes=archive["bytes"]) if archive else None
+    return RunDetail(**_summary(conn, row).model_dump(), stage_runs=stage_runs, sync_back=sync_back)
 
 
 def _latest_run_fact(conn: Conn, ticket_id: int) -> RunFact | None:
@@ -301,6 +306,16 @@ def get_manifest(db: Database, run_id: int) -> JobPackage:
     if json.loads(row["manifest"]).get("protocol") != 2:
         raise ApiError(404, "not_found", f"Run {run_id} was sent an older protocol's manifest")
     return JobPackage.model_validate_json(row["manifest"])
+
+
+def get_sync_back(db: Database, run_id: int) -> bytes:
+    """The zip the run's worker returned from sync_back. 404 `not_found` when there is none."""
+    with db.read() as conn:
+        run_row(conn, run_id)
+        row = conn.execute("SELECT data FROM run_sync_back WHERE run_id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise ApiError(404, "not_found", f"Run {run_id} returned no sync_back")
+    return bytes(row["data"])
 
 
 def run_events(

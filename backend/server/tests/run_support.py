@@ -6,6 +6,7 @@ no background loops, so every transition happens when a test asks for it.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -96,6 +97,16 @@ class Worker:
 
     def sync(self, stage_id: str, files: list[dict[str, Any]]) -> Response:
         return self.post("sync", {"stage_id": stage_id, "files": files})
+
+    def sync_back(self, data: bytes, files: int = 1, sha256: str | None = None) -> Response:
+        """Upload `data` as the run's sync_back zip; `sha256` defaults to the data's own."""
+        digest = sha256 or hashlib.sha256(data).hexdigest()
+        r: Response = self.client.put(
+            f"/api/worker/sync-back?sha256={digest}&files={files}",
+            content=data,
+            headers=bearer(self.token),
+        )
+        return r
 
     def complete(self, status: str = "completed", **extra: Any) -> Response:
         return self.post("complete", {"status": status, **extra})

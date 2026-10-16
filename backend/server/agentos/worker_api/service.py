@@ -1,5 +1,5 @@
-"""The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, complete, and
-the client poll.
+"""The worker protocol (SPEC §8 claim table, §10 worker API): claim, events, sync, the sync_back
+upload, complete, and the client poll.
 
 Claim authenticates with the dispatch token, every other route with the worker token the worker
 generated and bound at claim. Tokens are looked up by their SHA-256 hash. Worker-token runs are
@@ -13,6 +13,7 @@ above, unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
@@ -23,7 +24,7 @@ from agentos.clients import service as clients
 from agentos.clients.service import Client
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
-from agentos.errors import ApiError
+from agentos.errors import ApiError, field_error
 from agentos.files.service import current_bundle, write_version
 from agentos.models import (
     ClientRunAssignment,
@@ -44,6 +45,7 @@ from agentos.runs import service as runs
 from agentos.runs.service import TERMINAL, finish, token_hash
 from agentos.templates.service import current_defaults
 from agentos.tickets.service import run_ticket_ref, ticket_pipeline
+from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import path_key, validate_pr_url
 
 log = logging.getLogger(__name__)
@@ -338,6 +340,26 @@ def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFil
     if refused:
         log.warning("run %s: sync refused %s", run["id"], refused)
     return SyncResponse(versions=versions, refused=refused)
+
+
+def store_sync_back(db: Database, worker_token: str, data: bytes, sha256: str, files: int) -> None:
+    """Store the run's sync_back zip while the run is running. A repeat upload replaces it, so a
+    retry is safe. 413 `too_large` over MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex)
+    doesn't match the bytes."""
+    if len(data) > MAX_SYNC_BACK_BYTES:
+        raise ApiError(413, "too_large", f"sync_back: over {MAX_SYNC_BACK_BYTES} bytes")
+    if not data:
+        raise field_error([], "The zip is empty.")
+    if hashlib.sha256(data).hexdigest() != sha256.lower():
+        raise field_error(["sha256"], "Doesn't match the upload.")
+
+    with db.tx() as conn:
+        run = _live_run(conn, worker_token)
+        conn.execute(
+            "INSERT OR REPLACE INTO run_sync_back(run_id, sha256, bytes, files, data, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run["id"], sha256.lower(), len(data), files, data, to_db(utcnow())),
+        )
 
 
 def complete(db: Database, worker_token: str, body: CompleteRequest) -> None:

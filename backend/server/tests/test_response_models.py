@@ -109,6 +109,7 @@ def test_every_get_matches_its_model(
     # repo: plan gated, then implement cancelled mid-stage; no-repo: plan failed.
     worker = runs.start(repo.key)
     worker.run_stage("plan")
+    assert worker.sync_back(b"zip").status_code == 204
     assert worker.complete().status_code == 204
     worker = runs.start(repo.key)
     worker.events(
@@ -184,6 +185,7 @@ def test_every_get_matches_its_model(
     assert any(s.resolution is not None for s in summaries)
     assert any(s.dispatch_block is not None for s in summaries)
     infos = []
+    details: list[RunDetail] = []
     for summary in summaries:
         key = summary.key
         infos.append(check(client, f"/api/tickets/{key}", TicketDetail).base_branch_info)
@@ -196,10 +198,11 @@ def test_every_get_matches_its_model(
             check(client, f"/api/tickets/{key}/versions/{info.path}", list[FileVersionInfo])
         check(client, f"/api/tickets/{key}/chat", list[ChatMessage])
         for run in check(client, f"/api/tickets/{key}/runs", list[RunSummary]):
-            check(client, f"/api/runs/{run.id}", RunDetail)
+            details.append(check(client, f"/api/runs/{run.id}", RunDetail))
             if run.status == "queued":  # the client run: no manifest or events yet
                 continue
             check(client, f"/api/runs/{run.id}/manifest", JobPackage)
             assert check(client, f"/api/runs/{run.id}/events", list[RunEvent])
+    assert any(d.sync_back is not None for d in details)
     deleted = check(client, f"/api/tickets/{repo.key}/versions/gone.md", list[FileVersionInfo])
     assert [v.deleted for v in deleted] == [False, True]

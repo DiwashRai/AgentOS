@@ -248,6 +248,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/sync-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sync Back
+         * @description The run's sync_back zip, as a download.
+         */
+        get: operations["get_sync_back_api_runs__run_id__sync_back_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/intake": {
         parameters: {
             query?: never;
@@ -855,6 +875,27 @@ export interface paths {
         put?: never;
         /** Sync */
         post: operations["sync_api_worker_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/sync-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sync Back
+         * @description The run's sync_back zip as the raw body. Reading stops past the cap, so an oversize upload
+         *     is refused (413) without being held whole; the store runs in a thread.
+         */
+        put: operations["sync_back_api_worker_sync_back_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2065,6 +2106,7 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "dispatched" | "running" | "succeeded" | "gated" | "failed" | "cancelled";
+            sync_back: components["schemas"]["SyncBackInfo"] | null;
             /**
              * Target
              * @enum {string}
@@ -2468,6 +2510,13 @@ export interface components {
             dir: string;
             /** Max Bytes */
             max_bytes: number;
+        };
+        /** SyncBackInfo */
+        SyncBackInfo: {
+            /** Bytes */
+            bytes: number;
+            /** Files */
+            files: number;
         };
         /** SyncFile */
         SyncFile: {
@@ -3527,6 +3576,44 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["JobPackage"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_sync_back_api_runs__run_id__sync_back_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {
@@ -5433,6 +5520,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SyncResponse"];
                 };
+            };
+            /** @description Client error */
+            "4XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Server error */
+            "5XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    sync_back_api_worker_sync_back_put: {
+        parameters: {
+            query: {
+                sha256: string;
+                files: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Client error */
             "4XX": {

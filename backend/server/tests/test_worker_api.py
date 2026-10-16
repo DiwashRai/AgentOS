@@ -354,6 +354,45 @@ def test_sync_rejects_a_stage_outside_the_run(ticket: TicketDetail, runs: RunDri
     assert worker.sync("plan", []).json() == {"versions": {}, "refused": []}
 
 
+# ------------------------------------------------------------------ sync_back
+
+
+def test_sync_back_shows_on_the_run_and_downloads_as_an_attachment(
+    ticket: TicketDetail, runs: RunDriver
+) -> None:
+    worker = runs.start(ticket.key)
+    url = f"/api/runs/{worker.run_id}/sync-back"
+    assert runs.get(worker.run_id).sync_back is None
+    assert error(runs.client.get(url)) == (404, "not_found")
+
+    assert worker.sync_back(b"first zip", files=3).status_code == 204
+    zip_bytes = bytes(range(256)) * 4
+    assert worker.sync_back(zip_bytes, files=2).status_code == 204  # a repeat replaces it
+    assert worker.complete().status_code == 204
+
+    info = runs.get(worker.run_id).sync_back
+    assert info is not None
+    assert (info.files, info.bytes) == (2, len(zip_bytes))
+    download = runs.client.get(url)
+    assert download.status_code == 200
+    assert download.content == zip_bytes
+    assert download.headers["content-type"] == "application/zip"
+    assert download.headers["content-disposition"] == 'attachment; filename="sync_back.zip"'
+
+
+def test_sync_back_refuses_a_bad_upload(
+    ticket: TicketDetail, runs: RunDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = runs.start(ticket.key)
+    monkeypatch.setattr(worker_service, "MAX_SYNC_BACK_BYTES", 8)
+
+    assert error(worker.sync_back(b"zip", sha256="0" * 64)) == (422, "validation_error")
+    assert error(worker.sync_back(b"zip", files=0)) == (422, "validation_error")
+    assert error(worker.sync_back(b"")) == (422, "validation_error")
+    assert error(worker.sync_back(b"x" * 9)) == (413, "too_large")
+    assert worker.sync_back(b"x" * 8).status_code == 204
+
+
 # ------------------------------------------------------------------ complete
 
 
@@ -464,6 +503,7 @@ def gone_routes(worker: Worker, other_status: str = "failed") -> list[Any]:
     return [
         worker.events(log_event(99, "plan", "late")),
         worker.sync("plan", []),
+        worker.sync_back(b"zip"),
         worker.complete(other_status),
     ]
 

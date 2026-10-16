@@ -28,6 +28,7 @@ TABLES = {
     "runs",
     "stage_runs",
     "run_events",
+    "run_sync_back",
     "chat_messages",
     "settings",
     "client_tokens",
