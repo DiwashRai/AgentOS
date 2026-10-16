@@ -13,13 +13,13 @@ Each tick (every INTERVAL_S), job by job, the first rule that applies wins:
    sees `cancel: true` and publishes before it stops.
 5. Stop grace: no result STOP_GRACE after a stop → ended as `service.STOPPED` says; push:
    cancelled at the provider.
-A user-cancelled push job is cancelled at its provider before that. Each provider cancel is asked
-once per job per process, best effort. File-report jobs get rule 1 only (the mailbox reaper
-watches them); with no mailbox configured, one past its `not_after` is failed UNWATCHED. Queued
-runs are never touched. A push job's status is polled at most every STATUS_EVERY.
+Within the stop grace a running job is left alone, so its worker can still publish. Each provider
+cancel is asked once per job per process, best effort. File-report jobs get rule 1 only (the
+mailbox reaper watches them); with no mailbox configured, one past its `not_after` is failed
+UNWATCHED. Queued runs are never touched. A push job's status is polled at most every STATUS_EVERY.
 
 An ended run's job gets `ended_at` once `job_ended` (lifting the fence for its ticket's next
-run); a cancelled push job is cancelled at its provider first.
+run); a push run cancelled while queued or dispatched is cancelled at its provider first.
 
 `judge` is pure; `Reaper(ctx).tick(now)` is synchronous with an injected clock, and the lifespan
 runs it in a thread. A job whose check raises is logged and the next job is checked.
@@ -116,10 +116,10 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool)
     if job.stop_requested_at is None:
         over = now > job.started_at + timedelta(seconds=job.budget_s) + BUDGET_GRACE
         return Action(stop="budget") if over else None
-    if now > job.stop_requested_at + STOP_GRACE:
-        end, error = STOPPED[job.stop_reason]
-        return Action(end, error, cancel=push)
-    return Action(cancel=True) if push and job.stop_reason == "cancel" else None
+    if now <= job.stop_requested_at + STOP_GRACE:
+        return None  # the worker sees `cancel: true` and still publishes
+    end, error = STOPPED[job.stop_reason]
+    return Action(end, error, cancel=push)
 
 
 def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:

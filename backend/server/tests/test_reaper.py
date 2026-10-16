@@ -283,16 +283,24 @@ def test_a_stop_without_a_result_ends_the_run_after_2_minutes(
     assert (ref(stuck.run_id) in side.cancelled()) == side.push
 
 
-def test_a_user_cancel_reaches_the_provider_once(
+def test_a_user_cancel_reaches_the_provider_only_after_the_stop_grace(
     side: Side, runs: RunDriver, reaper: Reaper
 ) -> None:
+    """Inside the grace the worker sees `cancel: true` and still publishes: nothing kills it."""
     worker = side.start()
     assert side.client.post(f"/api/runs/{worker.run_id}/cancel", headers=CSRF).status_code == 200
     now = utcnow()
     armed(reaper, now)
-    for seconds in (0, 15, 30):
-        assert reaper.tick(now + timedelta(seconds=seconds)) == []
-        worker.journal()  # heartbeats
+    for seconds in range(0, 120, 15):
+        tick = now + timedelta(seconds=seconds)
+        runs.set_run(worker.run_id, last_seen_at=to_db(tick))  # its heartbeats
+        assert reaper.tick(tick) == []
+    assert side.cancelled() == []
+
+    later = now + timedelta(seconds=135)
+    runs.set_run(worker.run_id, last_seen_at=to_db(later))
+    assert [(r.run_id, r.status) for r in reaper.tick(later)] == [(worker.run_id, "cancelled")]
+    reaper.tick(later + timedelta(seconds=15))
     assert side.cancelled() == ([ref(worker.run_id)] if side.push else [])
 
 
