@@ -10,12 +10,12 @@ execution: run it, record a `sync`, then (repo mode) commit, pre-push guard, pus
 through EventSink, which resends from `ack + 1` with the instance id `started` bound, to a
 Reporter: HttpReporter, or Recorder in mailbox mode.
 
-Publication: `git push -u`, except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where
-each stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
-publish_branch) as one commit: blobs, a tree (checked against HEAD's), the commit on the
-branch's remote commit, then one ref write with `force: false`. Merges and rewrites are refused.
-Setup first checks the token can write there. A GitHub failure fails the stage; it is never a
-lost run or an unreachable server.
+Publication: `git push -u` (the clone's pre-push hook refuses every other push), except on
+GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where each stage's work goes through the
+Git Data API of the ticket's repo at GITHUB_API_URL (see publish_branch) as one commit: blobs, a
+tree (checked against HEAD's), the commit on the branch's remote commit, then one ref write with
+`force: false`. Merges and rewrites are refused. Setup first checks the token can write there.
+A GitHub failure fails the stage; it is never a lost run or an unreachable server.
 
 Every output line goes out as a log event. An agent stage's output is also printed on stderr as
 it arrives, as readable `[stage id] ...` lines (see Echo), so a job console or the launcher's log
@@ -33,6 +33,7 @@ Binding: 409 (another instance holds the job) exits 0; 401/410 or an unusable pa
 with the workdir untouched. Failure paths after it:
 - cancel (`cancel: true` in a journal answer): kill the stage tree, still sync/commit/push,
   result `cancelled`.
+- over budget (the job's `budget_s` passed since binding): the same, then result `failed`.
 - run gone (401/409/410 on any post, or the job's `not_after` passed before a publish): kill the
   stage tree, no commit, no push, exit 1.
 - server unreachable (network errors / 5xx for RETRY_BUDGET_S, or any other 4xx on the journal):
@@ -43,7 +44,8 @@ with the workdir untouched. Failure paths after it:
 Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
 server): no HTTP. The package comes from a file, and the journal is recorded as worker API calls,
 one JSONL line each, in the outbox (see Recorder), which the server replays later. Nothing
-answers, so there is no cancel and no run-gone; a failed outbox write counts as unreachable.
+answers, so there is no cancel and the only run-gone is `not_after`; a failed outbox write
+counts as unreachable.
 
 Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
 machine): long-polls POST /api/worker/lease for the jobs of the runs its user dispatched to their
@@ -120,6 +122,10 @@ SHELL_LINE_BYTES = 8192  # line cap for every stream except agent-stage stdout
 MAX_PATH_CHARS = 255
 MAX_ERROR_CHARS = 2000
 CANCELLED = "cancelled"  # stage_finished reason for a plain cancel
+OVER_BUDGET = "time budget exceeded"  # the job's budget_s ran out
+PUSH_REJECTED = "push rejected: the branch moved during the stage; did the agent push?"
+# Installed as the clone's only hook: refuses any push without the worker's per-run marker.
+PRE_PUSH = '#!/bin/sh\n[ "$AGENTOS_PUSH" = "{}" ] && exit 0\necho "agentos: no push" >&2\nexit 1\n'
 
 # Loop blocks and verdicts. `.agentos/` belongs to AgentOS: never committed, never synced.
 AGENTOS_DIR = ".agentos"
@@ -1284,7 +1290,7 @@ class Echo:
 @dataclass(frozen=True)
 class ProcResult:
     exit_code: int | None
-    stopped: str | None = None  # "timeout" | "cancel" | "abort"
+    stopped: str | None = None  # "timeout" | "cancel" | "budget" | "abort"
     error: str | None = None  # the program could not be started
 
 
@@ -2056,7 +2062,7 @@ def _write_ref(github: GitHub, branch: str, sha: str, exists: bool) -> None:
         return
 
     if failure.action == "rejected":
-        raise PublishError("push rejected")
+        raise PublishError(PUSH_REJECTED)
     if failure.action == "check":
         try:
             ref = github.call("GET", f"/git/ref/heads/{quoted}")
@@ -2083,7 +2089,7 @@ def publish_branch(
     head = _git_out(git, "rev-parse", "HEAD").decode().strip()
     r = git("merge-base", "--is-ancestor", pushed_head, head)
     if r.code == 1:
-        raise PublishError("push rejected")
+        raise PublishError(PUSH_REJECTED)
     if r.code:
         raise PublishError(f"push failed: git merge-base failed: {r.tail()}")
 
@@ -2180,12 +2186,13 @@ class Run:
         self.api_mode = self.repo and api_publish(os.environ)  # publish through the GitHub API
         self.github: GitHub | None = None  # set up by _setup_github in API mode
         self.branch_exists = False  # the branch was on the remote at clone or has been published
-        live = package.report["mode"] == "live"  # nothing is published after the job's not_after
-        self.not_after = datetime.fromisoformat(package.job["not_after"]) if live else None
+        self.not_after = datetime.fromisoformat(package.job["not_after"])  # never publish after
+        self.deadline = time.monotonic() + package.job["budget_s"]
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
-        self.git_env = base
+        self.push_marker = secrets.token_hex(16)  # only the worker's own git gets it
+        self.git_env = {**base, "AGENTOS_PUSH": self.push_marker}
         self.stage_env = {
             **base,
             **package.env,
@@ -2292,6 +2299,8 @@ class Run:
         self.events.check()
         if self.events.cancel.is_set():
             return self._finish("cancelled", stage.id, None), None
+        if time.monotonic() >= self.deadline:
+            return self._finish("failed", stage.id, OVER_BUDGET), None
         status, reason, verdict = self._run_stage(stage, round_, loop, feedback)
         if verdict is None and status != "succeeded":
             # A plain cancel is not an error; a cancel whose after-stage steps failed is.
@@ -2419,9 +2428,21 @@ class Run:
         if r.code:
             return f"git rev-parse HEAD failed: {r.tail()}"
         self.start_head = self.pushed_head = r.out.decode().strip()
+        hooks = self.workdir / ".git" / "agentos-hooks"  # local, so a global hooksPath can't win
+        try:
+            hooks.mkdir()
+            (hooks / "pre-push").write_bytes(PRE_PUSH.format(self.push_marker).encode())
+            (hooks / "pre-push").chmod(0o755)
+        except OSError as exc:
+            return f"cannot install the pre-push hook: {exc}"
         name = os.environ.get("AGENTOS_GIT_NAME") or "AgentOS"
         email = os.environ.get("AGENTOS_GIT_EMAIL") or "agentos@localhost"
-        for setting, value in (("user.name", name), ("user.email", email)):
+        settings = (
+            ("user.name", name),
+            ("user.email", email),
+            ("core.hooksPath", hooks.as_posix()),
+        )
+        for setting, value in settings:
             r = self._git("config", setting, value)
             if r.code:
                 return f"git config {setting} failed: {r.tail()}"
@@ -2562,7 +2583,7 @@ class Run:
             return "abort"
         if self.events.cancel.is_set():
             return "cancel"
-        return None
+        return "budget" if time.monotonic() >= self.deadline else None
 
     def _exec(
         self,
@@ -2604,6 +2625,8 @@ class Run:
             self.events.check()
         if result.stopped == "cancel":
             return "cancelled", None, CANCELLED
+        if result.stopped == "budget":
+            return "failed", None, OVER_BUDGET
         if result.stopped == "timeout":
             return "failed", None, f"timed out after {stage.timeout_s}s"
         if result.exit_code == 0:
@@ -2643,6 +2666,8 @@ class Run:
             self.events.check()
             if self.events.cancel.is_set():
                 return "cancelled", code, CANCELLED, None
+            if time.monotonic() >= self.deadline:
+                return "failed", code, OVER_BUDGET, None
             argv, stdin = stage.repairs[round_ - 1].build(error)
         if stage.repairs and stage.verdict_repairs:
             after = f" after {attempt} repair{'s' if attempt != 1 else ''}"
@@ -2798,7 +2823,7 @@ class Run:
             return self._publish(stage_id, self.github)
         r = self._git("push", "-u", "origin", self.branch, show=True, stage_id=stage_id)
         if r.code:
-            return "push rejected" if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
+            return PUSH_REJECTED if b"rejected" in r.out + r.err else f"push failed: {r.tail()}"
         count = self._git("rev-list", "--count", f"{self.pushed_head}..{head}")
         pushed = {"branch": self.branch, "head": head, "commits": int(count.out or 0)}
         self.events.emit("pushed", None, {**pushed, "method": "git"})
@@ -2809,7 +2834,7 @@ class Run:
         """Before every publish: never once the run was taken away, nor after `not_after`."""
         if isinstance(self.events.failure, RunGone):  # taken away while we were committing
             raise self.events.failure
-        if self.not_after is not None and datetime.now(UTC) >= self.not_after:
+        if datetime.now(UTC) >= self.not_after:
             raise RunGone(f"the job's not_after ({self.m.job['not_after']}) has passed")
 
     def _publish(self, stage_id: str | None, github: GitHub) -> str | None:

@@ -6,6 +6,7 @@ workspace (cwd). Actions run in order:
   write=P:TEXT    write TEXT to path P            rm=P            delete path P
   selfcommit      force-add CLAUDE.md and commit it (an agent ignoring the rules)
   forcecommit=P   force-add path P and commit it
+  push            `git push origin HEAD`, then print "push exit N"
   copyblock       copy AGENTS.md (block included) into docs/copy.md
   symlink=TARGET  create SKILL_DIR/link.md pointing at TARGET
   bgchild=PIDFILE start a child that holds stdout/stderr open for 30 s, write its pid, return
@@ -61,6 +62,9 @@ def _act(action: str) -> None:
     elif name in ("selfcommit", "forcecommit"):
         _git("add", "-f", arg or "CLAUDE.md")
         _git("commit", "-q", "--no-verify", "-m", "agent commit")
+    elif name == "push":
+        pushed = subprocess.run(["git", "push", "-q", "origin", "HEAD"], capture_output=True)
+        print(f"push exit {pushed.returncode}", flush=True)
     elif name == "copyblock":
         Path("docs").mkdir(exist_ok=True)
         Path("docs/copy.md").write_bytes(Path("AGENTS.md").read_bytes())
