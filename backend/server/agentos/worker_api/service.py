@@ -44,6 +44,7 @@ from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
 from agentos.runs.service import (
     EVENT_ADAPTER,
+    NEVER_STARTED,
     STOPPED,
     TERMINAL,
     WORKER_EXITED,
@@ -81,7 +82,8 @@ def _gone(run_id: int, status: str) -> ApiError:
 def _job_run(conn: Conn, job_token: str, instance: str) -> tuple[Row, Row]:
     """The job of this job token and its run (any status). 401 for an unknown token; 409
     `already_claimed` when the job is bound to another instance, or its run was started without
-    one (a mailbox run, started by the server)."""
+    one (a mailbox run, started by the server); 410 for an unbound job that has ended (the fence
+    may have lifted: no worker may start it any more)."""
     job: Row | None = conn.execute(
         "SELECT * FROM jobs WHERE token_hash = ?", (hash_token(job_token),)
     ).fetchone()
@@ -92,6 +94,8 @@ def _job_run(conn: Conn, job_token: str, instance: str) -> tuple[Row, Row]:
     bound = job["instance_hash"]
     if (bound is None and run["status"] == "running") or bound not in (None, hash_token(instance)):
         raise ApiError(409, "already_claimed", f"Job {job['id']} is bound to another worker")
+    if bound is None and job["ended_at"] is not None:
+        raise ApiError(410, "run_gone", f"Job {job['id']} has ended")
     return job, run
 
 
@@ -466,9 +470,9 @@ def lease_client(db: Database, client_token: str, instance: str, alive: list[str
 
     A job whose last lister is this instance and that this lease leaves out has lost its worker:
     an instance lists every worker that hasn't exited (its own children, and every held
-    `<job id>.lock` under its root; a worker locks before it binds). The job ends now. If its run
-    is still active and the job bound, the run ends too (as `STOPPED` says if it was stopped,
-    else failed `WORKER_EXITED`); an unbound one is left to the never-started rule. A job listed
+    `<job id>.lock` under its root; a worker locks before it binds). The job ends now, and so does
+    its run if still active (as `STOPPED` says if it was stopped, else failed `WORKER_EXITED`, or
+    `NEVER_STARTED` when the job never bound; a late bind of an ended job gets 410). A job listed
     by another instance (another process with this token, or one on another root) or never listed
     is left alone, to its own lister or its `not_after`."""
     client = clients.authenticate(db, client_token)
@@ -492,13 +496,13 @@ def lease_client(db: Database, client_token: str, instance: str, alive: list[str
         ).fetchall()
         for job in gone:
             if job["status"] not in TERMINAL:
-                if job["instance_hash"] is None:
-                    continue
-                end: tuple[RunStatus, str | None] = ("failed", WORKER_EXITED)
+                bound = job["instance_hash"] is not None
+                error = WORKER_EXITED if bound else NEVER_STARTED
+                end: tuple[RunStatus, str | None] = ("failed", error)
                 if job["stop_reason"] is not None:
                     end = STOPPED[job["stop_reason"]]
                 finish(conn, job["id"], end[0], ("dispatched", "running"), now=now, error=end[1])
-                log.warning("run %s %s: %s", job["id"], end[0], WORKER_EXITED)
+                log.warning("run %s %s (%s): its worker exited", job["id"], end[0], end[1])
             end_job(conn, job["id"], job["job_id"], now)
 
     sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()

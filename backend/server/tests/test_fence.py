@@ -18,7 +18,7 @@ from agentos.context import AppContext
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
-from agentos.runs.service import WORKER_EXITED, Snapshot, finish, not_after
+from agentos.runs.service import NEVER_STARTED, WORKER_EXITED, Snapshot, finish, not_after
 from tests.run_support import CSRF, INSTANCE, FakeProvider, RunDriver, bearer
 
 OTHER = "test-client-instance-b"  # another client process with the same token
@@ -199,6 +199,39 @@ def test_two_instances_of_one_token_each_end_only_their_own_jobs(
 
     assert lease(client, token, (a.job_id,), take=False, instance=OTHER) is None  # B's exited
     assert [runs.get(j.run_id).status for j in (a, b)] == ["running", "failed"]
+
+
+def test_an_unbound_job_its_lister_leaves_out_ends_its_run_and_refuses_a_late_bind(
+    key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    run_id = runs.queue(key, target="client").id
+    job = lease(client, token)
+    assert job is not None
+    assert lease(client, token, (job.job_id,), take=False) is None  # its worker started...
+    assert lease(client, token, take=False) is None  # ...and exited before it bound
+
+    run = runs.get(run_id)
+    assert (run.status, run.error) == ("failed", NEVER_STARTED)
+    assert job_ended_at(ctx, run_id) is not None
+    late = {**bearer(job.job_token), "X-AgentOS-Instance": "late-worker"}
+    assert client.get("/api/worker/job", headers=late).status_code == 410
+    r = client.post("/api/worker/journal", json={"records": []}, headers=late)
+    assert (r.status_code, r.json()["error"]["code"]) == (410, "run_gone")
+
+
+def test_an_ended_job_is_never_bound_whatever_its_run_says(
+    key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    run_id = runs.queue(key, target="client").id
+    job = lease(client, token)
+    assert job is not None
+    with ctx.db.tx() as conn:  # its job ended while the run still reads dispatched
+        conn.execute("UPDATE jobs SET ended_at = ? WHERE run_id = ?", (to_db(utcnow()), run_id))
+
+    late = {**bearer(job.job_token), "X-AgentOS-Instance": "late-worker"}
+    assert client.get("/api/worker/job", headers=late).status_code == 410
+    r = client.post("/api/worker/journal", json={"records": []}, headers=late)
+    assert (r.status_code, r.json()["error"]["code"]) == (410, "run_gone")
 
 
 def test_a_restarted_client_takes_over_the_survivors_it_lists(
