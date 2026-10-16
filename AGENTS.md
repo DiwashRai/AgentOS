@@ -72,7 +72,7 @@ A long session acts as an **orchestrator**: it breaks its work into tasks, deleg
 **A brief always contains:**
 1. **The task and why**: the plan or ticket it belongs to, and how it fits the loop.
 2. **Scope**: the exact files or modules it may create or edit. Everything else is off limits.
-3. **Fixed interfaces**: contracts it must not change (`models.py`, route signatures, generated API files, test fixtures such as `manifest_v1.json`). If one looks wrong, it reports back.
+3. **Fixed interfaces**: contracts it must not change (`models.py`, route signatures, generated API files, test fixtures such as `job_v2.json`). If one looks wrong, it reports back.
 4. **Done means**: the behaviour, the tests to add, the gate to run (`just check-backend` / `just check-web`), and what to report (summary, files touched, open questions, deviations).
 5. **Read first**: this file, the relevant `backend/AGENTS.md` or `web/AGENTS.md`, and the relevant docs.
 
