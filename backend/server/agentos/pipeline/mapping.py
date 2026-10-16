@@ -117,7 +117,8 @@ def check_mappings(
     for i, entry in enumerate(doc.mappings):
         if entry.target in seen:
             loc: list[str | int] = [*prefix, "mappings", i, "target"]
-            issues.append(ValidationIssue(loc=loc, message="This target has a mapping already."))
+            message = "This target has a mapping already."
+            issues.append(ValidationIssue(loc=loc, message=message))
         seen.add(entry.target)
 
         mapping, problems = check_mapping(entry, (*prefix, "mappings", i))
@@ -140,10 +141,16 @@ def check_mapping(
         loc: list[str | int] = [*prefix, "rules", j, "value"]
         if tuple(loc) in reported:
             continue
-        if entry.target == "base_branch" and (problem := base_branch_problem(rule.value.strip())):
+        if problem := _value_problem(entry.target, rule.value.strip()):
             issues.append(ValidationIssue(loc=loc, message=problem))
 
     return (None if issues else mapping), issues
+
+
+def _value_problem(target: MappingTarget, value: str) -> str | None:
+    if target == "base_branch":
+        return base_branch_problem(value)
+    return None
 
 
 def _and(items: Sequence[str]) -> str:

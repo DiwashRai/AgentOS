@@ -1312,8 +1312,7 @@ class ManifestLimits(ApiModel):
 
 
 class ManifestJob(ApiModel):
-    """The job: `id` is `<run_id>-<segment>-<16 hex>`. `budget_s`: the job's stage budgets;
-    `not_after`: the worker publishes nothing after it."""
+    """`id`: `<run_id>-<segment>-<16 hex>`. The worker publishes nothing after `not_after`."""
 
     id: str
     run_id: int
@@ -1333,9 +1332,8 @@ class ManifestReport(ApiModel):
 
 
 class JobPackage(ApiModel):
-    """What a worker receives for its job, built when the run is dispatched. `env`: non-secret
-    stage variables (workspace-relative paths); the worker adds `AGENTOS_RUN_ID` and
-    `AGENTOS_TICKET_KEY` itself."""
+    """What a worker receives for its job. `env`: non-secret stage variables (workspace-relative
+    paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself."""
 
     protocol: Literal[2]
     job: ManifestJob
@@ -1537,9 +1535,7 @@ class ResultData(ApiModel):
 
 
 class JournalRecord(ApiModel):
-    """One record of a run's journal. `seq` counts every record of the run, from the job's
-    `journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's
-    `data` (the display types as `RunEvent`, the others below) and consumes a bad record."""
+    """One record of a run's journal; ingest checks each type's `data` and consumes a bad one."""
 
     seq: int = Field(ge=1)
     ts: AwareDatetime
@@ -1554,8 +1550,7 @@ class JournalRequest(ApiModel):
 
 
 class JournalResponse(ApiModel):
-    """`ack`: the run's highest applied seq (resend from `ack + 1`); `rejected`: the seqs of this
-    batch's records that were consumed without applying."""
+    """`ack`: the highest applied seq; `rejected`: this batch's seqs consumed without applying."""
 
     ack: int
     cancel: bool
@@ -1589,9 +1584,8 @@ class PushedData(ApiModel):
 
 
 class LeaseRequest(ApiModel):
-    """POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:
-    false` (a busy client's heartbeat) answers `job: null` at once. Every lease records the
-    client as seen and stamps `alive`, the jobs its workers still run (its user's only)."""
+    """Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
+    the jobs the client's workers still run."""
 
     wait_s: int = Field(default=25, ge=0, le=25)
     take: bool = True

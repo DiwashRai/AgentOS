@@ -342,10 +342,18 @@ def _step(
     """A disabled stage is `skipped` with no gate and no round. A `gate_after` gate is `passed`
     once its stage is done and the ticket is not parked at it; otherwise `pending` (a parked gate
     is resolved per viewer by `for_viewer`). `rounds`: (round, max_rounds) or None."""
-    gate: GateInfo | None = None
     if not stage.enabled:
-        state, rounds = "skipped", None
-    elif stage.gate_after:
+        return RailStep(
+            stage_id=stage.id,
+            name=stage.name,
+            phase=stage.phase,
+            state="skipped",
+            gate=None,
+            round=None,
+            max_rounds=None,
+        )
+    gate: GateInfo | None = None
+    if stage.gate_after:
         gate_state: GateState = "passed" if state == "done" and stage.id != parked else "pending"
         gate = GateInfo(
             label=f"{stage.name} sign-off", short="Sign-off", state=gate_state, person=None
@@ -473,7 +481,9 @@ def _now(standing: Standing, facts: TicketFacts, nxt: str | None) -> NowInfo:
     if standing == "done":
         return info("done", progress=facts.tasks)
     if standing == "inbox" or run is None:
-        return info("add context, then dispatch")
+        return NowInfo(
+            actor=None, person=None, text="add context, then dispatch", run_id=None, progress=None
+        )
     if standing == "queued":
         if run.target == "client":
             whose = f"{run.creator_name}'s" if run.creator_name else "a"

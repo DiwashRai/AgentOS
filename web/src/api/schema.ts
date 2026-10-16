@@ -1459,9 +1459,8 @@ export interface components {
         };
         /**
          * JobPackage
-         * @description What a worker receives for its job, built when the run is dispatched. `env`: non-secret
-         *     stage variables (workspace-relative paths); the worker adds `AGENTOS_RUN_ID` and
-         *     `AGENTOS_TICKET_KEY` itself.
+         * @description What a worker receives for its job. `env`: non-secret stage variables (workspace-relative
+         *     paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.
          */
         JobPackage: {
             /** Context */
@@ -1497,9 +1496,7 @@ export interface components {
         };
         /**
          * JournalRecord
-         * @description One record of a run's journal. `seq` counts every record of the run, from the job's
-         *     `journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's
-         *     `data` (the display types as `RunEvent`, the others below) and consumes a bad record.
+         * @description One record of a run's journal; ingest checks each type's `data` and consumes a bad one.
          */
         JournalRecord: {
             /** Data */
@@ -1527,8 +1524,7 @@ export interface components {
         };
         /**
          * JournalResponse
-         * @description `ack`: the run's highest applied seq (resend from `ack + 1`); `rejected`: the seqs of this
-         *     batch's records that were consumed without applying.
+         * @description `ack`: the highest applied seq; `rejected`: this batch's seqs consumed without applying.
          */
         JournalResponse: {
             /** Ack */
@@ -1540,9 +1536,8 @@ export interface components {
         };
         /**
          * LeaseRequest
-         * @description POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:
-         *     false` (a busy client's heartbeat) answers `job: null` at once. Every lease records the
-         *     client as seen and stamps `alive`, the jobs its workers still run (its user's only).
+         * @description Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
+         *     the jobs the client's workers still run.
          */
         LeaseRequest: {
             /** Alive */
@@ -1668,8 +1663,7 @@ export interface components {
         };
         /**
          * ManifestJob
-         * @description The job: `id` is `<run_id>-<segment>-<16 hex>`. `budget_s`: the job's stage budgets;
-         *     `not_after`: the worker publishes nothing after it.
+         * @description `id`: `<run_id>-<segment>-<16 hex>`. The worker publishes nothing after `not_after`.
          */
         ManifestJob: {
             /** Budget S */

@@ -1296,7 +1296,7 @@
       },
       "JobPackage": {
         "additionalProperties": false,
-        "description": "What a worker receives for its job, built when the run is dispatched. `env`: non-secret\nstage variables (workspace-relative paths); the worker adds `AGENTOS_RUN_ID` and\n`AGENTOS_TICKET_KEY` itself.",
+        "description": "What a worker receives for its job. `env`: non-secret stage variables (workspace-relative\npaths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.",
         "properties": {
           "context": {
             "items": {
@@ -1402,7 +1402,7 @@
       },
       "JournalRecord": {
         "additionalProperties": false,
-        "description": "One record of a run's journal. `seq` counts every record of the run, from the job's\n`journal.first_seq`; `job` is the job id. The envelope is loose: ingest checks each type's\n`data` (the display types as `RunEvent`, the others below) and consumes a bad record.",
+        "description": "One record of a run's journal; ingest checks each type's `data` and consumes a bad one.",
         "properties": {
           "data": {
             "additionalProperties": true,
@@ -1469,7 +1469,7 @@
       },
       "JournalResponse": {
         "additionalProperties": false,
-        "description": "`ack`: the run's highest applied seq (resend from `ack + 1`); `rejected`: the seqs of this\nbatch's records that were consumed without applying.",
+        "description": "`ack`: the highest applied seq; `rejected`: this batch's seqs consumed without applying.",
         "properties": {
           "ack": {
             "title": "Ack",
@@ -1497,7 +1497,7 @@
       },
       "LeaseRequest": {
         "additionalProperties": false,
-        "description": "POST /api/worker/lease (bearer: a client token). Waits up to `wait_s` for a job; `take:\nfalse` (a busy client's heartbeat) answers `job: null` at once. Every lease records the\nclient as seen and stamps `alive`, the jobs its workers still run (its user's only).",
+        "description": "Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:\nthe jobs the client's workers still run.",
         "properties": {
           "alive": {
             "items": {
@@ -1774,7 +1774,7 @@
       },
       "ManifestJob": {
         "additionalProperties": false,
-        "description": "The job: `id` is `<run_id>-<segment>-<16 hex>`. `budget_s`: the job's stage budgets;\n`not_after`: the worker publishes nothing after it.",
+        "description": "`id`: `<run_id>-<segment>-<16 hex>`. The worker publishes nothing after `not_after`.",
         "properties": {
           "budget_s": {
             "title": "Budget S",

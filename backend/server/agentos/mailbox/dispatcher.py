@@ -30,14 +30,13 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
         dispatched = runs.mark_next_dispatched(ctx.db, service.LAUNCHER, None, _REPORT)
         if dispatched is None:
             return launched
-        run_id, token = dispatched
+        run_id, built = dispatched
         launched.append(run_id)
-        started = runs.start(ctx.db, run_id) if token is not None else None
-        if started is None:  # its job could not be built (the run is failed), or a cancel
+        # Not built (the run is failed), or cancelled meanwhile.
+        if built is None or (package := runs.start(ctx.db, run_id)) is None:
             log.warning("run %s: not launched", run_id)
             continue
-        job_id, package = started
-        folder = run_folder(run_id, job_id[-16:])  # the job id's random hex
+        folder = run_folder(run_id, built[0][-16:])  # the job id's random hex
         # Outside any transaction: uploads and a GitHub call (bounded by the plugins' timeouts).
         try:
             ref = mailbox.send(run_id, folder, package.encode("utf-8"))

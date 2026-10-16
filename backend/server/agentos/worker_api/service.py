@@ -1,15 +1,9 @@
-"""The worker protocol (SPEC §10 worker API): the job and its journal, the sync_back upload and
-the client lease.
+"""The worker protocol (SPEC §10 worker API): the job, its journal, the sync_back upload and the
+client lease (authenticated by a client token, `agentos.clients`).
 
-A job token (one per job, built at dispatch) fetches the job's package (`job_package`) and binds
-the job to the worker instance whose `started` record comes first (`post_journal`); every later
-post carries that instance id. `ingest` applies the journal's records to the run in strict seq
-order; the mailbox replay calls it too. Tokens and instance ids are looked up by their SHA-256
-hash. A terminal run answers 410 `run_gone` (the worker aborts and never pushes), except a repeat
-of its final result.
-
-The lease authenticates with a client token (`agentos.clients`) and hands the client the job of a
-run its user dispatched to "My client", with its job token.
+A job token fetches the job's package (`job_package`) and binds the job to the instance whose
+`started` record comes first (`post_journal`). `ingest` applies the journal in strict seq order;
+the mailbox replay calls it too. Tokens and instance ids are looked up by their SHA-256 hash.
 """
 
 from __future__ import annotations
@@ -110,10 +104,10 @@ def post_journal(
     """Apply a batch of the job's journal (`ingest`) and refresh `last_seen_at`; an empty batch
     is the heartbeat.
 
-    An unbound job binds to `instance` when the batch's first new record is a valid `started`
-    (else 422 `validation_error`, nothing bound; another protocol is refused the same way). A
-    terminal run answers 410, except a batch whose only new record repeats the final `result`
-    (or that holds only records applied already): 200, and only `journal_seq` may move.
+    An unbound job binds to `instance` when the batch's first new record is a valid `started` of
+    this job (else 422 `validation_error`, nothing bound; another protocol is refused the same
+    way). A terminal run answers 410, except a batch whose only new record repeats the final
+    `result` (or that holds only records applied already): 200, and only `journal_seq` may move.
     """
     now = utcnow()
     with db.tx() as conn:
@@ -132,7 +126,8 @@ def post_journal(
             if not instance:
                 raise ApiError(401, "unauthorized", "Missing X-AgentOS-Instance")
             first = new[0] if new else None
-            if first is None or first.type != "started" or first.seq != run["journal_seq"] + 1:
+            want = ("started", run["journal_seq"] + 1, job["id"])  # type, seq and job
+            if first is None or (first.type, first.seq, first.job) != want:
                 raise field_error(["records"], "An unbound job's first record must be `started`.")
             _, issues = parsed(StartedData, first.data, ["records", records.index(first), "data"])
             if issues:
@@ -424,10 +419,9 @@ def check_upload(db: Database, job_token: str, instance: str, job_id: str) -> in
 
 
 def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: int) -> None:
-    """Store the run's sync_back zip while the run is running. A repeat upload replaces it, so a
-    retry is safe. 413 `too_large` over MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex)
-    doesn't match the bytes. The caller has checked the credentials (`check_upload`) before
-    reading the body."""
+    """Store the run's sync_back zip; the caller checked the run (`check_upload`) before reading
+    the body. A repeat upload replaces it, so a retry is safe. 413 `too_large` over
+    MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex) doesn't match the bytes."""
     if len(data) > MAX_SYNC_BACK_BYTES:
         raise ApiError(413, "too_large", f"sync_back: over {MAX_SYNC_BACK_BYTES} bytes")
     if not data:
@@ -436,9 +430,6 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
         raise field_error(["sha256"], "Doesn't match the upload.")
 
     with db.tx() as conn:
-        status = conn.execute("SELECT status FROM runs WHERE id = ?", (run_id,)).fetchone()[0]
-        if status != "running":
-            raise _gone(run_id, status)
         conn.execute(
             "INSERT OR REPLACE INTO run_sync_back(run_id, sha256, bytes, files, data, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",

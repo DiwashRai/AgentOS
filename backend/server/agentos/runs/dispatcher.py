@@ -31,14 +31,14 @@ def tick(ctx: AppContext) -> list[int]:
         )
         if dispatched is None:
             return launched
-        run_id, token = dispatched
+        run_id, built = dispatched
         launched.append(run_id)
-        if token is None:
+        if built is None:
             log.warning("run %s: not launched: its job could not be built", run_id)
             continue
         # Outside any transaction: a launch may take a while (a GitHub API call in M1).
         try:
-            ref = launcher.launch(run_id, ctx.settings.effective_worker_url, token)
+            ref = launcher.launch(run_id, ctx.settings.effective_worker_url, built[1])
         except Exception as exc:
             log.warning("run %s: launch failed: %s", run_id, exc)
             service.fail_launch(ctx.db, run_id, f"launch failed: {exc}")

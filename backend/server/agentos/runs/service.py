@@ -6,10 +6,8 @@ was elsewhere already (a no-op or a conflict, the caller decides). Terminal side
 bumped. The dispatcher and the reaper (loops) and the worker API (the client lease included) call
 the primitives here.
 
-A run's job (`jobs`, one per run) is built when the run is dispatched (`build_job`): its package
-from the bundle as it is then, and a fresh job token. Tokens are never stored in plaintext:
-`jobs.token_hash` is a SHA-256 hex digest, never cleared (a token's validity follows the run's
-status).
+A run's job is built when it is dispatched (`build_job`). Job tokens are stored only as SHA-256
+digests, never cleared (a token's validity follows the run's status).
 """
 
 from __future__ import annotations
@@ -252,9 +250,7 @@ def get_manifest(db: Database, run_id: int) -> JobPackage:
         run_row(conn, run_id)
         row = conn.execute("SELECT package FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
     if row is None:
-        raise ApiError(
-            404, "not_found", f"Run {run_id} has no package: it is built when the run is dispatched"
-        )
+        raise ApiError(404, "not_found", f"Run {run_id} has no package until it is dispatched")
     return JobPackage.model_validate_json(row["package"])
 
 
@@ -364,26 +360,23 @@ def finish(
 # ------------------------------------------------------------------ dispatcher primitives
 
 
-def build_job(conn: Conn, run: Row, report: ManifestReport, now: datetime) -> str | None:
-    """Build and store the job of a run that was just dispatched, in the caller's transaction.
-    Returns its job token (in plaintext only here; never logged).
-
-    The package comes from the ticket's current pipeline (locked while the run is active, so the
-    plan must still cover the run's stages), its bundle, and the Space's repo catalog, runtimes
-    and defaults as they are now. A build failure (a repo gone from the catalog, a changed
-    pipeline) fails the run through `finish()` and returns None, so the run is never launched.
-    """
+def build_job(
+    conn: Conn, run: Row, report: ManifestReport, now: datetime
+) -> tuple[str, str] | None:
+    """Build and store the job of a run just dispatched, in the caller's transaction, from the
+    ticket, its bundle and the Space as they are now. Returns the job id and its token (in
+    plaintext only here; never logged). A build failure (a repo gone from the catalog, a changed
+    pipeline) fails the run through `finish()` and returns None, so the run is never launched."""
     snapshot = load_snapshot(conn)
     ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (run["ticket_id"],)).fetchone()
     budget_s: int = run["time_budget_s"]
-    allowance = timedelta(seconds=snapshot.space.claim_timeout_s + budget_s) + BUDGET_GRACE
     job = ManifestJob(
         id=f"{run['id']}-1-{secrets.token_hex(8)}",
         run_id=run["id"],
         segment=1,
         segments=1,
         budget_s=budget_s,
-        not_after=now + allowance,
+        not_after=now + timedelta(seconds=snapshot.space.claim_timeout_s + budget_s) + BUDGET_GRACE,
     )
     journal = ManifestJournal(first_seq=run["journal_seq"] + 1)
 
@@ -424,7 +417,7 @@ def build_job(conn: Conn, run: Row, report: ManifestReport, now: datetime) -> st
             to_db(now),
         ),
     )
-    return token
+    return job.id, token
 
 
 def mark_next_dispatched(
@@ -432,10 +425,10 @@ def mark_next_dispatched(
     launcher_name: str,
     max_concurrency: int | None,
     report: ManifestReport,
-) -> tuple[int, str | None] | None:
+) -> tuple[int, tuple[str, str] | None] | None:
     """Move the launcher's oldest `queued` run to `dispatched` and build its job, unless its
     active (dispatched|running) runs are already at `max_concurrency`. Returns the run id and
-    its job token (None: the build failed and the run is failed)."""
+    `build_job`'s answer."""
     now = utcnow()
     with db.tx() as conn:
         if max_concurrency is not None:
@@ -467,10 +460,9 @@ def take_client_run(
     db: Database, user_id: int, launch_ref: str, server_url: str
 ) -> LeasedJob | None:
     """Hand the user's oldest `queued` client run to their leasing client: → `dispatched`,
-    storing `launch_ref` (the client's name), and build its job (live, reporting to `server_url`).
-    From here the claim timeout applies, as for a launched worker. Returns the job with its token,
-    or None if none is queued or the build failed (the run is failed then). It reads first and
-    takes the write lock only when a run is queued, so a waiting lease never holds it."""
+    storing `launch_ref` (the client's name), and build its job (reporting to `server_url`).
+    Returns it, or None if none is queued or the build failed. It reads first and takes the
+    write lock only when a run is queued, so a waiting lease never holds it."""
     with db.read() as conn:
         if conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone() is None:
             return None
@@ -489,16 +481,15 @@ def take_client_run(
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
         report = ManifestReport(mode="live", url=server_url)
-        token = build_job(conn, run_row(conn, run_id), report, now)
-        if token is None:
-            return None
-        job_id = conn.execute("SELECT id FROM jobs WHERE run_id = ?", (run_id,)).fetchone()[0]
-    return LeasedJob(job_id=job_id, run_id=run_id, server_url=server_url, job_token=token)
+        built = build_job(conn, run_row(conn, run_id), report, now)
+    if built is None:
+        return None
+    return LeasedJob(job_id=built[0], run_id=run_id, server_url=server_url, job_token=built[1])
 
 
-def start(db: Database, run_id: int) -> tuple[str, str] | None:
+def start(db: Database, run_id: int) -> str | None:
     """dispatched → running, for a run the server starts itself (no worker binds to it). Returns
-    its job id and stored package, or None if the run isn't dispatched (any more)."""
+    its stored package, or None if the run isn't dispatched (any more)."""
     stamp = to_db(utcnow())
     with db.tx() as conn:
         cursor = conn.execute(
@@ -508,8 +499,8 @@ def start(db: Database, run_id: int) -> tuple[str, str] | None:
         )
         if cursor.rowcount == 0:
             return None
-        job = conn.execute("SELECT id, package FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
-    return job["id"], job["package"]
+        row = conn.execute("SELECT package FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+    return str(row["package"])
 
 
 def set_launch_ref(db: Database, run_id: int, launch_ref: str) -> None:

@@ -105,6 +105,21 @@ def test_an_unbound_job_takes_only_a_valid_started_first(key: str, runs: RunDriv
     assert runs.db_run(run.id)["status"] == "running"
 
 
+def test_a_started_of_another_job_binds_nothing(key: str, runs: RunDriver) -> None:
+    run = runs.queue(key)
+    runs.tick()
+    token = runs.launcher.token(run.id)
+    package = runs.client.get("/api/worker/job", headers=bearer(token)).json()
+    worker = Worker(runs.client, run.id, token, JobPackage.model_validate(package))
+    foreign = event(1, "started", None, **started_data()) | {"job": "1-1-0000000000000000"}
+    assert error(worker.journal(foreign)) == (422, "validation_error")
+    assert runs.db_run(run.id)["status"] == "dispatched"
+
+    other = stranger(worker)
+    assert other.journal(event(1, "started", None, **started_data())).json()["ack"] == 1
+    assert runs.db_run(run.id)["status"] == "running"
+
+
 def test_the_end_answers_410_except_a_repeat_of_the_final_result(key: str, runs: RunDriver) -> None:
     worker = runs.start(key)
     worker.run_stage("plan")

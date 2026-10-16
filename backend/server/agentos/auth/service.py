@@ -32,7 +32,6 @@ MAX_EMAIL_LEN = 254
 MAX_TOKEN_LEN = 1024  # Atlassian API tokens are ~200 chars, DC PATs ~44
 
 _ROLE_RANK: dict[Role, int] = {"pending": -1, "viewer": 0, "writer": 1, "admin": 2}
-_ME_FIELDS = ("id", "display_name", "email", "avatar_url", "role")
 _SELECT_USER = (
     "SELECT id, display_name, email, avatar_url, role, disabled, created_at, last_login_at "
     "FROM users"
@@ -176,7 +175,9 @@ def _dev_login(db: Database, body: LoginRequest, *, host: str | None, proxied: b
         raise ApiError(400, "missing_credentials", "Provide a username")
     if len(username) > MAX_USERNAME_LEN or not username.isprintable():
         raise ApiError(
-            422, "validation_error", f"username: 1-{MAX_USERNAME_LEN} printable characters"
+            422,
+            "validation_error",
+            f"username: 1-{MAX_USERNAME_LEN} printable characters",
         )
     now = utcnow()
     with db.tx() as conn:
@@ -268,7 +269,7 @@ def patch_user(db: Database, settings: Settings, actor: Me, user_id: int, patch:
                 raise ApiError(422, "validation_error", "You can't disable yourself")
             if demote:
                 raise ApiError(422, "validation_error", "You can't demote yourself")
-        env_admin = user_id in env_admin_ids(conn, settings, user_id)
+        env_admin = is_env_admin(conn, settings, user_id)
         if demote and env_admin:
             raise ApiError(
                 422,
@@ -284,6 +285,11 @@ def patch_user(db: Database, settings: Settings, actor: Me, user_id: int, patch:
             if patch.disabled:
                 conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         return _user(_user_row(conn, user_id), env_admin=env_admin)
+
+
+def is_env_admin(conn: Conn, settings: Settings, user_id: int) -> bool:
+    """True when ADMINS lists one of the user's identity subjects or their email (ignoring case)."""
+    return user_id in env_admin_ids(conn, settings, user_id)
 
 
 def env_admin_ids(conn: Conn, settings: Settings, user_id: int | None = None) -> set[int]:
@@ -369,11 +375,22 @@ def _fields(row: Row, names: tuple[str, ...]) -> dict[str, Any]:
 
 
 def _me(row: Row) -> Me:
-    return Me.model_validate(_fields(row, _ME_FIELDS))
+    return Me.model_validate(_fields(row, ("id", "display_name", "email", "avatar_url", "role")))
 
 
 def _user(row: Row, *, env_admin: bool) -> User:
-    data = _fields(row, (*_ME_FIELDS, "created_at", "last_login_at"))
+    data = _fields(
+        row,
+        (
+            "id",
+            "display_name",
+            "email",
+            "avatar_url",
+            "role",
+            "created_at",
+            "last_login_at",
+        ),
+    )
     data["disabled"] = bool(row["disabled"])
     data["env_admin"] = env_admin
     return User.model_validate(data)

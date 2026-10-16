@@ -251,6 +251,8 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
         facts.stage_runs[sr["run_id"]].append(stage_run_fact(sr))
     for ev in conn.execute(_SQL_EVER_SUCCEEDED, (ids,)).fetchall():
         facts.ever[ev["ticket_id"]].add(ev["stage_id"])
+    # TASKS.md content is only read by the "now" line of a running ticket (its next task), and by
+    # the detail.
     wanted = [
         [r["id"], names(r["key"], workspace_mode(r)).tasks_md]
         for r in rows
@@ -321,8 +323,7 @@ def run_summary(run: Row, ticket_key: str, online: set[int]) -> RunSummary:
         launch_url=launch_url(run["launcher"], run["launch_ref"]),
         log_delivery=log_delivery(run["launcher"]),
         target=run_target(run["launcher"]),
-        # A client run: whether its creator has a client online (`online`: such user ids).
-        client_online=(run["created_by"] in online if run["launcher"] == CLIENT_LAUNCHER else None),
+        client_online=client_online(run["launcher"], run["created_by"], online),
     )
 
 
@@ -330,10 +331,22 @@ def run_target(launcher: str) -> DispatchTarget:
     return "client" if launcher == CLIENT_LAUNCHER else "server"
 
 
+def client_online(launcher: str, created_by: int | None, online: set[int]) -> bool | None:
+    """A client run: whether its creator has a client online (`online`: such user ids, from
+    `clients.service.online_user_ids`). Null for a server run."""
+    if launcher != CLIENT_LAUNCHER:
+        return None
+    return created_by in online
+
+
 def launch_url(launcher: str, launch_ref: str | None) -> str | None:
     """The launcher's page for a run: the GitHub and mailbox launchers' ref is the Actions run URL;
     the local launcher's is a PID and a client run's the client's name (no page)."""
-    if launcher in ("github", "mailbox") and (launch_ref or "").startswith("https://"):
+    if (
+        launcher in ("github", "mailbox")
+        and launch_ref is not None
+        and launch_ref.startswith("https://")
+    ):
         return launch_ref
     return None
 
@@ -644,7 +657,7 @@ def import_ticket(
     The ticket gets the key, the source link, the mapped fields (imported text is stored as plain,
     untrusted data), the Space's `default_repo` and the template, exactly like a native ticket.
 
-    A `base_branch` field mapping on a repo ticket: its Jira field is read in the
+    A `base_branch` field mapping (request 22B) on a repo ticket: its Jira field is read in the
     same call and the rules set the ticket's own base branch (`mapping`), or leave it blank with
     a reason; a blank mapped ticket does not fall back to the repo default (blocked from
     dispatch until someone sets one). No mapping: the repo default applies (`default`).
@@ -938,7 +951,12 @@ def patch_ticket(
             "base_branch_source = :base_branch_source, base_branch_set_by = :base_branch_set_by, "
             "base_branch_reason = :base_branch_reason, owner_id = :owner_id, "
             "updated_at = :updated_at WHERE id = :id",
-            {**values, **base, "updated_at": now, "id": row["id"]},
+            {
+                **values,
+                **base,
+                "updated_at": now,
+                "id": row["id"],
+            },
         )
         if "state" in changed:  # PATCH carries no outcome: reopen, or done/closed unresolved
             conn.execute(_SQL_CLEAR_RESOLUTION, (row["id"],))

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from jinja2 import StrictUndefined, TemplateError
@@ -149,29 +149,37 @@ def render_scaffold(entries: Sequence[FileEntry], ticket: TicketRef) -> list[Fil
 # Dummy tickets for checking a template's scaffold when it is saved (SPEC §6): one per workspace
 # mode, with an awkward title, so `{% if ticket.branch %}` paths are exercised both ways, plus a
 # repo ticket without a base branch (a repo with no default_branch: the ticket is created blank).
-_NO_REPO_TICKET = TicketRef(
-    key="AOS-1",
-    title="Example",
-    description="",
-    type="task",
-    source_url="https://example.com/browse/AOS-1",
-    repo_url=None,
-    base_branch=None,
-    workspace_mode="none",
-)
-_REPO_URL = "https://example.com/org/repo.git"
 DUMMY_TICKETS = (
-    replace(
-        _NO_REPO_TICKET,
+    TicketRef(
+        key="AOS-1",
         title='Example: "quoted" #title',
         description="Example description.",
+        type="task",
         source_url=None,
-        repo_url=_REPO_URL,
+        repo_url="https://example.com/org/repo.git",
         base_branch="main",
         workspace_mode="repo",
     ),
-    _NO_REPO_TICKET,
-    replace(_NO_REPO_TICKET, source_url=None, repo_url=_REPO_URL, workspace_mode="repo"),
+    TicketRef(
+        key="AOS-1",
+        title="Example",
+        description="",
+        type="task",
+        source_url="https://example.com/browse/AOS-1",
+        repo_url=None,
+        base_branch=None,
+        workspace_mode="none",
+    ),
+    TicketRef(
+        key="AOS-1",
+        title="Example",
+        description="",
+        type="task",
+        source_url=None,
+        repo_url="https://example.com/org/repo.git",
+        base_branch=None,
+        workspace_mode="repo",
+    ),
 )
 
 
