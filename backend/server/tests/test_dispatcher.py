@@ -115,11 +115,12 @@ def test_launch_failure_fails_the_run_and_carries_on(
     assert runs.tick() == [retry.id]
 
 
-def test_other_launchers_runs_are_left_alone(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, ctx: AppContext
+@pytest.mark.parametrize("route", [{"provider": "github"}, {"report": "file"}])
+def test_runs_of_other_routes_are_left_alone(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, route: dict[str, str]
 ) -> None:
     run_id = runs.queue(create_ticket(repo=None).key).id
-    runs.set_run(run_id, launcher="github")
+    runs.set_run(run_id, **route)
     assert runs.tick() == []
 
 

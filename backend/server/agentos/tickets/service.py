@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from agentos.clients.service import CLIENT_LAUNCHER, online_user_ids, waiting_client_run_id
+from agentos.clients.service import online_user_ids, waiting_client_run_id
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError
@@ -34,11 +34,13 @@ from agentos.models import (
     Pipeline,
     PipelineUpdate,
     Priority,
+    ReportMode,
     Resolution,
     ResolveOutcome,
     ResolveRequest,
     RunSummary,
     SourceLink,
+    StartMode,
     TaskProgress,
     TicketCreate,
     TicketDetail,
@@ -86,7 +88,8 @@ _SQL_BOARD = (
 _SQL_ONE = _SELECT_TICKETS + "WHERE t.key = ?"
 _SQL_LATEST_RUNS = (
     "SELECT r.id, r.ticket_id, r.status, r.from_stage, r.stage_ids, r.created_by, r.created_at, "
-    "r.started_at, r.finished_at, r.cancel_requested_at, r.error, r.launcher, r.launch_ref, "
+    "r.started_at, r.finished_at, r.stop_requested_at, r.stop_reason, r.queue_reason, r.error, "
+    "r.start, r.report, r.launch_ref, "
     "u.display_name AS creator_name, u.avatar_url AS creator_avatar "
     "FROM runs r LEFT JOIN users u ON u.id = r.created_by "
     "WHERE r.id IN (SELECT MAX(id) FROM runs "
@@ -267,7 +270,7 @@ def _load_facts(conn: Conn, rows: Sequence[Row], *, with_plan: bool = False) -> 
     creators = [
         run["created_by"]
         for run in facts.latest.values()
-        if run["launcher"] == CLIENT_LAUNCHER and run["created_by"] is not None
+        if run["start"] == "pull" and run["created_by"] is not None
     ]
     if creators:
         facts.online = online_user_ids(conn, creators, utcnow())
@@ -301,7 +304,7 @@ def run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
         created_at=from_db(run["created_at"]),
         started_at=from_db_opt(run["started_at"]),
         finished_at=from_db_opt(run["finished_at"]),
-        target=run_target(run["launcher"]),
+        target=run_target(run["start"]),
         creator_name=run["creator_name"],
     )
 
@@ -317,44 +320,42 @@ def run_summary(run: Row, ticket_key: str, online: set[int]) -> RunSummary:
         created_at=from_db(run["created_at"]),
         started_at=from_db_opt(run["started_at"]),
         finished_at=from_db_opt(run["finished_at"]),
-        cancel_requested_at=from_db_opt(run["cancel_requested_at"]),
+        stop_requested_at=from_db_opt(run["stop_requested_at"]),
+        stop_reason=run["stop_reason"],
+        queue_reason=run["queue_reason"],
         error=run["error"],
         launch_ref=run["launch_ref"],
-        launch_url=launch_url(run["launcher"], run["launch_ref"]),
-        log_delivery=log_delivery(run["launcher"]),
-        target=run_target(run["launcher"]),
-        client_online=client_online(run["launcher"], run["created_by"], online),
+        launch_url=launch_url(run["start"], run["launch_ref"]),
+        log_delivery=log_delivery(run["report"]),
+        target=run_target(run["start"]),
+        client_online=client_online(run["start"], run["created_by"], online),
     )
 
 
-def run_target(launcher: str) -> DispatchTarget:
-    return "client" if launcher == CLIENT_LAUNCHER else "server"
+def run_target(start: StartMode) -> DispatchTarget:
+    return "client" if start == "pull" else "server"
 
 
-def client_online(launcher: str, created_by: int | None, online: set[int]) -> bool | None:
-    """A client run: whether its creator has a client online (`online`: such user ids, from
-    `clients.service.online_user_ids`). Null for a server run."""
-    if launcher != CLIENT_LAUNCHER:
+def client_online(start: StartMode, created_by: int | None, online: set[int]) -> bool | None:
+    """A client (pull) run: whether its creator has a client online (`online`: such user ids,
+    from `clients.service.online_user_ids`). Null for a server run."""
+    if start != "pull":
         return None
     return created_by in online
 
 
-def launch_url(launcher: str, launch_ref: str | None) -> str | None:
-    """The launcher's page for a run: the GitHub and mailbox launchers' ref is the Actions run URL;
-    the local launcher's is a PID and a client run's the client's name (no page)."""
-    if (
-        launcher in ("github", "mailbox")
-        and launch_ref is not None
-        and launch_ref.startswith("https://")
-    ):
+def launch_url(start: StartMode, launch_ref: str | None) -> str | None:
+    """The provider's page for a push run: GitHub's ref is the Actions run URL; the local
+    launcher's is a PID and a client run's the client's name (no page)."""
+    if start == "push" and launch_ref is not None and launch_ref.startswith("https://"):
         return launch_ref
     return None
 
 
-def log_delivery(launcher: str) -> LogDelivery:
-    """Mailbox runs replay their recorded events when the GitHub job ends; the rest (client runs
-    included) stream them."""
-    return "at_end" if launcher == "mailbox" else "live"
+def log_delivery(report: ReportMode) -> LogDelivery:
+    """File-report (mailbox) runs replay their recorded events when the job ends; live runs
+    stream them."""
+    return "at_end" if report == "file" else "live"
 
 
 def _tasks(row: Row) -> TaskProgress | None:

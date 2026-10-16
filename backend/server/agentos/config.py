@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     worker_url: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
-    launcher: LauncherName = "local"
+    launcher: LauncherName | Literal["local"] = "local"
     local_max_concurrency: int | None = 2  # None ("none"/"unlimited" in env) = no limit
     worker_env_file: Path | None = None
     web_dir: Path | None = None  # the built SPA (web/dist) to serve; None = API only (dev)

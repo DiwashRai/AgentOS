@@ -10,9 +10,9 @@ Rules, in order, each tick (every INTERVAL_S):
 6. local launcher only: delete workspaces older than 7 days that no active run owns.
 
 Rules 2-5 key on the run's own row, whichever launcher serves it. No rule touches a `queued`
-run: a client run (`launcher = 'client'`) waits for its user's client however long it is
+run: a client run (`start = 'pull'`) waits for its user's client however long it is
 offline (cancel still works). Once a client has taken it, it is `dispatched` and rules 2-5 apply
-to it exactly as to a local run. Only mailbox runs (`launcher = 'mailbox'`) skip rules 3-5, and
+to it exactly as to a local run. Only mailbox runs (`report = 'file'`) skip rules 3-5, and
 only while the mailbox reaper watches them (the mailbox launcher is configured). Rule 6 cleans
 the server's own WORKSPACES_DIR: client runs' workspaces are on the user's machine.
 
@@ -52,7 +52,7 @@ class Reaper:
             return []
         # Mailbox runs send no heartbeats: the mailbox reaper (agentos.mailbox) watches them, and
         # runs only with the mailbox launcher. Every other run (client runs too) is checked here.
-        exempt = "mailbox" if self.ctx.launcher.name == "mailbox" else None
+        exempt = "file" if self.ctx.launcher.name == "mailbox" else None
         reaped = service.reap(self.ctx.db, now, self.ctx.space.claim_timeout_s, exempt)
         for r in reaped:
             log.warning("reaper: run %s %s: %s", r.run_id, r.status, r.reason)

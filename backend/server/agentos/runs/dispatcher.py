@@ -22,13 +22,11 @@ INTERVAL_S = 2.0
 def tick(ctx: AppContext) -> list[int]:
     """Dispatch queued runs until none is left or the launcher is full. Returns the run ids
     taken from the queue (including ones whose build or launch failed: those runs are failed)."""
-    launcher = ctx.launcher
+    launcher, route = ctx.launcher, ctx.route
     report = ManifestReport(mode="live", url=ctx.settings.effective_worker_url)
     launched: list[int] = []
-    while True:
-        dispatched = service.mark_next_dispatched(
-            ctx.db, launcher.name, launcher.max_concurrency, report
-        )
+    while route is not None:
+        dispatched = service.mark_next_dispatched(ctx.db, route, launcher.max_concurrency, report)
         if dispatched is None:
             return launched
         run_id, built = dispatched
@@ -45,3 +43,4 @@ def tick(ctx: AppContext) -> list[int]:
             continue
         service.set_launch_ref(ctx.db, run_id, ref)
         log.info("run %s: launched (%s %s)", run_id, launcher.name, ref)
+    return launched

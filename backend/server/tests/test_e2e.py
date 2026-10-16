@@ -561,7 +561,7 @@ def test_cancel_mid_stage(e2e: E2E) -> None:
     pid = e2e.wait("the fake agent's pid", agent_pid, run.id)
 
     r = e2e.send("POST", f"/api/runs/{run.id}/cancel", None)
-    assert RunSummary.model_validate(r).cancel_requested_at is not None
+    assert RunSummary.model_validate(r).stop_requested_at is not None
     detail = e2e.wait_run(run.id, "cancelled")
     assert detail.stage_runs[0].status == "cancelled", e2e.diag(run.id)
     assert detail.stage_runs[0].started_at is not None

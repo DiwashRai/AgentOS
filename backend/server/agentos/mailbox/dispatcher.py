@@ -27,7 +27,7 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
     whose build or send failed: those runs are failed)."""
     launched: list[int] = []
     while True:
-        dispatched = runs.mark_next_dispatched(ctx.db, service.LAUNCHER, None, _REPORT)
+        dispatched = runs.mark_next_dispatched(ctx.db, service.ROUTE, None, _REPORT)
         if dispatched is None:
             return launched
         run_id, built = dispatched

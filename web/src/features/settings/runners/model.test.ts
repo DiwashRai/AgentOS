@@ -96,12 +96,12 @@ describe("runner form", () => {
   });
 
   it("names each launcher; the repo, workflow and ref apply to both GitHub launchers", () => {
-    expect(launcherLabel("local")).toBe("Local process");
+    expect(launcherLabel(null)).toBe("Local process");
     expect(launcherLabel("github")).toBe("GitHub Actions");
     expect(launcherLabel("mailbox")).toBe("GitHub Actions via Artifactory");
     expect(dispatchesWorkflow("github")).toBe(true);
     expect(dispatchesWorkflow("mailbox")).toBe(true);
-    expect(dispatchesWorkflow("local")).toBe(false);
+    expect(dispatchesWorkflow(null)).toBe(false);
   });
 });
 

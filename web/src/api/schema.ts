@@ -2094,8 +2094,6 @@ export interface components {
         };
         /** RunDetail */
         RunDetail: {
-            /** Cancel Requested At */
-            cancel_requested_at: string | null;
             /** Client Online */
             client_online: boolean | null;
             /**
@@ -2121,6 +2119,8 @@ export interface components {
              * @enum {string}
              */
             log_delivery: "live" | "at_end";
+            /** Queue Reason */
+            queue_reason: string | null;
             /** Stage Ids */
             stage_ids: string[];
             /** Stage Runs */
@@ -2132,6 +2132,10 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "dispatched" | "running" | "succeeded" | "gated" | "failed" | "cancelled";
+            /** Stop Reason */
+            stop_reason: ("cancel" | "budget" | "never_started") | null;
+            /** Stop Requested At */
+            stop_requested_at: string | null;
             sync_back: components["schemas"]["SyncBackInfo"] | null;
             /**
              * Target
@@ -2143,8 +2147,6 @@ export interface components {
         };
         /** RunSummary */
         RunSummary: {
-            /** Cancel Requested At */
-            cancel_requested_at: string | null;
             /** Client Online */
             client_online: boolean | null;
             /**
@@ -2170,6 +2172,8 @@ export interface components {
              * @enum {string}
              */
             log_delivery: "live" | "at_end";
+            /** Queue Reason */
+            queue_reason: string | null;
             /** Stage Ids */
             stage_ids: string[];
             /** Started At */
@@ -2179,6 +2183,10 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "dispatched" | "running" | "succeeded" | "gated" | "failed" | "cancelled";
+            /** Stop Reason */
+            stop_reason: ("cancel" | "budget" | "never_started") | null;
+            /** Stop Requested At */
+            stop_requested_at: string | null;
             /**
              * Target
              * @enum {string}
@@ -2204,15 +2212,12 @@ export interface components {
         };
         /**
          * RunnerSettings
-         * @description `launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the
-         *     server's env and are read-only.
+         * @description `launcher` (AGENTOS_LAUNCHER; null = unset) and `token_set` (AGENTOS_GITHUB_TOKEN is set)
+         *     come from the server's env and are read-only.
          */
         RunnerSettings: {
-            /**
-             * Launcher
-             * @enum {string}
-             */
-            launcher: "local" | "github" | "mailbox";
+            /** Launcher */
+            launcher: ("github" | "mailbox") | null;
             /** Token Set */
             token_set: boolean;
             /**

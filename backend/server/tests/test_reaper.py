@@ -140,7 +140,7 @@ def test_unacknowledged_cancel(
         authed.post(f"/api/runs/{w.run_id}/cancel", headers=CSRF)
     now = utcnow()
     armed(reaper, now)
-    runs.set_run(stuck.run_id, cancel_requested_at=to_db(now - timedelta(minutes=2, seconds=1)))
+    runs.set_run(stuck.run_id, stop_requested_at=to_db(now - timedelta(minutes=2, seconds=1)))
     reaped = reaper.tick(now)
     assert [(r.run_id, r.status) for r in reaped] == [(stuck.run_id, "cancelled")]
     detail = runs.get(stuck.run_id)
@@ -160,7 +160,7 @@ def test_rules_apply_in_order(
         worker.run_id,
         last_seen_at=to_db(now - timedelta(minutes=5)),
         started_at=to_db(now - timedelta(days=1)),
-        cancel_requested_at=to_db(now - timedelta(minutes=5)),
+        stop_requested_at=to_db(now - timedelta(minutes=5)),
     )
     reaped = reaper.tick(now)
     assert [(r.run_id, r.reason) for r in reaped] == [(worker.run_id, "worker lost")]
@@ -254,7 +254,7 @@ def test_a_silent_client_run_is_lost_whatever_the_launcher(
     """Only rows of the mailbox launcher skip the heartbeat, and only with that launcher on."""
     client_worker = mine.start("client")
     mailbox_worker = runs.start(mine.create_ticket("mailbox", repo=None).key)
-    runs.set_run(mailbox_worker.run_id, launcher="mailbox")
+    runs.set_run(mailbox_worker.run_id, report="file")
     runs.launcher.name = configured
     now = utcnow()
     armed(reaper, now)
@@ -277,7 +277,7 @@ def test_budget_and_cancel_rules_apply_to_client_runs(
     armed(reaper, now)
     budget = timedelta(seconds=3600, minutes=15)
     runs.set_run(over.run_id, started_at=to_db(now - budget - timedelta(seconds=1)))
-    runs.set_run(stuck.run_id, cancel_requested_at=to_db(now - timedelta(minutes=2, seconds=1)))
+    runs.set_run(stuck.run_id, stop_requested_at=to_db(now - timedelta(minutes=2, seconds=1)))
     reaped = reaper.tick(now)
     assert sorted((r.run_id, r.status, r.reason) for r in reaped) == sorted(
         [

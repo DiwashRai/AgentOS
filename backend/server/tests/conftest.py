@@ -236,7 +236,7 @@ def add_run(ctx: AppContext) -> AddRun:
             assert ticket is not None, key
             cursor = conn.execute(
                 "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
-                "launcher, created_by, created_at, started_at, finished_at) "
+                "provider, created_by, created_at, started_at, finished_at) "
                 "VALUES (?, ?, ?, ?, 3600, 'local', ?, ?, ?, ?)",
                 (
                     ticket["id"],

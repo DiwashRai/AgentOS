@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from pydantic import TypeAdapter
 
 from agentos.auth.service import hash_token
-from agentos.clients.service import CLIENT_LAUNCHER, has_client, online_user_ids
+from agentos.clients.service import has_client, online_user_ids
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
 from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError, field_error
@@ -35,11 +35,13 @@ from agentos.models import (
     ManifestReport,
     Me,
     Pipeline,
+    Route,
     RunDetail,
     RunEvent,
     RunStatus,
     RunSummary,
     StageRunInfo,
+    StopReason,
     SyncBackInfo,
 )
 from agentos.pipeline.manifest import build_package, render_stages
@@ -70,6 +72,18 @@ NEVER_CONNECTED = "worker never connected"
 WORKER_LOST = "worker lost"
 OVER_BUDGET = "time budget exceeded"
 
+# A client run: its owner's client leases it and it reports live.
+CLIENT_ROUTE = Route("pull", None, "live")
+
+# How a run ends when its stopped job reports `cancelled`: a user's cancel (or no stop) →
+# cancelled; a stop the server made → failed with its reason.
+STOPPED: dict[StopReason | None, tuple[RunStatus, str | None]] = {
+    None: ("cancelled", None),
+    "cancel": ("cancelled", None),
+    "budget": ("failed", OVER_BUDGET),
+    "never_started": ("failed", NEVER_CONNECTED),
+}
+
 EVENT_ADAPTER: TypeAdapter[RunEvent] = TypeAdapter(RunEvent)
 
 _SELECT_RUN = (
@@ -83,9 +97,9 @@ _SQL_STAGE_RUNS = (
     "SELECT idx, stage_id, round, status, verdict, exit_code, reason, started_at, finished_at "
     "FROM stage_runs WHERE run_id = ? ORDER BY idx"
 )
-# A user's oldest queued client run (params: CLIENT_LAUNCHER, user id).
+# A user's oldest queued client run (param: the user id).
 _SQL_QUEUED_CLIENT_RUN = (
-    "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' AND created_by = ? "
+    "SELECT id FROM runs WHERE start = 'pull' AND status = 'queued' AND created_by = ? "
     "ORDER BY id LIMIT 1"
 )
 
@@ -103,11 +117,7 @@ def run_row(conn: Conn, run_id: int) -> Row:
 
 def _summaries(conn: Conn, rows: Sequence[Row]) -> list[RunSummary]:
     """`run_row`-shaped rows → summaries, with one query for whose clients are online."""
-    creators = [
-        r["created_by"]
-        for r in rows
-        if r["launcher"] == CLIENT_LAUNCHER and r["created_by"] is not None
-    ]
+    creators = [r["created_by"] for r in rows if r["start"] == "pull" and r["created_by"]]
     online = online_user_ids(conn, creators, utcnow()) if creators else set()
     return [run_summary(r, r["ticket_key"], online) for r in rows]
 
@@ -157,7 +167,7 @@ def dispatch(
     db: Database,
     runtimes: RuntimesConfig,
     space: SpaceConfig,
-    launcher_name: str,
+    server_route: Route | None,
     key: str,
     user: Me,
     from_stage: str | None,
@@ -173,12 +183,16 @@ def dispatch(
     The run covers `plan_run`'s stages (`stage_ids`): from `from_stage` on, plus the start of the
     loop block it is in (run from round 2 on), with a time budget for every round.
 
-    `target` "server" queues the run for the configured launcher (`launcher_name`); "client"
-    queues it for `user`'s own client (`launcher = 'client'`, taken by `take_client_run`), which
-    only the ticket's owner may do (403 `forbidden`), and only with a client token (422
-    `validation_error`).
+    The run stores its route. `target` "server" takes `server_route` (None: 422
+    `validation_error`, this server starts no workers); "client" queues it for `user`'s own
+    client (`CLIENT_ROUTE`, taken by `take_client_run`), which only the ticket's owner may do
+    (403 `forbidden`), and only with a client token (422 `validation_error`).
     """
     now = to_db(utcnow())
+    route = CLIENT_ROUTE if target == "client" else server_route
+    if route is None:
+        raise field_error(["target"], "No runner is configured on this server; use your client.")
+
     with db.tx() as conn:
         ticket = get_ticket_row(conn, key)
         if target == "client" and ticket["owner_id"] != user.id:
@@ -197,12 +211,12 @@ def dispatch(
                 raise ApiError(422, "invalid_stage", "nothing to run; pick a stage")
         plan = plan_run(pipeline, from_stage)
         check_segment(plan.stages, ref.workspace_mode)
-        launcher = CLIENT_LAUNCHER if target == "client" else launcher_name
         try:
             cursor = conn.execute(
-                "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, "
-                "launcher, created_by, created_at) VALUES (?, 'queued', ?, '[]', 0, ?, ?, ?)",
-                (ticket["id"], from_stage, launcher, user.id, now),
+                "INSERT INTO runs(ticket_id, status, from_stage, stage_ids, time_budget_s, start, "
+                "provider, report, created_by, created_at) "
+                "VALUES (?, 'queued', ?, '[]', 0, ?, ?, ?, ?, ?)",
+                (ticket["id"], from_stage, *route, user.id, now),
             )
         except IntegrityError as exc:  # runs_one_active
             raise ApiError(409, "run_active", f"{key} already has an active run") from exc
@@ -301,20 +315,26 @@ def run_events(
 
 
 def cancel(db: Database, run_id: int) -> RunSummary:
-    """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → set
-    `cancel_requested_at` once; the worker sees `cancel: true` on its next journal post and
-    completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A terminal run
-    is returned unchanged."""
+    """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → stop the
+    run and its job once (reason `cancel`); the worker sees `cancel: true` on its next journal
+    post and completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A
+    terminal run is returned unchanged."""
     now = utcnow()
     with db.tx() as conn:
         row = run_row(conn, run_id)
         if row["status"] in ("queued", "dispatched"):
             finish(conn, run_id, "cancelled", ("queued", "dispatched"), now=now)
         elif row["status"] == "running":
+            stop = (to_db(now), run_id)
             conn.execute(
-                "UPDATE runs SET cancel_requested_at = ? "
-                "WHERE id = ? AND status = 'running' AND cancel_requested_at IS NULL",
-                (to_db(now), run_id),
+                "UPDATE runs SET stop_requested_at = ?, stop_reason = 'cancel' "
+                "WHERE id = ? AND status = 'running' AND stop_requested_at IS NULL",
+                stop,
+            )
+            conn.execute(
+                "UPDATE jobs SET stop_requested_at = ?, stop_reason = 'cancel' "
+                "WHERE run_id = ? AND stop_requested_at IS NULL",
+                stop,
             )
         return _summary(conn, run_row(conn, run_id))
 
@@ -422,26 +442,28 @@ def build_job(
 
 def mark_next_dispatched(
     db: Database,
-    launcher_name: str,
+    route: Route,
     max_concurrency: int | None,
     report: ManifestReport,
 ) -> tuple[int, tuple[str, str] | None] | None:
-    """Move the launcher's oldest `queued` run to `dispatched` and build its job, unless its
-    active (dispatched|running) runs are already at `max_concurrency`. Returns the run id and
-    `build_job`'s answer."""
+    """Move the oldest `queued` run of this (push) route to `dispatched` and build its job,
+    unless the route's active (dispatched|running) runs are already at `max_concurrency`.
+    Returns the run id and `build_job`'s answer."""
     now = utcnow()
+    params = (route.provider, route.report)
     with db.tx() as conn:
         if max_concurrency is not None:
             active = conn.execute(
-                "SELECT COUNT(*) FROM runs "
-                "WHERE launcher = ? AND status IN ('dispatched', 'running')",
-                (launcher_name,),
+                "SELECT COUNT(*) FROM runs WHERE start = 'push' AND provider = ? AND report = ? "
+                "AND status IN ('dispatched', 'running')",
+                params,
             ).fetchone()[0]
             if active >= max_concurrency:
                 return None
         row = conn.execute(
-            "SELECT id FROM runs WHERE launcher = ? AND status = 'queued' ORDER BY id LIMIT 1",
-            (launcher_name,),
+            "SELECT id FROM runs WHERE start = 'push' AND provider = ? AND report = ? "
+            "AND status = 'queued' ORDER BY id LIMIT 1",
+            params,
         ).fetchone()
         if row is None:
             return None
@@ -464,12 +486,12 @@ def take_client_run(
     Returns it, or None if none is queued or the build failed. It reads first and takes the
     write lock only when a run is queued, so a waiting lease never holds it."""
     with db.read() as conn:
-        if conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone() is None:
+        if conn.execute(_SQL_QUEUED_CLIENT_RUN, (user_id,)).fetchone() is None:
             return None
 
     now = utcnow()
     with db.tx() as conn:
-        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (CLIENT_LAUNCHER, user_id)).fetchone()
+        row = conn.execute(_SQL_QUEUED_CLIENT_RUN, (user_id,)).fetchone()
         if row is None:
             return None
         run_id: int = row["id"]
@@ -537,19 +559,19 @@ def reap(
     db: Database,
     now: datetime,
     claim_timeout_s: int,
-    exempt_launcher: str | None = None,
+    exempt_report: str | None = None,
 ) -> list[Reaped]:
     """Reaper rules 2-5 (SPEC §8), in order, in one transaction.
 
     Each rule keys on the run's own row: `queued` runs are never touched (a client run waits for
     its user's client), and a dispatched or running client run is reaped exactly like a local
-    one. Runs whose `launcher` is `exempt_launcher` skip rules 3-5 (heartbeat, budget,
-    unacknowledged cancel): the reaper passes "mailbox" only while the mailbox reaper
+    one. Runs whose `report` is `exempt_report` skip rules 3-5 (heartbeat, budget,
+    unacknowledged cancel): the reaper passes "file" only while the mailbox reaper
     (`agentos.mailbox`) watches those runs, as they never send heartbeats.
     """
     out: list[Reaped] = []
-    # Rules 3-5 end with `AND (? IS NULL OR launcher <> ?)`, bound to these two values.
-    exempt = (exempt_launcher, exempt_launcher)
+    # Rules 3-5 end with `AND (? IS NULL OR report <> ?)`, bound to these two values.
+    exempt = (exempt_report, exempt_report)
     with db.tx() as conn:
 
         def end(
@@ -570,7 +592,7 @@ def reap(
         lost = _ids(
             conn,
             "SELECT id FROM runs WHERE status = 'running' "
-            "AND COALESCE(last_seen_at, started_at) < ? AND (? IS NULL OR launcher <> ?)",
+            "AND COALESCE(last_seen_at, started_at) < ? AND (? IS NULL OR report <> ?)",
             (to_db(now - HEARTBEAT_TIMEOUT), *exempt),
         )
         end(lost, "running", "failed", WORKER_LOST, WORKER_LOST)
@@ -578,7 +600,7 @@ def reap(
         running = conn.execute(
             "SELECT id, started_at, time_budget_s FROM runs "
             "WHERE status = 'running' AND started_at IS NOT NULL "
-            "AND (? IS NULL OR launcher <> ?)",
+            "AND (? IS NULL OR report <> ?)",
             exempt,
         ).fetchall()
         over = [
@@ -590,8 +612,8 @@ def reap(
         # 5. a cancel the worker never acknowledged
         unacked = _ids(
             conn,
-            "SELECT id FROM runs WHERE status = 'running' AND cancel_requested_at < ? "
-            "AND (? IS NULL OR launcher <> ?)",
+            "SELECT id FROM runs WHERE status = 'running' AND stop_requested_at < ? "
+            "AND (? IS NULL OR report <> ?)",
             (to_db(now - CANCEL_GRACE), *exempt),
         )
         end(unacked, "running", "cancelled", None, "cancel not acknowledged")

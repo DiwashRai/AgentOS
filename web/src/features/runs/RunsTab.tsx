@@ -69,7 +69,7 @@ function startedText(run: RunSummary, now: number): string {
 
 function CancelControl({ ticketKey, run }: { ticketKey: string; run: RunSummary }) {
   const cancel = useCancelRun(ticketKey);
-  if (run.cancel_requested_at !== null || cancel.isPending) {
+  if (run.stop_requested_at !== null || cancel.isPending) {
     return <span className={text.label}>Cancelling…</span>;
   }
   return (

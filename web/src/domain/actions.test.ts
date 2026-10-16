@@ -140,7 +140,7 @@ describe("ticketActions", () => {
     it("shows Cancelling… (disabled) while a cancel is requested", () => {
       const t = ticket({
         attention: "running",
-        latest_run: run("running", { cancel_requested_at: "2026-10-11T10:05:00Z" }),
+        latest_run: run("running", { stop_requested_at: "2026-10-11T10:05:00Z" }),
       });
       const s = ticketActions(t, "row");
       expect(s.cancelling).toBe(true);

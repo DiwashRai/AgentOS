@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Annotated, Any, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple, Self
 
 from pydantic import (
     AfterValidator,
@@ -436,11 +436,26 @@ class NowInfo(ApiModel):
 
 
 # AGENTOS_LAUNCHER. mailbox: runs travel through a store (design/mailbox.md).
-LauncherName = Literal["local", "github", "mailbox"]
+LauncherName = Literal["github", "mailbox"]
 LogDelivery = Literal["live", "at_end"]
-# Who serves a run: the server's configured launcher, or the dispatching user's own client
-# (`worker.py --client`, which polls for it; stored as `runs.launcher = 'client'`).
+# Who serves a run: the server's route, or the dispatching user's own client (`worker.py
+# --client`, which leases it: a pull run).
 DispatchTarget = Literal["server", "client"]
+# A run's route, stored on it at dispatch: push (a provider starts its worker) or pull (its
+# owner's client leases it), by live (HTTP) or file (a mailbox) reporting. Pull + file is refused.
+StartMode = Literal["push", "pull"]
+ReportMode = Literal["live", "file"]
+# Why a run (and its job) was asked to stop: the user's cancel, its time budget, or it never
+# started.
+StopReason = Literal["cancel", "budget", "never_started"]
+
+
+class Route(NamedTuple):
+    """A run's route (`runs.start`, `provider`, `report`); `provider` is None for pull."""
+
+    start: StartMode
+    provider: str | None
+    report: ReportMode
 
 
 class RunSummary(ApiModel):
@@ -455,12 +470,15 @@ class RunSummary(ApiModel):
     created_at: AwareDatetime
     started_at: AwareDatetime | None
     finished_at: AwareDatetime | None
-    # Set while a running run waits for its worker to acknowledge a cancel (UI: "Cancelling…").
-    cancel_requested_at: AwareDatetime | None
+    # Set once a running run was asked to stop, and why (UI: "Cancelling…", "Over budget…").
+    stop_requested_at: AwareDatetime | None
+    stop_reason: StopReason | None
+    # Why a queued run waits (e.g. for the previous run's worker to stop); null otherwise.
+    queue_reason: str | None
     error: str | None
     # Informational: a PID (local), the Actions run URL (github), the client's name (client).
     launch_ref: str | None
-    # The launcher's page for this run (the GitHub Actions run); null for local and client runs.
+    # The provider's page for this run (the GitHub Actions run); null for local and client runs.
     launch_url: str | None
     # When the run's events arrive: "live" as the worker sends them, or "at_end" (a mailbox run:
     # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).
@@ -994,11 +1012,11 @@ class RunnerDoc(ApiModel):
 
 
 class RunnerSettings(SettingsMeta):
-    """`launcher` (AGENTOS_LAUNCHER) and `token_set` (AGENTOS_GITHUB_TOKEN is set) come from the
-    server's env and are read-only."""
+    """`launcher` (AGENTOS_LAUNCHER; null = unset) and `token_set` (AGENTOS_GITHUB_TOKEN is set)
+    come from the server's env and are read-only."""
 
     value: RunnerDoc
-    launcher: LauncherName
+    launcher: LauncherName | None
     token_set: bool
 
 

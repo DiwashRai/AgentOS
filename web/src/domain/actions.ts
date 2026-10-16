@@ -1,6 +1,6 @@
 // The ticket action group (DESIGN §13.8, gate primacy; web/AGENTS.md "Actions"), shared by queue
 // rows and the Ticket page header. Pure: it reads server fields (`attention`, which rail gate is
-// parked on you, whether an enabled stage follows it, `latest_run.cancel_requested_at`) and picks
+// parked on you, whether an enabled stage follows it, `latest_run.stop_requested_at`) and picks
 // buttons. It never derives board state. What each action does lives with the caller:
 //   approve = POST runs {} (the server picks next_stage) · retry = POST runs {} ·
 //   dispatch = POST runs {from_stage} ("Run from…") · cancel = POST cancel ·
@@ -143,7 +143,7 @@ function actionsFor(t: ActionTicket, ctx: ActionContext): ActionSet {
       return set(act("retry", words.retry, "ink"), header ? [abandon] : [abandon, open]);
     case "running":
     case "queued": {
-      const cancelling = t.latest_run?.cancel_requested_at != null;
+      const cancelling = t.latest_run?.stop_requested_at != null;
       const cancel = cancelling
         ? act("cancel", words.cancelling, "default", { disabled: true })
         : act("cancel", words.cancel, "default");

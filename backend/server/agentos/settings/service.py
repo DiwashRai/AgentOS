@@ -109,7 +109,7 @@ class SettingsEnv:
     intake cache a save of the queries drops."""
 
     jira_auth: bool
-    launcher: LauncherName
+    launcher: LauncherName | None
     token_set: bool
     intake_cache: TtlCache[str, JiraSearch | str]
 

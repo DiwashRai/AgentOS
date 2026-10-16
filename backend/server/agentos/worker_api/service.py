@@ -18,7 +18,6 @@ from pydantic import ValidationError
 
 from agentos.auth.service import hash_token
 from agentos.clients import service as clients
-from agentos.clients.service import CLIENT_LAUNCHER
 from agentos.clock import to_db, utcnow
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError, field_error, validation_error
@@ -42,7 +41,7 @@ from agentos.models import (
 )
 from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
-from agentos.runs.service import EVENT_ADAPTER, TERMINAL, finish
+from agentos.runs.service import EVENT_ADAPTER, STOPPED, TERMINAL, finish
 from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import parsed, path_key, pydantic_issues, validate_pr_url
@@ -55,7 +54,7 @@ MAX_EVENTS_PER_RUN = 100_000  # SPEC §6; beyond it `log` events are dropped
 _FINAL: dict[str, frozenset[RunStatus]] = {
     "completed": frozenset({"gated", "succeeded"}),
     "failed": frozenset({"failed"}),
-    "cancelled": frozenset({"cancelled"}),
+    "cancelled": frozenset({"cancelled", "failed"}),  # failed: a stop the server made
 }
 
 # The journal record types stored as `run_events` rows (validated as `RunEvent`).
@@ -198,7 +197,7 @@ def ingest(
 
     _store_events(conn, run, events, now)
     conn.execute("UPDATE runs SET journal_seq = ? WHERE id = ?", (seq, run["id"]))
-    cancel = run["cancel_requested_at"] is not None
+    cancel = run["stop_requested_at"] is not None
     return JournalResponse(ack=seq, cancel=cancel, rejected=rejected)
 
 
@@ -233,8 +232,9 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
         conn.execute("UPDATE runs SET head_commit = ? WHERE id = ?", (head, run["id"]))
 
     elif record.type == "result":
-        # running → gated|succeeded (completed, per `completion_status`), failed or cancelled,
-        # and the reported PR stored. A run that isn't running is left as it is.
+        # running → gated|succeeded (completed, per `completion_status`), failed, or as the stop
+        # table says for cancelled, and the reported PR stored. A run that isn't running is left
+        # as it is.
         result = ResultData.model_validate(record.data)
         status: RunStatus
         error = result.error
@@ -248,7 +248,7 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
             failed = result.failed_stage
             error = error or (f"stage {failed} failed" if failed else "the run failed")
         else:
-            status = "cancelled"
+            status, error = STOPPED[run["stop_reason"]]
         if finish(conn, run["id"], status, ("running",), now=now, error=error):
             _store_pr_url(conn, run, result.pr_url)
 
@@ -453,8 +453,8 @@ def lease_client(db: Database, client_token: str, alive: list[str]) -> LeaseResp
     with db.tx() as conn:
         conn.execute(
             "UPDATE jobs SET alive_at = ? WHERE id IN (SELECT value FROM json_each(?)) "
-            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND launcher = ?)",
-            (to_db(now), json.dumps(alive), client.user.id, CLIENT_LAUNCHER),
+            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",
+            (to_db(now), json.dumps(alive), client.user.id),
         )
 
     sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()

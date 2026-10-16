@@ -16,7 +16,7 @@ from agentos.launchers.base import Launcher
 from agentos.launchers.github import GitHubActionsLauncher, GitHubTarget
 from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
 from agentos.launchers.mailbox import MailboxLauncher
-from agentos.models import FieldMapping, JiraField
+from agentos.models import FieldMapping, JiraField, Route
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, RuntimesConfig
 from agentos.pipeline.space import RunnerSection, SpaceConfig
 from agentos.ratelimit import RateLimiter
@@ -69,6 +69,8 @@ class AppContext:
     settings: Settings
     db: Database
     launcher: Launcher
+    # The route a `target: "server"` dispatch stores; None = this server starts no workers.
+    route: Route | None
     # The Jira REST client when AGENTOS_JIRA_URL is set (tests swap in a MockTransport one).
     jira: JiraClient | None = None
     # Jira login attempts per (client IP, submitted email/username).
@@ -135,7 +137,16 @@ def build_context(settings: Settings, launcher: Launcher | None = None) -> AppCo
     if launcher is None:
         launcher = _launcher(settings, db)
     jira = JiraClient(settings.jira_url, settings.jira_deployment) if settings.jira_url else None
-    return AppContext(settings=settings, db=db, launcher=launcher, jira=jira)
+    route = server_route(launcher.name)
+    return AppContext(settings=settings, db=db, launcher=launcher, route=route, jira=jira)
+
+
+def server_route(launcher_name: str) -> Route:
+    """The route of the server's runs: `mailbox` is GitHub with file reporting; every other
+    launcher starts its own workers, which report live."""
+    if launcher_name == "mailbox":
+        return Route("push", "github", "file")
+    return Route("push", launcher_name, "live")
 
 
 def seed_settings(db: Database) -> list[Area]:

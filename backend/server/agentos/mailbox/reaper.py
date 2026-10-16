@@ -91,7 +91,7 @@ class MailboxReaper:
     def check(self, run: service.MailboxRun, now: datetime) -> Outcome | None:
         folder = run_folder(run.id, run.job_hex)
         ref = run.launch_ref
-        cancel_requested = run.cancel_requested_at is not None
+        cancel_requested = run.stop_requested_at is not None
         # 1. a requested cancel reaches GitHub once
         if cancel_requested:
             self._cancel(run.id, ref)
@@ -145,9 +145,9 @@ class MailboxReaper:
                 return self._end(run.id, folder, "failed", OVER_BUDGET)
         # 7. a cancel GitHub can't confirm
         if (
-            run.cancel_requested_at is not None
+            run.stop_requested_at is not None
             and status is None
-            and now > run.cancel_requested_at + CANCEL_GRACE
+            and now > run.stop_requested_at + CANCEL_GRACE
         ):
             return self._end(run.id, folder, "cancelled", None)
         # 8. the server died between the start and storing the launch_ref

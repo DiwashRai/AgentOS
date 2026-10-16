@@ -246,7 +246,7 @@ def test_seeded_runner_with_the_local_launcher(authed: TestClient) -> None:
     got = runner(authed)
     assert got.model_dump(exclude={"updated_at"}) == {
         "value": {"github_repo": None, "workflow": "agentos-worker.yml", "ref": "main"},
-        "launcher": "local",
+        "launcher": None,  # unset (the local launcher)
         "token_set": False,
         "version": 1,
         "updated_by": None,

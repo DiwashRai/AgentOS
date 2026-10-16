@@ -89,14 +89,14 @@ export const RUNNER_FIELDS: readonly (keyof RunnerForm)[] = ["github_repo", "wor
 
 export type Launcher = RunnerSettings["launcher"];
 
-const LAUNCHER_LABEL: Record<Launcher, string> = {
-  local: "Local process",
+const LAUNCHER_LABEL: Record<NonNullable<Launcher>, string> = {
   github: "GitHub Actions",
   mailbox: "GitHub Actions via Artifactory",
 };
 
+/** Null: AGENTOS_LAUNCHER is unset, so the server starts local worker processes. */
 export function launcherLabel(launcher: Launcher): string {
-  return LAUNCHER_LABEL[launcher];
+  return launcher === null ? "Local process" : LAUNCHER_LABEL[launcher];
 }
 
 /** The launchers that dispatch a GitHub workflow, so the repo, workflow and ref apply. */

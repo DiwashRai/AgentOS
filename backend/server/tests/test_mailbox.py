@@ -34,7 +34,6 @@ from agentos.runs import dispatcher as runs_dispatcher
 from agentos.runs.reaper import Reaper
 from agentos.runs.service import BUDGET_GRACE, OVER_BUDGET
 from agentos.stores.artifactory import ArtifactoryStore
-from agentos.tickets.service import log_delivery
 from agentos.worker_api import service as worker_api
 from tests.mailbox_support import FakeMailbox, Outbox
 from tests.run_support import CSRF, FakeLauncher, RunDriver, log_event
@@ -46,7 +45,7 @@ PR = "https://github.com/o/r/pull/7"
 
 @pytest.fixture
 def launcher() -> FakeLauncher:
-    """Overrides conftest's: dispatches store `launcher = 'mailbox'` (the loops never call it)."""
+    """Overrides conftest's: dispatches store the mailbox route (the loops never call it)."""
     fake = FakeLauncher(max_concurrency=None)
     fake.name = "mailbox"
     return fake
@@ -114,7 +113,7 @@ def test_dispatch_claims_sends_the_manifest_and_locks_the_bundle(
     run_id = launch(runs, mailbox, ticket.key)
     row = runs.db_run(run_id)
     assert row["status"] == "running"
-    assert row["launcher"] == "mailbox"
+    assert (row["start"], row["provider"], row["report"]) == ("push", "github", "file")
     [(sent_id, folder, manifest)] = mailbox.sent
     assert sent_id == run_id
     with runs.ctx.db.read() as conn:
@@ -503,7 +502,7 @@ def test_cancel_grace_applies_only_while_the_status_is_unknown(
     run_id = launch(runs, mailbox, ticket.key)
     mailbox.set_status(run_id, "in_progress")
     authed.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
-    requested = from_db(runs.db_run(run_id)["cancel_requested_at"])
+    requested = from_db(runs.db_run(run_id)["stop_requested_at"])
     late = requested + CANCEL_GRACE + timedelta(seconds=1)
     assert reaper.tick(late) == {}  # GitHub answers: wait for it to complete
     mailbox.statuses[mailbox.ref_of(run_id)] = MailboxError("GitHub unreachable")
@@ -564,7 +563,7 @@ def test_the_runs_reaper_leaves_mailbox_runs_alone(
     now = utcnow() + timedelta(hours=1)
     reaper.tick(now - timedelta(seconds=15))  # the grace tick (refreshes last_seen_at)
     old = to_db(now - timedelta(hours=1))
-    runs.set_run(run_id, last_seen_at=old, cancel_requested_at=old, time_budget_s=1)
+    runs.set_run(run_id, last_seen_at=old, stop_requested_at=old, time_budget_s=1)
     local = add_run(create_ticket("local").key, "running", [("plan", "running")])  # silent
     # No heartbeat, budget or cancel rule for mailbox runs; other launchers' runs still reaped.
     assert [(r.run_id, r.reason) for r in reaper.tick(now)] == [(local, "worker lost")]
@@ -603,11 +602,3 @@ def test_the_lifespan_runs_the_mailbox_loops_instead_of_the_runs_dispatcher(
         assert seen["dispatcher"].wait(10)
         assert seen["reaper"].wait(10)
     assert calls["runs"] == 0
-
-
-def test_only_mailbox_runs_deliver_their_logs_at_the_end() -> None:
-    assert [log_delivery(name) for name in ("mailbox", "github", "local")] == [
-        "at_end",
-        "live",
-        "live",
-    ]

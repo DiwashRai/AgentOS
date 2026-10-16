@@ -258,7 +258,7 @@ describe("RunnerSection", () => {
     const onChange = vi.fn();
     const el = mount(
       <RunnerSection
-        settings={{ launcher: "local", token_set: true }}
+        settings={{ launcher: null, token_set: true }}
         value={FORM}
         issues={NO_ISSUES}
         readOnly={false}
