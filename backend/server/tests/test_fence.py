@@ -202,6 +202,7 @@ def test_pull_fence_lifts_when_the_client_is_offline_90_s_after_the_result(
     assert waits_for(runs, second, first.run_id)
 
     reap(ctx, now + 120 * S)  # nothing heard from the client since `now`
+    assert runs.get(second).queue_reason is None  # gone before the client is back
     taken = lease(client, token, (first.job_id,))
     assert taken is not None
     assert taken.run_id == second

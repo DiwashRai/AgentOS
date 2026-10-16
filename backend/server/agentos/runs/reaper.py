@@ -190,7 +190,7 @@ class Reaper:
                     if job.status == "cancelled" and job.start == "push":
                         self._cancel(job)
                     if job_ended(job, now, self._status(job, now)):
-                        service.end_job(self.ctx.db, job.job_id, now)
+                        service.end_job(self.ctx.db, job.run_id, job.job_id, now)
                     continue
                 action = judge(job, now, self._status(job, now), self.ctx.mailbox is not None)
                 if action is not None and (ended := self._apply(job, action, now)):

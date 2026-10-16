@@ -461,6 +461,11 @@ def build_job(
     return job.id, token
 
 
+def fence_reason(run_id: int) -> str:
+    """The `queue_reason` of a run held by the fence of run `run_id`'s job."""
+    return f"waiting for run #{run_id}'s worker to stop"
+
+
 def _next_queued(
     conn: Conn, sql: str, param: str | int, now: datetime, providers: Collection[str] | None
 ) -> tuple[Row | None, list[tuple[str, int]]]:
@@ -470,7 +475,7 @@ def _next_queued(
     held: list[tuple[str, int]] = []
     for row in conn.execute(sql, (to_db(now), param)).fetchall():
         if row["fence"] is not None:
-            reason = f"waiting for run #{row['fence']}'s worker to stop"
+            reason = fence_reason(row["fence"])
         elif providers is not None and row["provider"] not in providers:
             runner = "mailbox" if row["report"] == "file" else row["provider"]
             reason = f"its runner ({runner}) is not configured on this server"
@@ -605,10 +610,15 @@ def active_jobs(db: Database) -> list[Row]:
     return rows
 
 
-def end_job(db: Database, job_id: str, now: datetime) -> None:
-    """The job's worker can no longer publish: the fence lifts for its ticket's next run."""
+def end_job(db: Database, run_id: int, job_id: str, now: datetime) -> None:
+    """The job's worker can no longer publish: the fence lifts for its ticket's next run, whose
+    reason naming this run goes at once (a pull run may wait for a lease that doesn't come)."""
     with db.tx() as conn:
         conn.execute("UPDATE jobs SET ended_at = ? WHERE id = ?", (to_db(now), job_id))
+        conn.execute(
+            "UPDATE runs SET queue_reason = NULL WHERE status = 'queued' AND queue_reason = ?",
+            (fence_reason(run_id),),
+        )
 
 
 def reap(
