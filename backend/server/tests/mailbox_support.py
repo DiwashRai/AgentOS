@@ -16,11 +16,14 @@ OUTBOX = "outbox.jsonl"
 
 class FakeMailbox:
     """Implements `launchers.mailbox.Mailbox` in memory. `statuses` maps a launch_ref to what
-    `status()` answers (an exception is raised); `fail_*` make a call raise."""
+    `status()` answers (an exception is raised), `job_lists` likewise for `jobs()` (no jobs
+    when unset); `fail_*` make a call raise."""
 
     def __init__(self) -> None:
         self.folders: dict[str, dict[str, bytes]] = {}
         self.statuses: dict[str, ActionsRun | Exception | None] = {}
+        self.job_lists: dict[str, dict[str, str] | Exception] = {}
+        self.job_checks: list[str] = []
         self.sent: list[tuple[int, str, bytes]] = []
         self.cancelled: list[str] = []
         self.deleted: list[str] = []
@@ -43,6 +46,13 @@ class FakeMailbox:
 
     def status(self, launch_ref: str) -> ActionsRun | None:
         answer = self.statuses.get(launch_ref)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def jobs(self, launch_ref: str) -> dict[str, str] | None:
+        self.job_checks.append(launch_ref)
+        answer = self.job_lists.get(launch_ref, {})
         if isinstance(answer, Exception):
             raise answer
         return answer
@@ -78,6 +88,9 @@ class FakeMailbox:
 
     def set_status(self, run_id: int, status: str, conclusion: str | None = None) -> None:
         self.statuses[self.ref_of(run_id)] = ActionsRun(status, conclusion)
+
+    def set_jobs(self, run_id: int, answer: dict[str, str] | Exception) -> None:
+        self.job_lists[self.ref_of(run_id)] = answer
 
     def put_outbox(self, run_id: int, data: bytes) -> None:
         self.folders.setdefault(self.folder_of(run_id), {})[OUTBOX] = data

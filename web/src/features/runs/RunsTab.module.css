@@ -386,17 +386,21 @@
 }
 
 .warning {
-  composes: box;
-  margin: var(--sp-2) 0;
-  padding-block: var(--sp-1);
-  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-1);
 }
 
-/* the manifest's warnings: the log's warning box at the meta size (after it, so it wins) */
+/* the manifest's warnings: a ruled box at the meta size */
 .callWarning {
-  composes: warning;
+  composes: box;
   margin: 0;
+  padding-block: var(--sp-1);
+  border-left: 2px solid var(--rule-strong);
   font-size: var(--fs-meta);
+}
+
+.warnLabel {
+  font-weight: 600;
+  color: var(--warn-text);
 }
 
 /* a check's verdict and its notes */

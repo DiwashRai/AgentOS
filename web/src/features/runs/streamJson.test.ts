@@ -143,6 +143,181 @@ describe("summariseStreamJson", () => {
   });
 });
 
+// Copilot CLI 1.0 `--output-format json`: one `{"type": "<area>.<event>", "data": {...}}` per line
+// (the sample run from backend/worker/worker_tests/test_worker_echo.py).
+const COPILOT = [
+  { type: "session.start", data: { sessionId: "x", selectedModel: "gpt-5" }, id: "1" },
+  { type: "user.message", data: { content: "Fix the login bug" } },
+  { type: "assistant.turn_start", data: { turnId: "0" } },
+  { type: "assistant.message_delta", data: { deltaContent: "I" }, ephemeral: true },
+  { type: "assistant.reasoning", data: { reasoningId: "r", content: "Glob first." } },
+  {
+    type: "assistant.message",
+    data: {
+      messageId: "m1",
+      content: "",
+      reasoningText: "Glob first.",
+      toolRequests: [{ toolCallId: "c1", name: "glob", arguments: {} }],
+    },
+  },
+  {
+    type: "tool.execution_start",
+    data: { toolCallId: "c1", toolName: "glob", arguments: { pattern: "**/*.py" } },
+  },
+  {
+    type: "tool.execution_complete",
+    data: { toolCallId: "c1", success: true, result: { content: "a.py\nb.py\nc.py" } },
+  },
+  {
+    type: "tool.execution_start",
+    data: { toolCallId: "c2", toolName: "bash", arguments: { command: "rm x" } },
+  },
+  {
+    type: "tool.execution_complete",
+    data: { toolCallId: "c2", success: false, error: { message: "permission denied" } },
+  },
+  { type: "assistant.message", data: { messageId: "m2", content: "All done." } },
+  { type: "assistant.turn_end", data: { turnId: "0" } },
+  { type: "session.shutdown", data: { totalPremiumRequests: 1 } },
+];
+
+describe("Copilot JSONL", () => {
+  it("a run reads as the session, the agent's text, its tool calls, failures and the end", () => {
+    expect(COPILOT.flatMap((e) => summariseStreamJson(JSON.stringify(e)) ?? [])).toEqual([
+      { kind: "session", text: "Session started · gpt-5" },
+      { kind: "tool", text: "glob · **/*.py" },
+      { kind: "tool", text: "bash · rm x" },
+      { kind: "toolError", text: "Tool error · permission denied" },
+      { kind: "agent", text: "All done." },
+      { kind: "result", text: "Result: done · 1 premium request" },
+    ]);
+  });
+
+  const one = (line: unknown) => summariseStreamJson(JSON.stringify(line));
+
+  it.each([
+    ["no model", { type: "session.start", data: "odd" }, "session", "Session started"],
+    [
+      "report_intent names its intent",
+      {
+        type: "tool.execution_start",
+        data: { toolName: "report_intent", arguments: { intent: "Exploring", description: "d" } },
+      },
+      "tool",
+      "report_intent · Exploring",
+    ],
+    ["unnamed tool", { type: "tool.execution_start", data: {} }, "tool", "tool"],
+    [
+      "a string error",
+      { type: "tool.execution_complete", data: { success: false, error: "nope\nmore" } },
+      "toolError",
+      "Tool error · nope",
+    ],
+    [
+      "no error text",
+      { type: "tool.execution_complete", data: { success: false } },
+      "toolError",
+      "Tool error",
+    ],
+    [
+      "session error",
+      { type: "session.error", data: { message: "boom" } },
+      "resultError",
+      "Error: boom",
+    ],
+    [
+      "abort",
+      { type: "abort", data: { reason: "user cancelled" } },
+      "resultError",
+      "Aborted: user cancelled",
+    ],
+    ["shutdown without a count", { type: "session.shutdown", data: {} }, "result", "Result: done"],
+    [
+      "plural requests",
+      { type: "session.shutdown", data: { totalPremiumRequests: 2.5 } },
+      "result",
+      "Result: done · 2.5 premium requests",
+    ],
+  ])("%s", (_name, line, kind, text) => {
+    expect(one(line)).toEqual([{ kind, text }]);
+  });
+
+  it.each([
+    ["successful tool result", { type: "tool.execution_complete", data: { success: true } }],
+    ["reasoning", { type: "assistant.reasoning", data: { content: "x" } }],
+    ["intent", { type: "assistant.intent", data: { intent: "Exploring" } }],
+    ["usage", { type: "assistant.usage", data: { outputTokens: 9 } }],
+    ["progress", { type: "tool.execution_progress", data: {} }],
+    ["an unknown ephemeral event", { type: "subagent.progress", ephemeral: true }],
+    ["a tools-only message", { type: "assistant.message", data: { content: "  " } }],
+  ])("%s is hidden", (_name, line) => {
+    expect(one(line)).toEqual([]);
+  });
+
+  it("an unknown event that isn't ephemeral is shown raw", () => {
+    expect(one({ type: "hook.start", data: {} })).toBeNull();
+  });
+
+  it("odd shapes don't throw", () => {
+    expect(one({ type: "tool.execution_complete", data: "odd", success: false })).toEqual([]);
+    expect(
+      one({ type: "tool.execution_complete", data: { success: false, error: "\nx" } }),
+    ).toEqual([{ kind: "toolError", text: "Tool error · x" }]);
+  });
+
+  it("ephemeral only hides unknown events: a known Claude line still reads", () => {
+    expect(one({ type: "result", subtype: "success", result: "Done.", ephemeral: true })).toEqual([
+      { kind: "result", text: "Result: Done." },
+    ]);
+  });
+
+  describe("workflow.result", () => {
+    const wf = (run: unknown, name: unknown = "fix-login") =>
+      one({ type: "workflow.result", data: { name, run } });
+
+    it("completed shows the run's result; error is flagged with why it failed", () => {
+      expect(wf({ status: "completed", result: "Tests pass.\nmore" })).toEqual([
+        { kind: "result", text: "Result: fix-login completed · Tests pass." },
+      ]);
+      expect(wf({ status: "error", result: "partial", error: { message: "API 401" } })).toEqual([
+        { kind: "resultError", text: "Result: fix-login error · API 401" },
+      ]);
+      expect(wf({ status: "error", failure: "tool crashed" })).toEqual([
+        { kind: "resultError", text: "Result: fix-login error · tool crashed" },
+      ]);
+    });
+
+    it("a stop that isn't an error says why, without the error flag", () => {
+      for (const status of ["halted", "paused", "cancelled"]) {
+        expect(wf({ status, reason: "waiting for input" })).toEqual([
+          { kind: "result", text: `Result: fix-login ${status} · waiting for input` },
+        ]);
+      }
+    });
+
+    it("blank fields count as missing, and the detail skips leading blank lines", () => {
+      expect(wf({ status: "halted", result: " ", reason: "\nwaiting" })).toEqual([
+        { kind: "result", text: "Result: fix-login halted · waiting" },
+      ]);
+      expect(wf({ status: "error", error: {}, failure: "", reason: "quota" })).toEqual([
+        { kind: "resultError", text: "Result: fix-login error · quota" },
+      ]);
+    });
+
+    it("a status it doesn't know is flagged, as a Claude result that isn't success is", () => {
+      expect(wf({ status: "failed" })?.[0]?.kind).toBe("resultError");
+    });
+
+    it("missing parts fall back", () => {
+      expect(one({ type: "workflow.result", data: "odd" })?.[0]?.kind).toBe("result");
+      expect(wf(undefined, null)).toEqual([{ kind: "result", text: "Result: done" }]);
+      expect(wf({ status: "completed" }, 3)).toEqual([
+        { kind: "result", text: "Result: completed" },
+      ]);
+    });
+  });
+});
+
 describe("helpers", () => {
   it("oneLine keeps the first line and cuts long text", () => {
     expect(oneLine("a\nb")).toBe("a");

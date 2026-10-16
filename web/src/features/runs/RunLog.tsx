@@ -97,6 +97,7 @@ export function RunLog({ runId, active, queued, stageName, delivery, liveHref }:
       >
         {lines.map((l) => (
           <div key={l.key} className={cx(s.line, s[l.kind])} title={timeOf(l.ts)}>
+            {l.kind === "warning" ? <span className={s.warnLabel}>Warning: </span> : null}
             {l.text}
             {l.truncated ? <span className={s.trunc}> (truncated)</span> : null}
           </div>
