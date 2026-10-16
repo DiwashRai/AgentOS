@@ -3084,14 +3084,53 @@ def _take_lock(lock: IO[bytes], wait: bool) -> bool:
 def hold_lock(path: Path) -> IO[bytes]:
     """Open `path` (created if missing) and take an exclusive OS lock on it, waiting while
     another holder has it (a client looking: `lock_held`). The lock lasts while the file stays
-    open, and the OS releases it when the process ends, however it ends."""
-    lock = path.open("a+b")
+    open, and the OS releases it when the process ends, however it ends.
+
+    POSIX: a file opened just before a cleanup deleted it (`remove_free_lock`) would be locked
+    where no client looks, so it checks the path still names the file it locked, and starts over
+    if not. Windows can't delete an open file."""
+    while True:
+        lock = path.open("a+b")
+        try:
+            _take_lock(lock, wait=True)
+            stale = sys.platform != "win32" and not _names(path, lock)
+        except BaseException:
+            lock.close()
+            raise
+        if not stale:
+            return lock
+        release_lock(lock)
+
+
+def _names(path: Path, lock: IO[bytes]) -> bool:
+    """Whether `path` is the open file `lock` (same device and inode)."""
     try:
-        _take_lock(lock, wait=True)
-    except BaseException:
+        there = path.stat()
+    except FileNotFoundError:
+        return False
+    held = os.fstat(lock.fileno())
+    return (held.st_dev, held.st_ino) == (there.st_dev, there.st_ino)
+
+
+def remove_free_lock(path: Path) -> bool:
+    """Delete a lock file no worker holds; False if one does. POSIX: unlink while holding its
+    lock (a worker that opened it just before starts over, `hold_lock`). Windows: release, then
+    unlink, which fails (OSError) if a worker opened it in between."""
+    try:
+        lock = path.open("a+b")
+    except OSError:
+        return False
+    if not _take_lock(lock, wait=False):
         lock.close()
-        raise
-    return lock
+        return False
+    try:
+        if sys.platform != "win32":
+            path.unlink()
+    finally:
+        release_lock(lock)
+    if sys.platform == "win32":
+        path.unlink()
+    return True
 
 
 def release_lock(lock: IO[bytes]) -> None:
@@ -3239,13 +3278,14 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
     for child in children:
         if not _RUN_ENTRY_RE.fullmatch(child.name):
             continue
-        if child.suffix == ".lock" and lock_held(child):
-            continue  # its worker still runs
         try:
             st = child.lstat()
             if st.st_mtime >= cutoff:
                 continue
-            if stat.S_ISDIR(st.st_mode) and not is_link(st):
+            if child.suffix == ".lock":
+                if not remove_free_lock(child):
+                    continue  # its worker still runs
+            elif stat.S_ISDIR(st.st_mode) and not is_link(st):
                 remove_tree(child)
             else:
                 child.unlink()
