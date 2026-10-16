@@ -376,7 +376,7 @@ def test_client_runs_gate_edit_continue_while_the_provider_serves_server_runs(
     assert_clean_branch(ann.remote, key)
 
     # Bob's client never got Ann's runs; no client took the server run.
-    assert list(bob.logs.iterdir()) == []  # no run workspace or log
+    assert [p.name for p in bob.logs.iterdir()] == ["client.lock"]  # no run workspace or log
     assert anns.proc.poll() is None
     assert bobs.proc.poll() is None
     server_detail = ann.run(server_run.id)

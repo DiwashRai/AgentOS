@@ -120,6 +120,7 @@ CLIENT_REAP_S = 1.0  # with every slot busy, look for finished workers this ofte
 CLIENT_HEARTBEAT_S = 30.0  # with every slot busy, a no-take lease this often keeps it online
 WORKSPACE_MAX_AGE_S = 7 * 24 * 3600.0  # older run workspaces and logs go at client startup
 CLIENT_RUNS_DIR = "runs"  # under --workdir-root: the run workspaces and logs, all the client owns
+CLIENT_LOCK = "client.lock"  # in CLIENT_RUNS_DIR: held by the one client on that root
 LEASE_LIST_MAX = 100  # a lease's `alive` and `gone` hold at most this many (models.LeaseRequest)
 # Lease answers worth retrying; any other 4xx (a revoked token, a newer protocol) stops the client.
 CLIENT_TRANSIENT_4XX = frozenset({408, 425, 429})
@@ -3316,7 +3317,8 @@ def run_client(
 
     Everything it writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs there with
     `--workdir <root>/runs/<run_id>` and `--lock-file <root>/runs/<job id>.lock`, logs to
-    `<run_id>.log` and gets its job token in child_env."""
+    `<run_id>.log` and gets its job token in child_env. It holds `<root>/runs/client.lock`
+    (CLIENT_LOCK) for its whole life; a second client on that root exits 2."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -3333,6 +3335,12 @@ def run_client(
     except OSError as exc:
         say(f"cannot create {runs}: {exc}")
         return 1
+    # One client per root, for its whole life: another would misread this one's workers' locks.
+    client_lock = (runs / CLIENT_LOCK).open("a+b")
+    if not _take_lock(client_lock, wait=False):
+        client_lock.close()
+        say(f"another client already runs on {root}; stop it or choose another --workdir-root")
+        return 2
 
     removed = clean_workdir_root(root, time.time())
     if removed:
@@ -3415,6 +3423,8 @@ def run_client(
     except KeyboardInterrupt:
         say("client stopped; started workers keep running")
         return 130
+    finally:
+        release_lock(client_lock)
 
 
 # ---------------------------------------------------------------- entry point

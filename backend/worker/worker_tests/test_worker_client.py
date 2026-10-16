@@ -411,6 +411,24 @@ def test_a_worker_whose_process_exits_while_its_lock_is_held_stays_alive(
     assert listed == [([], []), ([job_id(5)], []), ([], [job_id(5)])]
 
 
+def test_one_client_per_root(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = tmp_path / "ws" / "runs"
+    runs.mkdir(parents=True)
+    first = worker.hold_lock(runs / "client.lock")  # a client already runs on this root
+    try:
+        assert run_client(server, tmp_path / "ws") == 2
+    finally:
+        worker.release_lock(first)
+    assert leases(server) == 0
+
+    monkeypatch.setenv("AGENTOS_CLIENT_TOKEN", CLIENT_TOKEN)  # main pops it
+    answer_leases(server, [])
+    assert run_client(server, tmp_path / "ws") == 1
+    assert not worker.lock_held(runs / "client.lock")  # released when the client stops
+
+
 @pytest.mark.parametrize("end", ["exit", "kill"])
 def test_a_run_worker_holds_its_lock_until_its_process_ends(
     server: FakeServer, tmp_path: Path, end: str
