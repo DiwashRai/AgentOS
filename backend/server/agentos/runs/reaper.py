@@ -16,8 +16,7 @@ Each tick (every INTERVAL_S), job by job, the first rule that applies wins:
 A user-cancelled push job is cancelled at its provider before that. Each provider cancel is asked
 once per job per process, best effort. File-report jobs get rule 1 only (the mailbox reaper
 watches them); with no mailbox configured, one past its `not_after` is failed UNWATCHED. Queued
-runs are never touched. A push job's status is polled at most every
-STATUS_EVERY.
+runs are never touched. A push job's status is polled at most every STATUS_EVERY.
 
 An ended run's job gets `ended_at` once `job_ended` (lifting the fence for its ticket's next
 run); a cancelled push job is cancelled at its provider first.

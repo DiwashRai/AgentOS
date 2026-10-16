@@ -445,8 +445,7 @@ DispatchTarget = Literal["server", "client"]
 # owner's client leases it), by live (HTTP) or file (a mailbox) reporting. Pull + file is refused.
 StartMode = Literal["push", "pull"]
 ReportMode = Literal["live", "file"]
-# Why a run (and its job) was asked to stop: the user's cancel, its time budget, or it never
-# started.
+# Why a run (and its job) was asked to stop: a user's cancel, its time budget, or never started.
 StopReason = Literal["cancel", "budget", "never_started"]
 
 
@@ -476,9 +475,9 @@ class RunSummary(ApiModel):
     # Why a queued run waits (e.g. for the previous run's worker to stop); null otherwise.
     queue_reason: str | None
     error: str | None
-    # Informational: a PID (local), the Actions run URL (github), the client's name (client).
+    # Informational: the Actions run URL (github), the client's name (client).
     launch_ref: str | None
-    # The provider's page for this run (the GitHub Actions run); null for local and client runs.
+    # The provider's page for this run (the GitHub Actions run); null for client runs.
     launch_url: str | None
     # When the run's events arrive: "live" as the worker sends them, or "at_end" (a mailbox run:
     # its logs and stage progress land when the GitHub job finishes; launch_url shows it live).

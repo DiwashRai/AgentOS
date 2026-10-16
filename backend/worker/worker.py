@@ -44,8 +44,7 @@ with the workdir untouched. Failure paths after it:
 Mailbox mode (`--manifest PATH --outbox PATH --workdir PATH`, for runners that can't reach the
 server): no HTTP. The package comes from a file, and the journal is recorded as worker API calls,
 one JSONL line each, in the outbox (see Recorder), which the server replays later. Nothing
-answers, so there is no cancel and the only run-gone is `not_after`; a failed outbox write
-counts as unreachable.
+answers, so no cancel; the only run-gone is `not_after`; a failed outbox write is unreachable.
 
 Client mode (`--client --server URL`, the client token in AGENTOS_CLIENT_TOKEN, for a user's own
 machine): long-polls POST /api/worker/lease for the jobs of the runs its user dispatched to their
@@ -2437,15 +2436,11 @@ class Run:
             return f"cannot install the pre-push hook: {exc}"
         name = os.environ.get("AGENTOS_GIT_NAME") or "AgentOS"
         email = os.environ.get("AGENTOS_GIT_EMAIL") or "agentos@localhost"
-        settings = (
-            ("user.name", name),
-            ("user.email", email),
-            ("core.hooksPath", hooks.as_posix()),
-        )
-        for setting, value in settings:
-            r = self._git("config", setting, value)
+        path = hooks.as_posix()
+        for key, value in (("user.name", name), ("user.email", email), ("core.hooksPath", path)):
+            r = self._git("config", key, value)
             if r.code:
-                return f"git config {setting} failed: {r.tail()}"
+                return f"git config {key} failed: {r.tail()}"
         return None
 
     def _setup_github(self, repo_url: str) -> str | None:

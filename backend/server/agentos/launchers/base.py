@@ -8,7 +8,6 @@ jobs itself; the server sets no concurrency limit.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal, Protocol
 
 State = Literal["pending", "running", "ended", "unknown"]
@@ -30,11 +29,10 @@ class JobStart:
 
 @dataclass(frozen=True, slots=True)
 class JobStatus:
-    """The state of the job that runs the worker. `since`: when it got a machine; `detail`: the
-    conclusion once ended, or why the state is unknown."""
+    """The state of the job that runs the worker. `detail`: the conclusion once ended, or why the
+    state is unknown."""
 
     state: State
-    since: datetime | None = None
     detail: str | None = None
 
 

@@ -8,7 +8,6 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -320,20 +319,16 @@ GHES_RUN = "https://ghe.corp/DiwashRai/AgentOS/actions/runs/555"
 # ---------------------------------------------------------------- status and cancel
 
 
-def _at(hms: str) -> datetime:
-    return datetime.fromisoformat(f"2026-10-16T{hms}").replace(tzinfo=UTC)
-
-
 @pytest.mark.parametrize(
     ("recorded", "expected"),
     [
         ("worker_no_jobs_yet", JobStatus("pending")),
         ("worker_queued", JobStatus("pending")),  # a queued job has a started_at too
-        ("worker_in_progress", JobStatus("running", since=_at("09:02:10"))),
+        ("worker_in_progress", JobStatus("running")),
         ("worker_completed", JobStatus("ended", detail="success")),
         ("mailbox_fetch_running", JobStatus("pending")),  # the work job, not the run
         # work completed while publish waits (e.g. on its environment's approval): not ended
-        ("mailbox_publish_waiting", JobStatus("running", since=_at("10:00:31"))),
+        ("mailbox_publish_waiting", JobStatus("running")),
         ("mailbox_completed", JobStatus("ended", detail="failure")),
     ],
 )

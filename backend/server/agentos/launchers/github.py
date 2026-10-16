@@ -14,7 +14,7 @@ REST facts (docs.github.com, checked 2026-10-11):
 - GHES may predate both; a 204 is still handled (ref = the workflow's runs page, naming no run).
 - Fine-grained PAT: repository permission "Actions: write" on the one repo.
 - `GET .../actions/runs/{id}/jobs` lists the latest attempt's jobs (`name`, `status`,
-  `conclusion`, `started_at`); `POST .../actions/runs/{id}/cancel` answers 202, or 409 once the
+  `conclusion`); `POST .../actions/runs/{id}/cancel` answers 202, or 409 once the
   run has finished.
 
 Mailbox mode (`launchers/mailbox.py`) dispatches with its own inputs (`dispatch()`). `status` and
@@ -29,7 +29,6 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -150,7 +149,7 @@ class GitHubActionsProvider:
             return JobStatus("ended", detail=conclusion if isinstance(conclusion, str) else None)
         if work.get("status", "queued") in _WAITING:
             return JobStatus("pending")
-        return JobStatus("running", since=_time(work.get("started_at")))
+        return JobStatus("running")
 
     def cancel(self, ref: str) -> None:
         """Ask GitHub to cancel the run `ref` names (no-op if it names none). 202 and 409
@@ -246,14 +245,6 @@ def _html_url(resp: httpx.Response) -> str | None:
     if isinstance(url, str) and urlsplit(url).scheme in ("http", "https"):
         return url
     return None
-
-
-def _time(value: object) -> datetime | None:
-    """A GitHub timestamp (`2026-10-16T09:00:00Z`), or None if it isn't one."""
-    try:
-        return datetime.fromisoformat(value) if isinstance(value, str) else None
-    except ValueError:
-        return None
 
 
 def _refused(resp: httpx.Response, secrets: tuple[str, ...]) -> ProviderError:
