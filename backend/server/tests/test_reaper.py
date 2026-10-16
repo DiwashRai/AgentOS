@@ -9,11 +9,11 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from agentos.clock import to_db, utcnow
+from agentos.clock import from_db, to_db, utcnow
 from agentos.context import AppContext
 from agentos.launchers.base import JobStatus
 from agentos.models import LeaseResponse, Me, TicketDetail
-from agentos.runs.reaper import Reaper
+from agentos.runs.reaper import UNWATCHED, Reaper
 from agentos.runs.service import NEVER_STARTED, OVER_BUDGET
 from tests.mailbox_support import FakeMailbox
 from tests.run_support import CSRF, FakeProvider, RunDriver, Worker, bearer
@@ -335,6 +335,26 @@ def test_a_running_file_run_is_left_to_the_mailbox_whatever_the_settings(
     )
     assert reaper.tick(now) == []
     assert runs.db_run(worker.run_id)["status"] == "running"
+
+
+@pytest.mark.parametrize("mailbox", [False, True])
+def test_with_no_mailbox_a_running_file_run_fails_past_its_not_after(
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    reaper: Reaper,
+    mailbox: bool,
+) -> None:
+    worker = runs.start(create_ticket(repo=None).key)
+    runs.ctx.mailbox = FakeMailbox() if mailbox else None
+    runs.set_run(worker.run_id, report="file")
+    with runs.ctx.db.read() as conn:
+        row = conn.execute("SELECT not_after FROM jobs WHERE run_id = ?", (worker.run_id,))
+        not_after = from_db(row.fetchone()["not_after"])
+
+    assert armed(reaper, not_after).tick(not_after) == []
+    late = not_after + timedelta(seconds=15)
+    assert reaped(reaper, late) == ([] if mailbox else [(worker.run_id, "failed", UNWATCHED)])
 
 
 def test_terminal_runs_are_never_touched(side: Side, runs: RunDriver, reaper: Reaper) -> None:

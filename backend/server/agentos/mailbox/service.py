@@ -19,7 +19,7 @@ from typing import Any, BinaryIO, Literal
 
 from pydantic import TypeAdapter, ValidationError
 
-from agentos.clock import from_db_opt, utcnow
+from agentos.clock import from_db, from_db_opt, utcnow
 from agentos.db import Database
 from agentos.models import JournalRecord, Route, RunStatus
 from agentos.runs.service import STOPPED, finish
@@ -47,8 +47,8 @@ class MailboxRun:
     id: int
     job_hex: str  # the random part of its job id, which names its folder
     launch_ref: str | None
-    started_at: datetime | None
-    time_budget_s: int
+    started_at: datetime  # when the server started it
+    not_after: datetime  # its job's: the worker publishes nothing after it
     stop_requested_at: datetime | None
 
 
@@ -60,7 +60,7 @@ def running_runs(db: Database) -> list[MailboxRun]:
     with db.read() as conn:
         rows = conn.execute(
             "SELECT r.id, substr(j.id, -16) AS job_hex, r.launch_ref, r.started_at, "
-            "r.time_budget_s, r.stop_requested_at FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "j.not_after, r.stop_requested_at FROM runs r JOIN jobs j ON j.run_id = r.id "
             "WHERE r.report = 'file' AND r.status = 'running' ORDER BY r.id"
         ).fetchall()
     return [
@@ -68,8 +68,8 @@ def running_runs(db: Database) -> list[MailboxRun]:
             id=r["id"],
             job_hex=r["job_hex"],
             launch_ref=r["launch_ref"],
-            started_at=from_db_opt(r["started_at"]),
-            time_budget_s=r["time_budget_s"],
+            started_at=from_db(r["started_at"]),
+            not_after=from_db(r["not_after"]),
             stop_requested_at=from_db_opt(r["stop_requested_at"]),
         )
         for r in rows

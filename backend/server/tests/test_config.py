@@ -188,9 +188,9 @@ def test_mailbox_launcher_needs_the_github_token_and_artifactory(tmp_path: Path)
     found = problems(make(tmp_path, launcher="mailbox"))
     assert found == [
         "AGENTOS_GITHUB_TOKEN is required with AGENTOS_LAUNCHER=mailbox",
-        "AGENTOS_ARTIFACTORY_URL is required with AGENTOS_LAUNCHER=mailbox",
-        "AGENTOS_ARTIFACTORY_USER is required with AGENTOS_LAUNCHER=mailbox",
-        "AGENTOS_ARTIFACTORY_PASSWORD is required with AGENTOS_LAUNCHER=mailbox",
+        "AGENTOS_ARTIFACTORY_URL is required for the mailbox",
+        "AGENTOS_ARTIFACTORY_USER is required for the mailbox",
+        "AGENTOS_ARTIFACTORY_PASSWORD is required for the mailbox",
     ]
     startup_checks(make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY))  # noqa: S106 - fake
 
@@ -217,14 +217,18 @@ def test_mailbox_artifactory_url_must_be_https_with_a_repo(tmp_path: Path, url: 
     assert "s3cret-pw" not in found[0]
 
 
-def test_mailbox_launcher_is_built_from_settings(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("launcher", "report"), [("mailbox", "file"), ("github", "live")])
+def test_a_mailbox_store_is_built_whatever_the_launcher(
+    tmp_path: Path, launcher: str, report: str
+) -> None:
+    """With the store configured, file runs keep their loops after the launcher changes."""
     ctx = build_context(
-        make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY)  # noqa: S106 - fake
+        make(tmp_path, launcher=launcher, github_token="t0ken", **ARTIFACTORY)  # noqa: S106 - fake
     )
     assert isinstance(ctx.mailbox, MailboxLauncher)
     assert ctx.providers == {"github": ctx.mailbox.github}
     assert isinstance(ctx.mailbox.github, GitHubActionsProvider)
-    assert ctx.route == ("push", "github", "file")
+    assert ctx.route == ("push", "github", report)
 
 
 def test_no_launcher_starts_no_workers(tmp_path: Path) -> None:

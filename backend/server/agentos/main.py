@@ -61,10 +61,13 @@ async def _every(
 
 
 def _loops(ctx: AppContext, stop: asyncio.Event) -> list[Coroutine[Any, Any, None]]:
-    """The background loops: the runs reaper always; the runs dispatcher, or with the mailbox
-    the mailbox dispatcher and reaper instead."""
+    """The background loops: the runs dispatcher and reaper always, plus the mailbox dispatcher
+    and reaper with a mailbox store. Each takes only the runs whose stored route is its own."""
     reaper = Reaper(ctx)
-    loops = [_every("reaper", REAPER_INTERVAL_S, lambda: reaper.tick(utcnow()), stop)]
+    loops = [
+        _every("reaper", REAPER_INTERVAL_S, lambda: reaper.tick(utcnow()), stop),
+        _every("dispatcher", dispatcher.INTERVAL_S, lambda: dispatcher.tick(ctx), stop),
+    ]
     mailbox = ctx.mailbox
     if mailbox is not None:
         mailbox_reaper = MailboxReaper(ctx, mailbox)
@@ -82,10 +85,6 @@ def _loops(ctx: AppContext, stop: asyncio.Event) -> list[Coroutine[Any, Any, Non
                 stop,
             ),
         ]
-    else:
-        loops.append(
-            _every("dispatcher", dispatcher.INTERVAL_S, lambda: dispatcher.tick(ctx), stop)
-        )
     return loops
 
 

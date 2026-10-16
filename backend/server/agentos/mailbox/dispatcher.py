@@ -1,7 +1,7 @@
-"""Mailbox dispatcher (`design/mailbox.md` §3.2): replaces `runs.dispatcher.tick` when
-AGENTOS_LAUNCHER=mailbox.
+"""Mailbox dispatcher (`design/mailbox.md` §3.2): beside `runs.dispatcher.tick` whenever a
+mailbox store is configured, it takes only the queued runs whose route reports through a file.
 
-The runner can't reach the server, so the server dispatches each queued run with a file-report
+The runner can't reach the server, so the server dispatches each such run with a file-report
 job, starts it itself (`dispatched → running`, no worker binds to it), sends the job's package
 through the mailbox and stores the Actions run URL. The job token is never kept in plaintext.
 """

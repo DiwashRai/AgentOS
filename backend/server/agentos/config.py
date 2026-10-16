@@ -68,9 +68,9 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     github_api_url: str = "https://api.github.com"  # GHES: https://<host>/api/v3
     github_api_version: str = "2022-11-28"
-    # AGENTOS_LAUNCHER=mailbox (design/mailbox.md): runs are dispatched as with `github`, but the
-    # manifest and the worker's results travel through an Artifactory folder
-    # (https://<host>/artifactory/<repo>/<folder>, the same string as the runner repo's variable).
+    # The mailbox store (design/mailbox.md, `mailbox_store`): file-report runs are dispatched as
+    # with `github`, but the manifest and the worker's results travel through an Artifactory
+    # folder (https://<host>/artifactory/<repo>/<folder>, the runner repo variable's string).
     artifactory_url: str | None = None
     artifactory_user: str | None = None
     artifactory_password: SecretStr | None = None
@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     def effective_worker_url(self) -> str:
         """What workers dial: WORKER_URL, defaulting to PUBLIC_URL."""
         return self.worker_url or self.public_url
+
+    @property
+    def mailbox_store(self) -> bool:
+        """AGENTOS_LAUNCHER=mailbox, or another launcher with AGENTOS_ARTIFACTORY_URL."""
+        return self.launcher == "mailbox" or bool(self.launcher and self.artifactory_url)
 
     @property
     def db_path(self) -> Path:
@@ -153,7 +158,7 @@ def _jira_service_problems(settings: Settings) -> list[str]:
 
 
 def _artifactory_problems(settings: Settings) -> list[str]:
-    """AGENTOS_LAUNCHER=mailbox: all three Artifactory vars, and an https URL with an
+    """The mailbox store: all three Artifactory vars, and an https URL with an
     `/artifactory/<repo>` path. Problems never quote the password."""
     password = settings.artifactory_password
     values = {
@@ -162,7 +167,7 @@ def _artifactory_problems(settings: Settings) -> list[str]:
         "AGENTOS_ARTIFACTORY_PASSWORD": password.get_secret_value() if password else None,
     }
     problems = [
-        f"{name} is required with AGENTOS_LAUNCHER=mailbox"
+        f"{name} is required for the mailbox"
         for name, value in values.items()
         if value is None or not value.strip()
     ]
@@ -215,7 +220,7 @@ def startup_checks(settings: Settings) -> None:
             )
         if problem := _url_problem("AGENTOS_GITHUB_API_URL", settings.github_api_url):
             problems.append(problem)
-    if settings.launcher == "mailbox":
+    if settings.mailbox_store:
         problems.extend(_artifactory_problems(settings))
 
     if problems:

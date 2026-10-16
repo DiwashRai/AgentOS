@@ -1,18 +1,19 @@
-"""Mailbox reaper (`design/mailbox.md` §4, §5 as amended by D3-D6, D9): watches running mailbox
-runs through GitHub and the store, replays results, and ends runs that can't finish.
+"""Mailbox reaper (`design/mailbox.md` §4, §5 as amended by D3-D6, D9): watches running
+file-report runs (whatever the launcher setting) through GitHub and the store, replays results,
+and ends runs that can't finish.
 
-Per running mailbox run, each tick, in this order (each run on its own: an error is logged and the
-next run is checked):
+Per running file-report run, each tick, in this order (each run on its own: an error is logged
+and the next run is checked):
 1. A cancel was requested → cancel the Actions run, once per run per process.
 2. Ask GitHub for the work job's status (`JobStatus`; unknown also for no run URL or a
    MailboxError).
 3. The outbox is in the store → replay it (an unexpected error fails the run).
 4. The job has ended (every job of the Actions run completed) and there is no outbox →
    cancelled (if requested) or failed.
-5. The work job is still pending past the claim timeout → cancel + failed.
-6. Past `started_at + time_budget_s + BUDGET_GRACE + claim_timeout_s` → cancel + failed.
+5. The work job is still pending past the start timeout → cancel + failed "never started".
+6. Past its job's `not_after` → cancel + failed "time budget exceeded".
 7. The status is unknown and a cancel was requested over CANCEL_GRACE ago → cancelled.
-8. No launch_ref LAUNCH_GRACE after the start (the server died mid-launch) → failed.
+8. No launch_ref START_GRACE after the start (the server died mid-launch) → failed.
 A store error while fetching the outbox leaves only the time rules (6, 7) for that tick. The
 run's folder is deleted after every replay and every end. Once an hour, folders of runs that
 aren't active on this server are deleted (the sweep).
@@ -39,16 +40,14 @@ from agentos.launchers.mailbox import (
     run_folder,
 )
 from agentos.mailbox import service
-from agentos.runs.service import BUDGET_GRACE, OVER_BUDGET
+from agentos.runs.reaper import START_GRACE, START_INTERRUPTED
+from agentos.runs.service import NEVER_STARTED, OVER_BUDGET
 
 log = logging.getLogger(__name__)
 
 INTERVAL_S = 20.0
 CANCEL_GRACE = timedelta(minutes=15)  # only while GitHub can't tell us the run's status (D5)
-LAUNCH_GRACE = timedelta(minutes=15)  # well above a bounded send() (D4)
 SWEEP_EVERY = timedelta(hours=1)
-NOT_PICKED_UP = "no runner picked up the GitHub job"
-LAUNCH_INTERRUPTED = "launch interrupted"
 TOO_LARGE = "the run's results are over 512 MiB"
 _FOLDER = re.compile(RUN_FOLDER_PATTERN)
 
@@ -111,7 +110,7 @@ class MailboxReaper:
             except MailboxError as exc:
                 log.warning("mailbox reaper: run %s: cannot fetch the outbox: %s", run.id, exc)
                 outbox_known = False
-        claim_timeout = timedelta(seconds=self.ctx.space.claim_timeout_s)
+        start_timeout = timedelta(seconds=self.ctx.space.claim_timeout_s)
         if outbox_known and status is not None:
             # 4. the job ended without results
             if status.state == "ended":
@@ -124,35 +123,21 @@ class MailboxReaper:
                     f"GitHub job ended ({status.detail or 'no conclusion'}) without sending "
                     "results; see the GitHub run",
                 )
-            # 5. never picked up
-            if (
-                status.state == "pending"
-                and run.started_at is not None
-                and now - run.started_at > claim_timeout
-            ):
+            # 5. never picked up (a finished work job whose publish job waits is running)
+            if status.state == "pending" and now > run.started_at + start_timeout:
                 self._cancel(run.id, ref)
-                return self._end(run.id, folder, "failed", NOT_PICKED_UP)
-        # 6. over budget (the claim timeout is the queue allowance: started_at = launch time)
-        if run.started_at is not None:
-            budget = timedelta(seconds=run.time_budget_s) + BUDGET_GRACE + claim_timeout
-            if now > run.started_at + budget:
-                self._cancel(run.id, ref)
-                return self._end(run.id, folder, "failed", OVER_BUDGET)
+                return self._end(run.id, folder, "failed", NEVER_STARTED)
+        # 6. over budget: the worker publishes nothing after its not_after
+        if now > run.not_after:
+            self._cancel(run.id, ref)
+            return self._end(run.id, folder, "failed", OVER_BUDGET)
         # 7. a cancel GitHub can't confirm
-        if (
-            run.stop_requested_at is not None
-            and status is None
-            and now > run.stop_requested_at + CANCEL_GRACE
-        ):
+        stop = run.stop_requested_at
+        if stop is not None and status is None and now > stop + CANCEL_GRACE:
             return self._end(run.id, folder, "cancelled", None)
         # 8. the server died between the start and storing the launch_ref
-        if (
-            outbox_known
-            and ref is None
-            and run.started_at is not None
-            and now > run.started_at + LAUNCH_GRACE
-        ):
-            return self._end(run.id, folder, "failed", LAUNCH_INTERRUPTED)
+        if outbox_known and ref is None and now > run.started_at + START_GRACE:
+            return self._end(run.id, folder, "failed", START_INTERRUPTED)
         return None
 
     def _replay(self, run_id: int, folder: str, outbox: Path) -> Outcome:

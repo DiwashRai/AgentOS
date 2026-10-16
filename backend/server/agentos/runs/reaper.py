@@ -15,7 +15,8 @@ Each tick (every INTERVAL_S), job by job, the first rule that applies wins:
    cancelled at the provider.
 A user-cancelled push job is cancelled at its provider before that. Each provider cancel is asked
 once per job per process, best effort. File-report jobs get rule 1 only (the mailbox reaper
-watches them), and queued runs are never touched. A push job's status is polled at most every
+watches them); with no mailbox configured, one past its `not_after` is failed UNWATCHED. Queued
+runs are never touched. A push job's status is polled at most every
 STATUS_EVERY.
 
 An ended run's job gets `ended_at` once `job_ended` (lifting the fence for its ticket's next
@@ -49,6 +50,7 @@ STOP_GRACE = timedelta(minutes=2)
 STATUS_EVERY = timedelta(seconds=60)
 START_INTERRUPTED = "start interrupted"
 WORKER_LOST = "worker lost"
+UNWATCHED = "its runner is no longer configured"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,15 +96,15 @@ class Reaped:
     reason: str
 
 
-def judge(job: JobFacts, now: datetime, status: JobStatus | None) -> Action | None:
+def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool) -> Action | None:
     """Rules 1-5 for one job, in order; None leaves it. `status` is its provider's answer (push
-    only; None when there is none)."""
+    only; None when there is none); `mailbox`: a mailbox store watches the file-report jobs."""
     push = job.start == "push"
     if job.status == "dispatched" and push and job.ref is None:
         late = now > job.dispatched_at + START_GRACE
         return Action("failed", START_INTERRUPTED) if late else None
     if job.report == "file":
-        return None
+        return Action("failed", UNWATCHED) if not mailbox and now > job.not_after else None
 
     if job.status == "dispatched":
         running = status is not None and status.state == "running"
@@ -191,7 +193,7 @@ class Reaper:
                     if job_ended(job, now, self._status(job, now)):
                         service.end_job(self.ctx.db, job.job_id, now)
                     continue
-                action = judge(job, now, self._status(job, now))
+                action = judge(job, now, self._status(job, now), self.ctx.mailbox is not None)
                 if action is not None and (ended := self._apply(job, action, now)):
                     reaped.append(ended)
             except Exception:
