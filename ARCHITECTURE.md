@@ -15,7 +15,7 @@ flowchart LR
   C["Client: worker.py --client<br/>(a user's own machine)"] -- "poll (client token)" --> S
   C -- "starts one per run" --> W
   W -- "claim / events / sync / complete" --> S
-  W -- "argv from manifest" --> A["agent CLI (claude) / shell"]
+  W -- "argv from the job package" --> A["agent CLI (claude) / shell"]
   W -- "clone, commit, push" --> G[("git remote")]
   S -- "login / import / intake" --> J["Jira adapter<br/>sources/jira.py"]
 ```
@@ -44,7 +44,7 @@ flowchart LR
 - **Deliberate denormalisations, each with a reason:**
   - `tickets.pipeline` is a JSON copy of the template's pipeline, guarded by `pipeline_version`. Each ticket can enable or disable stages and gates without forking a template. Where: `tickets/service.py` `ticket_pipeline()`.
   - `tickets.tasks_done/tasks_total` are cached from `TASKS.md` on every version write, so lists never parse files. `write_version()` is the one write path, which keeps the cache in step. Where: `files/service.py` `write_version()`, `pipeline/plan.py` `parse_plan()`.
-  - `runs.manifest` stores exactly what was sent at claim, so a run can be inspected and a claim retry is idempotent.
+  - `runs.manifest` stores exactly the job package sent at claim, so a run can be inspected (`GET /api/runs/{id}/manifest`, 404 for a run stored under an older protocol), a claim retry is idempotent and sync checks paths against it.
   - `tickets.pr_url` holds the last PR a worker reported.
 - **Some tables are append-only.**
   - `templates`: the current template is `max(version)` per name. A ticket's scaffold is rendered from the current version at creation and never linked afterwards, so a template edit only affects new tickets. Where: `templates/service.py`.
@@ -60,7 +60,7 @@ flowchart LR
 - **A run executes one segment:** the enabled stages from `from_stage` up to and including the first `gate_after`, or to the end. Disabled stages, and their gates, are skipped. Where: `pipeline/segment.py` `segment()`, `check_segment()`.
 - **When the worker reports `completed`, the run becomes `gated` if the last executed stage has `gate_after` and an enabled stage follows it in the current pipeline. Otherwise it becomes `succeeded`.** Where: `pipeline/segment.py` `completion_status()`.
 - **Continue, Retry and Dispatch default to `next_stage()`:** after gated or succeeded, the first enabled stage after the anchor; after failed or cancelled, the failing stage. A ticket is "complete" when no enabled stage follows the last executed one. Where: `tickets/board.py` `next_stage()`.
-- **The worker is deliberately dumb.** It executes the manifest's stages in order and reports back. All orchestration (segments, gating, the next stage, runtime argv) is pure server functions, which keeps the worker small, stable and testable. Where: `pipeline/` (pure, import-linter enforced).
+- **The worker is deliberately dumb.** It executes the job package's stages in order and reports back. All orchestration (segments, gating, the next stage, runtime argv) is pure server functions, which keeps the worker small, stable and testable. Where: `pipeline/` (pure, import-linter enforced).
 - **The pipeline is locked while a run is active** (409 `run_active`). Where: `tickets/service.py`.
 
 ## Run lifecycle & loops
@@ -87,14 +87,30 @@ flowchart LR
 
   | Situation | Response |
   |---|---|
-  | dispatched | 200 + manifest, run becomes running |
-  | same worker token again | 200, the stored manifest |
+  | dispatched | 200 + the job package (under the answer's `manifest` key), run becomes running |
+  | same worker token again | 200, the stored package |
   | another worker token | 409 `already_claimed` |
   | terminal run | 410 `run_gone` |
   | unknown dispatch token | 401 |
 
-- **Events** (`POST /api/worker/events`) are batched and idempotent on `(run_id, seq)`. An empty batch is the heartbeat (the worker posts at least every 10 s), and the response carries `cancel`.
-- **Sync** (`POST /api/worker/sync`) writes context files back as versions authored by the run. A path is only accepted if it is a `sync=true` manifest file or lies under a manifest `sync_dirs` entry. **Complete** (`POST /api/worker/complete`, 204) accepts an optional `pr_url`.
+- **The job package (protocol 2) is all the worker knows of a run.** Fields: `protocol: 2`, `run_id`, `ticket {key, title}`, `workspace {mode, repo_url, base_branch, branch, protect, blocks}`, `context`, `notes`, `sync_back {dir, max_bytes}`, `env` (workspace-relative `AGENTOS_SKILL_DIR` and `AGENTOS_SYNC_BACK`; the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY`), `stages`, `loops`, `start_stage`, `warnings` and `limits {max_file_bytes, max_line_bytes}`. The worker refuses any other protocol and fails the run before touching git. Up front it checks only the protocol and the loop shape; the repo URL and branches are checked at workspace setup and paths when they are written (`resolve_inside`), so the worker keeps no copy of the server's models. Where: `models.py` `JobPackage`, `pipeline/manifest.py` `build_package()`, `worker.py` `load_package()`.
+- **Every ticket file is a typed `context` entry** `{path, kind, name, mode, block, access, content}`. The kind comes from the path, first match wins: the ticket skill's `TASKS.md` → `plan`; a block-mode file → `instructions` (`block` = the ticket key); `.claude/agents/**` → `agent`; other files in `.claude/skills/<n>/` → `skill` named `<n>` (the ticket skill's old `out/` files excepted); anything else → `file`. Every ticket file is `access: write`; `read` entries are never synced. The kind says what a file is, so neither the worker nor the UI guesses from a path. Where: `pipeline/manifest.py` `classify()`.
+- **Notes** (the ticket skill's `learnings.log` and `swarm.log`) go in `notes` and are shipped and synced like write context. Append-only is warn-only: a note that no longer starts with its shipped content gets one warning per run and is still stored. Where: `worker.py` `SyncState`.
+- **Events** (`POST /api/worker/events`) are batched and idempotent on `(run_id, seq)`. An empty batch is the heartbeat (the worker posts at least every 10 s), and the response carries `cancel`. `seq` is the worker's alone; nothing on the server inserts events.
+- **Sync** (`POST /api/worker/sync`) is declared-only, because returning anything is deliberate: an agent's build output can never become ticket context.
+  - After each stage the worker reads exactly the write context entries and the notes and sends those that changed since it last sent them: a deleted replace file as `content: null`, a block file as its block only. There is no directory walk.
+  - The server writes a path, as a version authored by the run, only if it matches (by `path_key`, in the same mode) a write context entry or note of the run's stored package. Any other path is listed in `SyncResponse.refused` and logged, the rest of the batch still applies, and the worker turns `refused` into one warning event. A `stage_id` outside the run is 422.
+  - Files under `workspace.protect` (the ticket skill dir) that aren't declared are neither synced nor committed: one warning per stage names them (`not kept: …`, at most 20 names plus a count).
+
+  Where: `worker_api/service.py` `sync()`, `worker.py` `SyncState`.
+- **sync_back is the one way to return anything else.** The folder is `.agentos/sync_back/` in the workspace, in both modes; prompts name it `{{paths.sync_back}}`, stages get `AGENTOS_SYNC_BACK`, and the scaffold's AGENTS.md block points agents there.
+  - At the end of the job (completed, failed or cancelled, once setup finished, before `complete` and before the workdir is deleted) the worker zips its regular files with stdlib `zipfile`. Links and special files are skipped and named in a warning; an empty folder sends nothing; a zip over `sync_back.max_bytes` (20 MiB compressed, `validate.MAX_SYNC_BACK_BYTES`) gets a warning and isn't sent.
+  - Upload: one `PUT /api/worker/sync-back?sha256=…&files=N` with the worker token, for a running run only. The server stops reading past the cap (413 `too_large`), checks the sha256 (422) and upserts the zip into `run_sync_back` (one row per run, so a retry replaces it; deleted with the run). It's an opaque blob: never extracted, never ticket context. An upload error other than 401/410 only warns, and the run completes as usual.
+  - Download: `RunDetail.sync_back {files, bytes}` drives the Runs tab line ("sync_back.zip · N files · size"), which links `GET /api/runs/{id}/sync-back` (any approved user; `application/zip` as an attachment; 404 when there is none).
+  - Mailbox mode doesn't return it yet: a non-empty folder gets one warning.
+
+  Where: `worker.py` `Run._send_sync_back()`, `worker_api/routes.py` `sync_back()`, `worker_api/service.py` `store_sync_back()`, `migrations/0003_run_sync_back.sql`, `runs/routes.py` `get_sync_back()`, `web/src/features/runs/RunsTab.tsx`.
+- **Complete** (`POST /api/worker/complete`, 204) accepts an optional `pr_url`.
 - **After a run ends, every worker route answers 410**, except `complete` repeating the final status (an idempotent retry). Where: `worker_api/service.py` `_live_run()`, `_FINAL`.
 - **Failure semantics in the worker:**
   - 401/410 → kill the stage process tree, no commit, no push, exit 1. A reaped run's worker must not race its retry on the branch.
@@ -106,14 +122,16 @@ flowchart LR
 
 ## Context files & git safety
 - **A ticket's context is a versioned file bundle.** By default it holds `.claude/skills/context-<key>/` (`SKILL.md`, `TASKS.md`, `learnings.log`, `swarm.log`) plus `AGENTS.md` and `CLAUDE.md` in block mode. Agents get context as files, the convention they already understand. Where: `pipeline/scaffold.py`.
-- **The manifest is built and stored at claim, not at dispatch.** A queued run never ships stale context. At the same moment, the repo URL and branch are resolved from the Space's catalog and the default runtime and model from the current template. A build failure fails the run. Where: `worker_api/service.py` `_build()`, `pipeline/manifest.py` `build_manifest()`.
-- **The bundle is read-only (409 `bundle_locked`) while a run is `running`.** A queued server run doesn't lock it, because its manifest doesn't exist yet. A client run that waits (queued or dispatched) does: it will run on its owner's machine with the owner's credentials, so only what the owner dispatched may reach it. For the same reason a PATCH of the ticket's owner, title, description or type (the fields its prompts render) gets 409 `run_active` while one waits. Where: `files/service.py` `_check_unlocked()`, `tickets/service.py` `patch_ticket()`, `clients/service.py` `waiting_client_run_id()`.
+- **The job package is built and stored at claim, not at dispatch.** A queued run never ships stale context. At the same moment, the repo URL and branch are resolved from the Space's catalog and the default runtime and model from the current template. A build failure fails the run. Where: `worker_api/service.py` `_build()`, `pipeline/manifest.py` `build_package()`.
+- **The bundle is read-only (409 `bundle_locked`) while a run is `running`.** A queued server run doesn't lock it, because its package doesn't exist yet. A client run that waits (queued or dispatched) does: it will run on its owner's machine with the owner's credentials, so only what the owner dispatched may reach it. For the same reason a PATCH of the ticket's owner, title, description or type (the fields its prompts render) gets 409 `run_active` while one waits. Where: `files/service.py` `_check_unlocked()`, `tickets/service.py` `patch_ticket()`, `clients/service.py` `waiting_client_run_id()`.
 - **Block mode:** the server's content goes between `<!-- agentos:begin KEY -->` and `<!-- agentos:end KEY -->` inside a file the repo may already have. The rest of the repo's copy survives, and blocks are never stripped. Where: `validate.py` `BLOCK_BEGIN/BLOCK_END`, `worker.py` block-mode section.
-- **Git protection has several layers, so it holds even if the agent commits by itself or `.gitignore` has negations:**
+- **A shipped agent never overwrites the repo's.** If a `kind: agent` entry's path already exists after the clone (tracked or untracked), setup fails with an error naming the file, before any context file is written; nothing is committed or pushed. Where: `worker.py` `Run._execute()`.
+- **`.agentos/` in the workspace belongs to AgentOS** (a check's `verdict.json`, the sync_back folder): it is never synced as context and never committed.
+- **Git protection has several layers, so it holds even if the agent commits by itself or `.gitignore` has negations.** Context paths are every declared entry and note, every folder in `workspace.protect`, and `.agentos/`.
   - `skip-worktree` on tracked context paths.
   - `.git/info/exclude` for untracked context paths and tool caches (`JUNK_PATTERNS`).
   - Unstage-and-assert after `git add -A`.
-  - A pre-push guard that rejects commits touching context paths or containing the `agentos:begin KEY` marker.
+  - A pre-push guard that rejects commits touching context paths or containing an `agentos:begin` marker for any name in `workspace.blocks`.
   - Never a force push. On GitHub Actions (`GITHUB_ACTIONS=true` with `GH_TOKEN`) `_push()` publishes through the Git Data API instead of `git push`, as one commit per publish, with `force: false` on the ref write; an agent's rewrite of published commits or a merge is refused.
 
   The cost: an agent's edits to a tracked `AGENTS.md` outside the block aren't committed. Where: `worker.py` `_commit()`, `_guard()`, `_push()`.
@@ -139,9 +157,9 @@ flowchart LR
   - `local`: a detached child process with its own process group, so a `--reload` doesn't kill runs. Its environment is the server's minus `AGENTOS_*`, plus `WORKER_ENV_FILE`. Where: `launchers/local.py`.
   - `github`: one workflow dispatch per run. The repo, workflow and ref come from Settings, and `backend/deploy/github/agentos-worker.yml` must stay identical to `.github/workflows/agentos-worker.yml` (a test checks this). Where: `launchers/github.py`.
   - `mailbox`: for runners that can reach GitHub and a store (Artifactory) but not the server. One package in, one package out:
-    - **Launch:** the server claims the run itself at launch, which builds the manifest and locks the bundle. It uploads the manifest and `worker.py` to `runs/<run id>-<16 hex>/` in the store and dispatches `agentos-mailbox.yml`.
+    - **Launch:** the server claims the run itself at launch, which builds the job package and locks the bundle. It uploads the package (as `manifest.json`) and `worker.py` to `runs/<run id>-<16 hex>/` in the store and dispatches `agentos-mailbox.yml`.
     - **Three jobs:** fetch (holds the store secret) → work (runs the agent; no store secret, so the agent can never read it) → publish (holds the store secret again; uploads the outbox bytes without parsing them).
-    - **The outbox** is the worker's API calls, recorded one per line (`worker.py --manifest --outbox`). The server replays it through the unchanged `worker_api` service functions, so the state machine, board and UI are shared with HTTP mode.
+    - **The outbox** is the worker's API calls, recorded one per line (`worker.py --manifest --outbox`). The server replays it through the unchanged `worker_api` service functions, so the state machine, board and UI are shared with HTTP mode. Sync refusals are only logged there, and sync_back isn't returned yet.
     - **Liveness** comes from the Actions run's status, not heartbeats. The runs reaper skips its heartbeat, budget and cancel rules for mailbox runs, and the mailbox reaper applies its own rules, cancelling the Actions run through the API.
     - **Results arrive when the GitHub job ends**; to watch a run live, open it on GitHub.
     - **Cleanup:** the run folder is deleted after replay, and an hourly sweep removes folders of runs that are no longer active.
@@ -172,7 +190,7 @@ flowchart LR
   6. Plugins (`launchers`, `sources`, `stores`) import no db, services, routes or FastAPI.
   7. There are no import cycles between subpackages. The direction is `worker_api → runs → social → tickets → workflows → templates | files | clients → auth`; `clients` is a leaf (its tokens and who is online), which is why `CLIENT_LAUNCHER` lives there.
 - **Drift test:** `server/tests/test_api_drift.py` fails when the committed `web/src/api/openapi.json` doesn't match the backend.
-- **Shared fixtures:** `server/tests/fixtures/manifest_v1.json` is the server ↔ worker contract, and both test suites parse it. `fixtures/path_cases.json` is one table of path rules, run against both `validate.validate_path` and `worker.path_error`.
+- **Shared fixtures:** `server/tests/fixtures/job_v2.json` is the server ↔ worker contract (a protocol 2 job package): the server suite validates it as `JobPackage` and compares its keys with `build_package()`, and the worker suite loads it with `load_package()`. `fixtures/path_cases.json` is one table of path rules, run against both `validate.validate_path` and `worker.path_error`.
 - **The worker on Python 3.11:** `check-backend` type-checks `worker.py` as 3.11, and `test_worker_stdlib.py` forbids non-stdlib imports.
 - **Closed error codes:** `models.ErrorCode` is the full set, and the UI branches on them (e.g. 409 `stale_version` / `run_active` / `bundle_locked`).
 
