@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pydantic import TypeAdapter
@@ -34,7 +35,6 @@ from agentos.models import (
     ManifestReport,
     Me,
     Pipeline,
-    ReportMode,
     Route,
     RunDetail,
     RunEvent,
@@ -461,8 +461,7 @@ def build_job(
     return job.id, token
 
 
-def fence_reason(run_id: int) -> str:
-    """The `queue_reason` of a run held by the fence of run `run_id`'s job."""
+def fence_reason(run_id: int) -> str:  # the `queue_reason` of a run held by run_id's job
     return f"waiting for run #{run_id}'s worker to stop"
 
 
@@ -491,7 +490,8 @@ def mark_next_dispatched(
 ) -> tuple[int, str, tuple[str, str] | None] | None:
     """Move the oldest `queued` push run reporting `report.mode` that may start (`_next_queued`)
     to `dispatched` (clearing its `queue_reason`) and build its job. Returns the run id, its
-    provider and `build_job`'s answer."""
+    provider and `build_job`'s answer. With no `providers` nothing starts: every such run only
+    gets the reason it waits."""
     now = utcnow()
     with db.tx() as conn:
         row, held = _next_queued(conn, _SQL_QUEUED_PUSH, report.mode, now, providers)
@@ -507,18 +507,6 @@ def mark_next_dispatched(
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
         return run_id, row["provider"], build_job(conn, run_row(conn, run_id), report, now)
-
-
-def hold_queued(db: Database, report: ReportMode) -> None:
-    """No runner for `report` is configured here (a file report without a mailbox store): every
-    queued push run reporting it waits, with the reason (or its fence's) as `queue_reason`."""
-    with db.read() as conn:
-        _, held = _next_queued(conn, _SQL_QUEUED_PUSH, report, utcnow(), ())
-    if held:  # the write lock only when a reason changes
-        with db.tx() as conn:
-            conn.executemany(
-                "UPDATE runs SET queue_reason = ? WHERE id = ? AND status = 'queued'", held
-            )
 
 
 def take_client_run(
@@ -611,8 +599,7 @@ def active_jobs(db: Database) -> list[Row]:
 
 
 def end_job(db: Database, run_id: int, job_id: str, now: datetime) -> None:
-    """The job's worker can no longer publish: the fence lifts for its ticket's next run, whose
-    reason naming this run goes at once (a pull run may wait for a lease that doesn't come)."""
+    """The job's worker can no longer publish: lift the fence, and its reason on the next run."""
     with db.tx() as conn:
         conn.execute("UPDATE jobs SET ended_at = ? WHERE id = ?", (to_db(now), job_id))
         conn.execute(
@@ -621,18 +608,22 @@ def end_job(db: Database, run_id: int, job_id: str, now: datetime) -> None:
         )
 
 
-def reap(
-    db: Database,
-    run_id: int,
-    was: RunStatus,
-    now: datetime,
-    stop_reason: StopReason | None,
-    status: RunStatus | None,
-    error: str | None,
-) -> bool:
-    """One reaper verdict, in one transaction: stop the run (`stop_reason`), then end it
-    (`status`, only if it is still `was`). Returns whether it ended."""
+@dataclass(frozen=True, slots=True)
+class Action:
+    """A reaper verdict: stop the run (`stop`), end it (`end`, with `error`), and ask its provider
+    to cancel the job (`cancel`)."""
+
+    end: RunStatus | None = None
+    error: str | None = None
+    stop: StopReason | None = None
+    cancel: bool = False
+
+
+def reap(db: Database, run_id: int, was: RunStatus, now: datetime, action: Action) -> bool:
+    """Write a reaper verdict in one transaction: stop the run, then end it (only if it is still
+    `was`). Returns whether it ended."""
     with db.tx() as conn:
-        if stop_reason is not None:
-            stop(conn, run_id, stop_reason, now)
-        return status is not None and finish(conn, run_id, status, (was,), now=now, error=error)
+        if action.stop is not None:
+            stop(conn, run_id, action.stop, now)
+        end, error = action.end, action.error
+        return end is not None and finish(conn, run_id, end, (was,), now=now, error=error)

@@ -146,9 +146,8 @@ def post_journal(
 
 
 def _is_final(run: Row, result: dict[str, Any]) -> bool:
-    """Whether a terminal run ended as a `result` with these `data` would have ended it: a
-    cancelled result only as the stop table makes of the run's stop (a run failed "worker lost"
-    never matches)."""
+    """Whether the run ended as a `result` with these `data` ends it (cancelled: by the stop
+    table, so a run failed "worker lost" never matches)."""
     status = str(result.get("status"))
     if status == "cancelled":
         return (run["status"], run["error"]) == STOPPED[run["stop_reason"]]

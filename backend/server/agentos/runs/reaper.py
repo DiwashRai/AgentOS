@@ -40,6 +40,7 @@ from agentos.runs import service
 from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, PULL_START_TIMEOUT, STOPPED, TERMINAL
 
 log = logging.getLogger(__name__)
+Action = service.Action  # a verdict, which `service.reap` writes
 
 INTERVAL_S = 15.0
 SLEEP_GRACE = timedelta(seconds=60)
@@ -75,17 +76,6 @@ class JobFacts:
     finished_at: datetime | None
     alive_at: datetime | None
     client_seen_at: datetime | None
-
-
-@dataclass(frozen=True, slots=True)
-class Action:
-    """A verdict: stop the run (`stop`), end it (`end`, with `error`), and ask its provider to
-    cancel the job (`cancel`)."""
-
-    end: RunStatus | None = None
-    error: str | None = None
-    stop: StopReason | None = None
-    cancel: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,8 +209,7 @@ class Reaper:
         """Write the verdict, then ask the provider to cancel (once per job). Returns the run's
         end, if it ended."""
         ended = None
-        verdict = (action.stop, action.end, action.error)
-        if service.reap(self.ctx.db, job.run_id, job.status, now, *verdict):
+        if service.reap(self.ctx.db, job.run_id, job.status, now, action):
             ended = Reaped(job.run_id, action.end or "failed", action.error or "stop unanswered")
             log.warning("reaper: run %s %s: %s", ended.run_id, ended.status, ended.reason)
         elif action.stop is not None:

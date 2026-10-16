@@ -45,6 +45,6 @@ def tick(ctx: AppContext) -> list[int]:
         service.set_launch_ref(ctx.db, run_id, ref)
         log.info("run %s: started (%s %s)", run_id, name, ref)
 
-    if ctx.mailbox is None:  # file-report runs wait, visibly, for a mailbox store
-        service.hold_queued(ctx.db, "file")
+    if ctx.mailbox is None:  # nothing takes file-report runs: they only get their reason
+        service.mark_next_dispatched(ctx.db, (), ManifestReport(mode="file", url=None))
     return launched

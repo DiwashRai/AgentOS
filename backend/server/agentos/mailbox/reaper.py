@@ -5,8 +5,7 @@ and ends runs that can't finish.
 Per running file-report run, each tick, in this order (each run on its own: an error is logged
 and the next run is checked):
 1. A cancel was requested → cancel the Actions run, once per run per process.
-2. Ask GitHub for the work job's status (`JobStatus`; unknown also for no run URL or a
-   MailboxError).
+2. Ask GitHub for the work job's status (unknown also for no run URL or a MailboxError).
 3. The outbox is in the store → replay it (an unexpected error fails the run).
 4. The job has ended (every job of the Actions run completed) and there is no outbox →
    cancelled (if requested) or failed.

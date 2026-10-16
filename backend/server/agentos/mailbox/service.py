@@ -156,12 +156,10 @@ def replay(db: Database, run_id: int, outbox: Path) -> ReplayResult:
             if last.type == "result" and last.seq > run["journal_seq"] and last.seq not in rejected:
                 return "completed"
 
-    with db.read() as conn:
-        stop = conn.execute(
-            "SELECT stop_requested_at, stop_reason FROM runs WHERE id = ?", (run_id,)
-        ).fetchone()
-    stopped = stop is not None and stop["stop_requested_at"] is not None
-    status, error = STOPPED[stop["stop_reason"]] if stopped else ("failed", NO_COMPLETE)
+    with db.read() as conn:  # a stop sets its reason with it
+        stop = conn.execute("SELECT stop_reason FROM runs WHERE id = ?", (run_id,)).fetchone()
+    reason = stop["stop_reason"] if stop is not None else None
+    status, error = STOPPED[reason] if reason else ("failed", NO_COMPLETE)
     return "ended" if end(db, run_id, status, error) else "gone"
 
 

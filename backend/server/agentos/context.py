@@ -71,8 +71,7 @@ class AppContext:
     providers: dict[str, Provider]
     # The route a `target: "server"` dispatch stores; None = this server starts no workers.
     route: Route | None
-    # The mailbox store when configured (`Settings.mailbox_store`): its loops dispatch and watch
-    # the file-report runs.
+    # The mailbox, when a store is configured: its loops dispatch and watch the file-report runs.
     mailbox: Mailbox | None = None
     # The Jira REST client when AGENTOS_JIRA_URL is set (tests swap in a MockTransport one).
     jira: JiraClient | None = None
@@ -147,8 +146,7 @@ def build_context(settings: Settings, providers: dict[str, Provider] | None = No
 
 
 def server_route(launcher: LauncherName | None) -> Route | None:
-    """The route of the server's runs: `mailbox` is GitHub with file reporting, `github` reports
-    live; no launcher, no server route."""
+    """The server's route: `github` reports live, `mailbox` through a file; None without one."""
     if launcher is None:
         return None
     return Route("push", "github", "file" if launcher == "mailbox" else "live")
@@ -204,9 +202,8 @@ def _providers(settings: Settings, db: Database) -> tuple[dict[str, Provider], M
     if url is None or user is None or password is None:  # pragma: no cover - startup_checks
         raise ConfigError(["the mailbox needs the AGENTOS_ARTIFACTORY_* vars"])
     artifactory = ArtifactoryStore(base_url=url, user=user, password=password.get_secret_value())
-    return {"github": github}, MailboxLauncher(
-        github=github, store=artifactory, worker_path=WORKER_PATH
-    )
+    mailbox = MailboxLauncher(github=github, store=artifactory, worker_path=WORKER_PATH)
+    return {"github": github}, mailbox
 
 
 def _github_provider(settings: Settings, db: Database) -> GitHubActionsProvider:

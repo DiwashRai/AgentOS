@@ -438,8 +438,7 @@ class NowInfo(ApiModel):
 # AGENTOS_LAUNCHER. mailbox: runs travel through a store (design/mailbox.md).
 LauncherName = Literal["github", "mailbox"]
 LogDelivery = Literal["live", "at_end"]
-# Who serves a run: the server's route, or the dispatching user's own client (`worker.py
-# --client`, which leases it: a pull run).
+# Who serves a run: the server's route, or the dispatching user's own client (a pull run).
 DispatchTarget = Literal["server", "client"]
 # A run's route, stored on it at dispatch: push (a provider starts its worker) or pull (its
 # owner's client leases it), by live (HTTP) or file (a mailbox) reporting. Pull + file is refused.
