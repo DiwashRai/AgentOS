@@ -529,6 +529,17 @@ def test_a_cancelled_result_ends_the_run_by_its_stop_reason(
     assert worker.complete("cancelled").status_code == 200  # a repeated final result
 
 
+@pytest.mark.parametrize("reason", [None, "budget"])
+def test_a_run_failed_otherwise_refuses_a_late_cancelled_result(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, reason: str | None
+) -> None:
+    """Only a failure the stop table made accepts `cancelled` as its final result."""
+    worker = runs.start(create_ticket().key)
+    runs.set_run(worker.run_id, stop_requested_at=to_db(utcnow()), stop_reason=reason)
+    runs.set_run(worker.run_id, status="failed", error="worker lost", finished_at=to_db(utcnow()))
+    assert error(worker.complete("cancelled")) == (410, "run_gone")
+
+
 def test_cancel_terminal_is_unchanged(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:

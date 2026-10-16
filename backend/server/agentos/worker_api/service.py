@@ -13,6 +13,7 @@ import json
 import logging
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -50,11 +51,12 @@ log = logging.getLogger(__name__)
 
 MAX_EVENTS_PER_RUN = 100_000  # SPEC §6; beyond it `log` events are dropped
 
-# The run statuses a repeated final result may find (by `ResultData.status`).
+# The run statuses a repeated final result may find (by `ResultData.status`); a cancelled one
+# goes by the stop table instead (`_is_final`).
 _FINAL: dict[str, frozenset[RunStatus]] = {
     "completed": frozenset({"gated", "succeeded"}),
     "failed": frozenset({"failed"}),
-    "cancelled": frozenset({"cancelled", "failed"}),  # failed: a stop the server made
+    "cancelled": frozenset({"cancelled"}),
 }
 
 # The journal record types stored as `run_events` rows (validated as `RunEvent`).
@@ -116,11 +118,7 @@ def post_journal(
         new = [r for r in records if r.seq > run["journal_seq"]]
         if run["status"] in TERMINAL:
             last = records[-1] if records else None
-            final = (
-                last is not None
-                and last.type == "result"
-                and run["status"] in _FINAL.get(str(last.data.get("status")), ())
-            )
+            final = last is not None and last.type == "result" and _is_final(run, last.data)
             if not final or any(r is not last for r in new):
                 raise _gone(run["id"], run["status"])
 
@@ -145,6 +143,16 @@ def post_journal(
             (to_db(now), run["id"]),
         )
     return response
+
+
+def _is_final(run: Row, result: dict[str, Any]) -> bool:
+    """Whether a terminal run ended as a `result` with these `data` would have ended it: a
+    cancelled result only as the stop table makes of the run's stop (a run failed "worker lost"
+    never matches)."""
+    status = str(result.get("status"))
+    if status == "cancelled":
+        return (run["status"], run["error"]) == STOPPED[run["stop_reason"]]
+    return run["status"] in _FINAL.get(status, ())
 
 
 def ingest(
