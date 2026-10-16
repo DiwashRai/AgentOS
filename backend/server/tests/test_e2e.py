@@ -24,6 +24,7 @@ import time
 import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -32,6 +33,7 @@ import pytest
 import uvicorn
 from pydantic import SecretStr
 
+import agentos.main
 from agentos.config import Settings
 from agentos.launchers.base import Provider
 from agentos.main import create_app
@@ -47,7 +49,7 @@ from agentos.models import (
 )
 from agentos.pipeline.runtime import NamedRuntime
 from agentos.pipeline.space import RepoSpec, SpaceConfig
-from agentos.runs import dispatcher
+from agentos.runs import dispatcher, reaper
 from tests.fake_agent import BLOCK_LINE, SYNC_BACK_FILE
 from tests.provider_support import SubprocessProvider
 from tests.settings_support import seed_test_settings
@@ -301,6 +303,9 @@ def e2e(
             if name.upper().startswith("AGENTOS_"):
                 mp.delenv(name)
         mp.setattr(dispatcher, "INTERVAL_S", 0.1)
+        # The fence holds a ticket's next run until the reaper sees the provider say `ended`.
+        mp.setattr(agentos.main, "REAPER_INTERVAL_S", 0.5)
+        mp.setattr(reaper, "STATUS_EVERY", timedelta(seconds=1))
 
         sock = _free_socket()
         url = f"http://127.0.0.1:{sock.getsockname()[1]}"

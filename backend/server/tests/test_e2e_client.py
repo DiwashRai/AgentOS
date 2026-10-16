@@ -31,6 +31,7 @@ import uvicorn
 from pydantic import SecretStr
 
 import agentos.main
+import worker
 from agentos.clock import utcnow
 from agentos.config import WORKER_PATH, Settings
 from agentos.context import AppContext
@@ -166,11 +167,13 @@ class User(E2E):
 
 @dataclass
 class ClientProcess:
-    """A running `worker.py --client` and the token it uses."""
+    """A running `worker.py --client` and the token it uses. Windows: `job` holds it and every run
+    worker it starts, so teardown ends exactly those (a bare pid may name another process)."""
 
     token: ClientTokenCreated
     proc: subprocess.Popen[bytes]
     log: Path
+    job: worker._Job
 
     def output(self) -> str:
         return self.log.read_text("utf-8", "replace") if self.log.exists() else ""
@@ -227,7 +230,7 @@ class World:
                 stderr=subprocess.STDOUT,
                 creationflags=flags,
             )
-        client = ClientProcess(token, proc, log)
+        client = ClientProcess(token, proc, log, worker._Job(proc.pid))
         self.clients.append(client)
         return client
 
@@ -255,7 +258,8 @@ def world(server: Server) -> Iterator[World]:
             client.proc.wait(10)
         for user in w.users:
             _settle(user)
-        _end_workers([pid for client in w.clients for pid in client.worker_pids()])
+        for client in w.clients:
+            _end_workers(client)
         for user in w.users:
             user.http.close()
 
@@ -273,11 +277,18 @@ def _settle(user: User) -> None:
             continue
 
 
-def _end_workers(pids: list[int]) -> None:
-    """Wait for run workers to exit after their runs ended; kill any that outlive the wait."""
+def _end_workers(client: ClientProcess) -> None:
+    """Wait for the client's run workers to exit after their runs ended, then end any left.
+    Windows ends them through the client's job object, never by pid: Windows reuses the pid of
+    an exited worker at once, so killing by number can end another test's run worker."""
+    pids = client.worker_pids()
     deadline = time.monotonic() + 15
     while any(pid_alive(pid) for pid in pids) and time.monotonic() < deadline:
         time.sleep(0.2)
+    if sys.platform == "win32":
+        client.job.kill()
+        client.job.close()
+        return
     for pid in pids:
         if pid_alive(pid):
             try:
