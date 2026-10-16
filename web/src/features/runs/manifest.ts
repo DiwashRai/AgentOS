@@ -5,7 +5,7 @@
 // are picked out by flag name on any program.
 import { ApiError, type Schemas } from "../../api/client";
 
-export type Manifest = Schemas["Manifest"];
+export type Manifest = Schemas["JobPackage"];
 export type ManifestStage = Schemas["ManifestStage"];
 
 /** The flags worth a chip, in chip order: flag → label. Add a row to pick out another flag. */
@@ -201,8 +201,10 @@ export function promptLabel(via: "stdin" | "arg"): string {
 }
 
 /** The context files' paths (never their contents), sorted so a path is easy to find. */
-export function filePaths(manifest: Pick<Manifest, "files">): string[] {
-  return manifest.files.map((f) => f.path).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+export function filePaths(manifest: Pick<Manifest, "context" | "notes">): string[] {
+  return [...manifest.context, ...manifest.notes]
+    .map((f) => f.path)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 /** `30s`, `15m`, `2h`, `1h 30m`: a stage's time limit. */

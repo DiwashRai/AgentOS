@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from agentos.models import (
     AppConfig,
-    Manifest,
+    JobPackage,
     Template,
     TemplateDefaults,
     TicketDetail,
@@ -52,7 +52,7 @@ def config(client: TestClient) -> AppConfig:
     return AppConfig.model_validate(client.get("/api/config").json())
 
 
-def first_argv(manifest: Manifest) -> list[str]:
+def first_argv(manifest: JobPackage) -> list[str]:
     argv = manifest.stages[0].argv
     assert argv is not None
     return argv

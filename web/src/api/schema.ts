@@ -237,7 +237,7 @@ export interface paths {
         };
         /**
          * Get Manifest
-         * @description Exactly what was sent to the worker (prompts + files). Can be large; fetch on demand.
+         * @description Exactly what was sent to the worker (the job package). Can be large; fetch on demand.
          */
         get: operations["get_manifest_api_runs__run_id__manifest_get"];
         put?: never;
@@ -1037,7 +1037,7 @@ export interface components {
         };
         /** ClaimResponse */
         ClaimResponse: {
-            manifest: components["schemas"]["Manifest"];
+            manifest: components["schemas"]["JobPackage"];
         };
         /**
          * ClientPollRequest
@@ -1130,6 +1130,36 @@ export interface components {
              * @enum {string}
              */
             status: "completed" | "failed" | "cancelled";
+        };
+        /**
+         * ContextEntry
+         * @description A context file. `name`: the skill, block, agent or file it belongs to. `block`: the block
+         *     name in block mode (`content` is then the block's). `access: write` entries are synced back.
+         */
+        ContextEntry: {
+            /**
+             * Access
+             * @enum {string}
+             */
+            access: "write" | "read";
+            /** Block */
+            block: string | null;
+            /** Content */
+            content: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skill" | "plan" | "instructions" | "agent" | "file";
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "replace" | "block";
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
         };
         /**
          * DispatchBlock
@@ -1486,6 +1516,40 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * JobPackage
+         * @description What a worker receives at claim. `env`: non-secret stage variables (workspace-relative
+         *     paths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.
+         */
+        JobPackage: {
+            /** Context */
+            context: components["schemas"]["ContextEntry"][];
+            /** Env */
+            env: {
+                [key: string]: string;
+            };
+            limits: components["schemas"]["ManifestLimits"];
+            /** Loops */
+            loops?: components["schemas"]["ManifestLoop"][];
+            /** Notes */
+            notes: components["schemas"]["NoteEntry"][];
+            /**
+             * Protocol
+             * @constant
+             */
+            protocol: 2;
+            /** Run Id */
+            run_id: number;
+            /** Stages */
+            stages: components["schemas"]["ManifestStage"][];
+            /** Start Stage */
+            start_stage?: string | null;
+            sync_back: components["schemas"]["SyncBack"];
+            ticket: components["schemas"]["ManifestTicket"];
+            /** Warnings */
+            warnings?: string[];
+            workspace: components["schemas"]["ManifestWorkspace"];
+        };
         /** LogData */
         LogData: {
             /**
@@ -1549,46 +1613,6 @@ export interface components {
             /** Start */
             start: string;
         };
-        /** Manifest */
-        Manifest: {
-            /** Files */
-            files: components["schemas"]["ManifestFile"][];
-            limits: components["schemas"]["ManifestLimits"];
-            /** Loops */
-            loops?: components["schemas"]["ManifestLoop"][];
-            /**
-             * Protocol
-             * @default 1
-             * @constant
-             */
-            protocol: 1;
-            /** Run Id */
-            run_id: number;
-            /** Stages */
-            stages: components["schemas"]["ManifestStage"][];
-            /** Start Stage */
-            start_stage?: string | null;
-            /** Sync Dirs */
-            sync_dirs: string[];
-            ticket: components["schemas"]["ManifestTicket"];
-            /** Warnings */
-            warnings?: string[];
-            workspace: components["schemas"]["ManifestWorkspace"];
-        };
-        /** ManifestFile */
-        ManifestFile: {
-            /** Content */
-            content: string;
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "replace" | "block";
-            /** Path */
-            path: string;
-            /** Sync */
-            sync: boolean;
-        };
         /**
          * ManifestInvocation
          * @description Another call of a loop stage's agent: a later round, or a verdict repair (request 24). The
@@ -1615,7 +1639,7 @@ export interface components {
         };
         /**
          * ManifestLoop
-         * @description A loop block over the manifest's `stages` (ids, `start` at or before `end`).
+         * @description A loop block over the package's `stages` (ids, `start` at or before `end`).
          */
         ManifestLoop: {
             /** End */
@@ -1678,10 +1702,17 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** ManifestWorkspace */
+        /**
+         * ManifestWorkspace
+         * @description `protect`: folders kept out of git besides the declared files (the ticket skill dir; the
+         *     worker always adds `.agentos/`). `blocks`: every block name in `context`, all of which the
+         *     pre-push marker scan looks for.
+         */
         ManifestWorkspace: {
             /** Base Branch */
             base_branch: string | null;
+            /** Blocks */
+            blocks: string[];
             /** Branch */
             branch: string | null;
             /**
@@ -1689,6 +1720,8 @@ export interface components {
              * @enum {string}
              */
             mode: "repo" | "none";
+            /** Protect */
+            protect: string[];
             /** Repo Url */
             repo_url: string | null;
         };
@@ -1781,6 +1814,18 @@ export interface components {
              * @enum {string}
              */
             role: "pending" | "viewer" | "writer" | "admin";
+        };
+        /**
+         * NoteEntry
+         * @description An append-only log (`learnings.log`, `swarm.log`), shipped and synced like write context.
+         */
+        NoteEntry: {
+            /** Content */
+            content: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
         };
         /**
          * NowInfo
@@ -2413,6 +2458,16 @@ export interface components {
              * @enum {string}
              */
             type: "stage_started";
+        };
+        /**
+         * SyncBack
+         * @description The workspace folder the agent returns files through, as one zip of at most `max_bytes`.
+         */
+        SyncBack: {
+            /** Dir */
+            dir: string;
+            /** Max Bytes */
+            max_bytes: number;
         };
         /** SyncFile */
         SyncFile: {
@@ -3468,7 +3523,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Manifest"];
+                    "application/json": components["schemas"]["JobPackage"];
                 };
             };
             /** @description Client error */

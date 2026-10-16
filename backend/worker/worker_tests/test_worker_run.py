@@ -1,7 +1,7 @@
 """Whole runs through worker.main(): fake server + temp bare repo as origin + fake agent.
 
-Covers the commit procedure (manifest files never committed, repo edits committed), the pre-push
-guard, abort (410), server loss, cancel, push rejection, no-repo mode and the early exits.
+Covers the commit procedure (context files and notes never committed, repo edits committed), the
+pre-push guard, abort (410), server loss, cancel, push rejection, no-repo mode and the early exits.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from worker_tests.worker_support import (
     agent_stage,
     error,
     git,
-    make_manifest,
+    make_package,
     python_shell,
     run_worker,
     shell_stage,
@@ -67,7 +67,7 @@ def test_repo_run_commits_code_and_never_context(
     server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     python_shell(monkeypatch)
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit", "env"), shell_stage("lint", LINT)], repo_url=origin.url
     )
     workdir = tmp_path / "ws"
@@ -129,6 +129,7 @@ def test_repo_run_commits_code_and_never_context(
     assert env["AGENTOS_RUN_ID"] == "42"
     assert env["AGENTOS_TICKET_KEY"] == KEY
     assert env["AGENTOS_SKILL_DIR"] == SKILL_DIR
+    assert env["AGENTOS_SYNC_BACK"] == ".agentos/sync_back"
     assert "AGENTOS_TOKEN" not in env
     assert env["GIT_TERMINAL_PROMPT"] == "0"
 
@@ -136,9 +137,9 @@ def test_repo_run_commits_code_and_never_context(
 def test_a_second_run_continues_the_branch(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws1") == 0
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("review", "write=src/review.md:ok")], repo_url=origin.url, run_id=43
     )
     assert run_worker(server, tmp_path / "ws2") == 0
@@ -150,7 +151,7 @@ def test_build_caches_are_not_committed(server: FakeServer, origin: Origin, tmp_
     # origin's .gitignore says nothing about caches: the worker's defaults keep them out.
     caches = ["src/__pycache__/app.cpython-311.pyc", "node_modules/x/index.js", ".DS_Store"]
     writes = [f"write={p}:junk" for p in caches]
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "write=src/app.py:code", *writes)], repo_url=origin.url
     )
     assert run_worker(server, tmp_path / "ws") == 0
@@ -162,7 +163,7 @@ def test_build_caches_are_not_committed(server: FakeServer, origin: Origin, tmp_
 def test_nothing_to_commit_pushes_nothing(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
-    server.manifest = make_manifest([agent_stage("plan", "print=thinking")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("plan", "print=thinking")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
     assert not origin.has_branch(BRANCH)
@@ -178,7 +179,7 @@ def test_nothing_to_commit_pushes_nothing(
 def test_pre_push_guard_blocks_agent_commits_of_context(
     server: FakeServer, origin: Origin, tmp_path: Path, action: str, why: str
 ) -> None:
-    server.manifest = make_manifest([agent_stage("implement", "edit", action)], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit", action)], repo_url=origin.url)
     workdir = tmp_path / "ws"
     assert run_worker(server, workdir) == 0
     done = server.complete()
@@ -198,7 +199,7 @@ def test_pre_push_guard_blocks_agent_commits_of_context(
 def test_failed_stage_still_syncs_commits_and_pushes(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit", "exit=3"), agent_stage("never", "print=no")],
         repo_url=origin.url,
     )
@@ -223,7 +224,7 @@ def test_run_gone_after_claim_means_no_commit_and_no_push(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
     server.hook = trip_on("stage_started", error(410, "run_gone"))
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit", "sleep=30")], repo_url=origin.url
     )
     started = time.monotonic()
@@ -240,7 +241,7 @@ def test_unreachable_server_saves_the_work_and_exits_1(
 ) -> None:
     monkeypatch.setattr(worker, "RETRY_BUDGET_S", 0.5)
     server.hook = trip_on("stage_started", error(503, "internal_error"))
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit", "sleep=30")], repo_url=origin.url
     )
     assert run_worker(server, tmp_path / "ws") == 1
@@ -260,7 +261,7 @@ def test_cancel_kills_the_stage_but_still_syncs_and_pushes(
             server.cancel = True
 
     server.hook = hook
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit", "sleep=30"), agent_stage("never", "print=no")],
         repo_url=origin.url,
     )
@@ -285,7 +286,7 @@ def test_rejected_push_fails_the_run(server: FakeServer, origin: Origin, tmp_pat
     hook = origin.bare / "hooks" / "pre-receive"
     hook.write_bytes(b"#!/bin/sh\necho 'no pushes today' >&2\nexit 1\n")
     hook.chmod(0o755)
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {
         "status": "failed",
@@ -295,7 +296,7 @@ def test_rejected_push_fails_the_run(server: FakeServer, origin: Origin, tmp_pat
 
 
 def test_no_repo_mode(server: FakeServer, tmp_path: Path) -> None:
-    server.manifest = make_manifest([agent_stage("plan", "edit")])
+    server.manifest = make_package([agent_stage("plan", "edit")])
     workdir = tmp_path / "ws"
     assert run_worker(server, workdir) == 0
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
@@ -322,7 +323,7 @@ def test_non_empty_workdir_fails_the_run(server: FakeServer, tmp_path: Path) -> 
     workdir = tmp_path / "ws"
     workdir.mkdir()
     (workdir / "keep.txt").write_bytes(b"mine")
-    server.manifest = make_manifest([agent_stage("plan", "print=x")])
+    server.manifest = make_package([agent_stage("plan", "print=x")])
     assert run_worker(server, workdir) == 0
     done = server.complete()
     assert done is not None
@@ -333,7 +334,7 @@ def test_non_empty_workdir_fails_the_run(server: FakeServer, tmp_path: Path) -> 
 
 def test_clone_failure_fails_the_run(server: FakeServer, tmp_path: Path) -> None:
     missing = (tmp_path / "nope.git").as_uri()
-    server.manifest = make_manifest([agent_stage("plan", "print=x")], repo_url=missing)
+    server.manifest = make_package([agent_stage("plan", "print=x")], repo_url=missing)
     assert run_worker(server, tmp_path / "ws") == 0
     done = server.complete()
     assert done is not None
@@ -342,20 +343,43 @@ def test_clone_failure_fails_the_run(server: FakeServer, tmp_path: Path) -> None
     assert stage_events(server, "stage_started") == []
 
 
-def test_invalid_manifest_fails_the_run(server: FakeServer, tmp_path: Path) -> None:
-    server.manifest = {"protocol": 1, "run_id": 42}
+@pytest.mark.parametrize("protocol", [1, 3, None])
+def test_another_protocol_fails_the_run_without_touching_git(
+    server: FakeServer, origin: Origin, tmp_path: Path, protocol: int | None
+) -> None:
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest["protocol"] = protocol
     assert run_worker(server, tmp_path / "ws") == 0
     done = server.complete()
     assert done is not None
     assert done["status"] == "failed"
-    assert done["error"].startswith("invalid manifest")
+    assert "protocol" in done["error"]
+    assert not (tmp_path / "ws").exists(), "no workspace, no clone"
+    assert not origin.has_branch(BRANCH)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("repo_url", "--upload-pack=evil"), ("branch", "-x"), ("base_branch", "a..b")],
+)
+def test_a_bad_workspace_fails_setup_before_the_clone(
+    server: FakeServer, origin: Origin, tmp_path: Path, field: str, value: str
+) -> None:
+    server.manifest = make_package([agent_stage("plan", "print=x")], repo_url=origin.url)
+    server.manifest["workspace"][field] = value
+    assert run_worker(server, tmp_path / "ws") == 0
+    done = server.complete()
+    assert done is not None
+    assert (done["status"], done["failed_stage"]) == ("failed", None)
+    assert field in done["error"]
+    assert not (tmp_path / "ws" / ".git").exists()
 
 
 def test_token_from_env_never_reaches_stages(
     server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENTOS_TOKEN", DISPATCH_TOKEN)
-    server.manifest = make_manifest([agent_stage("plan", "env")])
+    server.manifest = make_package([agent_stage("plan", "env")])
     assert worker.main(["--server", server.url, "--workdir", str(tmp_path / "ws")]) == 0
     assert server.requests[0].auth == f"Bearer {DISPATCH_TOKEN}"
     env = json.loads(next(t for t in server.logs("stdout") if t.startswith("{")))
@@ -365,7 +389,7 @@ def test_token_from_env_never_reaches_stages(
 def test_missing_program_fails_the_stage(server: FakeServer, tmp_path: Path) -> None:
     stage = agent_stage("plan")
     stage["argv"] = ["agentos-no-such-program-xyz", "-p"]
-    server.manifest = make_manifest([stage])
+    server.manifest = make_package([stage])
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {
         "status": "failed",
@@ -377,7 +401,7 @@ def test_missing_program_fails_the_stage(server: FakeServer, tmp_path: Path) -> 
 def test_stage_timeout_fails_the_stage(server: FakeServer, tmp_path: Path) -> None:
     stage = agent_stage("plan", "sleep=30")
     stage["timeout_s"] = 1
-    server.manifest = make_manifest([stage])
+    server.manifest = make_package([stage])
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {
         "status": "failed",
@@ -394,7 +418,7 @@ def test_cmd_shim_with_an_unsafe_prompt_argument_is_refused(
     shim.write_bytes(b"@echo ran %*\r\n")
     stage = agent_stage("plan")
     stage["argv"] = [str(shim), "-p", "fix it & del everything"]
-    server.manifest = make_manifest([stage])
+    server.manifest = make_package([stage])
     assert run_worker(server, tmp_path / "ws") == 0
     done = server.complete()
     assert done is not None

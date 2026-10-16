@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agentos.context import AppContext
-from agentos.models import Manifest, RunDetail, RunSummary
+from agentos.models import JobPackage, RunDetail, RunSummary
 from agentos.runs import dispatcher
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ class Worker:
     client: TestClient
     run_id: int
     token: str
-    manifest: Manifest
+    manifest: JobPackage
     seq: int = field(default=0)
 
     def post(self, path: str, body: dict[str, Any]) -> Response:
@@ -145,7 +145,7 @@ class RunDriver:
         r = self.claim(run_id, worker_token)
         assert r.status_code == 200, r.text
         return Worker(
-            self.client, run_id, worker_token, Manifest.model_validate(r.json()["manifest"])
+            self.client, run_id, worker_token, JobPackage.model_validate(r.json()["manifest"])
         )
 
     def get(self, run_id: int) -> RunDetail:

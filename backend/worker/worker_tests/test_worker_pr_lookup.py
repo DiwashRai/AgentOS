@@ -14,7 +14,7 @@ from worker_tests.worker_support import (
     FakeServer,
     Origin,
     agent_stage,
-    make_manifest,
+    make_package,
     run_worker,
 )
 
@@ -94,7 +94,7 @@ def test_a_found_pr_is_reported_even_when_the_run_fails(
 ) -> None:
     record = tmp_path / "gh-branch.txt"
     fake_gh(monkeypatch, record, PR)
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit", "exit=3")], repo_url=origin.url
     )
     assert run_worker(server, tmp_path / "ws") == 0
@@ -114,7 +114,7 @@ def test_missing_gh_is_not_an_error(
 ) -> None:
     monkeypatch.delenv("AGENTOS_PR_LOOKUP")
     monkeypatch.setattr(worker, "PR_LOOKUP", ("agentos-no-such-gh-xyz", "pr", "view", "{branch}"))
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
     assert "no PR URL: agentos-no-such-gh-xyz not found" in system_logs(server)
@@ -125,7 +125,7 @@ def test_no_repo_mode_does_no_lookup(
 ) -> None:
     record = tmp_path / "gh-branch.txt"
     fake_gh(monkeypatch, record, PR)
-    server.manifest = make_manifest([agent_stage("plan", "edit")])
+    server.manifest = make_package([agent_stage("plan", "edit")])
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
     assert not record.exists()
@@ -137,7 +137,7 @@ def test_opt_out_does_no_lookup(
     record = tmp_path / "gh-branch.txt"
     fake_gh(monkeypatch, record, PR)
     monkeypatch.setenv("AGENTOS_PR_LOOKUP", "0")
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}
     assert not record.exists()

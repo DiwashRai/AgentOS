@@ -1,4 +1,4 @@
-"""Writing manifest files and collecting the context to sync (SPEC §9.3 / §9.4.1)."""
+"""Writing the package's context and notes, and collecting what to sync (SPEC §9.3 / §9.4.1)."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from typing import Literal
 import pytest
 
 import worker
-from worker_tests.worker_support import AGENTS_BLOCK, KEY, SKILL_DIR, make_manifest
+from worker_tests.worker_support import AGENTS_BLOCK, KEY, SKILL_DIR, make_package
 
 
-def manifest() -> worker.Manifest:
-    return worker.parse_manifest(make_manifest([]))
+def manifest() -> worker.Package:
+    return worker.load_package(make_package([]))
 
 
-def materialise(root: Path, m: worker.Manifest) -> worker.SyncState:
+def materialise(root: Path, m: worker.Package) -> worker.SyncState:
     state = worker.SyncState(m)
     for f in m.files:
-        problem = worker.write_entry(root, f, m.key)
+        problem = worker.write_entry(root, f)
         if problem:
             state.unsynced.add(f.path)
     return state
@@ -97,8 +97,8 @@ def test_write_skips_a_symlinked_target(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     root.mkdir()
     make_link("file", root / "CLAUDE.md", outside)
-    entry = worker.ManifestFile("CLAUDE.md", "@AGENTS.md", "block", True)
-    assert worker.write_entry(root, entry, KEY) == "CLAUDE.md is a symlink"
+    entry = worker.ContextFile("CLAUDE.md", KEY, "@AGENTS.md", "instructions", "block", KEY)
+    assert worker.write_entry(root, entry) == "CLAUDE.md is a symlink"
     assert outside.read_bytes() == b"precious\n"
 
 
@@ -134,7 +134,7 @@ def test_new_changed_and_vanished_files_under_sync_dirs(tmp_path: Path) -> None:
     unchanged = state.collect(tmp_path)
     state.accept(unchanged)
     assert f"{SKILL_DIR}/notes.md" not in sent(unchanged)
-    assert f"{SKILL_DIR}/TASKS.md" in sent(unchanged)  # sync=true files always go
+    assert f"{SKILL_DIR}/TASKS.md" in sent(unchanged)  # declared write files always go
 
     (skill / "notes.md").write_bytes(b"two\n")
     (skill / "sub" / "deep.txt").unlink()
@@ -162,7 +162,7 @@ def test_skipped_files_are_warnings(tmp_path: Path) -> None:
     m = manifest()
     state = materialise(tmp_path, m)
     skill = tmp_path / SKILL_DIR
-    (skill / "big.md").write_bytes(b"x" * (m.max_file_bytes + 1))
+    (skill / "big.md").write_bytes(b"x" * (m.limits["max_file_bytes"] + 1))
     (skill / "binary.bin").write_bytes(b"\xff\xfe\x00")
     (skill / "café.md").write_bytes(b"bad name\n")
     (tmp_path / "CLAUDE.md").write_bytes(b"markers removed by the agent\n")

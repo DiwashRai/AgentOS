@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
-from agentos.models import FileVersionInfo, Manifest, TicketDetail
+from agentos.models import FileVersionInfo, JobPackage, TicketDetail
 from agentos.worker_api import service as worker_service
 from tests.run_support import CSRF, RunDriver, Worker, bearer, event, finished, log_event
 
@@ -42,20 +42,26 @@ def test_claim_returns_the_manifest_and_starts_the_run(
     runs.tick()
     r = runs.claim(run.id, "a" * 43)
     assert r.status_code == 200, r.text
-    m = Manifest.model_validate(r.json()["manifest"])
-    assert m.run_id == run.id
+    m = JobPackage.model_validate(r.json()["manifest"])
+    assert (m.protocol, m.run_id) == (2, run.id)
     assert m.ticket.key == ticket.key
     assert m.workspace.mode == "repo"
     assert m.workspace.repo_url == REPO
     assert m.workspace.base_branch == "main"
     assert m.workspace.branch == f"agent/{ticket.key}"
-    assert m.sync_dirs == [skill_dir(ticket)]
+    assert (m.workspace.protect, m.workspace.blocks) == ([skill_dir(ticket)], [ticket.key])
     assert [s.id for s in m.stages] == ["plan"]
     assert m.stages[0].argv == ["python", "fake_agent.py"]  # the test runtime
     assert m.stages[0].stdin is not None
     assert ticket.key in m.stages[0].stdin
-    assert all(f.sync for f in m.files)
-    assert f"{skill_dir(ticket)}/TASKS.md" in {f.path for f in m.files}
+    d = skill_dir(ticket)
+    assert [(e.path, e.kind, e.access) for e in m.context] == [
+        (f"{d}/SKILL.md", "skill", "write"),
+        (f"{d}/TASKS.md", "plan", "write"),
+        ("AGENTS.md", "instructions", "write"),
+        ("CLAUDE.md", "instructions", "write"),
+    ]
+    assert [n.path for n in m.notes] == [f"{d}/learnings.log", f"{d}/swarm.log"]
     row = runs.db_run(run.id)
     assert row["status"] == "running"
     assert row["started_at"] is not None
@@ -112,8 +118,8 @@ def test_manifest_is_the_bundle_at_claim_time(
     put("while-dispatched.md", "d")
     r = authed.delete(f"/api/tickets/{ticket.key}/files/CLAUDE.md?base_version=1", headers=CSRF)
     assert r.status_code == 204, r.text
-    m = Manifest.model_validate(runs.claim(run.id).json()["manifest"])
-    files = {f.path: f.content for f in m.files}
+    m = JobPackage.model_validate(runs.claim(run.id).json()["manifest"])
+    files = {e.path: e.content for e in m.context}
     assert files["while-queued.md"] == "q"
     assert files["while-dispatched.md"] == "d"
     assert "CLAUDE.md" not in files  # deleted files are not in the bundle
@@ -490,4 +496,4 @@ def test_unknown_worker_token_is_401(ticket: TicketDetail, runs: RunDriver) -> N
 def test_worker_source_is_served(client: TestClient) -> None:
     response = client.get("/api/worker/worker.py")
     assert response.status_code == 200
-    assert "PROTOCOL = 1" in response.text
+    assert "PROTOCOL = 2" in response.text

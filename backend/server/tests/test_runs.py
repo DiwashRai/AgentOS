@@ -361,6 +361,14 @@ def test_manifest_is_404_until_claimed(
     assert authed.get(f"/api/runs/{run.id}/manifest").json() == claimed
 
 
+def test_a_run_stored_under_protocol_1_has_no_package(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
+) -> None:
+    worker = runs.start(create_ticket().key)
+    runs.set_run(worker.run_id, manifest=json.dumps({"protocol": 1, "files": []}))
+    assert error(authed.get(f"/api/runs/{worker.run_id}/manifest")) == (404, "not_found")
+
+
 def test_stage_names_fall_back_to_the_id(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:

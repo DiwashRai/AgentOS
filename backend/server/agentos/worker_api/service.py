@@ -28,14 +28,14 @@ from agentos.files.service import current_bundle, write_version
 from agentos.models import (
     ClientRunAssignment,
     CompleteRequest,
-    Manifest,
-    ManifestFile,
+    ContextEntry,
+    JobPackage,
     RunEvent,
     RunStatus,
     SyncFile,
     WorkerFinalStatus,
 )
-from agentos.pipeline.manifest import build_manifest
+from agentos.pipeline.manifest import build_package
 from agentos.pipeline.runtime import RuntimesConfig
 from agentos.pipeline.segment import completion_status, plan_run
 from agentos.pipeline.space import SpaceConfig
@@ -70,7 +70,7 @@ def _unauthorized(what: str) -> ApiError:
 
 @dataclass(frozen=True, slots=True)
 class _Claim:
-    manifest: Manifest | None = None
+    manifest: JobPackage | None = None
     error: ApiError | None = None
 
 
@@ -80,7 +80,7 @@ def claim(
     space: SpaceConfig,
     dispatch_token: str,
     worker_token: str,
-) -> Manifest:
+) -> JobPackage:
     """dispatched → running, binding the worker token and building the manifest from the bundle
     as it is now (the bundle locks from here). A safe retry with the same worker token returns
     the stored manifest; another worker token → 409 `already_claimed`; terminal → 410."""
@@ -107,7 +107,7 @@ def _claim(
         if run["status"] == "running":
             if run["worker_token_hash"] != worker_hash:
                 raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-            return _Claim(manifest=Manifest.model_validate_json(run["manifest"]))
+            return _Claim(manifest=JobPackage.model_validate_json(run["manifest"]))
         if run["status"] != "dispatched":
             raise _gone(run["id"], run["status"])
         try:
@@ -130,7 +130,7 @@ def _claim(
         return _Claim(manifest=manifest)
 
 
-def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> Manifest:
+def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -> JobPackage:
     """The run's plan comes from the ticket's current pipeline: it is locked while the run is
     active, so it is the one validated at dispatch (the plan must still cover the run's stages).
     The workspace's repo URL and base branch are resolved from the Space's catalog now; a repo
@@ -140,7 +140,7 @@ def _build(conn: Conn, run: Row, runtimes: RuntimesConfig, space: SpaceConfig) -
     plan = plan_run(ticket_pipeline(ticket), run["from_stage"])
     if [s.id for s in plan.stages] != json.loads(run["stage_ids"]):
         raise ApiError(422, "invalid_stage", "the pipeline changed since the run was dispatched")
-    return build_manifest(
+    return build_package(
         run["id"],
         run_ticket_ref(ticket, space),
         plan,
@@ -301,9 +301,10 @@ def sync(
 ) -> dict[str, int]:
     """Write the worker's context files back as new versions authored by the run (SPEC §9.4.1).
 
-    Each path must be a `sync=true` manifest file (keeping its mode) or lie under a manifest
-    `sync_dirs` entry, and pass `validate_path`. Any invalid entry → 422 for the whole request,
-    nothing written. Returns each path's latest version (0 = absent: deleting a missing file).
+    Each path must be a write context entry or a note of the run's package (keeping its mode), or
+    lie under a `workspace.protect` folder, and pass `validate_path`. Any invalid entry → 422 for
+    the whole request, nothing written. Returns each path's latest version (0 = absent: deleting
+    a missing file).
     """
     with db.tx() as conn:
         run = _live_run(conn, worker_token)
@@ -311,8 +312,8 @@ def sync(
             raise ApiError(
                 422, "validation_error", f"stage_id: {stage_id!r} is not a stage of this run"
             )
-        manifest = Manifest.model_validate_json(run["manifest"])
-        entries = [_check_sync_entry(manifest, f) for f in files]
+        package = JobPackage.model_validate_json(run["manifest"])
+        entries = [_check_sync_entry(package, f) for f in files]
         versions: dict[str, int] = {}
         for path, f in entries:
             version = write_version(
@@ -328,12 +329,16 @@ def sync(
     return versions
 
 
-def _check_sync_entry(manifest: Manifest, f: SyncFile) -> tuple[str, SyncFile]:
+def _check_sync_entry(package: JobPackage, f: SyncFile) -> tuple[str, SyncFile]:
     path = validate_path(f.path, "files.path")
     key = path_key(path)
-    known: ManifestFile | None = next((m for m in manifest.files if path_key(m.path) == key), None)
+    notes = [
+        ContextEntry(**n.model_dump(), kind="file", mode="replace", block=None, access="write")
+        for n in package.notes
+    ]
+    known = next((e for e in [*package.context, *notes] if path_key(e.path) == key), None)
     if known is not None:
-        if not known.sync:
+        if known.access != "write":
             raise ApiError(422, "validation_error", f"files.path: {path!r} is read-only (library)")
         if f.content is not None and f.mode != known.mode:
             raise ApiError(
@@ -342,7 +347,7 @@ def _check_sync_entry(manifest: Manifest, f: SyncFile) -> tuple[str, SyncFile]:
                 f"files.mode: {path!r} is a {known.mode}-mode file; its mode can't change",
             )
         return known.path, f.model_copy(update={"mode": known.mode})
-    if not any(key.startswith(path_key(d) + "/") for d in manifest.sync_dirs):
+    if not any(key.startswith(path_key(d) + "/") for d in package.workspace.protect):
         raise ApiError(
             422, "validation_error", f"files.path: {path!r} is not a context file of this run"
         )

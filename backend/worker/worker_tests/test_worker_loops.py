@@ -22,7 +22,7 @@ from worker_tests.worker_support import (
     agent_stage,
     git,
     invocation,
-    make_manifest,
+    make_package,
     python_shell,
     run_worker,
     shell_stage,
@@ -41,7 +41,7 @@ def block(start: str, end: str, max_rounds: int) -> dict[str, Any]:
 def manifest(
     stages: list[dict[str, Any]], loops: list[dict[str, Any]], **extra: Any
 ) -> dict[str, Any]:
-    data = make_manifest(stages, repo_url=extra.pop("repo_url", None))
+    data = make_package(stages, repo_url=extra.pop("repo_url", None))
     data.update(loops=loops, **extra)
     return data
 
@@ -348,7 +348,7 @@ def test_cancel_in_a_later_round(server: FakeServer, tmp_path: Path) -> None:
 
 
 def test_manifest_warnings_become_warning_events(server: FakeServer, tmp_path: Path) -> None:
-    server.manifest = make_manifest([agent_stage("plan", "print=x")])
+    server.manifest = make_package([agent_stage("plan", "print=x")])
     server.manifest["warnings"] = ["The loop over implement..review is ignored: it has no check."]
     assert run_worker(server, tmp_path / "ws") == 0
     kinds = [(e["type"], e["stage_id"]) for e in server.events() if e["type"] != "log"]
@@ -550,7 +550,7 @@ def test_agentos_dir_never_reaches_the_branch(
 def test_the_pre_push_guard_refuses_commits_of_agentos(
     server: FakeServer, origin: Origin, tmp_path: Path
 ) -> None:
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "write=.agentos/verdict.json:{}", "forcecommit=.agentos")],
         repo_url=origin.url,
     )

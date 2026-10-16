@@ -7,15 +7,32 @@ import { ManifestBody } from "./StageCalls";
 const PROMPT = "Review the change.\nSECRET-LOOKING-PROMPT-BODY";
 
 const MANIFEST: Manifest = {
-  protocol: 1,
+  protocol: 2,
   run_id: 7,
   ticket: { key: "AOS-1", title: "A ticket" },
-  workspace: { mode: "repo", repo_url: null, branch: null, base_branch: null },
+  workspace: {
+    mode: "repo",
+    repo_url: null,
+    branch: null,
+    base_branch: null,
+    protect: [],
+    blocks: [],
+  },
   limits: { max_file_bytes: 1, max_line_bytes: 1 },
-  sync_dirs: [],
-  files: [
-    { path: ".claude/agents/reviewer.md", content: "FILE-CONTENT", mode: "replace", sync: false },
+  context: [
+    {
+      path: ".claude/agents/reviewer.md",
+      kind: "agent",
+      name: "reviewer",
+      mode: "replace",
+      block: null,
+      access: "write",
+      content: "FILE-CONTENT",
+    },
   ],
+  notes: [],
+  sync_back: { dir: ".agentos/sync_back", max_bytes: 1 },
+  env: {},
   stages: [
     {
       id: "review",

@@ -25,7 +25,7 @@ from agentos.models import (
     IntakeQuery,
     IntakeSettings,
     JiraField,
-    Manifest,
+    JobPackage,
     MappingSettings,
     Me,
     Person,
@@ -199,7 +199,7 @@ def test_every_get_matches_its_model(
             check(client, f"/api/runs/{run.id}", RunDetail)
             if run.status == "queued":  # the client run: no manifest or events yet
                 continue
-            check(client, f"/api/runs/{run.id}/manifest", Manifest)
+            check(client, f"/api/runs/{run.id}/manifest", JobPackage)
             assert check(client, f"/api/runs/{run.id}/events", list[RunEvent])
     deleted = check(client, f"/api/tickets/{repo.key}/versions/gone.md", list[FileVersionInfo])
     assert [v.deleted for v in deleted] == [False, True]

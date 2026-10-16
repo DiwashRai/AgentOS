@@ -301,31 +301,20 @@ AGENTS_BLOCK = (
 )
 
 
-def make_manifest(
+def context(path: str, content: str, kind: str, name: str, **extra: Any) -> dict[str, Any]:
+    """A package context entry (write access, replace mode unless `extra` says otherwise)."""
+    entry = {"path": path, "kind": kind, "name": name, "mode": "replace", "block": None}
+    return {**entry, "access": "write", "content": content, **extra}
+
+
+def make_package(
     stages: list[dict[str, Any]], *, repo_url: str | None = None, run_id: int = 42
 ) -> dict[str, Any]:
-    """A protocol v1 manifest shaped like the server's (fixtures/manifest_v1.json)."""
-    files: list[dict[str, Any]] = [
-        {
-            "path": ".claude/skills/review-checklist/SKILL.md",
-            "content": "# Review checklist\n",
-            "mode": "replace",
-            "sync": False,
-        },
-        {"path": f"{SKILL_DIR}/SKILL.md", "content": "# AOS-42\n", "mode": "replace", "sync": True},
-        {
-            "path": f"{SKILL_DIR}/TASKS.md",
-            "content": "# Tasks\n\n- [ ] Fix expiry\n- [ ] Add test\n",
-            "mode": "replace",
-            "sync": True,
-        },
-        {"path": f"{SKILL_DIR}/learnings.log", "content": "", "mode": "replace", "sync": True},
-        {"path": "AGENTS.md", "content": AGENTS_BLOCK, "mode": "block", "sync": True},
-        {"path": "CLAUDE.md", "content": "@AGENTS.md", "mode": "block", "sync": True},
-    ]
+    """A protocol 2 job package shaped like the server's (fixtures/job_v2.json)."""
+    block = {"mode": "block", "block": KEY}
     repo = repo_url is not None
     return {
-        "protocol": 1,
+        "protocol": 2,
         "run_id": run_id,
         "ticket": {"key": KEY, "title": "Fix login bug"},
         "workspace": {
@@ -333,11 +322,35 @@ def make_manifest(
             "repo_url": repo_url,
             "base_branch": "main" if repo else None,
             "branch": f"agent/{KEY}" if repo else None,
+            "protect": [SKILL_DIR],
+            "blocks": [KEY],
         },
-        "files": files,
-        "sync_dirs": [SKILL_DIR],
+        "context": [
+            context(
+                ".claude/skills/review-checklist/SKILL.md",
+                "# Review checklist\n",
+                "skill",
+                "review-checklist",
+                access="read",
+            ),
+            context(f"{SKILL_DIR}/SKILL.md", "# AOS-42\n", "skill", SKILL_DIR.split("/")[-1]),
+            context(
+                f"{SKILL_DIR}/TASKS.md",
+                "# Tasks\n\n- [ ] Fix expiry\n- [ ] Add test\n",
+                "plan",
+                "TASKS",
+            ),
+            context("AGENTS.md", AGENTS_BLOCK, "instructions", KEY, **block),
+            context("CLAUDE.md", "@AGENTS.md", "instructions", KEY, **block),
+        ],
+        "notes": [{"path": f"{SKILL_DIR}/learnings.log", "name": "learnings", "content": ""}],
+        "sync_back": {"dir": ".agentos/sync_back", "max_bytes": 20 * 1024 * 1024},
+        "env": {"AGENTOS_SKILL_DIR": SKILL_DIR, "AGENTOS_SYNC_BACK": ".agentos/sync_back"},
         "stages": stages,
         "limits": {"max_file_bytes": 1048576, "max_line_bytes": 262144},
+        "loops": [],
+        "start_stage": None,
+        "warnings": [],
     }
 
 

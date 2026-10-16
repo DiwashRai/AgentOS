@@ -219,15 +219,15 @@ describe("loop stages", () => {
 
 describe("the rest", () => {
   it("lists file paths only, sorted", () => {
-    const file = (path: string): Manifest["files"][number] => ({
+    const file = (path: string): Manifest["notes"][number] => ({
       path,
+      name: path,
       content: "x".repeat(10),
-      mode: "replace",
-      sync: false,
     });
     expect(
       filePaths({
-        files: [file("TASKS.md"), file(".claude/agents/reviewer.md"), file("CONTEXT.md")],
+        context: [],
+        notes: [file("TASKS.md"), file(".claude/agents/reviewer.md"), file("CONTEXT.md")],
       }),
     ).toEqual([".claude/agents/reviewer.md", "CONTEXT.md", "TASKS.md"]);
   });

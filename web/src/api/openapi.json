@@ -277,7 +277,7 @@
         "additionalProperties": false,
         "properties": {
           "manifest": {
-            "$ref": "#/components/schemas/Manifest"
+            "$ref": "#/components/schemas/JobPackage"
           }
         },
         "required": [
@@ -488,6 +488,73 @@
           "status"
         ],
         "title": "CompleteRequest",
+        "type": "object"
+      },
+      "ContextEntry": {
+        "additionalProperties": false,
+        "description": "A context file. `name`: the skill, block, agent or file it belongs to. `block`: the block\nname in block mode (`content` is then the block's). `access: write` entries are synced back.",
+        "properties": {
+          "access": {
+            "enum": [
+              "write",
+              "read"
+            ],
+            "title": "Access",
+            "type": "string"
+          },
+          "block": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "skill",
+              "plan",
+              "instructions",
+              "agent",
+              "file"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "replace",
+              "block"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "name",
+          "mode",
+          "block",
+          "access",
+          "content"
+        ],
+        "title": "ContextEntry",
         "type": "object"
       },
       "DispatchBlock": {
@@ -1437,6 +1504,100 @@
         "title": "JiraField",
         "type": "object"
       },
+      "JobPackage": {
+        "additionalProperties": false,
+        "description": "What a worker receives at claim. `env`: non-secret stage variables (workspace-relative\npaths); the worker adds `AGENTOS_RUN_ID` and `AGENTOS_TICKET_KEY` itself.",
+        "properties": {
+          "context": {
+            "items": {
+              "$ref": "#/components/schemas/ContextEntry"
+            },
+            "title": "Context",
+            "type": "array"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Env",
+            "type": "object"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ManifestLimits"
+          },
+          "loops": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestLoop"
+            },
+            "title": "Loops",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/NoteEntry"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "protocol": {
+            "const": 2,
+            "title": "Protocol",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/ManifestStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "start_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Stage"
+          },
+          "sync_back": {
+            "$ref": "#/components/schemas/SyncBack"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/ManifestTicket"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/ManifestWorkspace"
+          }
+        },
+        "required": [
+          "protocol",
+          "run_id",
+          "ticket",
+          "workspace",
+          "context",
+          "notes",
+          "sync_back",
+          "env",
+          "stages",
+          "limits"
+        ],
+        "title": "JobPackage",
+        "type": "object"
+      },
       "LogData": {
         "additionalProperties": false,
         "properties": {
@@ -1577,120 +1738,6 @@
         "title": "Loop",
         "type": "object"
       },
-      "Manifest": {
-        "additionalProperties": false,
-        "properties": {
-          "files": {
-            "items": {
-              "$ref": "#/components/schemas/ManifestFile"
-            },
-            "title": "Files",
-            "type": "array"
-          },
-          "limits": {
-            "$ref": "#/components/schemas/ManifestLimits"
-          },
-          "loops": {
-            "items": {
-              "$ref": "#/components/schemas/ManifestLoop"
-            },
-            "title": "Loops",
-            "type": "array"
-          },
-          "protocol": {
-            "const": 1,
-            "default": 1,
-            "title": "Protocol",
-            "type": "integer"
-          },
-          "run_id": {
-            "title": "Run Id",
-            "type": "integer"
-          },
-          "stages": {
-            "items": {
-              "$ref": "#/components/schemas/ManifestStage"
-            },
-            "title": "Stages",
-            "type": "array"
-          },
-          "start_stage": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Start Stage"
-          },
-          "sync_dirs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Sync Dirs",
-            "type": "array"
-          },
-          "ticket": {
-            "$ref": "#/components/schemas/ManifestTicket"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Warnings",
-            "type": "array"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/ManifestWorkspace"
-          }
-        },
-        "required": [
-          "run_id",
-          "ticket",
-          "workspace",
-          "files",
-          "sync_dirs",
-          "stages",
-          "limits"
-        ],
-        "title": "Manifest",
-        "type": "object"
-      },
-      "ManifestFile": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "title": "Content",
-            "type": "string"
-          },
-          "mode": {
-            "enum": [
-              "replace",
-              "block"
-            ],
-            "title": "Mode",
-            "type": "string"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "sync": {
-            "title": "Sync",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "path",
-          "content",
-          "mode",
-          "sync"
-        ],
-        "title": "ManifestFile",
-        "type": "object"
-      },
       "ManifestInvocation": {
         "additionalProperties": false,
         "description": "Another call of a loop stage's agent: a later round, or a verdict repair (request 24). The\nprompt is the `stdin`, or `argv[prompt_arg]` when the runtime takes it as an argument (then\n`stdin` is null). The worker appends its text to the prompt (the round's feedback, or why the\nverdict was invalid), then `tail`, and changes nothing else.",
@@ -1759,7 +1806,7 @@
       },
       "ManifestLoop": {
         "additionalProperties": false,
-        "description": "A loop block over the manifest's `stages` (ids, `start` at or before `end`).",
+        "description": "A loop block over the package's `stages` (ids, `start` at or before `end`).",
         "properties": {
           "end": {
             "title": "End",
@@ -1912,6 +1959,7 @@
       },
       "ManifestWorkspace": {
         "additionalProperties": false,
+        "description": "`protect`: folders kept out of git besides the declared files (the ticket skill dir; the\nworker always adds `.agentos/`). `blocks`: every block name in `context`, all of which the\npre-push marker scan looks for.",
         "properties": {
           "base_branch": {
             "anyOf": [
@@ -1923,6 +1971,13 @@
               }
             ],
             "title": "Base Branch"
+          },
+          "blocks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocks",
+            "type": "array"
           },
           "branch": {
             "anyOf": [
@@ -1943,6 +1998,13 @@
             "title": "Mode",
             "type": "string"
           },
+          "protect": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Protect",
+            "type": "array"
+          },
           "repo_url": {
             "anyOf": [
               {
@@ -1959,7 +2021,9 @@
           "mode",
           "repo_url",
           "base_branch",
-          "branch"
+          "branch",
+          "protect",
+          "blocks"
         ],
         "title": "ManifestWorkspace",
         "type": "object"
@@ -2219,6 +2283,31 @@
           "role"
         ],
         "title": "Me",
+        "type": "object"
+      },
+      "NoteEntry": {
+        "additionalProperties": false,
+        "description": "An append-only log (`learnings.log`, `swarm.log`), shipped and synced like write context.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "content"
+        ],
+        "title": "NoteEntry",
         "type": "object"
       },
       "NowInfo": {
@@ -3901,6 +3990,26 @@
           "data"
         ],
         "title": "StageStartedEvent",
+        "type": "object"
+      },
+      "SyncBack": {
+        "additionalProperties": false,
+        "description": "The workspace folder the agent returns files through, as one zip of at most `max_bytes`.",
+        "properties": {
+          "dir": {
+            "title": "Dir",
+            "type": "string"
+          },
+          "max_bytes": {
+            "title": "Max Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dir",
+          "max_bytes"
+        ],
+        "title": "SyncBack",
         "type": "object"
       },
       "SyncFile": {
@@ -6044,7 +6153,7 @@
     },
     "/api/runs/{run_id}/manifest": {
       "get": {
-        "description": "Exactly what was sent to the worker (prompts + files). Can be large; fetch on demand.",
+        "description": "Exactly what was sent to the worker (the job package). Can be large; fetch on demand.",
         "operationId": "get_manifest_api_runs__run_id__manifest_get",
         "parameters": [
           {
@@ -6062,7 +6171,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Manifest"
+                  "$ref": "#/components/schemas/JobPackage"
                 }
               }
             },

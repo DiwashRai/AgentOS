@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from agentos.context import AppContext
-from agentos.models import ClientPollResponse, ClientToken, Manifest, Me, Role, TicketDetail
+from agentos.models import ClientPollResponse, ClientToken, JobPackage, Me, Role, TicketDetail
 from agentos.worker_api import service
 from tests.run_support import CSRF, RunDriver, Worker, bearer
 
@@ -145,9 +145,11 @@ def test_the_dispatch_token_drives_the_worker_api(
         headers=bearer(run.dispatch_token),
     )
     assert claim.status_code == 200, claim.text
-    worker = Worker(client, run_id, worker_token, Manifest.model_validate(claim.json()["manifest"]))
+    worker = Worker(
+        client, run_id, worker_token, JobPackage.model_validate(claim.json()["manifest"])
+    )
     worker.run_stage("plan")
-    synced = next(f for f in worker.manifest.files if f.sync)
+    synced = worker.manifest.context[0]
     files = [{"path": synced.path, "content": "edited", "mode": synced.mode}]
     assert worker.sync("plan", files).status_code == 200
     assert worker.complete().status_code == 204

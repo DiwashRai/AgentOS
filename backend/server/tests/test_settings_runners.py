@@ -16,7 +16,7 @@ from agentos.config import Settings
 from agentos.context import AppContext, runner_target
 from agentos.launchers.github import NO_REPO, GitHubActionsLauncher
 from agentos.main import create_app
-from agentos.models import AppConfig, Manifest, RunnerSettings, RuntimeSettings, TicketDetail
+from agentos.models import AppConfig, JobPackage, RunnerSettings, RuntimeSettings, TicketDetail
 from tests.run_support import RunDriver
 from tests.test_runs import put_pipeline, stage_of
 
@@ -228,7 +228,7 @@ def test_a_manifest_built_after_a_save_uses_the_new_argv(
     fake, claude = entries(authed)
     fake["argv"] = ["python", "fake_agent.py", "--new"]
     assert put_runtimes(authed, [fake, claude]).status_code == 200
-    manifest: Manifest = runs.launch_and_claim(run.id).manifest
+    manifest: JobPackage = runs.launch_and_claim(run.id).manifest
     assert manifest.stages[0].argv == ["python", "fake_agent.py", "--new"]
 
 

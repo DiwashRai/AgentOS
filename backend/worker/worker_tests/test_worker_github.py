@@ -18,7 +18,7 @@ from worker_tests.worker_support import (
     Origin,
     agent_stage,
     git,
-    make_manifest,
+    make_package,
     run_worker,
 )
 
@@ -241,7 +241,7 @@ def test_api_mode_without_the_api_url_fails_setup(
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GH_TOKEN", "ghs_secret")
     monkeypatch.setenv("GITHUB_SERVER_URL", SERVER)
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
 
     assert run_worker(server, tmp_path / "ws") == 0
 
@@ -263,7 +263,7 @@ def test_a_rate_limited_setup_check_is_not_blamed_on_the_token(
     monkeypatch.setenv("GH_TOKEN", "ghs_secret")
     monkeypatch.setenv("GITHUB_API_URL", "https://api.github.com")
     monkeypatch.setenv("GITHUB_SERVER_URL", SERVER)
-    server.manifest = make_manifest(
+    server.manifest = make_package(
         [agent_stage("implement", "edit")], repo_url="https://github.com/acme/app"
     )
 
@@ -379,7 +379,7 @@ def test_a_token_off_actions_still_pushes_with_git(
     server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GH_TOKEN", "ghs_secret")
-    server.manifest = make_manifest([agent_stage("implement", "edit")], repo_url=origin.url)
+    server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
 
     assert run_worker(server, tmp_path / "ws") == 0
 

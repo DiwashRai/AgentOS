@@ -26,7 +26,7 @@ from agentos.db import Conn, Database, IntegrityError, Row
 from agentos.errors import ApiError, field_error
 from agentos.models import (
     DispatchTarget,
-    Manifest,
+    JobPackage,
     Me,
     Person,
     Pipeline,
@@ -287,17 +287,20 @@ def get_run(db: Database, run_id: int) -> RunDetail:
         return _detail(conn, run_row(conn, run_id))
 
 
-def get_manifest(db: Database, run_id: int) -> Manifest:
-    """The manifest exactly as sent to the worker. 404 `not_found` until the run is claimed."""
+def get_manifest(db: Database, run_id: int) -> JobPackage:
+    """The job package exactly as sent to the worker. 404 `not_found` until the run is claimed,
+    and for a run stored under another protocol."""
     with db.read() as conn:
         row = run_row(conn, run_id)
     if row["manifest"] is None:
         raise ApiError(
             404,
             "not_found",
-            f"Run {run_id} has no manifest: it is built when a worker claims the run",
+            f"Run {run_id} has no package: it is built when a worker claims the run",
         )
-    return Manifest.model_validate_json(row["manifest"])
+    if json.loads(row["manifest"]).get("protocol") != 2:
+        raise ApiError(404, "not_found", f"Run {run_id} was sent an older protocol's manifest")
+    return JobPackage.model_validate_json(row["manifest"])
 
 
 def run_events(
