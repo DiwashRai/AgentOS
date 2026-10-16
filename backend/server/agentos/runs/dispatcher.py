@@ -22,7 +22,8 @@ INTERVAL_S = 2.0
 
 def tick(ctx: AppContext) -> list[int]:
     """Dispatch queued runs until none of a configured provider is left. Returns the run ids
-    taken from the queue (including ones whose build or start failed: those runs are failed)."""
+    taken from the queue (including ones whose build or start failed: those runs are failed).
+    With no mailbox store, the queued file-report runs get their `queue_reason`."""
     url = ctx.settings.effective_worker_url
     report = ManifestReport(mode="live", url=url)
     launched: list[int] = []
@@ -43,4 +44,7 @@ def tick(ctx: AppContext) -> list[int]:
             continue
         service.set_launch_ref(ctx.db, run_id, ref)
         log.info("run %s: started (%s %s)", run_id, name, ref)
+
+    if ctx.mailbox is None:  # file-report runs wait, visibly, for a mailbox store
+        service.hold_queued(ctx.db, "file")
     return launched

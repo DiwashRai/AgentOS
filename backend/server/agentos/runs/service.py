@@ -34,6 +34,7 @@ from agentos.models import (
     ManifestReport,
     Me,
     Pipeline,
+    ReportMode,
     Route,
     RunDetail,
     RunEvent,
@@ -99,7 +100,7 @@ _SQL_STAGE_RUNS = (
 # Queued runs, oldest first, each with `fence`: the latest earlier run of its ticket whose job may
 # still publish (params: now, then those of the WHERE part appended).
 _SQL_QUEUED = (
-    "SELECT r.id, r.provider, r.queue_reason, (SELECT MAX(p.id) FROM runs p JOIN jobs j "
+    "SELECT r.id, r.provider, r.report, r.queue_reason, (SELECT MAX(p.id) FROM runs p JOIN jobs j "
     "ON j.run_id = p.id WHERE p.ticket_id = r.ticket_id AND p.id < r.id AND j.ended_at IS NULL "
     "AND j.not_after > ?) AS fence FROM runs r WHERE r.status = 'queued' AND "
 )
@@ -465,13 +466,14 @@ def _next_queued(
 ) -> tuple[Row | None, list[tuple[str, int]]]:
     """The oldest queued run `sql` selects that may start now, and `(queue_reason, id)` for each
     older one that waits for a new reason: the fence (its ticket's earlier job may still
-    publish) or, for push (`providers` given), a provider that isn't configured."""
+    publish) or, for push (`providers` given), a runner that isn't configured."""
     held: list[tuple[str, int]] = []
     for row in conn.execute(sql, (to_db(now), param)).fetchall():
         if row["fence"] is not None:
             reason = f"waiting for run #{row['fence']}'s worker to stop"
         elif providers is not None and row["provider"] not in providers:
-            reason = f"its runner ({row['provider']}) is not configured on this server"
+            runner = "mailbox" if row["report"] == "file" else row["provider"]
+            reason = f"its runner ({runner}) is not configured on this server"
         else:
             return row, held
         if reason != row["queue_reason"]:
@@ -500,6 +502,18 @@ def mark_next_dispatched(
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
         return run_id, row["provider"], build_job(conn, run_row(conn, run_id), report, now)
+
+
+def hold_queued(db: Database, report: ReportMode) -> None:
+    """No runner for `report` is configured here (a file report without a mailbox store): every
+    queued push run reporting it waits, with the reason (or its fence's) as `queue_reason`."""
+    with db.read() as conn:
+        _, held = _next_queued(conn, _SQL_QUEUED_PUSH, report, utcnow(), ())
+    if held:  # the write lock only when a reason changes
+        with db.tx() as conn:
+            conn.executemany(
+                "UPDATE runs SET queue_reason = ? WHERE id = ? AND status = 'queued'", held
+            )
 
 
 def take_client_run(

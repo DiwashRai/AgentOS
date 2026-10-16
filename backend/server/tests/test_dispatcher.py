@@ -18,9 +18,11 @@ from agentos.clock import to_db, utcnow
 from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.launchers.base import Provider, ProviderError
+from agentos.mailbox import dispatcher as mailbox_dispatcher
 from agentos.main import _every, create_app
 from agentos.models import Me, Route, RunDetail, TicketDetail
 from agentos.runs import dispatcher
+from tests.mailbox_support import FakeMailbox
 from tests.run_support import CSRF, FakeProvider, RunDriver
 
 CreateTicket = Callable[..., TicketDetail]
@@ -125,12 +127,21 @@ def test_a_queued_run_keeps_its_route_after_the_launcher_changes(
     assert runs.get(before).queue_reason is None
 
 
-def test_file_report_runs_are_left_to_the_mailbox(
+def test_file_report_runs_wait_with_a_reason_until_a_mailbox_takes_them(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
+    """Queued for the mailbox, then AGENTOS_LAUNCHER switched to github with no store."""
     run_id = runs.queue(create_ticket(repo=None).key).id
     runs.set_run(run_id, report="file")
     assert runs.tick() == []
+    reason = runs.get(run_id).queue_reason
+    assert reason is not None
+    assert "mailbox" in reason
+
+    mailbox = FakeMailbox()
+    runs.ctx.mailbox = mailbox
+    assert runs.tick() == []  # the runs dispatcher never takes a file run
+    assert mailbox_dispatcher.tick(runs.ctx, mailbox) == [run_id]
     assert runs.get(run_id).queue_reason is None
 
 
