@@ -119,7 +119,7 @@ def test_seeded_space_settings(authed: TestClient) -> None:
             "default_repo": "r",
             "key_prefix": "AOS",
             "jira_projects": [],
-            "claim_timeout_s": 900,
+            "claim_timeout_s": 3600,
         },
         "version": 1,
         "updated_by": None,  # seeded, not saved by anyone

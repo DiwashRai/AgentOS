@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
 from agentos.models import JobPackage, Me, Route, RunSummary, TicketDetail, TicketSummary
-from agentos.runs.service import BUDGET_GRACE, NEVER_CONNECTED, OVER_BUDGET
+from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, OVER_BUDGET
 from tests.run_support import CSRF, FakeProvider, RunDriver, bearer, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
@@ -508,7 +508,7 @@ def test_cancel_running_waits_for_the_worker(
         (None, "cancelled", None),  # the worker stopped on its own
         ("cancel", "cancelled", None),
         ("budget", "failed", OVER_BUDGET),
-        ("never_started", "failed", NEVER_CONNECTED),
+        ("never_started", "failed", NEVER_STARTED),
     ],
 )
 def test_a_cancelled_result_ends_the_run_by_its_stop_reason(

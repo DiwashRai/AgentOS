@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from pydantic import TypeAdapter
@@ -64,12 +63,9 @@ from agentos.tickets.service import (
 ACTIVE: tuple[RunStatus, ...] = ("queued", "dispatched", "running")
 TERMINAL: tuple[RunStatus, ...] = ("succeeded", "gated", "failed", "cancelled")
 
-# Reaper thresholds (SPEC §8 "Reaper loop").
-HEARTBEAT_TIMEOUT = timedelta(seconds=90)
+# A job's allowance past its time budget (clone, publish).
 BUDGET_GRACE = timedelta(minutes=15)
-CANCEL_GRACE = timedelta(minutes=2)
-NEVER_CONNECTED = "worker never connected"
-WORKER_LOST = "worker lost"
+NEVER_STARTED = "never started"
 OVER_BUDGET = "time budget exceeded"
 
 # A client run: its owner's client leases it and it reports live.
@@ -81,7 +77,7 @@ STOPPED: dict[StopReason | None, tuple[RunStatus, str | None]] = {
     None: ("cancelled", None),
     "cancel": ("cancelled", None),
     "budget": ("failed", OVER_BUDGET),
-    "never_started": ("failed", NEVER_CONNECTED),
+    "never_started": ("failed", NEVER_STARTED),
 }
 
 EVENT_ADAPTER: TypeAdapter[RunEvent] = TypeAdapter(RunEvent)
@@ -317,7 +313,7 @@ def run_events(
 def cancel(db: Database, run_id: int) -> RunSummary:
     """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → stop the
     run and its job once (reason `cancel`); the worker sees `cancel: true` on its next journal
-    post and completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A
+    post and completes as cancelled (the reaper ends it after its stop grace otherwise). A
     terminal run is returned unchanged."""
     now = utcnow()
     with db.tx() as conn:
@@ -325,18 +321,25 @@ def cancel(db: Database, run_id: int) -> RunSummary:
         if row["status"] in ("queued", "dispatched"):
             finish(conn, run_id, "cancelled", ("queued", "dispatched"), now=now)
         elif row["status"] == "running":
-            stop = (to_db(now), run_id)
-            conn.execute(
-                "UPDATE runs SET stop_requested_at = ?, stop_reason = 'cancel' "
-                "WHERE id = ? AND status = 'running' AND stop_requested_at IS NULL",
-                stop,
-            )
-            conn.execute(
-                "UPDATE jobs SET stop_requested_at = ?, stop_reason = 'cancel' "
-                "WHERE run_id = ? AND stop_requested_at IS NULL",
-                stop,
-            )
+            stop(conn, run_id, "cancel", now)
         return _summary(conn, run_row(conn, run_id))
+
+
+def stop(conn: Conn, run_id: int, reason: StopReason, now: datetime) -> None:
+    """Stop an active run and its job once, with `reason`, in the caller's transaction: its
+    worker sees `cancel: true` in its next journal reply."""
+    params = (to_db(now), reason, run_id)
+    cursor = conn.execute(
+        "UPDATE runs SET stop_requested_at = ?, stop_reason = ? "
+        "WHERE id = ? AND status IN ('dispatched', 'running') AND stop_requested_at IS NULL",
+        params,
+    )
+    if cursor.rowcount:
+        conn.execute(
+            "UPDATE jobs SET stop_requested_at = ?, stop_reason = ? "
+            "WHERE run_id = ? AND stop_requested_at IS NULL",
+            params,
+        )
 
 
 # ------------------------------------------------------------------ state machine primitives
@@ -539,13 +542,6 @@ def fail_start(db: Database, run_id: int, job_id: str, error: str) -> None:
 # ------------------------------------------------------------------ reaper primitives
 
 
-@dataclass(frozen=True, slots=True)
-class Reaped:
-    run_id: int
-    status: RunStatus
-    reason: str
-
-
 def touch_running(db: Database, now: datetime) -> int:
     """Startup / sleep grace: every running run counts as just seen. Returns how many."""
     with db.tx() as conn:
@@ -555,70 +551,30 @@ def touch_running(db: Database, now: datetime) -> int:
         return cursor.rowcount
 
 
+def active_jobs(db: Database) -> list[Row]:
+    """The job of every dispatched or running run, with its run's route and clocks."""
+    with db.read() as conn:
+        rows: list[Row] = conn.execute(
+            "SELECT r.id AS run_id, r.status, r.start, r.provider, r.report, r.launch_ref, "
+            "r.dispatched_at, r.started_at, r.last_seen_at, r.stop_requested_at, r.stop_reason, "
+            "j.id AS job_id, j.budget_s FROM runs r JOIN jobs j ON j.run_id = r.id "
+            "WHERE r.status IN ('dispatched', 'running') ORDER BY r.id"
+        ).fetchall()
+    return rows
+
+
 def reap(
     db: Database,
+    run_id: int,
+    was: RunStatus,
     now: datetime,
-    claim_timeout_s: int,
-    exempt_report: str | None = None,
-) -> list[Reaped]:
-    """Reaper rules 2-5 (SPEC §8), in order, in one transaction.
-
-    Each rule keys on the run's own row: `queued` runs are never touched (a client run waits for
-    its user's client), and a dispatched or running client run is reaped exactly like a local
-    one. Runs whose `report` is `exempt_report` skip rules 3-5 (heartbeat, budget,
-    unacknowledged cancel): the reaper passes "file" only while the mailbox reaper
-    (`agentos.mailbox`) watches those runs, as they never send heartbeats.
-    """
-    out: list[Reaped] = []
-    # Rules 3-5 end with `AND (? IS NULL OR report <> ?)`, bound to these two values.
-    exempt = (exempt_report, exempt_report)
+    stop_reason: StopReason | None,
+    status: RunStatus | None,
+    error: str | None,
+) -> bool:
+    """One reaper verdict, in one transaction: stop the run (`stop_reason`), then end it
+    (`status`, only if it is still `was`). Returns whether it ended."""
     with db.tx() as conn:
-
-        def end(
-            ids: Sequence[int], was: RunStatus, status: RunStatus, error: str | None, why: str
-        ) -> None:
-            for run_id in ids:
-                if finish(conn, run_id, status, (was,), now=now, error=error):
-                    out.append(Reaped(run_id, status, why))
-
-        # 2. dispatched, never started
-        stale = _ids(
-            conn,
-            "SELECT id FROM runs WHERE status = 'dispatched' AND dispatched_at < ?",
-            (to_db(now - timedelta(seconds=claim_timeout_s)),),
-        )
-        end(stale, "dispatched", "failed", NEVER_CONNECTED, NEVER_CONNECTED)
-        # 3. no heartbeat
-        lost = _ids(
-            conn,
-            "SELECT id FROM runs WHERE status = 'running' "
-            "AND COALESCE(last_seen_at, started_at) < ? AND (? IS NULL OR report <> ?)",
-            (to_db(now - HEARTBEAT_TIMEOUT), *exempt),
-        )
-        end(lost, "running", "failed", WORKER_LOST, WORKER_LOST)
-        # 4. over the time budget
-        running = conn.execute(
-            "SELECT id, started_at, time_budget_s FROM runs "
-            "WHERE status = 'running' AND started_at IS NOT NULL "
-            "AND (? IS NULL OR report <> ?)",
-            exempt,
-        ).fetchall()
-        over = [
-            int(r["id"])
-            for r in running
-            if from_db(r["started_at"]) + timedelta(seconds=r["time_budget_s"]) + BUDGET_GRACE < now
-        ]
-        end(over, "running", "failed", OVER_BUDGET, OVER_BUDGET)
-        # 5. a cancel the worker never acknowledged
-        unacked = _ids(
-            conn,
-            "SELECT id FROM runs WHERE status = 'running' AND stop_requested_at < ? "
-            "AND (? IS NULL OR report <> ?)",
-            (to_db(now - CANCEL_GRACE), *exempt),
-        )
-        end(unacked, "running", "cancelled", None, "cancel not acknowledged")
-    return out
-
-
-def _ids(conn: Conn, sql: str, params: Sequence[object] = ()) -> list[int]:
-    return [int(r[0]) for r in conn.execute(sql, tuple(params)).fetchall()]
+        if stop_reason is not None:
+            stop(conn, run_id, stop_reason, now)
+        return status is not None and finish(conn, run_id, status, (was,), now=now, error=error)

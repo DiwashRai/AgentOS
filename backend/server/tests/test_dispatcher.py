@@ -225,5 +225,5 @@ def test_the_lifespan_runs_the_reaper(settings: Settings, monkeypatch: pytest.Mo
             lambda: client.get(f"/api/runs/{run_id}").json()["status"] != "dispatched",
         )
         run = RunDetail.model_validate(client.get(f"/api/runs/{run_id}").json())
-        assert (run.status, run.error) == ("failed", "worker never connected")
+        assert (run.status, run.error) == ("failed", "never started")
         assert [s.status for s in run.stage_runs] == ["cancelled"]

@@ -833,7 +833,7 @@ class SpaceDoc(ApiModel):
     default_repo: str | None  # a repo catalog name: what a new ticket gets when it names none
     key_prefix: str
     jira_projects: list[str]
-    claim_timeout_s: int  # a dispatched run whose worker never connects fails after this
+    claim_timeout_s: int  # the start timeout: a push job not started by then fails
 
 
 class SpaceSettings(SettingsMeta):

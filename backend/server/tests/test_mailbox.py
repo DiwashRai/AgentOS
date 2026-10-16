@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from agentos.clock import from_db, to_db, utcnow
+from agentos.clock import from_db, utcnow
 from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.launchers.base import JobStatus, Provider
@@ -32,7 +32,6 @@ from agentos.mailbox.reaper import (
 from agentos.main import create_app
 from agentos.models import TicketDetail
 from agentos.runs import dispatcher as runs_dispatcher
-from agentos.runs.reaper import Reaper
 from agentos.runs.service import BUDGET_GRACE, OVER_BUDGET
 from agentos.worker_api import service as worker_api
 from tests.mailbox_support import FakeMailbox, Outbox
@@ -520,27 +519,6 @@ def test_the_sweep_keeps_active_runs_folders(
 
 
 # ------------------------------------------------------------------ the runs reaper and loops
-
-
-def test_the_runs_reaper_leaves_mailbox_runs_alone(
-    authed: TestClient,
-    ticket: TicketDetail,
-    create_ticket: CreateTicket,
-    add_run: AddRun,
-    runs: RunDriver,
-    mailbox: FakeMailbox,
-) -> None:
-    run_id = launch(runs, mailbox, ticket.key)
-    authed.post(f"/api/runs/{run_id}/cancel", headers=CSRF)
-    reaper = Reaper(runs.ctx)
-    now = utcnow() + timedelta(hours=1)
-    reaper.tick(now - timedelta(seconds=15))  # the grace tick (refreshes last_seen_at)
-    old = to_db(now - timedelta(hours=1))
-    runs.set_run(run_id, last_seen_at=old, stop_requested_at=old, time_budget_s=1)
-    local = add_run(create_ticket("local").key, "running", [("plan", "running")])  # silent
-    # No heartbeat, budget or cancel rule for mailbox runs; other launchers' runs still reaped.
-    assert [(r.run_id, r.reason) for r in reaper.tick(now)] == [(local, "worker lost")]
-    assert runs.db_run(run_id)["status"] == "running"
 
 
 def test_the_lifespan_runs_the_mailbox_loops_instead_of_the_runs_dispatcher(

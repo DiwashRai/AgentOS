@@ -268,7 +268,7 @@ def test_a_fresh_start_seeds_the_built_in_defaults(tmp_path: Path) -> None:
         "AgentOS",
         "AOS",
         [],
-        900,
+        3600,
     )
     assert [r.model_dump() for r in runtimes.runtimes] == [
         r.model_dump(mode="json") for r in BUILTIN_RUNTIMES
