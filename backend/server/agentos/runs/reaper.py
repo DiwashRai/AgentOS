@@ -79,6 +79,7 @@ class JobFacts:
     finished_at: datetime | None
     alive_at: datetime | None
     client_seen_at: datetime | None
+    read: service.Snapshot  # the run as stored: a verdict is written only while it still holds
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +155,9 @@ def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
         finished_at=from_db_opt(row["finished_at"]),
         alive_at=from_db_opt(row["alive_at"]),
         client_seen_at=from_db_opt(row["client_seen_at"]),
+        read=service.Snapshot(
+            row["status"], row["launch_ref"], row["started_at"], row["last_seen_at"]
+        ),
     )
 
 
@@ -211,13 +215,17 @@ class Reaper:
         return polled[1]
 
     def _apply(self, job: JobFacts, action: Action, now: datetime) -> Reaped | None:
-        """Write the verdict, then ask the provider to cancel (once per job). Returns the run's
-        end, if it ended."""
+        """Write the verdict, then ask the provider to cancel (once per job), only if the run was
+        still as the verdict read it. Returns the run's end, if it ended."""
+        if not service.reap(self.ctx.db, job.run_id, job.read, now, action):
+            log.info("reaper: run %s changed since it was read; verdict dropped", job.run_id)
+            return None
+
         ended = None
-        if service.reap(self.ctx.db, job.run_id, job.status, now, action):
-            ended = Reaped(job.run_id, action.end or "failed", action.error or "stop unanswered")
+        if action.end is not None:
+            ended = Reaped(job.run_id, action.end, action.error or "stop unanswered")
             log.warning("reaper: run %s %s: %s", ended.run_id, ended.status, ended.reason)
-        elif action.stop is not None:
+        else:
             log.info("reaper: run %s stopped: %s", job.run_id, action.stop)
 
         if action.cancel:

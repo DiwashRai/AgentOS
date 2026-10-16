@@ -216,6 +216,47 @@ def test_a_failing_check_does_not_stop_the_next_job(
     assert runs.db_run(broken)["status"] == "dispatched"
 
 
+@pytest.mark.parametrize("rule", ["never_started", "lost", "stop_grace"])
+def test_a_run_that_moves_while_the_provider_is_asked_keeps_its_worker(
+    rule: str,
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    reaper: Reaper,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reaper reads, asks the provider, then writes: what the worker posts in between
+    (`started`, a heartbeat) drops the verdict, and nothing is cancelled."""
+    run_id = runs.queue(create_ticket(repo=None).key).id
+    assert runs.tick() == [run_id]
+    now = utcnow()
+    armed(reaper, now)
+    worker: list[Worker] = []
+    if rule == "never_started":
+        runs.set_run(run_id, dispatched_at=to_db(now - timedelta(days=1)))
+    else:
+        worker.append(runs.bind(run_id, runs.provider.token(run_id)))
+        runs.set_run(run_id, last_seen_at=to_db(now - timedelta(minutes=5)))
+        if rule == "stop_grace":
+            stopped = to_db(now - timedelta(minutes=3))
+            runs.set_run(run_id, last_seen_at=to_db(now), stop_requested_at=stopped)
+            runs.set_run(run_id, stop_reason="cancel")
+
+    def status(job_ref: str) -> JobStatus:
+        if rule == "never_started":
+            worker.append(runs.bind(run_id, runs.provider.token(run_id)))
+        else:
+            assert worker[0].events().status_code == 200  # a post: last_seen_at moves
+        return JobStatus("unknown")
+
+    monkeypatch.setattr(runs.provider, "status", status)
+    assert reaper.tick(now) == []
+    row = runs.db_run(run_id)
+    assert (row["status"], row["error"]) == ("running", None)
+    assert row["stop_reason"] == ("cancel" if rule == "stop_grace" else None)
+    assert runs.provider.cancelled == []
+
+
 # ------------------------------------------------------------------ rule 3: lost
 
 

@@ -19,7 +19,7 @@ from agentos.db import Conn
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
-from agentos.runs.service import finish, not_after
+from agentos.runs.service import Snapshot, finish, not_after
 from tests.run_support import CSRF, FakeProvider, RunDriver, bearer
 
 CreateTicket = Callable[..., TicketDetail]
@@ -66,6 +66,7 @@ PULL = JobFacts(
     finished_at=T0 + 10 * S,
     alive_at=T0 + 20 * S,
     client_seen_at=T0 + 20 * S,
+    read=Snapshot("succeeded", "laptop", to_db(T0), to_db(T0)),
 )
 PUSH = replace(PULL, start="push", provider="github", ref="r", alive_at=None, client_seen_at=None)
 LATE = T0 + timedelta(hours=2) + S

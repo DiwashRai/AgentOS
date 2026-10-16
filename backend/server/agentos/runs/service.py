@@ -333,9 +333,9 @@ def cancel(db: Database, run_id: int) -> RunSummary:
         return _summary(conn, run_row(conn, run_id))
 
 
-def stop(conn: Conn, run_id: int, reason: StopReason, now: datetime) -> None:
+def stop(conn: Conn, run_id: int, reason: StopReason, now: datetime) -> bool:
     """Stop an active run and its job once, with `reason`, in the caller's transaction: its
-    worker sees `cancel: true` in its next journal reply."""
+    worker sees `cancel: true` in its next journal reply. Returns whether it stopped it now."""
     params = (to_db(now), reason, run_id)
     cursor = conn.execute(
         "UPDATE runs SET stop_requested_at = ?, stop_reason = ? "
@@ -348,6 +348,7 @@ def stop(conn: Conn, run_id: int, reason: StopReason, now: datetime) -> None:
             "WHERE run_id = ? AND stop_requested_at IS NULL",
             params,
         )
+    return cursor.rowcount > 0
 
 
 # ------------------------------------------------------------------ state machine primitives
@@ -622,11 +623,28 @@ class Action:
     cancel: bool = False
 
 
-def reap(db: Database, run_id: int, was: RunStatus, now: datetime, action: Action) -> bool:
-    """Write a reaper verdict in one transaction: stop the run, then end it (only if it is still
-    `was`). Returns whether it ended."""
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    """What a reaper verdict read of its run, as stored: the rules decide on these."""
+
+    status: RunStatus
+    launch_ref: str | None
+    started_at: str | None
+    last_seen_at: str | None
+
+
+def reap(db: Database, run_id: int, read: Snapshot, now: datetime, action: Action) -> bool:
+    """Write a reaper verdict in one transaction, only while the run is still as the verdict read
+    it (`read`): stop the run, then end it. Returns whether it wrote anything. The reaper reads,
+    then asks the provider, then writes: a `started`, a post or a result in between changes the
+    run, and the stale verdict is dropped."""
     with db.tx() as conn:
-        if action.stop is not None:
-            stop(conn, run_id, action.stop, now)
+        row = conn.execute(
+            "SELECT status, launch_ref, started_at, last_seen_at FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row is None or Snapshot(*row) != read:
+            return False
+        stopped = action.stop is not None and stop(conn, run_id, action.stop, now)
         end, error = action.end, action.error
-        return end is not None and finish(conn, run_id, end, (was,), now=now, error=error)
+        ended = end is not None and finish(conn, run_id, end, (read.status,), now=now, error=error)
+        return stopped or ended
