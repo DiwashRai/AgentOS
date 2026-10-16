@@ -1,6 +1,6 @@
 """The fence: a ticket's next run stays queued, with a reason, until the previous job can no longer
 publish: its accepted result says so; for a worker that sent none, push: its provider says ended;
-pull: its client stops listing it or goes offline after the run ended; any route: past
+pull: its client stops listing it (never because the client went quiet); any route: past
 `not_after`. Plus tables for `job_ended` and `not_after`."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.clients import service as clients
-from agentos.clock import to_db, utcnow
+from agentos.clock import from_db, to_db, utcnow
 from agentos.context import AppContext
 from agentos.db import Conn
 from agentos.launchers.base import JobStatus
@@ -63,7 +63,6 @@ PULL = JobFacts(
     stop_reason=None,
     start_timeout=timedelta(minutes=2),
     not_after=T0 + timedelta(hours=2),
-    finished_at=T0 + 10 * S,
     alive_at=T0 + 20 * S,
     client_seen_at=T0 + 20 * S,
     read=Snapshot("succeeded", "laptop", to_db(T0), to_db(T0)),
@@ -90,14 +89,13 @@ LATE = T0 + timedelta(hours=2) + S
             False,
             id="pull-no-lease-since-the-take",
         ),
-        pytest.param(PULL, T0 + 110 * S, None, False, id="pull-offline-90-s"),
-        pytest.param(PULL, T0 + 111 * S, None, True, id="pull-offline-over-90-s"),
+        pytest.param(PULL, T0 + timedelta(hours=1), None, False, id="pull-client-offline"),
         pytest.param(
             replace(PULL, alive_at=None, client_seen_at=None),
-            T0 + 101 * S,
+            T0 + timedelta(hours=1),
             None,
-            True,
-            id="pull-client-revoked-90-s-after-the-result",
+            False,
+            id="pull-client-revoked",
         ),
         pytest.param(
             replace(PULL, client_seen_at=LATE), LATE, None, True, id="pull-past-not-after"
@@ -258,22 +256,19 @@ def test_pull_fence_holds_until_the_client_stops_listing_the_job(
     assert taken.run_id == second
 
 
-def test_pull_fence_lifts_when_the_client_is_offline_90_s_after_the_result(
+def test_pull_fence_holds_while_the_client_is_offline(
     key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
 ) -> None:
+    """Its worker outlives the client and may still publish: only a lease or not_after tells."""
     first = lost_client_run(runs, ctx, client, key, token)
     second = runs.queue(key, target="client").id
-    now = utcnow()
-
-    reap(ctx, now + 60 * S)
     assert lease(client, token, (first.job_id,)) is None
-    assert waits_for(runs, second, first.run_id)
 
-    reap(ctx, now + 120 * S)  # nothing heard from the client since `now`
-    assert runs.get(second).queue_reason is None  # gone before the client is back
-    taken = lease(client, token, (first.job_id,))
-    assert taken is not None
-    assert taken.run_id == second
+    with ctx.db.read() as conn:
+        row = conn.execute("SELECT not_after FROM jobs WHERE id = ?", (first.job_id,)).fetchone()
+    reap(ctx, from_db(row["not_after"]))  # nothing heard from the client until then
+    assert waits_for(runs, second, first.run_id)
+    assert lease(client, token, (first.job_id,)) is None  # back, and the worker still runs
 
 
 @pytest.mark.parametrize("target", ["server", "client"])

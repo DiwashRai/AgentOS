@@ -47,7 +47,7 @@ Action = service.Action  # a verdict, which `service.reap` writes
 INTERVAL_S = 15.0
 SLEEP_GRACE = timedelta(seconds=60)
 START_GRACE = timedelta(minutes=15)
-HEARTBEAT_TIMEOUT = timedelta(seconds=90)  # also how long a pull job's client may be offline
+HEARTBEAT_TIMEOUT = timedelta(seconds=90)
 STOP_GRACE = timedelta(minutes=2)
 STATUS_EVERY = timedelta(seconds=60)
 START_INTERRUPTED = "start interrupted"
@@ -76,7 +76,6 @@ class JobFacts:
     stop_reason: StopReason | None
     start_timeout: timedelta
     not_after: datetime
-    finished_at: datetime | None
     alive_at: datetime | None
     client_seen_at: datetime | None
     read: service.Snapshot  # the run as stored: a verdict is written only while it still holds
@@ -119,16 +118,14 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool)
 def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:
     """Whether the job of a run that ended without its result can no longer publish: past its
     `not_after` (any route); push: its provider says `ended` (`status`); pull: a later lease by
-    its client didn't list it, or that client has been offline HEARTBEAT_TIMEOUT since the run
-    ended."""
+    its client didn't list it (the client lists every worker whose lock is held, so this is seen,
+    not inferred). A silent client proves nothing: its workers outlive it."""
     if now > job.not_after:
         return True
     if job.start == "push":
         return status is not None and status.state == "ended"
-    seen, finished = job.client_seen_at, job.finished_at or job.dispatched_at
-    if seen is not None and seen > (job.alive_at or job.dispatched_at):
-        return True
-    return now > max(seen or finished, finished) + HEARTBEAT_TIMEOUT
+    seen = job.client_seen_at
+    return seen is not None and seen > (job.alive_at or job.dispatched_at)
 
 
 def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
@@ -152,7 +149,6 @@ def job_facts(row: Row, start_timeout: timedelta) -> JobFacts:
         stop_reason=row["stop_reason"],
         start_timeout=start_timeout if row["start"] == "push" else PULL_START_TIMEOUT,
         not_after=from_db(row["not_after"]),
-        finished_at=from_db_opt(row["finished_at"]),
         alive_at=from_db_opt(row["alive_at"]),
         client_seen_at=from_db_opt(row["client_seen_at"]),
         read=service.Snapshot(

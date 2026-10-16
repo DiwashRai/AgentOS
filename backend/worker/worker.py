@@ -87,6 +87,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, Protocol
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 PROTOCOL = 2
 
 # ---------------------------------------------------------------- tunables (tests shrink these)
@@ -2970,7 +2975,9 @@ _ENV_ENTRY_RE = re.compile(
 _SINGLE_ESCAPE_RE = re.compile(r"\\([\\'])")
 _DOUBLE_ESCAPE_RE = re.compile(r"\\([\\'\"abfnrtv])")
 _ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
-_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?")  # <run_id> workspaces and <run_id>.log logs
+# <run_id> workspaces, <run_id>.log logs and <job id>.lock run worker locks
+_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?|[0-9]+-[0-9]+-[0-9a-f]+\.lock")
+_JOB_ID_RE = re.compile(r"[0-9]+-[0-9]+-[0-9a-f]+")  # a job id the client puts in a file name
 
 
 class EnvFileError(ValueError):
@@ -3052,14 +3059,78 @@ class Child(Protocol):
 Spawn = Callable[[list[str], Path, dict[str, str], Path], Child]  # (argv, cwd, env, log file)
 
 
-class Children:
-    """The client's started workers that still run, by job id. A thread per worker waits on its
-    process: one that exits while the client loop waits (`waiting`: a lease in flight, or a busy
-    client's pause) is reported at once by `report` (the job ids still running), so the server
-    hears it ended without waiting for the next lease."""
+def _take_lock(lock: IO[bytes], wait: bool) -> bool:
+    """Take an exclusive OS lock on an open file (`wait`: until it is free). False if not free."""
+    lock.seek(0)
+    try:
+        if sys.platform == "win32":
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK if wait else msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except OSError:
+        if wait:
+            raise
+        return False
+    return True
 
-    def __init__(self, report: Callable[[list[str]], object]) -> None:
+
+def hold_lock(path: Path) -> IO[bytes]:
+    """Open `path` (created if missing) and take an exclusive OS lock on it, waiting while
+    another holder has it (a client looking: `lock_held`). The lock lasts while the file stays
+    open, and the OS releases it when the process ends, however it ends."""
+    lock = path.open("a+b")
+    try:
+        _take_lock(lock, wait=True)
+    except BaseException:
+        lock.close()
+        raise
+    return lock
+
+
+def release_lock(lock: IO[bytes]) -> None:
+    """Release a lock `hold_lock` (or `_take_lock`) took, and close its file."""
+    lock.seek(0)
+    if sys.platform == "win32":
+        msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    lock.close()
+
+
+def lock_held(path: Path) -> bool:
+    """Whether a process holds `path`'s lock (`hold_lock`): try to take it without waiting."""
+    try:
+        lock = path.open("a+b")
+    except OSError:
+        return False  # gone, or not openable: nobody holds it
+    with lock:
+        if not _take_lock(lock, wait=False):
+            return True
+        release_lock(lock)
+    return False
+
+
+def held_jobs(runs: Path) -> set[str]:
+    """The job ids whose run worker holds its `<job id>.lock` in `runs`: alive, whichever client
+    started it (a restarted client sees the workers that outlived it; a reused pid can't fool a
+    lock the OS released)."""
+    try:
+        locks = [p for p in runs.glob("*.lock") if _JOB_ID_RE.fullmatch(p.stem)]
+    except OSError:
+        return set()
+    return {p.stem for p in locks if lock_held(p)}
+
+
+class Children:
+    """The client's started workers that still run, by job id, plus the jobs `held` reports alive
+    (workers an earlier client started). A thread per started worker waits on its process: one
+    that exits while the client loop waits (`waiting`: a lease in flight, or a busy client's
+    pause) is reported at once by `report` (the job ids still running), so the server hears it
+    ended without waiting for the next lease."""
+
+    def __init__(self, report: Callable[[list[str]], object], held: Callable[[], set[str]]) -> None:
         self._report = report
+        self._held = held
         self._lock = threading.Lock()
         self._running: dict[str, Child] = {}
         self._waiting = False
@@ -3071,12 +3142,13 @@ class Children:
 
     @contextlib.contextmanager
     def waiting(self) -> Iterator[list[str]]:
-        """Drop the exited workers and yield the running ones' job ids; until the block ends,
-        each exit is reported as it happens."""
+        """Drop the exited workers and yield the running ones' job ids, then the held ones'; until
+        the block ends, each exit is reported as it happens."""
+        held = self._held()
         with self._lock:
             self._running = {job: c for job, c in self._running.items() if c.poll() is None}
             self._waiting = True
-            alive = list(self._running)
+            alive = [*self._running, *sorted(held - self._running.keys())]
         try:
             yield alive
         finally:
@@ -3089,8 +3161,9 @@ class Children:
             if not self._waiting or self._running.pop(job_id, None) is None:
                 return  # the loop's next lease leaves it out
             alive = list(self._running)
+        held = self._held() - {job_id}  # its process ended, whatever its lock says yet
         try:
-            self._report(alive)
+            self._report([*alive, *sorted(held - set(alive))])
         except (HttpError, Unreachable, ValueError) as exc:
             say(f"could not report the end of job {job_id} ({exc}); the next lease will")
 
@@ -3133,10 +3206,10 @@ def git_repo_containing(path: Path) -> Path | None:
 
 
 def clean_workdir_root(root: Path, now: float) -> list[Path]:
-    """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under the
-    client's own `root/CLIENT_RUNS_DIR`, last modified more than WORKSPACE_MAX_AGE_S before `now`
-    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it is left
-    alone. Returns what was deleted."""
+    """Delete the run workspaces (`<run_id>`), logs (`<run_id>.log`) and free worker locks
+    (`<job id>.lock`) directly under the client's own `root/CLIENT_RUNS_DIR`, last modified more
+    than WORKSPACE_MAX_AGE_S before `now` (a POSIX timestamp). Nothing outside that folder is
+    looked at, and anything else in it is left alone. Returns what was deleted."""
     runs = root / CLIENT_RUNS_DIR
     try:
         children = sorted(runs.iterdir())
@@ -3149,6 +3222,8 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
     for child in children:
         if not _RUN_ENTRY_RE.fullmatch(child.name):
             continue
+        if child.suffix == ".lock" and lock_held(child):
+            continue  # its worker still runs
         try:
             st = child.lstat()
             if st.st_mtime >= cutoff:
@@ -3173,14 +3248,18 @@ def run_client(
     spawn: Spawn,
 ) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
-    `max_runs` at once, listing the running ones as `alive` on every lease; a worker that exits
-    while a lease waits is reported at once by a no-take lease (`Children`). With every slot busy
+    `max_runs` at once, listing the running ones as `alive` on every lease: those it started, and
+    those whose `<job id>.lock` is held (`held_jobs`: every worker holds its lock for its whole
+    life, so workers that outlived an earlier client are listed too and count against
+    `max_runs`). A worker that exits while a lease waits is reported at once by a no-take lease
+    (`Children`). With every slot busy
     it sends a no-take lease every CLIENT_HEARTBEAT_S, so the server still sees it online. Network
     errors, 5xx, CLIENT_TRANSIENT_4XX and malformed answers back off (up to CLIENT_BACKOFF_CAP_S)
     forever; any other 4xx or another protocol exits 1. Started workers outlive the client.
 
     Everything it writes goes under `<root>/runs` (CLIENT_RUNS_DIR): each worker runs there with
-    `--workdir <root>/runs/<run_id>`, logs to `<run_id>.log` and gets its job token in child_env."""
+    `--workdir <root>/runs/<run_id>` and `--lock-file <root>/runs/<job id>.lock`, logs to
+    `<run_id>.log` and gets its job token in child_env."""
     root = root.expanduser().resolve()
     repo = git_repo_containing(root)
     if repo is not None:
@@ -3208,7 +3287,8 @@ def run_client(
     children = Children(
         lambda alive: client.post(
             "/api/worker/lease", {"wait_s": 0, "take": False, "alive": alive}, retry_budget_s=0
-        )
+        ),
+        lambda: held_jobs(runs),
     )
     delay = BACKOFF_START_S
     answered = time.monotonic()  # when the server last answered a lease
@@ -3234,6 +3314,8 @@ def run_client(
                         return 1
                     job = resp["job"]
                     leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
+                    if leased and not _JOB_ID_RE.fullmatch(leased[0]):
+                        raise ValueError(f"a job id that isn't one: {leased[0]!r}")
                 except HttpError as exc:
                     if exc.status not in CLIENT_TRANSIENT_4XX:
                         say(f"the server refused this client ({exc}); stopping")
@@ -3254,6 +3336,7 @@ def run_client(
                 job_id, run_id, job_token = leased
                 workdir = runs / str(run_id)
                 argv = [sys.executable, str(me), "--server", server, "--workdir", str(workdir)]
+                argv += ["--lock-file", str(runs / f"{job_id}.lock")]
                 log = runs / f"{run_id}.log"
                 try:
                     child = spawn(argv, runs, child_env(job_token, env_values), log)
@@ -3282,6 +3365,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--server", help="AgentOS server URL, e.g. http://127.0.0.1:8000")
     parser.add_argument("--token", help="job token (default: $AGENTOS_TOKEN)")
     parser.add_argument("--workdir", help="workspace directory (default: ./agentos-run-<run_id>)")
+    parser.add_argument(
+        "--lock-file", help="hold an OS lock on this file while running (a client's run worker)"
+    )
     parser.add_argument("--manifest", help="mailbox mode: the run's manifest.json")
     parser.add_argument("--outbox", help="mailbox mode: the outbox.jsonl to create")
     parser.add_argument(
@@ -3300,9 +3386,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     client_only = (args.max_runs, args.workdir_root, args.env_file)
     if args.client:
-        used = [args.token, args.workdir, args.manifest, args.outbox]
+        used = [args.token, args.workdir, args.lock_file, args.manifest, args.outbox]
         if any(value is not None for value in used):
-            parser.error("--client can't be used with --token, --workdir, --manifest or --outbox")
+            parser.error(
+                "--client can't be used with --token, --workdir, --lock-file, --manifest or "
+                "--outbox"
+            )
         if args.server is None:
             parser.error("--client needs --server")
         if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
@@ -3344,9 +3433,24 @@ def main(argv: list[str] | None = None) -> int:
         return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
     if args.mailbox:
         return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
+    if args.lock_file is None:
+        return run_live(args)
 
-    # Live mode: fetch the job, then bind it to a new instance id by posting `started` and waiting
-    # for its ack, all before the workdir is touched.
+    # A client's run worker: its client lists the job as alive while this lock is held.
+    try:
+        lock = hold_lock(Path(args.lock_file))
+    except OSError as exc:
+        say(f"cannot lock {args.lock_file}: {exc}")
+        return 1
+    try:
+        return run_live(args)
+    finally:
+        release_lock(lock)
+
+
+def run_live(args: argparse.Namespace) -> int:
+    """Live mode: fetch the job, then bind it to a new instance id by posting `started` and
+    waiting for its ack, all before the workdir is touched."""
     client = Client(args.server, args.token, secrets.token_urlsafe(32))
     reporter = HttpReporter(client)
     say(f"fetching the job from {args.server}")

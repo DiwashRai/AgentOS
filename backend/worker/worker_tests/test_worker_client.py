@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -132,7 +133,10 @@ def test_one_worker_per_run_with_the_token_in_its_env_only(
     me = str(Path(worker.__file__).resolve())
     assert [(c.argv, c.cwd, c.log) for c in spawn.calls] == [
         (
-            [sys.executable, me, "--server", server.url, "--workdir", str(runs / str(run_id))],
+            [
+                *(sys.executable, me, "--server", server.url, "--workdir", str(runs / str(run_id))),
+                *("--lock-file", str(runs / f"{job_id(run_id)}.lock")),
+            ],
             runs,
             log,
         )
@@ -194,7 +198,8 @@ def test_leasing_goes_on_through_an_unreachable_spell(
 
     assert run_client(server, tmp_path / "ws") == 1
 
-    assert [c.argv[-1] for c in spawn.calls] == [str((tmp_path / "ws" / "runs" / "9").resolve())]
+    workdirs = [c.argv[c.argv.index("--workdir") + 1] for c in spawn.calls]
+    assert workdirs == [str((tmp_path / "ws" / "runs" / "9").resolve())]
     assert leases(server) == len(spell) + 2
 
 
@@ -301,6 +306,65 @@ def test_a_worker_that_exits_during_a_long_poll_is_reported_at_once(
         {"wait_s": 25, "take": True, "alive": [job_id(5)]},
         {"wait_s": 0, "take": False, "alive": []},
     ]
+
+
+def test_a_restarted_client_lists_the_workers_that_outlived_it(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path
+) -> None:
+    runs = tmp_path / "ws" / "runs"
+    runs.mkdir(parents=True)
+    (runs / f"{job_id(4)}.lock").write_bytes(b"")  # a worker that has exited
+    survivor = worker.hold_lock(runs / f"{job_id(5)}.lock")
+    answer_leases(server, [NOTHING])
+    try:
+        assert run_client(server, tmp_path / "ws", "--max-runs", "2") == 1
+    finally:
+        worker.release_lock(survivor)
+
+    assert [body["alive"] for body in server.bodies(LEASE)] == [[job_id(5)], [job_id(5)]]
+
+
+@pytest.mark.parametrize("end", ["exit", "kill"])
+def test_a_run_worker_holds_its_lock_until_its_process_ends(
+    server: FakeServer, tmp_path: Path, end: str
+) -> None:
+    lock = tmp_path / f"{job_id(5)}.lock"
+    fetching, answer_now = threading.Event(), threading.Event()
+
+    def hook(path: str, body: Any) -> tuple[int, Any] | None:
+        if path != "/api/worker/job":
+            return None
+        fetching.set()  # the worker locks before it fetches its job
+        answer_now.wait(30)
+        return error(410, "run_gone")
+
+    server.hook = hook
+    argv = [sys.executable, worker.__file__, "--server", server.url, "--lock-file", str(lock)]
+    env = {**os.environ, "AGENTOS_TOKEN": "t" * 43}
+    proc = subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        assert fetching.wait(30)
+        assert worker.lock_held(lock)
+        if end == "kill":
+            proc.kill()
+        answer_now.set()
+        assert proc.wait(30) != 0
+    finally:
+        answer_now.set()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    eventually(lambda: not worker.lock_held(lock), "the OS to release the dead worker's lock")
+
+
+def test_a_job_id_that_cant_name_a_file_is_a_malformed_answer(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path
+) -> None:
+    bad = {"job_id": "../5", "run_id": 5, "server_url": "http://x.invalid", "job_token": "d" * 43}
+    answer_leases(server, [answer(bad)])
+
+    assert run_client(server, tmp_path / "ws") == 1
+    assert spawn.count() == 0
 
 
 def test_another_protocol_stops_the_client(
