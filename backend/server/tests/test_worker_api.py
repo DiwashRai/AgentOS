@@ -1,5 +1,5 @@
-"""Worker API (SPEC §8 claim table, §10): the claim, and events, sync, sync_back and the result
-as journal records; idempotency and 410s. Ordering and binding: test_journal.py."""
+"""Worker API (SPEC §10): the job's package, and events, sync, sync_back and the result as
+journal records; idempotency and 410s. Ordering and binding: test_journal.py."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.context import AppContext
-from agentos.models import FileVersionInfo, JobPackage, TicketDetail
+from agentos.models import FileVersionInfo, TicketDetail
 from agentos.worker_api import service as worker_service
 from tests.run_support import CSRF, RunDriver, Worker, bearer, event, finished, log_event
 
@@ -33,17 +33,15 @@ def skill_dir(t: TicketDetail) -> str:
     return f".claude/skills/{t.skill_name}"
 
 
-# ------------------------------------------------------------------ claim
+# ------------------------------------------------------------------ the job
 
 
-def test_claim_returns_the_manifest_and_starts_the_run(
+def test_the_job_returns_the_package_and_started_starts_the_run(
     ticket: TicketDetail, runs: RunDriver
 ) -> None:
     run = runs.queue(ticket.key)
-    runs.tick()
-    r = runs.claim(run.id, "a" * 43)
-    assert r.status_code == 200, r.text
-    m = JobPackage.model_validate(r.json()["manifest"])
+    worker = runs.launch_and_bind(run.id)
+    m = worker.manifest
     assert (m.protocol, m.run_id) == (2, run.id)
     assert m.ticket.key == ticket.key
     assert m.workspace.mode == "repo"
@@ -67,37 +65,24 @@ def test_claim_returns_the_manifest_and_starts_the_run(
     assert row["status"] == "running"
     assert row["started_at"] is not None
     assert row["last_seen_at"] == row["started_at"]
-    assert row["worker_token_hash"] != "a" * 43  # hashed
+    with runs.ctx.db.read() as conn:
+        bound = conn.execute("SELECT instance_hash FROM jobs WHERE run_id = ?", (run.id,))
+        assert bound.fetchone()[0] not in (None, worker.instance)  # hashed
 
 
-def test_claim_retry_with_the_same_token_and_a_different_one(
-    ticket: TicketDetail, runs: RunDriver
-) -> None:
-    run = runs.queue(ticket.key)
-    runs.tick()
-    first = runs.claim(run.id, "a" * 43)
-    again = runs.claim(run.id, "a" * 43)
-    assert again.status_code == 200
-    assert again.json() == first.json()
-    assert error(runs.claim(run.id, "b" * 43)) == (409, "already_claimed")
-
-
-def test_claim_after_cancel_is_gone(ticket: TicketDetail, runs: RunDriver) -> None:
+def test_the_job_of_a_cancelled_run_is_gone(ticket: TicketDetail, runs: RunDriver) -> None:
     run = runs.queue(ticket.key)
     runs.tick()
     runs.client.post(f"/api/runs/{run.id}/cancel", headers=CSRF)
-    assert error(runs.claim(run.id)) == (410, "run_gone")
+    r = runs.client.get("/api/worker/job", headers=bearer(runs.launcher.token(run.id)))
+    assert error(r) == (410, "run_gone")
 
 
-def test_claim_needs_a_known_job_token(ticket: TicketDetail, runs: RunDriver) -> None:
+def test_the_job_needs_a_bearer_job_token(ticket: TicketDetail, runs: RunDriver) -> None:
     run = runs.queue(ticket.key)
     runs.tick()
-    body = {"worker_token": "a" * 43}
-    r = runs.client.post("/api/worker/claim", json=body, headers=bearer("nope"))
-    assert error(r) == (401, "unauthorized")
-    assert error(runs.client.post("/api/worker/claim", json=body)) == (401, "unauthorized")
-    r = runs.client.post("/api/worker/claim", json=body, headers={"Authorization": "Basic x"})
-    assert error(r) == (401, "unauthorized")
+    for headers in ({}, {"Authorization": "Basic x"}, bearer("nope")):
+        assert error(runs.client.get("/api/worker/job", headers=headers)) == (401, "unauthorized")
     assert runs.db_run(run.id)["status"] == "dispatched"
 
 
@@ -113,8 +98,7 @@ def test_the_package_is_the_bundle_at_dispatch(
     assert r.status_code == 200, r.text
     r = authed.delete(f"/api/tickets/{ticket.key}/files/CLAUDE.md?base_version=1", headers=CSRF)
     assert r.status_code == 204, r.text
-    runs.tick()
-    m = JobPackage.model_validate(runs.claim(run.id).json()["manifest"])
+    m = runs.launch_and_bind(run.id).manifest
     files = {e.path: e.content for e in m.context}
     assert files["while-queued.md"] == "q"
     assert "CLAUDE.md" not in files  # deleted files are not in the bundle
@@ -229,17 +213,6 @@ def test_events_limits(
         (7, "warning"),  # non-log events are still stored past the cap
         (8, "stage_finished"),
     ]
-
-
-def test_events_need_a_worker_token(ticket: TicketDetail, runs: RunDriver) -> None:
-    run = runs.queue(ticket.key)
-    runs.tick()
-    r = runs.client.post(
-        "/api/worker/events", json={"events": []}, headers=bearer(runs.launcher.token(run.id))
-    )
-    assert error(r) == (401, "unauthorized")  # the dispatch token isn't a worker token
-    r = runs.client.post("/api/worker/events", json={"events": []})
-    assert error(r) == (401, "unauthorized")
 
 
 # ------------------------------------------------------------------ sync
@@ -505,7 +478,8 @@ def test_complete_ignores_an_invalid_pr_url(
 
 
 def gone_routes(worker: Worker, other_status: str = "failed") -> list[Any]:
-    """Every worker-token route; `complete` with a status that isn't the run's final one."""
+    """Every journal record kind and the upload; `complete` with a status that isn't the run's
+    final one."""
     return [
         worker.events(log_event(99, "plan", "late")),
         worker.sync("plan", []),
@@ -529,10 +503,11 @@ def test_every_worker_route_is_gone_after_terminal(
             conn.execute("UPDATE runs SET status = 'failed' WHERE id = ?", (worker.run_id,))
     for r in gone_routes(worker, "failed" if how == "completed" else "completed"):
         assert error(r) == (410, "run_gone")
-    assert error(runs.claim(worker.run_id)) == (410, "run_gone")
+    r = runs.client.get("/api/worker/job", headers=worker.headers)
+    assert error(r) == (410, "run_gone")
 
 
-def test_unknown_worker_token_is_401(ticket: TicketDetail, runs: RunDriver) -> None:
+def test_unknown_job_token_is_401(ticket: TicketDetail, runs: RunDriver) -> None:
     worker = runs.start(ticket.key)
     stranger = Worker(runs.client, worker.run_id, "z" * 43, worker.manifest)
     for r in gone_routes(stranger):

@@ -162,7 +162,7 @@ def ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
 
 
 def run_ticket_ref(row: Row, space: SpaceConfig) -> TicketRef:
-    """`ticket_ref` for a run (dispatch, claim): 422 `validation_error` naming the repo if it is
+    """`ticket_ref` for a run (its job's build): 422 `validation_error` naming the repo if it is
     no longer in the catalog; 409 `base_branch_missing` for a repo ticket whose base branch
     resolves to nothing (the board's `dispatch_block` says the same)."""
     if row["repo"] is not None:
@@ -826,7 +826,7 @@ _PATCHABLE = (
     "base_branch",
     "owner_id",
 )
-# What a waiting client run (queued or dispatched; its manifest is built at claim) will run on
+# What a waiting client run (queued or dispatched; its package is built at the take) will run on
 # its owner's machine besides the context files: the owner, and the fields its prompts render.
 _CLIENT_RUN_INTENT = frozenset({"owner_id", "title", "description", "type"})
 

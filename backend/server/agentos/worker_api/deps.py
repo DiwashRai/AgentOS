@@ -1,4 +1,4 @@
-"""Worker authentication: `Authorization: Bearer <token>` (a job, worker or client token), plus
+"""Worker authentication: `Authorization: Bearer <token>` (a job or client token), plus
 the job's instance header.
 
 Only parses the header (401 if it is missing or malformed); the service looks the token up by
@@ -28,6 +28,6 @@ def instance_id(request: Request) -> str:
     return request.headers.get("x-agentos-instance", "").strip()
 
 
-RunToken = Annotated[str, Depends(bearer_token)]
+JobToken = Annotated[str, Depends(bearer_token)]
 ClientBearer = Annotated[str, Depends(bearer_token)]
 Instance = Annotated[str, Depends(instance_id)]

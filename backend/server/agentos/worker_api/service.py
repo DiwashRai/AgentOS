@@ -1,13 +1,12 @@
-"""The worker protocol (SPEC §8 claim table, §10 worker API): the job and its journal, the
-sync_back upload, the client lease, and the older claim, events, sync and complete routes.
+"""The worker protocol (SPEC §10 worker API): the job and its journal, the sync_back upload and
+the client lease.
 
 A job token (one per job, built at dispatch) fetches the job's package (`job_package`) and binds
 the job to the worker instance whose `started` record comes first (`post_journal`); every later
 post carries that instance id. `ingest` applies the journal's records to the run in strict seq
-order. Tokens and instance ids are looked up by their SHA-256 hash. A terminal run answers 410
-`run_gone` (the worker aborts and never pushes), except a repeat of its final result.
-
-The older routes take the worker token bound at claim and apply the same effects as ingest.
+order; the mailbox replay calls it too. Tokens and instance ids are looked up by their SHA-256
+hash. A terminal run answers 410 `run_gone` (the worker aborts and never pushes), except a repeat
+of its final result.
 
 The lease authenticates with a client token (`agentos.clients`) and hands the client the job of a
 run its user dispatched to "My client", with its job token.
@@ -26,7 +25,7 @@ from pydantic import ValidationError
 from agentos.clients import service as clients
 from agentos.clients.service import CLIENT_LAUNCHER
 from agentos.clock import to_db, utcnow
-from agentos.db import Conn, Database, IntegrityError, Row
+from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError, field_error, validation_error
 from agentos.files.service import write_version
 from agentos.launchers.local import WORKER_PATH
@@ -45,7 +44,6 @@ from agentos.models import (
     SyncBackData,
     SyncData,
     SyncFile,
-    SyncResponse,
 )
 from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
@@ -75,22 +73,18 @@ def _gone(run_id: int, status: str) -> ApiError:
     return ApiError(410, "run_gone", f"Run {run_id} is {status}")
 
 
-def _unauthorized(what: str) -> ApiError:
-    return ApiError(401, "unauthorized", f"Unknown {what} token")
-
-
 # ------------------------------------------------------------------ the job and its journal
 
 
 def _job_run(conn: Conn, job_token: str, instance: str) -> tuple[Row, Row]:
     """The job of this job token and its run (any status). 401 for an unknown token; 409
     `already_claimed` when the job is bound to another instance, or its run was started without
-    one (by the server, or through the claim)."""
+    one (a mailbox run, started by the server)."""
     job: Row | None = conn.execute(
         "SELECT * FROM jobs WHERE token_hash = ?", (token_hash(job_token),)
     ).fetchone()
     if job is None:
-        raise _unauthorized("job")
+        raise ApiError(401, "unauthorized", "Unknown job token")
 
     run: Row = conn.execute("SELECT * FROM runs WHERE id = ?", (job["run_id"],)).fetchone()
     bound = job["instance_hash"]
@@ -225,10 +219,7 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
             return "This worker.py differs from the server's: update it."
 
     elif record.type == "sync":
-        files = SyncData.model_validate(record.data).files
-        refused = _sync(conn, run, record.stage_id, files).refused
-        if refused:
-            raise field_error(["files"], f"Not declared in the package: {', '.join(refused)}.")
+        _sync(conn, run, record.stage_id, SyncData.model_validate(record.data).files)
 
     elif record.type == "sync_back":
         sent = SyncBackData.model_validate(record.data)
@@ -244,81 +235,37 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
         conn.execute("UPDATE runs SET head_commit = ? WHERE id = ?", (head, run["id"]))
 
     elif record.type == "result":
-        _finish(conn, run, ResultData.model_validate(record.data), now)
+        # running → gated|succeeded (completed, per `completion_status`), failed or cancelled,
+        # and the reported PR stored. A run that isn't running is left as it is.
+        result = ResultData.model_validate(record.data)
+        status: RunStatus
+        error = result.error
+        if result.status == "completed":
+            ticket = conn.execute(
+                "SELECT pipeline FROM tickets WHERE id = ?", (run["ticket_id"],)
+            ).fetchone()
+            status = completion_status(ticket_pipeline(ticket), json.loads(run["stage_ids"]))
+        elif result.status == "failed":
+            status = "failed"
+            if not error:
+                failed = result.failed_stage
+                error = f"stage {failed} failed" if failed else "the run failed"
+        else:
+            status = "cancelled"
+        if finish(conn, run["id"], status, ("running",), now=now, error=error):
+            _store_pr_url(conn, run, result.pr_url)
 
     else:
         raise field_error(["type"], f"Unknown record type {record.type!r}.")
     return None
 
 
-# ------------------------------------------------------------------ claim
-
-
-def claim(db: Database, job_token: str, worker_token: str) -> JobPackage:
-    """dispatched → running, binding the worker token, and returns the job's stored package. A
-    safe retry with the same worker token returns it again; another worker token → 409
-    `already_claimed`; terminal → 410."""
-    worker_hash = token_hash(worker_token)
-    stamp = to_db(utcnow())
-    with db.tx() as conn:
-        run = conn.execute(
-            "SELECT r.*, j.package FROM jobs j JOIN runs r ON r.id = j.run_id "
-            "WHERE j.token_hash = ?",
-            (token_hash(job_token),),
-        ).fetchone()
-        if run is None:
-            raise _unauthorized("job")
-        if run["status"] == "running":
-            if run["worker_token_hash"] != worker_hash:
-                raise ApiError(409, "already_claimed", f"Run {run['id']} is already claimed")
-            return JobPackage.model_validate_json(run["package"])
-        if run["status"] != "dispatched":
-            raise _gone(run["id"], run["status"])
-
-        try:
-            conn.execute(
-                "UPDATE runs SET status = 'running', worker_token_hash = ?, started_at = ?, "
-                "last_seen_at = ? WHERE id = ? AND status = 'dispatched'",
-                (worker_hash, stamp, stamp, run["id"]),
-            )
-        except IntegrityError as exc:  # worker_token_hash is UNIQUE: a token reused across runs
-            raise ApiError(409, "already_claimed", "That worker token is already in use") from exc
-    return JobPackage.model_validate_json(run["package"])
-
-
-# ------------------------------------------------------------------ worker-token routes
-
-
-def _worker_run(conn: Conn, worker_token: str) -> Row:
-    """The run bound to this worker token (any status). 401 if none."""
-    run: Row | None = conn.execute(
-        "SELECT * FROM runs WHERE worker_token_hash = ?", (token_hash(worker_token),)
-    ).fetchone()
-    if run is None:
-        raise _unauthorized("worker")
-    return run
-
-
-def _live_run(conn: Conn, worker_token: str) -> Row:
-    run = _worker_run(conn, worker_token)
-    if run["status"] in TERMINAL:
-        raise _gone(run["id"], run["status"])
-    return run
-
-
-def post_events(db: Database, worker_token: str, events: Sequence[RunEvent]) -> bool:
-    """Store events (`_store_events`) and refresh `last_seen_at` (an empty batch is the
-    heartbeat). Returns whether a cancel was requested."""
-    now = utcnow()
-    with db.tx() as conn:
-        run = _live_run(conn, worker_token)
-        _store_events(conn, run, events, now)
-        conn.execute("UPDATE runs SET last_seen_at = ? WHERE id = ?", (to_db(now), run["id"]))
-    return run["cancel_requested_at"] is not None
+# ------------------------------------------------------------------ record effects
 
 
 def _store_events(conn: Conn, run: Row, events: Sequence[RunEvent], now: datetime) -> None:
-    """Store events idempotently on `(run_id, seq)` and move stage_runs along.
+    """Store display records as events, idempotently on `(run_id, seq)`, and move stage_runs
+    along.
 
     Beyond MAX_EVENTS_PER_RUN stored events, `log` events are dropped (the worker already
     replaces its own overflow with one `warning`; this is the server-side backstop, logged here
@@ -418,14 +365,14 @@ def _start_stage(conn: Conn, run_id: int, stage_id: str, round_: int, at: str) -
 
 def _lock_base_branch(conn: Conn, run: Row) -> None:
     """Lock the base branch of the run's ticket on the run's first stored `stage_started`, if no
-    run locked it before (request 22A).
+    run locked it before.
 
     Why then: the worker emits `stage_started` only after `_setup_workspace` succeeded, i.e. the
     ticket branch was checked out from `origin/{base_branch}` (or from an existing
     `origin/agent/{KEY}`). From then on work exists on top of that base, so changing it (or the
     repo) would strand it. A run that fails at checkout (a wrong base branch) never sends one, so
-    the owner can still fix the base. Mailbox runs replay their events through `post_events`, so
-    the same moment applies. A no-repo ticket has no base branch: nothing to lock. The ticket's
+    the owner can still fix the base. Mailbox runs replay their outbox through `ingest`, so the
+    same moment applies. A no-repo ticket has no base branch: nothing to lock. The ticket's
     `repo` can't change while the run is active (409 `run_active`), so it is the run's.
 
     A ticket that followed the repo default is pinned to the branch the run started from (its
@@ -439,23 +386,13 @@ def _lock_base_branch(conn: Conn, run: Row) -> None:
     )
 
 
-def sync(db: Database, worker_token: str, stage_id: str, files: Sequence[SyncFile]) -> SyncResponse:
-    """Write the worker's context files back (`_sync`); refused paths are logged."""
-    with db.tx() as conn:
-        run = _live_run(conn, worker_token)
-        response = _sync(conn, run, stage_id, files)
-    if response.refused:
-        log.warning("run %s: sync refused %s", run["id"], response.refused)
-    return response
-
-
-def _sync(conn: Conn, run: Row, stage_id: str | None, files: Sequence[SyncFile]) -> SyncResponse:
-    """Write the worker's context files back as new versions authored by the run (SPEC §9.4.1).
+def _sync(conn: Conn, run: Row, stage_id: str | None, files: Sequence[SyncFile]) -> None:
+    """A `sync` record: write the worker's context files back as new versions authored by the
+    run (SPEC §9.4.1).
 
     Only the run package's write context entries and notes are written (matched by `path_key`, in
-    the package's mode). Any other path, or a declared one sent in another mode, is refused:
-    listed in `refused`, while the rest of the batch applies. `versions` holds each written
-    path's latest version (0 = absent: deleting a missing file). A stage outside the run → 422.
+    the package's mode). Any other path, or a declared one sent in another mode, is refused: the
+    rest of the batch applies, then a 422 names the refused paths. A stage outside the run → 422.
     """
     if stage_id not in json.loads(run["stage_ids"]):
         raise ApiError(
@@ -469,14 +406,13 @@ def _sync(conn: Conn, run: Row, stage_id: str | None, files: Sequence[SyncFile])
     }
     declared |= {path_key(n.path): (n.path, "replace") for n in package.notes}
 
-    versions: dict[str, int] = {}
     refused: list[str] = []
     for f in files:
         path, mode = declared.get(path_key(f.path), (None, f.mode))
         if path is None or (f.content is not None and f.mode != mode):
             refused.append(f.path)
             continue
-        version = write_version(
+        write_version(
             conn,
             run["ticket_id"],
             path,
@@ -485,16 +421,8 @@ def _sync(conn: Conn, run: Row, stage_id: str | None, files: Sequence[SyncFile])
             author_run_id=run["id"],
             author_stage=stage_id,
         )
-        versions[path] = version or 0
-    return SyncResponse(versions=versions, refused=refused)
-
-
-def check_live_run(db: Database, worker_token: str) -> int:
-    """The run of a worker token: 401 for an unknown token, 410 when the run has ended. The
-    upload route calls it before it reads a body."""
-    with db.read() as conn:
-        run_id: int = _live_run(conn, worker_token)["id"]
-    return run_id
+    if refused:
+        raise field_error(["files"], f"Not declared in the package: {', '.join(refused)}.")
 
 
 def check_upload(db: Database, job_token: str, instance: str, job_id: str) -> int:
@@ -513,8 +441,8 @@ def check_upload(db: Database, job_token: str, instance: str, job_id: str) -> in
 def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: int) -> None:
     """Store the run's sync_back zip while the run is running. A repeat upload replaces it, so a
     retry is safe. 413 `too_large` over MAX_SYNC_BACK_BYTES; 422 when empty or the sha256 (hex)
-    doesn't match the bytes. The caller has checked the credentials (`check_live_run`,
-    `check_upload`) before reading the body."""
+    doesn't match the bytes. The caller has checked the credentials (`check_upload`) before
+    reading the body."""
     if len(data) > MAX_SYNC_BACK_BYTES:
         raise ApiError(413, "too_large", f"sync_back: over {MAX_SYNC_BACK_BYTES} bytes")
     if not data:
@@ -531,38 +459,6 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
             "VALUES (?, ?, ?, ?, ?, ?)",
             (run_id, sha256.lower(), len(data), files, data, to_db(utcnow())),
         )
-
-
-def complete(db: Database, worker_token: str, body: ResultData) -> None:
-    """End the run (`_finish`). Repeating the final status of a terminal run is a no-op; anything
-    else on a terminal run → 410."""
-    with db.tx() as conn:
-        run = _worker_run(conn, worker_token)
-        if run["status"] in TERMINAL:
-            if run["status"] in _FINAL[body.status]:
-                return
-            raise _gone(run["id"], run["status"])
-        _finish(conn, run, body, utcnow())
-
-
-def _finish(conn: Conn, run: Row, body: ResultData, now: datetime) -> None:
-    """running → gated|succeeded (completed, per `completion_status`), failed or cancelled, and
-    the reported PR stored. A run that isn't running is left as it is."""
-    status: RunStatus
-    error = body.error
-    if body.status == "completed":
-        ticket = conn.execute(
-            "SELECT pipeline FROM tickets WHERE id = ?", (run["ticket_id"],)
-        ).fetchone()
-        status = completion_status(ticket_pipeline(ticket), json.loads(run["stage_ids"]))
-    elif body.status == "failed":
-        status = "failed"
-        if not error:
-            error = f"stage {body.failed_stage} failed" if body.failed_stage else "the run failed"
-    else:
-        status = "cancelled"
-    if finish(conn, run["id"], status, ("running",), now=now, error=error):
-        _store_pr_url(conn, run, body.pr_url)
 
 
 # ------------------------------------------------------------------ client lease

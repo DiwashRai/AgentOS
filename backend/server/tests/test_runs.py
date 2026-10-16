@@ -394,10 +394,9 @@ def test_the_package_is_built_at_dispatch(
         "url": ctx.settings.effective_worker_url,
     }
 
-    # The worker's claim returns the same package.
-    worker_token = "w" * 43
-    claimed = runs.claim(run.id, worker_token).json()["manifest"]
-    assert authed.get(f"/api/runs/{run.id}/manifest").json() == claimed
+    # The worker's job returns the same package.
+    fetched = runs.client.get("/api/worker/job", headers=bearer(launcher.token(run.id))).json()
+    assert authed.get(f"/api/runs/{run.id}/manifest").json() == fetched
     assert [r for r, _, _ in launcher.launched] == [run.id]
 
 
@@ -516,19 +515,13 @@ def test_bundle_locked_from_dispatch_to_complete(
     assert put("queued", 0).status_code == 200  # a queued run doesn't lock
     runs.tick()
     assert error(put("dispatched", 1)) == (409, "bundle_locked")  # its package is built
-    worker_token = "k" * 43
-    assert runs.claim(run.id, worker_token).status_code == 200
+    worker = runs.bind(run.id, runs.launcher.token(run.id))
     assert error(put("running", 1)) == (409, "bundle_locked")
     assert error(put("new", 0, "new.md")) == (409, "bundle_locked")
     deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=1", headers=CSRF)
     assert error(deleted) == (409, "bundle_locked")
     assert runs.get(run.id).status == "running"
-    r = authed.post(
-        "/api/worker/complete",
-        json={"status": "completed"},
-        headers={"Authorization": f"Bearer {worker_token}"},
-    )
-    assert r.status_code == 204
+    assert worker.complete().status_code == 200
     assert put("after", 1).status_code == 200
 
 
@@ -568,7 +561,7 @@ def test_board_through_plan_gate_continue_succeed(
         "current pending skipped pending skipped",
         None,
     )
-    worker = runs.launch_and_claim(run.id)
+    worker = runs.launch_and_bind(run.id)
     worker.events(event(worker.next_seq(), "stage_started", "plan"))
     summary = next(s for s in authed.get("/api/tickets").json() if s["key"] == t.key)
     assert summary["now"]["actor"] == "Plan"
@@ -599,7 +592,7 @@ def test_board_through_plan_gate_continue_succeed(
     )
     cont = runs.queue(t.key)  # Continue = dispatch with the default from_stage
     assert cont.stage_ids == ["implement", "review"]
-    w2 = runs.launch_and_claim(cont.id)
+    w2 = runs.launch_and_bind(cont.id)
     w2.run_stage("implement")
     assert board(authed, t.key)[:4] == (
         "running",

@@ -164,11 +164,12 @@ def test_runtime_fallback_chain(
     assert first_argv(runs.start(b, "plan").manifest) == FAKE_ARGV
 
 
-def test_defaults_resolve_at_claim(
+def test_defaults_resolve_at_launch(
     authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
-    """The manifest is built at claim, so a change between dispatch and claim applies."""
+    """The package is built when the dispatcher launches the run, so a change while it is queued
+    applies."""
     key = create_ticket().key
     run = runs.queue(key, "plan")
     set_defaults(authed, model="late")
-    assert first_argv(runs.launch_and_claim(run.id).manifest) == [*FAKE_ARGV, "--model", "late"]
+    assert first_argv(runs.launch_and_bind(run.id).manifest) == [*FAKE_ARGV, "--model", "late"]

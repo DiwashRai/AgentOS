@@ -78,7 +78,7 @@ def legacy_pipeline(conn: Conn) -> Pipeline:
 
 def current_defaults(conn: Conn) -> TemplateDefaults:
     """The Space's agent defaults as the admin set them (the current version's). Runs resolve
-    null stage runtimes/models against these at dispatch and claim (`pipeline.manifest`)."""
+    null stage runtimes/models against these at dispatch (`pipeline.manifest`)."""
     row = conn.execute(
         "SELECT defaults FROM templates WHERE name = ? ORDER BY version DESC LIMIT 1",
         (DEFAULT_NAME,),

@@ -436,7 +436,7 @@ def test_dispatch_and_claim_a_loop(ticket: TicketDetail, runs: RunDriver) -> Non
     assert run.stage_ids == ["implement", "review"]
     # 3 rounds of implement + 3 rounds x (1 + 2 repairs) of review, at 3600 s each
     assert runs.db_run(run.id)["time_budget_s"] == (3 + 9) * 3600
-    worker = runs.launch_and_claim(run.id)
+    worker = runs.launch_and_bind(run.id)
     m = worker.manifest
     assert [lp.model_dump() for lp in m.loops] == [
         {"start": "implement", "end": "review", "max_rounds": 3}
@@ -455,7 +455,7 @@ def test_a_run_from_inside_the_block_plans_round_one_from_there(
     run = runs.queue(ticket.key, "review")
     assert (run.from_stage, run.stage_ids) == ("review", ["implement", "review"])
     assert [(s.stage_id, s.idx, s.round) for s in runs.get(run.id).stage_runs] == [("review", 0, 1)]
-    assert runs.launch_and_claim(run.id).manifest.start_stage == "review"
+    assert runs.launch_and_bind(run.id).manifest.start_stage == "review"
 
 
 def test_a_block_without_an_enabled_check_runs_once_with_a_warning(

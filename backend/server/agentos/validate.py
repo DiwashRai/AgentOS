@@ -31,7 +31,7 @@ MAX_AGENT_LINE_BYTES = 256 * 1024  # manifest limits.max_line_bytes (Claude stre
 MAX_PATH_CHARS = 255
 MAX_KEY_CHARS = 40  # keeps skill.name (context-{key}) within 64 chars (see scaffold.py)
 MAX_REPO_URL_CHARS = 2048
-MAX_PR_URL_CHARS = 500  # CompleteRequest.pr_url max_length
+MAX_PR_URL_CHARS = 500  # ResultData.pr_url max_length
 MAX_SYNC_BACK_BYTES = 20 * 1024 * 1024  # the run's sync_back zip, compressed
 
 # The workspace folder whose files the worker returns as one zip at the end of a job (repo and

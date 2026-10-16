@@ -12,7 +12,7 @@ next run is checked):
    → cancel + failed.
 6. Past `started_at + time_budget_s + BUDGET_GRACE + claim_timeout_s` → cancel + failed.
 7. The status is unknown and a cancel was requested over CANCEL_GRACE ago → cancelled.
-8. No launch_ref LAUNCH_GRACE after the claim (the server died mid-launch) → failed.
+8. No launch_ref LAUNCH_GRACE after the start (the server died mid-launch) → failed.
 A store error while fetching the outbox leaves only the time rules (6, 7) for that tick. The
 run's folder is deleted after every replay and every end. Once an hour, folders of runs that
 aren't active on this server are deleted (the sweep).
@@ -150,7 +150,7 @@ class MailboxReaper:
             and now > run.cancel_requested_at + CANCEL_GRACE
         ):
             return self._end(run.id, folder, "cancelled", None)
-        # 8. the server died between the claim and storing the launch_ref
+        # 8. the server died between the start and storing the launch_ref
         if (
             outbox_known
             and ref is None

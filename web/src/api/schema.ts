@@ -790,57 +790,6 @@ export interface paths {
         patch: operations["patch_user_api_users__user_id__patch"];
         trace?: never;
     };
-    "/api/worker/claim": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Claim */
-        post: operations["claim_api_worker_claim_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Complete */
-        post: operations["complete_api_worker_complete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Events */
-        post: operations["events_api_worker_events_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/worker/job": {
         parameters: {
             query?: never;
@@ -872,7 +821,9 @@ export interface paths {
         /**
          * Job Sync Back
          * @description The job's sync_back zip as the raw body; a `sync_back` record describing it follows. The
-         *     token and instance are checked before anything is read.
+         *     token and instance are checked before anything is read. A declared length over the cap is
+         *     refused unread, and reading stops past the cap, so an oversize upload is refused (413)
+         *     without being held whole; the store runs in a thread.
          */
         put: operations["job_sync_back_api_worker_jobs__job_id__sync_back_put"];
         post?: never;
@@ -916,40 +867,6 @@ export interface paths {
          *     in a thread only while it runs, so idle leases hold no threadpool thread while they wait.
          */
         post: operations["lease_api_worker_lease_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Sync */
-        post: operations["sync_api_worker_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/worker/sync-back": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Sync Back */
-        put: operations["sync_back_api_worker_sync_back_put"];
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1125,15 +1042,6 @@ export interface components {
             /** Body */
             body: string;
         };
-        /** ClaimRequest */
-        ClaimRequest: {
-            /** Worker Token */
-            worker_token: string;
-        };
-        /** ClaimResponse */
-        ClaimResponse: {
-            manifest: components["schemas"]["JobPackage"];
-        };
         /**
          * ClientToken
          * @description One of the signed-in user's client tokens (Settings > My client). The token itself is
@@ -1249,16 +1157,6 @@ export interface components {
             issues: components["schemas"]["ValidationIssue"][];
             /** Message */
             message: string;
-        };
-        /** EventsRequest */
-        EventsRequest: {
-            /** Events */
-            events: (components["schemas"]["StageStartedEvent"] | components["schemas"]["StageFinishedEvent"] | components["schemas"]["LogEvent"] | components["schemas"]["WarningEvent"] | components["schemas"]["VerdictEvent"] | components["schemas"]["VerdictRepairEvent"])[];
-        };
-        /** EventsResponse */
-        EventsResponse: {
-            /** Cancel */
-            cancel: boolean;
         };
         /**
          * FieldMappingEntry
@@ -2200,23 +2098,6 @@ export interface components {
              */
             outcome: "completed" | "abandoned";
         };
-        /**
-         * ResultData
-         * @description A `result` record's data (and the old `complete` body): how the job ended.
-         */
-        ResultData: {
-            /** Error */
-            error?: string | null;
-            /** Failed Stage */
-            failed_stage?: string | null;
-            /** Pr Url */
-            pr_url?: string | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "completed" | "failed" | "cancelled";
-        };
         /** RunDetail */
         RunDetail: {
             /** Cancel Requested At */
@@ -2668,34 +2549,6 @@ export interface components {
             bytes: number;
             /** Files */
             files: number;
-        };
-        /** SyncFile */
-        SyncFile: {
-            /** Content */
-            content: string | null;
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "replace" | "block";
-            /** Path */
-            path: string;
-        };
-        /** SyncRequest */
-        SyncRequest: {
-            /** Files */
-            files: components["schemas"]["SyncFile"][];
-            /** Stage Id */
-            stage_id: string;
-        };
-        /** SyncResponse */
-        SyncResponse: {
-            /** Refused */
-            refused: string[];
-            /** Versions */
-            versions: {
-                [key: string]: number;
-            };
         };
         /** TaskProgress */
         TaskProgress: {
@@ -5484,130 +5337,6 @@ export interface operations {
             };
         };
     };
-    claim_api_worker_claim_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaimRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClaimResponse"];
-                };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    complete_api_worker_complete_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResultData"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    events_api_worker_events_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EventsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EventsResponse"];
-                };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
     job_api_worker_job_get: {
         parameters: {
             query?: never;
@@ -5750,87 +5479,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LeaseResponse"];
                 };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    sync_api_worker_sync_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SyncRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncResponse"];
-                };
-            };
-            /** @description Client error */
-            "4XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Server error */
-            "5XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-        };
-    };
-    sync_back_api_worker_sync_back_put: {
-        parameters: {
-            query: {
-                sha256: string;
-                files: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Client error */
             "4XX": {

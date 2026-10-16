@@ -1522,40 +1522,14 @@ RunEvent = Annotated[
 # ------------------------------------------------------------------ worker API
 
 
-class ClaimRequest(ApiModel):
-    worker_token: str = Field(min_length=32, max_length=256)
-
-
-class ClaimResponse(ApiModel):
-    manifest: JobPackage
-
-
-class EventsRequest(ApiModel):
-    events: list[RunEvent] = Field(max_length=500)
-
-
-class EventsResponse(ApiModel):
-    cancel: bool
-
-
 class SyncFile(ApiModel):
     path: str
     content: str | None
     mode: Mode
 
 
-class SyncRequest(ApiModel):
-    stage_id: str
-    files: list[SyncFile]
-
-
-class SyncResponse(ApiModel):
-    versions: dict[str, int]
-    refused: list[str]  # paths that aren't write context or notes of the run's package
-
-
 class ResultData(ApiModel):
-    """A `result` record's data (and the old `complete` body): how the job ended."""
+    """A `result` record's data: how the job ended."""
 
     status: WorkerFinalStatus
     failed_stage: str | None = None

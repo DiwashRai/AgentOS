@@ -8,8 +8,8 @@ the primitives here.
 
 A run's job (`jobs`, one per run) is built when the run is dispatched (`build_job`): its package
 from the bundle as it is then, and a fresh job token. Tokens are never stored in plaintext:
-`jobs.token_hash` / `runs.worker_token_hash` are SHA-256 hex digests, and they are never cleared
-(a token's validity follows the run's status).
+`jobs.token_hash` is a SHA-256 hex digest, never cleared (a token's validity follows the run's
+status).
 """
 
 from __future__ import annotations
@@ -224,7 +224,7 @@ def dispatch(
             "UPDATE runs SET stage_ids = ?, time_budget_s = ? WHERE id = ?",
             (json.dumps(ids), plan.time_budget_s(), run_id),
         )
-        # Round 1's stage_runs; later rounds of a loop get theirs when they start (post_events).
+        # Round 1's stage_runs; later rounds of a loop get theirs when they start (ingest).
         conn.executemany(
             "INSERT INTO stage_runs(run_id, idx, stage_id, status) VALUES (?, ?, ?, 'pending')",
             [(run_id, i, stage_id) for i, stage_id in enumerate(ids[ids.index(from_stage) :])],
@@ -309,8 +309,8 @@ def run_events(
 
 
 def cancel(db: Database, run_id: int) -> RunSummary:
-    """queued/dispatched → `cancelled` at once (a late claim gets 410). running → set
-    `cancel_requested_at` once; the worker sees `cancel: true` on its next event post and
+    """queued/dispatched → `cancelled` at once (a late `started` gets 410). running → set
+    `cancel_requested_at` once; the worker sees `cancel: true` on its next journal post and
     completes as cancelled (the reaper cancels it after CANCEL_GRACE otherwise). A terminal run
     is returned unchanged."""
     now = utcnow()
@@ -572,7 +572,7 @@ def reap(
                 if finish(conn, run_id, status, (was,), now=now, error=error):
                     out.append(Reaped(run_id, status, why))
 
-        # 2. dispatched, never claimed
+        # 2. dispatched, never started
         stale = _ids(
             conn,
             "SELECT id FROM runs WHERE status = 'dispatched' AND dispatched_at < ?",

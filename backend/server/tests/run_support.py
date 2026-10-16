@@ -1,5 +1,5 @@
-"""Helpers for run tests: dispatch through the API, drive the dispatcher, act as a worker (on
-the journal; `RunDriver.claim` is the older claim route).
+"""Helpers for run tests: dispatch through the API, drive the dispatcher, act as a worker on the
+journal.
 
 `RunDriver` is provided by the `runs` fixture (conftest.py); the app runs with a FakeLauncher and
 no background loops, so every transition happens when a test asks for it.
@@ -26,13 +26,13 @@ CSRF = {"X-AgentOS": "1"}
 
 
 class FakeLauncher:
-    """In-memory Launcher: records launches (incl. the plaintext dispatch token) and can fail."""
+    """In-memory Launcher: records launches (incl. the plaintext job token) and can fail."""
 
     name = "local"
 
     def __init__(self, max_concurrency: int | None = 2) -> None:
         self.max_concurrency = max_concurrency
-        self.launched: list[tuple[int, str, str]] = []  # (run_id, server_url, dispatch_token)
+        self.launched: list[tuple[int, str, str]] = []  # (run_id, server_url, job_token)
         self.fail: Exception | None = None
 
     def launch(self, run_id: int, server_url: str, dispatch_token: str) -> str:
@@ -162,19 +162,11 @@ class RunDriver:
     def tick(self) -> list[int]:
         return dispatcher.tick(self.ctx)
 
-    def claim(self, run_id: int, worker_token: str | None = None) -> Response:
-        r: Response = self.client.post(
-            "/api/worker/claim",
-            json={"worker_token": worker_token or secrets.token_urlsafe(32)},
-            headers=bearer(self.launcher.token(run_id)),
-        )
-        return r
-
     def start(self, key: str, from_stage: str | None = None) -> Worker:
         """Dispatch, launch and start: the run is `running` and its worker is returned."""
-        return self.launch_and_claim(self.queue(key, from_stage).id)
+        return self.launch_and_bind(self.queue(key, from_stage).id)
 
-    def launch_and_claim(self, run_id: int) -> Worker:
+    def launch_and_bind(self, run_id: int) -> Worker:
         """Tick the dispatcher (it must launch `run_id`) and bind its job as a new worker."""
         assert run_id in self.tick()
         return self.bind(run_id, self.launcher.token(run_id))

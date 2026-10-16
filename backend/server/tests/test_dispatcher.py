@@ -206,7 +206,7 @@ def test_the_lifespan_runs_the_dispatcher(
 
 
 def test_the_lifespan_runs_the_reaper(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A launched worker that never claims is failed by the reaper (rule 2), seen via the API."""
+    """A launched worker that never starts is failed by the reaper (rule 2), seen via the API."""
     launcher = FakeLauncher()
     with with_loops(settings, launcher, monkeypatch) as (client, ctx):
         run_id = dispatch(client)
