@@ -367,6 +367,11 @@ def finish(
 ) -> bool:
     """Guarded terminal transition + side effects, in the caller's transaction.
 
+    A live-report run's job that never bound ends with it (`end_job`, lifting the fence): once
+    ended, its package and journal answer 410, so no worker can start it any more. Except a push
+    run ending cancelled: the reaper still asks its provider to cancel the job, which then ends
+    when the provider says so. A file-report job is left alone: its worker never binds live.
+
     Returns False (and changes nothing) if the run's status isn't one of `from_statuses`.
     """
     if status not in TERMINAL:
@@ -388,6 +393,14 @@ def finish(
         "UPDATE tickets SET updated_at = ? WHERE id = (SELECT ticket_id FROM runs WHERE id = ?)",
         (stamp, run_id),
     )
+    unbound = conn.execute(
+        "SELECT j.id FROM jobs j JOIN runs r ON r.id = j.run_id WHERE j.run_id = ? "
+        "AND j.ended_at IS NULL AND j.instance_hash IS NULL AND r.report = 'live' "
+        "AND NOT (r.start = 'push' AND r.status = 'cancelled')",
+        (run_id,),
+    ).fetchone()
+    if unbound is not None:
+        end_job(conn, run_id, unbound["id"], now)
     return True
 
 

@@ -17,7 +17,14 @@ from agentos.context import AppContext
 from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
-from agentos.runs.service import EXITED_UNSTARTED, WORKER_EXITED, Snapshot, finish, not_after
+from agentos.runs.service import (
+    EXITED_UNSTARTED,
+    NEVER_STARTED,
+    WORKER_EXITED,
+    Snapshot,
+    finish,
+    not_after,
+)
 from tests.run_support import CSRF, FakeProvider, RunDriver, bearer
 
 CreateTicket = Callable[..., TicketDetail]
@@ -222,6 +229,39 @@ def test_an_unbound_job_reported_gone_ends_its_run_and_refuses_a_late_bind(
     assert client.get("/api/worker/job", headers=late).status_code == 410
     r = client.post("/api/worker/journal", json={"records": []}, headers=late)
     assert (r.status_code, r.json()["error"]["code"]) == (410, "run_gone")
+
+
+def test_a_client_run_that_never_started_ends_its_job_so_the_next_run_starts_at_once(
+    key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    """Its long poll was answered after its client stopped: no worker ever takes the job."""
+    run_id = runs.queue(key, target="client").id
+    assert lease(client, token) is not None
+    now = utcnow()
+    runs.set_run(run_id, dispatched_at=to_db(now - timedelta(minutes=3)))
+
+    reap(ctx, now)
+    run = runs.get(run_id)
+    assert (run.status, run.error) == ("failed", NEVER_STARTED)
+    assert job_ended_at(ctx, run_id) is not None
+    second = runs.queue(key, target="client").id
+    taken = lease(client, token)
+    assert taken is not None
+    assert taken.run_id == second
+
+
+@pytest.mark.parametrize(("report", "ended"), [("live", True), ("file", False)])
+def test_an_ended_runs_unbound_job_ends_only_for_a_live_report(
+    report: str, ended: bool, key: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    """A file-report worker publishes without ever binding live, so its job stays open."""
+    run_id = runs.queue(key).id
+    assert runs.tick() == [run_id]
+    runs.set_run(run_id, report=report)
+    with ctx.db.tx() as conn:
+        assert finish(conn, run_id, "failed", ("dispatched",), now=utcnow(), error="test")
+
+    assert (job_ended_at(ctx, run_id) is not None) is ended
 
 
 def test_an_ended_job_is_never_bound_whatever_its_run_says(

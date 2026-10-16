@@ -80,6 +80,8 @@ flowchart LR
   - push: the provider's `status` says `ended` (the reaper);
   - pull: its client reports it `gone` in a lease (it saw the worker's process exit and its lock file free). Nothing else ends a pull job early: a lease leaving it out of `alive` doesn't, nor a client going silent, since its workers outlive it.
 
+  A live-report run that ends before its job ever bound (never started, cancelled, a start failure) ends that job with it (`finish()`): an ended unbound job answers 410, so no worker can start it. A push run ending cancelled is the exception: the reaper asks its provider to cancel, and its job ends when the provider says so. File-report jobs are left alone, since their worker never binds live.
+
   One narrow case stays: a client that dies after starting a worker but before that worker creates its lock file leaves a worker the next client can't see; its job then ends at its result, or at `not_after`.
 
   Without it, a reaped run's worker could still push while its retry starts on the same branch. Where: `runs/service.py` `_SQL_QUEUED`, `_next_queued()`; `runs/reaper.py` `job_ended()`; `worker_api/service.py` `lease_client()`.
