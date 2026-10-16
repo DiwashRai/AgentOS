@@ -10,7 +10,11 @@ execution: run it, record a `sync`, then (repo mode) commit, pre-push guard, pus
 through EventSink, which resends from `ack + 1` with the instance id `started` bound, to a
 Reporter: HttpReporter, or Recorder in mailbox mode.
 
-Publication: `git push -u` (the clone's pre-push hook refuses every other push), except on
+Publication: `git push -u`, never forced, so a push after the branch moved under the run is
+rejected (PUSH_REJECTED; publish_branch's ref write is likewise `force: false` on the last
+published commit). That check is the protection. The clone's pre-push hook, which refuses a push
+without the worker's marker, only guards against an agent's accidental push: the marker is plain
+text in the clone's hook file, and `--no-verify` or `-c core.hooksPath=` skip it. Except on
 GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where each stage's work goes through the
 Git Data API of the ticket's repo at GITHUB_API_URL (see publish_branch) as one commit: blobs, a
 tree (checked against HEAD's), the commit on the branch's remote commit, then one ref write with
@@ -128,7 +132,9 @@ MAX_ERROR_CHARS = 2000
 CANCELLED = "cancelled"  # stage_finished reason for a plain cancel
 OVER_BUDGET = "time budget exceeded"  # the job's budget_s ran out
 PUSH_REJECTED = "push rejected: the branch moved during the stage; did the agent push?"
-# Installed as the clone's only hook: refuses any push without the worker's per-run marker.
+# Installed as the clone's only hook: refuses any push without the worker's per-run marker. A
+# guardrail against an agent's accidental push, not a boundary: the marker is readable in this
+# file and `--no-verify` skips the hook. The never-forced push (PUSH_REJECTED) is the protection.
 PRE_PUSH = '#!/bin/sh\n[ "$AGENTOS_PUSH" = "{}" ] && exit 0\necho "agentos: no push" >&2\nexit 1\n'
 
 # Loop blocks and verdicts. `.agentos/` belongs to AgentOS: never committed, never synced.
@@ -2195,7 +2201,7 @@ class Run:
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
-        self.push_marker = secrets.token_hex(16)  # only the worker's own git gets it
+        self.push_marker = secrets.token_hex(16)  # in the worker's git env, not the stages'
         self.git_env = {**base, "AGENTOS_PUSH": self.push_marker}
         self.stage_env = {
             **base,
@@ -2432,7 +2438,8 @@ class Run:
         if r.code:
             return f"git rev-parse HEAD failed: {r.tail()}"
         self.start_head = self.pushed_head = r.out.decode().strip()
-        hooks = self.workdir / ".git" / "agentos-hooks"  # local, so a global hooksPath can't win
+        # The accidental-push guardrail (PRE_PUSH); local, so a global hooksPath doesn't replace it.
+        hooks = self.workdir / ".git" / "agentos-hooks"
         try:
             hooks.mkdir()
             (hooks / "pre-push").write_bytes(PRE_PUSH.format(self.push_marker).encode())
