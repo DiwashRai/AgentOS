@@ -30,7 +30,6 @@ import pytest
 import uvicorn
 from pydantic import SecretStr
 
-import agentos.main
 import worker
 from agentos.clock import utcnow
 from agentos.config import WORKER_PATH, Settings
@@ -87,7 +86,6 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
             if name.upper().startswith("AGENTOS_"):
                 mp.delenv(name)
         mp.setattr(dispatcher, "INTERVAL_S", 0.1)
-        mp.setattr(agentos.main, "REAPER_INTERVAL_S", 0.5)  # the real reaper watches every run
 
         remote = make_remote(root)
         env_file = root / "client.env"
@@ -358,7 +356,11 @@ def test_client_runs_gate_edit_continue_while_the_provider_serves_server_runs(
         {"content": edited, "mode": "replace", "base_version": current.version},
     )
 
-    # 3. Continue on the client: implement → review run to the end.
+    # 3. Continue on the client: implement → review run to the end. Run 1's result ended its job,
+    # so run 2 has no fence to wait for.
+    with world.server.ctx.db.read() as conn:
+        ended = conn.execute("SELECT ended_at FROM jobs WHERE run_id = ?", (run1.id,)).fetchone()
+    assert ended[0] is not None
     run2 = ann.dispatch(key, target="client")
     assert (run2.from_stage, run2.stage_ids) == ("implement", ["implement", "review"])
     detail = ann.wait_run(run2.id, "succeeded")
