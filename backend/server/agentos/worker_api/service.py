@@ -462,11 +462,16 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
 # ------------------------------------------------------------------ client lease
 
 
-def lease_client(db: Database, client_token: str, instance: str, alive: list[str]) -> LeaseResponse:
+def lease_client(
+    db: Database, client_token: str, instance: str, seq: int, alive: list[str]
+) -> LeaseResponse:
     """Authenticate a leasing client (401/403: `clients.service.authenticate`), record that it
     was seen, and stamp the jobs in `alive` that are its user's client runs (other ids are
-    ignored) as listed now (`alive_at`) by this client instance (`alive_by`: its digest). Once per
-    lease. Returns the answer without a job.
+    ignored) as listed now (`alive_at`) by this client instance (`alive_by`: its digest) at its
+    lease `seq` (`alive_seq`). Once per lease. Returns the answer without a job.
+
+    An instance's leases can arrive out of order (its exit reports go beside its long poll): a
+    lease whose `seq` isn't above the one that last listed a job neither re-lists nor ends it.
 
     A job whose last lister is this instance and that this lease leaves out has lost its worker:
     an instance lists every worker that hasn't exited (its own children, and every held
@@ -482,17 +487,18 @@ def lease_client(db: Database, client_token: str, instance: str, alive: list[str
     with db.tx() as conn:
         clients.touch(conn, client.id, now)
         conn.execute(
-            "UPDATE jobs SET alive_at = ?, alive_by = ? "
+            "UPDATE jobs SET alive_at = ?, alive_by = ?, alive_seq = ? "
             "WHERE id IN (SELECT value FROM json_each(?)) "
-            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",
-            (to_db(now), lister, json.dumps(alive), client.user.id),
+            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull') "
+            "AND (alive_by IS NOT ? OR alive_seq < ?)",
+            (to_db(now), lister, seq, json.dumps(alive), client.user.id, lister, seq),
         )
         gone = conn.execute(
             "SELECT r.id, r.status, r.stop_reason, j.id AS job_id, j.instance_hash "
             "FROM jobs j JOIN runs r ON r.id = j.run_id "
-            "WHERE r.created_by = ? AND r.start = 'pull' AND j.alive_by = ? "
+            "WHERE r.created_by = ? AND r.start = 'pull' AND j.alive_by = ? AND j.alive_seq < ? "
             "AND j.ended_at IS NULL AND j.id NOT IN (SELECT value FROM json_each(?))",
-            (client.user.id, lister, json.dumps(alive)),
+            (client.user.id, lister, seq, json.dumps(alive)),
         ).fetchall()
         for job in gone:
             if job["status"] not in TERMINAL:

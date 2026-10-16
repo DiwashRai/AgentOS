@@ -437,7 +437,7 @@ def test_revoking_the_token_stops_the_client(world: World) -> None:
     assert wait_exit(client) == 1, client.output()
     r = httpx.post(
         f"{world.server.url}/api/worker/lease",
-        json={"instance": "e2e-revoked-client", "wait_s": 0},
+        json={"instance": "e2e-revoked-client", "seq": 1, "wait_s": 0},
         headers={"Authorization": f"Bearer {token.token}"},
     )
     assert (r.status_code, r.json()["error"]["code"]) == (401, "unauthorized")

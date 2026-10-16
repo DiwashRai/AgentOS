@@ -3133,14 +3133,21 @@ class Children:
     (workers an earlier client started). A thread per started worker waits on its process: one
     that exits while the client loop waits (`waiting`: a lease in flight, or a busy client's
     pause) is reported at once by `report` (the job ids still running), so the server hears it
-    ended without waiting for the next lease."""
+    ended without waiting for the next lease.
 
-    def __init__(self, report: Callable[[list[str]], object], held: Callable[[], set[str]]) -> None:
+    Every list comes with a `seq` taken under the same lock as it is built, so a later-built list
+    has a higher seq: the report and the loop's lease travel apart and may arrive out of order,
+    and the server judges by seq, not by arrival."""
+
+    def __init__(
+        self, report: Callable[[int, list[str]], object], held: Callable[[], set[str]]
+    ) -> None:
         self._report = report
         self._held = held
         self._lock = threading.Lock()
         self._running: dict[str, Child] = {}
         self._waiting = False
+        self._seq = 0
 
     def add(self, job_id: str, child: Child) -> None:
         with self._lock:
@@ -3148,16 +3155,17 @@ class Children:
         threading.Thread(target=self._watch, args=(job_id, child), daemon=True).start()
 
     @contextlib.contextmanager
-    def waiting(self) -> Iterator[list[str]]:
-        """Drop the exited workers and yield the running ones' job ids, then the held ones'; until
-        the block ends, each exit is reported as it happens."""
+    def waiting(self) -> Iterator[tuple[int, list[str]]]:
+        """Drop the exited workers and yield a seq and the running ones' job ids, then the held
+        ones'; until the block ends, each exit is reported as it happens."""
         held = self._held()
         with self._lock:
             self._running = {job: c for job, c in self._running.items() if c.poll() is None}
             self._waiting = True
-            alive = [*self._running, *sorted(held - self._running.keys())]
+            self._seq += 1
+            listing = (self._seq, [*self._running, *sorted(held - self._running.keys())])
         try:
-            yield alive
+            yield listing
         finally:
             with self._lock:
                 self._waiting = False
@@ -3165,13 +3173,14 @@ class Children:
     def _watch(self, job_id: str, child: Child) -> None:
         code = child.wait()
         say(f"job {job_id}: its worker (pid {child.pid}) exited with code {code}")
+        held = self._held() - {job_id}  # its process ended, whatever its lock says yet
         with self._lock:
             if not self._waiting or self._running.pop(job_id, None) is None:
                 return  # the loop's next lease leaves it out
-            alive = list(self._running)
-        held = self._held() - {job_id}  # its process ended, whatever its lock says yet
+            self._seq += 1
+            seq, alive = self._seq, [*self._running, *sorted(held - self._running.keys())]
         try:
-            self._report([*alive, *sorted(held - set(alive))])
+            self._report(seq, alive)
         except (HttpError, Unreachable, ValueError) as exc:
             say(f"could not report the end of job {job_id} ({exc}); the next lease will")
 
@@ -3296,9 +3305,9 @@ def run_client(
     # leaving it out, so another process with this token (or on another root) never does.
     instance = secrets.token_urlsafe(32)
     children = Children(
-        lambda alive: client.post(
+        lambda seq, alive: client.post(
             "/api/worker/lease",
-            {"instance": instance, "wait_s": 0, "take": False, "alive": alive},
+            {"instance": instance, "seq": seq, "wait_s": 0, "take": False, "alive": alive},
             retry_budget_s=0,
         ),
         lambda: held_jobs(runs),
@@ -3309,14 +3318,20 @@ def run_client(
     try:
         while True:
             problem: str | None = None
-            with children.waiting() as alive:
+            with children.waiting() as (seq, alive):
                 busy = len(alive) >= max_runs
                 if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
                     time.sleep(CLIENT_REAP_S)
                     continue
 
                 wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-                body = {"instance": instance, "wait_s": wait_s, "take": not busy, "alive": alive}
+                body = {
+                    "instance": instance,
+                    "seq": seq,
+                    "wait_s": wait_s,
+                    "take": not busy,
+                    "alive": alive,
+                }
                 try:
                     resp = client.post(
                         "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0

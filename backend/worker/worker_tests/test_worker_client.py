@@ -118,10 +118,12 @@ def leases(server: FakeServer) -> int:
 
 
 def lease_bodies(server: FakeServer) -> list[dict[str, Any]]:
-    """The lease bodies without `instance`, after checking every one carries the same."""
+    """The lease bodies without `instance` and `seq`, after checking every one carries the same
+    instance and its own seq."""
     bodies = server.bodies(LEASE)
     assert len({body["instance"] for body in bodies}) == 1
-    return [{k: v for k, v in body.items() if k != "instance"} for body in bodies]
+    assert len({body["seq"] for body in bodies}) == len(bodies)
+    return [{k: v for k, v in body.items() if k not in ("instance", "seq")} for body in bodies]
 
 
 def test_one_worker_per_run_with_the_token_in_its_env_only(
@@ -313,6 +315,8 @@ def test_a_worker_that_exits_during_a_long_poll_is_reported_at_once(
         {"wait_s": 25, "take": True, "alive": [job_id(5)]},
         {"wait_s": 0, "take": False, "alive": []},
     ]
+    seqs = [body["seq"] for body in server.bodies(LEASE)]
+    assert seqs == sorted(seqs)  # the report was built after the held lease's list
 
 
 def test_a_started_worker_is_listed_before_it_holds_its_lock(

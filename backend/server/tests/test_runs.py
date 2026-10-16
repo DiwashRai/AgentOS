@@ -15,7 +15,16 @@ from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
 from agentos.models import JobPackage, Me, Route, RunSummary, TicketDetail, TicketSummary
 from agentos.runs.service import BUDGET_GRACE, NEVER_STARTED, OVER_BUDGET
-from tests.run_support import CSRF, INSTANCE, FakeProvider, RunDriver, bearer, event, log_event
+from tests.run_support import (
+    CSRF,
+    INSTANCE,
+    LEASE_SEQ,
+    FakeProvider,
+    RunDriver,
+    bearer,
+    event,
+    log_event,
+)
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -336,7 +345,9 @@ def test_a_waiting_client_run_keeps_what_its_owner_dispatched(
     assert patch({"priority": "high"}).status_code == 200  # nothing a run renders
 
     taken = client.post(
-        "/api/worker/lease", json={"instance": INSTANCE, "wait_s": 0}, headers=bearer(token)
+        "/api/worker/lease",
+        json={"instance": INSTANCE, "seq": next(LEASE_SEQ), "wait_s": 0},
+        headers=bearer(token),
     )
     assert taken.json()["job"]["run_id"] == run.id  # dispatched, not bound yet
     assert error(put()) == (409, "bundle_locked")
@@ -362,7 +373,9 @@ def test_a_client_run_whose_package_cannot_be_built_fails_at_the_take(
         conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (t.key,))
 
     taken = client.post(
-        "/api/worker/lease", json={"instance": INSTANCE, "wait_s": 0}, headers=bearer(token)
+        "/api/worker/lease",
+        json={"instance": INSTANCE, "seq": next(LEASE_SEQ), "wait_s": 0},
+        headers=bearer(token),
     )
     assert taken.json()["job"] is None
     assert runs.get(run.id).status == "failed"

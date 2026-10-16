@@ -8,6 +8,7 @@ no background loops, so every transition happens when a test asks for it.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 CSRF = {"X-AgentOS": "1"}
 INSTANCE = "test-client-instance-a"  # a client process's lease `instance`
+LEASE_SEQ = itertools.count(1)  # lease `seq`s, increasing as a client's are
 
 
 class FakeProvider:

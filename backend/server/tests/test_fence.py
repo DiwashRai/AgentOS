@@ -19,7 +19,7 @@ from agentos.launchers.base import JobStatus
 from agentos.models import LeasedJob, LeaseResponse, Me, Route, TicketDetail
 from agentos.runs.reaper import WORKER_LOST, JobFacts, Reaper, job_ended
 from agentos.runs.service import NEVER_STARTED, WORKER_EXITED, Snapshot, finish, not_after
-from tests.run_support import CSRF, INSTANCE, FakeProvider, RunDriver, bearer
+from tests.run_support import CSRF, INSTANCE, LEASE_SEQ, FakeProvider, RunDriver, bearer
 
 OTHER = "test-client-instance-b"  # another client process with the same token
 CreateTicket = Callable[..., TicketDetail]
@@ -111,8 +111,11 @@ def lease(
     alive: tuple[str, ...] = (),
     take: bool = True,
     instance: str = INSTANCE,
+    seq: int | None = None,
 ) -> LeasedJob | None:
-    body = {"instance": instance, "wait_s": 0, "take": take, "alive": list(alive)}
+    """A lease; `seq` defaults to the next one, as a client's leases are built."""
+    seq = next(LEASE_SEQ) if seq is None else seq
+    body = {"instance": instance, "seq": seq, "wait_s": 0, "take": take, "alive": list(alive)}
     r = client.post("/api/worker/lease", json=body, headers=bearer(token))
     assert r.status_code == 200, r.text
     return LeaseResponse.model_validate(r.json()).job
@@ -217,6 +220,36 @@ def test_an_unbound_job_its_lister_leaves_out_ends_its_run_and_refuses_a_late_bi
     assert client.get("/api/worker/job", headers=late).status_code == 410
     r = client.post("/api/worker/journal", json={"records": []}, headers=late)
     assert (r.status_code, r.json()["error"]["code"]) == (410, "run_gone")
+
+
+def test_an_older_lease_arriving_late_neither_ends_nor_relists_a_job(
+    key: str, client: TestClient, token: str, runs: RunDriver, ctx: AppContext
+) -> None:
+    """An exit report built before the job started can arrive after the lease that listed it."""
+    run_id = runs.queue(key, target="client").id
+    job = lease(client, token, seq=10)
+    assert job is not None
+    runs.bind(run_id, job.job_token)
+
+    def listed() -> tuple[str, int]:
+        with ctx.db.read() as conn:
+            row = conn.execute(
+                "SELECT alive_at, alive_seq FROM jobs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return str(row["alive_at"]), int(row["alive_seq"])
+
+    assert lease(client, token, (job.job_id,), take=False, seq=12) is None
+    newer = listed()
+    assert newer[1] == 12
+    assert lease(client, token, take=False, seq=11) is None  # built before: leaves it out
+    assert lease(client, token, (job.job_id,), take=False, seq=11) is None  # or lists it
+    assert runs.get(run_id).status == "running"
+    assert listed() == newer
+
+    assert lease(client, token, take=False, seq=13) is None  # built after its worker exited
+    run = runs.get(run_id)
+    assert (run.status, run.error) == ("failed", WORKER_EXITED)
+    assert job_ended_at(ctx, run_id) is not None
 
 
 def test_an_ended_job_is_never_bound_whatever_its_run_says(
