@@ -134,10 +134,30 @@ MAX_ERROR_CHARS = 2000
 CANCELLED = "cancelled"  # stage_finished reason for a plain cancel
 OVER_BUDGET = "time budget exceeded"  # the job's budget_s ran out
 PUSH_REJECTED = "push rejected: the branch moved during the stage; did the agent push?"
-# Installed as the clone's only hook: refuses any push without the worker's per-run marker. A
-# guardrail against an agent's accidental push, not a boundary: the marker is readable in this
-# file and `--no-verify` skips the hook. The never-forced push (PUSH_REJECTED) is the protection.
-PRE_PUSH = '#!/bin/sh\n[ "$AGENTOS_PUSH" = "{}" ] && exit 0\necho "agentos: no push" >&2\nexit 1\n'
+# The clone's hooks: each runs the user's own hook of that name (from their core.hooksPath, else
+# .git/hooks), so their hooks apply as if they committed themselves. pre-push first refuses any
+# push without the worker's per-run marker: a guardrail against an agent's accidental push, not a
+# boundary (the marker is readable in this file and `--no-verify` skips the hook). The
+# never-forced push (PUSH_REJECTED) is the protection.
+HOOK_NAMES = (
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-auto-gc",
+    "post-rewrite",
+    "reference-transaction",
+)
+PUSH_GUARD = '[ "$AGENTOS_PUSH" = "{}" ] || {{ echo "agentos: no push" >&2; exit 1; }}\n'
+HOOK_SHIM = '#!/bin/sh\n{}h={}\n[ -x "$h" ] && exec "$h" "$@"\nexit 0\n'
 
 # Loop blocks and verdicts. `.agentos/` belongs to AgentOS: never committed, never synced.
 AGENTOS_DIR = ".agentos"
@@ -2440,21 +2460,40 @@ class Run:
         if r.code:
             return f"git rev-parse HEAD failed: {r.tail()}"
         self.start_head = self.pushed_head = r.out.decode().strip()
-        # The accidental-push guardrail (PRE_PUSH); local, so a global hooksPath doesn't replace it.
+        return self._install_hooks() or self._set_identity()
+
+    def _install_hooks(self) -> str | None:
+        """Point the clone's core.hooksPath at HOOK_SHIMs that run the user's own hooks, behind
+        the push guardrail. Set locally, so a global hooksPath doesn't replace the guardrail."""
+        r = self._git("config", "--path", "--get", "core.hooksPath")
+        mine = r.out.decode().strip() if r.code == 0 else ""
+        theirs = (self.workdir / mine) if mine else (self.workdir / ".git" / "hooks")
         hooks = self.workdir / ".git" / "agentos-hooks"
         try:
             hooks.mkdir()
-            (hooks / "pre-push").write_bytes(PRE_PUSH.format(self.push_marker).encode())
-            (hooks / "pre-push").chmod(0o755)
+            for name in HOOK_NAMES:
+                guard = PUSH_GUARD.format(self.push_marker) if name == "pre-push" else ""
+                target = shlex.quote((theirs / name).as_posix())
+                (hooks / name).write_bytes(HOOK_SHIM.format(guard, target).encode())
+                (hooks / name).chmod(0o755)
         except OSError as exc:
-            return f"cannot install the pre-push hook: {exc}"
-        name = os.environ.get("AGENTOS_GIT_NAME") or "AgentOS"
-        email = os.environ.get("AGENTOS_GIT_EMAIL") or "agentos@localhost"
-        path = hooks.as_posix()
-        for key, value in (("user.name", name), ("user.email", email), ("core.hooksPath", path)):
-            r = self._git("config", key, value)
+            return f"cannot install the git hooks: {exc}"
+        r = self._git("config", "core.hooksPath", hooks.as_posix())
+        return f"git config core.hooksPath failed: {r.tail()}" if r.code else None
+
+    def _set_identity(self) -> str | None:
+        """On Actions (API mode) commit as AGENTOS_GIT_NAME / _EMAIL, default AgentOS. A local
+        or client worker is the user: their git config (identity, signing) applies as if they
+        committed themselves, and nothing is set."""
+        if not self.api_mode:
+            return None
+        for setting, var, default in (
+            ("user.name", "AGENTOS_GIT_NAME", "AgentOS"),
+            ("user.email", "AGENTOS_GIT_EMAIL", "agentos@localhost"),
+        ):
+            r = self._git("config", setting, os.environ.get(var, "").strip() or default)
             if r.code:
-                return f"git config {key} failed: {r.tail()}"
+                return f"git config {setting} failed: {r.tail()}"
         return None
 
     def _setup_github(self, repo_url: str) -> str | None:
@@ -2799,9 +2838,7 @@ class Run:
         if not staged:
             return None
         message = f"{self.m.key} [{stage_id}] wip"
-        r = self._git(
-            "-c", "commit.gpgsign=false", "commit", "--no-verify", "-q", "-m", message, show=True
-        )
+        r = self._git("commit", "-q", "-m", message, show=True)
         return f"git commit failed: {r.tail()}" if r.code else None
 
     def _guard(self) -> str | None:
