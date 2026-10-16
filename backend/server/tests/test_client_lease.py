@@ -19,7 +19,7 @@ from agentos.config import WORKER_PATH
 from agentos.context import AppContext
 from agentos.models import ClientToken, LeasedJob, LeaseResponse, Me, Role, TicketDetail
 from agentos.worker_api import service
-from tests.run_support import CSRF, INSTANCE, LEASE_SEQ, RunDriver, bearer
+from tests.run_support import CSRF, RunDriver, bearer
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -40,13 +40,7 @@ def lease_raw(
     take: bool = True,
     alive: Sequence[str] = (),
 ) -> Response:
-    body = {
-        "instance": INSTANCE,
-        "seq": next(LEASE_SEQ),
-        "wait_s": wait_s,
-        "take": take,
-        "alive": list(alive),
-    }
+    body = {"wait_s": wait_s, "take": take, "alive": list(alive)}
     r: Response = client.post("/api/worker/lease", json=body, headers=bearer(token))
     return r
 
@@ -307,6 +301,6 @@ def test_a_lease_needs_a_known_bearer_token(client: TestClient, login: LoginFn) 
     login("ann")
     new_token(client)
     assert error(lease_raw(client, secrets.token_urlsafe(32))) == (401, "unauthorized")
-    body = {"instance": INSTANCE, "seq": next(LEASE_SEQ), "wait_s": 0}
+    body = {"wait_s": 0}
     no_bearer = client.post("/api/worker/lease", json=body)  # the session cookie only
     assert error(no_bearer) == (401, "unauthorized")

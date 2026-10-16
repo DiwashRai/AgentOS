@@ -1537,18 +1537,15 @@ export interface components {
         /**
          * LeaseRequest
          * @description Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
-         *     the jobs the client's workers still run. `instance`: the client process's random id, the same
-         *     on every lease it sends; only the instance that last listed a job can end it by leaving it
-         *     out of `alive`. `seq`: increasing per instance, taken when its `alive` list is built, so a
-         *     lease that arrives late (an older list) neither re-lists nor ends a job a newer one judged.
+         *     the jobs the client's workers still run (recorded for display; leaving one out ends
+         *     nothing). `gone`: the jobs whose worker the client saw end (its process exited, or its lock
+         *     was released); the server ends exactly those, once, so a repeat or a late one is harmless.
          */
         LeaseRequest: {
             /** Alive */
             alive?: string[];
-            /** Instance */
-            instance: string;
-            /** Seq */
-            seq: number;
+            /** Gone */
+            gone?: string[];
             /**
              * Take
              * @default true

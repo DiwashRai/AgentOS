@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import os
 import stat
-import sys
 import time
 from pathlib import Path
-from typing import IO
 
 import pytest
 
@@ -79,67 +77,15 @@ def test_cleanup_deletes_only_old_run_workspaces_and_logs_of_the_client(tmp_path
     (runs / "3.txt").write_bytes(b"x")
     (tmp_path / "4").mkdir()  # not the client's: an unrelated all-digit folder in the root
     (tmp_path / "4.log").write_bytes(b"x")
-    (runs / "5-1-ab.lock").write_bytes(b"")  # its worker is gone
-    held = worker.hold_lock(runs / "6-1-cd.lock")  # its worker still runs
-    locks = (runs / "5-1-ab.lock", runs / "6-1-cd.lock")
-    for path in (runs / "1", runs / "1.log", runs / "notes", runs / "3.txt", *locks):
+    (runs / "5-1-ab.lock").write_bytes(b"")  # kept until its `gone` is acknowledged
+    for path in (runs / "1", runs / "1.log", runs / "notes", runs / "3.txt", runs / "5-1-ab.lock"):
         os.utime(path, (old, old))
     for path in (tmp_path / "4", tmp_path / "4.log"):
         os.utime(path, (old, old))
 
-    try:
-        removed = worker.clean_workdir_root(tmp_path, now)
-    finally:
-        worker.release_lock(held)
+    removed = worker.clean_workdir_root(tmp_path, now)
 
-    assert sorted(p.name for p in removed) == ["1", "1.log", "5-1-ab.lock"]
+    assert sorted(p.name for p in removed) == ["1", "1.log"]
     names = sorted(p.name for p in runs.iterdir())
-    assert names == ["2", "2.log", "3.txt", "6-1-cd.lock", "notes"]
+    assert names == ["2", "2.log", "3.txt", "5-1-ab.lock", "notes"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["4", "4.log", "runs"]
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows can't delete an open file")
-def test_a_worker_whose_lock_file_is_deleted_before_it_locks_starts_over(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "5-1-ab.lock"
-    take = worker._take_lock
-    calls: list[int] = []
-
-    def deleted_first(lock: IO[bytes], wait: bool) -> bool:
-        calls.append(1)
-        if len(calls) == 1:
-            path.unlink()  # a cleanup removed the file this worker had just opened
-        return take(lock, wait)
-
-    monkeypatch.setattr(worker, "_take_lock", deleted_first)
-    lock = worker.hold_lock(path)
-    try:
-        assert len(calls) == 2
-        assert os.fstat(lock.fileno()).st_ino == path.stat().st_ino
-        assert worker.lock_held(path)
-    finally:
-        worker.release_lock(lock)
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="POSIX unlinks while holding the lock")
-def test_a_cleanup_never_deletes_a_lock_file_a_worker_opened_meanwhile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "5-1-ab.lock"
-    path.write_bytes(b"")
-    release = worker.release_lock
-    opened: list[IO[bytes]] = []
-
-    def release_then_a_worker_opens(lock: IO[bytes]) -> None:
-        release(lock)
-        opened.append(path.open("a+b"))  # a worker starting between the release and the unlink
-
-    monkeypatch.setattr(worker, "release_lock", release_then_a_worker_opens)
-    try:
-        with pytest.raises(PermissionError):  # Windows: the file is open
-            worker.remove_free_lock(path)
-        assert path.exists()
-    finally:
-        for f in opened:
-            f.close()

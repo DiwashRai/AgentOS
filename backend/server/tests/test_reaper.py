@@ -16,7 +16,7 @@ from agentos.models import LeaseResponse, Me, TicketDetail
 from agentos.runs.reaper import UNWATCHED, Reaper
 from agentos.runs.service import NEVER_STARTED, OVER_BUDGET
 from tests.mailbox_support import FakeMailbox
-from tests.run_support import CSRF, INSTANCE, LEASE_SEQ, FakeProvider, RunDriver, Worker, bearer
+from tests.run_support import CSRF, FakeProvider, RunDriver, Worker, bearer
 from tests.settings_support import set_space
 
 CreateTicket = Callable[..., TicketDetail]
@@ -56,7 +56,7 @@ class Side:
             return run_id, self.runs.provider.token(run_id)
         r = self.client.post(
             "/api/worker/lease",
-            json={"instance": INSTANCE, "seq": next(LEASE_SEQ), "wait_s": 0},
+            json={"wait_s": 0},
             headers=bearer(self.token),
         )
         job = LeaseResponse.model_validate(r.json()).job

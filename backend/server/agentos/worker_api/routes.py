@@ -81,9 +81,7 @@ async def lease(
     waiting up to `wait_s` for one; `take: false` (a busy client's heartbeat) only records that it
     and its `alive` jobs were seen. 401/403 at once for a bad token. Async, and each db step runs
     in a thread only while it runs, so idle leases hold no threadpool thread while they wait."""
-    answer = await asyncio.to_thread(
-        service.lease_client, ctx.db, token, body.instance, body.seq, body.alive
-    )
+    answer = await asyncio.to_thread(service.lease_client, ctx.db, token, body.alive, body.gone)
     if not body.take:
         return answer
 

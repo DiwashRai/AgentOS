@@ -44,7 +44,7 @@ from agentos.pipeline.segment import completion_status
 from agentos.runs import service as runs
 from agentos.runs.service import (
     EVENT_ADAPTER,
-    NEVER_STARTED,
+    EXITED_UNSTARTED,
     STOPPED,
     TERMINAL,
     WORKER_EXITED,
@@ -463,47 +463,38 @@ def store_sync_back(db: Database, run_id: int, data: bytes, sha256: str, files: 
 
 
 def lease_client(
-    db: Database, client_token: str, instance: str, seq: int, alive: list[str]
+    db: Database, client_token: str, alive: list[str], gone: list[str]
 ) -> LeaseResponse:
     """Authenticate a leasing client (401/403: `clients.service.authenticate`), record that it
-    was seen, and stamp the jobs in `alive` that are its user's client runs (other ids are
-    ignored) as listed now (`alive_at`) by this client instance (`alive_by`: its digest) at its
-    lease `seq` (`alive_seq`). Once per lease. Returns the answer without a job.
+    was seen, and stamp the jobs in `alive` that are its user's client runs as listed now
+    (`alive_at`; for display only: leaving a job out ends nothing). Once per lease. Returns the
+    answer without a job.
 
-    An instance's leases can arrive out of order (its exit reports go beside its long poll): a
-    lease whose `seq` isn't above the one that last listed a job neither re-lists nor ends it.
-
-    A job whose last lister is this instance and that this lease leaves out has lost its worker:
-    an instance lists every worker that hasn't exited (its own children, and every held
-    `<job id>.lock` under its root; a worker locks before it binds). The job ends now, and so does
-    its run if still active (as `STOPPED` says if it was stopped, else failed `WORKER_EXITED`, or
-    `NEVER_STARTED` when the job never bound; a late bind of an ended job gets 410). A job listed
-    by another instance (another process with this token, or one on another root) or never listed
-    is left alone, to its own lister or its `not_after`."""
+    `gone` are the jobs whose worker the client saw end (its process exited, or its lock file was
+    released). Each that this client was leased (`jobs.client_id`; others are ignored) and that
+    hasn't ended ends now, in this transaction, and so does its run if still active: as `STOPPED`
+    says if it was stopped, else failed `WORKER_EXITED`, or `EXITED_UNSTARTED` when the job never
+    bound (a late bind of an ended job gets 410). An ended job is skipped, so a repeated or late
+    `gone` changes nothing, whatever order leases arrive in."""
     client = clients.authenticate(db, client_token)
     now = utcnow()
-    lister = hash_token(instance)
-    # One transaction: the stamp and the judgement read the same lease.
     with db.tx() as conn:
         clients.touch(conn, client.id, now)
         conn.execute(
-            "UPDATE jobs SET alive_at = ?, alive_by = ?, alive_seq = ? "
-            "WHERE id IN (SELECT value FROM json_each(?)) "
-            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull') "
-            "AND (alive_by IS NOT ? OR alive_seq < ?)",
-            (to_db(now), lister, seq, json.dumps(alive), client.user.id, lister, seq),
+            "UPDATE jobs SET alive_at = ? WHERE id IN (SELECT value FROM json_each(?)) "
+            "AND run_id IN (SELECT id FROM runs WHERE created_by = ? AND start = 'pull')",
+            (to_db(now), json.dumps(alive), client.user.id),
         )
-        gone = conn.execute(
+        ended = conn.execute(
             "SELECT r.id, r.status, r.stop_reason, j.id AS job_id, j.instance_hash "
-            "FROM jobs j JOIN runs r ON r.id = j.run_id "
-            "WHERE r.created_by = ? AND r.start = 'pull' AND j.alive_by = ? AND j.alive_seq < ? "
-            "AND j.ended_at IS NULL AND j.id NOT IN (SELECT value FROM json_each(?))",
-            (client.user.id, lister, seq, json.dumps(alive)),
+            "FROM jobs j JOIN runs r ON r.id = j.run_id WHERE j.client_id = ? "
+            "AND j.ended_at IS NULL AND j.id IN (SELECT value FROM json_each(?))",
+            (client.id, json.dumps(gone)),
         ).fetchall()
-        for job in gone:
+        for job in ended:
             if job["status"] not in TERMINAL:
                 bound = job["instance_hash"] is not None
-                error = WORKER_EXITED if bound else NEVER_STARTED
+                error = WORKER_EXITED if bound else EXITED_UNSTARTED
                 end: tuple[RunStatus, str | None] = ("failed", error)
                 if job["stop_reason"] is not None:
                     end = STOPPED[job["stop_reason"]]

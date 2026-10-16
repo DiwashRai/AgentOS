@@ -1601,16 +1601,14 @@ class PushedData(ApiModel):
 
 class LeaseRequest(ApiModel):
     """Waits up to `wait_s` for a job (`take: false`: a heartbeat, answered at once). `alive`:
-    the jobs the client's workers still run. `instance`: the client process's random id, the same
-    on every lease it sends; only the instance that last listed a job can end it by leaving it
-    out of `alive`. `seq`: increasing per instance, taken when its `alive` list is built, so a
-    lease that arrives late (an older list) neither re-lists nor ends a job a newer one judged."""
+    the jobs the client's workers still run (recorded for display; leaving one out ends
+    nothing). `gone`: the jobs whose worker the client saw end (its process exited, or its lock
+    was released); the server ends exactly those, once, so a repeat or a late one is harmless."""
 
-    instance: str = Field(min_length=16, max_length=128)
-    seq: int = Field(ge=1)
     wait_s: int = Field(default=25, ge=0, le=25)
     take: bool = True
     alive: list[str] = Field(default_factory=list, max_length=100)
+    gone: list[str] = Field(default_factory=list, max_length=100)
 
 
 class LeasedJob(ApiModel):

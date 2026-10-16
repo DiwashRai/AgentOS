@@ -21,7 +21,7 @@ from worker_tests.worker_support import FakeServer, error, eventually
 CLIENT_TOKEN = "c" * 43
 LEASE = "/api/worker/lease"
 SHA256 = hashlib.sha256(Path(worker.__file__).read_bytes()).hexdigest()
-TAKE = {"wait_s": 25, "take": True, "alive": []}
+TAKE = {"wait_s": 25, "take": True, "alive": [], "gone": []}
 
 
 @dataclass
@@ -117,15 +117,6 @@ def leases(server: FakeServer) -> int:
     return len(server.bodies(LEASE))
 
 
-def lease_bodies(server: FakeServer) -> list[dict[str, Any]]:
-    """The lease bodies without `instance` and `seq`, after checking every one carries the same
-    instance and its own seq."""
-    bodies = server.bodies(LEASE)
-    assert len({body["instance"] for body in bodies}) == 1
-    assert len({body["seq"] for body in bodies}) == len(bodies)
-    return [{k: v for k, v in body.items() if k not in ("instance", "seq")} for body in bodies]
-
-
 def test_one_worker_per_run_with_the_token_in_its_env_only(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -160,7 +151,8 @@ def test_one_worker_per_run_with_the_token_in_its_env_only(
         assert not any(token in arg or CLIENT_TOKEN in arg for arg in call.argv)
 
     assert {r.auth for r in server.requests} == {f"Bearer {CLIENT_TOKEN}"}
-    assert lease_bodies(server) == [TAKE] * 4
+    gone = [{**TAKE, "gone": [job_id(run_id)]} for run_id in (7, 8)]  # each finished at once
+    assert server.bodies(LEASE) == [TAKE, gone[0], TAKE, gone[1]]
     assert "AGENTOS_CLIENT_TOKEN" not in os.environ
 
 
@@ -244,8 +236,8 @@ def test_a_busy_client_sends_heartbeats_that_take_nothing(
 
     assert run_client(server, tmp_path / "ws") == 1  # the 401 after the answers
 
-    heartbeat = {"wait_s": 0, "take": False, "alive": [job_id(5)]}
-    assert lease_bodies(server) == [TAKE, *[heartbeat] * 4]
+    heartbeat = {"wait_s": 0, "take": False, "alive": [job_id(5)], "gone": []}
+    assert server.bodies(LEASE) == [TAKE, *[heartbeat] * 4]
     assert spawn.count() == 1
 
 
@@ -310,13 +302,11 @@ def test_a_worker_that_exits_during_a_long_poll_is_reported_at_once(
     finally:
         release.set()
     assert result == [1]
-    assert lease_bodies(server) == [
+    assert server.bodies(LEASE) == [
         TAKE,
-        {"wait_s": 25, "take": True, "alive": [job_id(5)]},
-        {"wait_s": 0, "take": False, "alive": []},
+        {"wait_s": 25, "take": True, "alive": [job_id(5)], "gone": []},
+        {"wait_s": 0, "take": False, "alive": [], "gone": [job_id(5)]},
     ]
-    seqs = [body["seq"] for body in server.bodies(LEASE)]
-    assert seqs == sorted(seqs)  # the report was built after the held lease's list
 
 
 def test_a_started_worker_is_listed_before_it_holds_its_lock(
@@ -338,15 +328,32 @@ def test_a_restarted_client_lists_the_workers_that_outlived_it(
 ) -> None:
     runs = tmp_path / "ws" / "runs"
     runs.mkdir(parents=True)
-    (runs / f"{job_id(4)}.lock").write_bytes(b"")  # a worker that has exited
+    (runs / f"{job_id(4)}.lock").write_bytes(b"")  # a worker that ended while no client watched
     survivor = worker.hold_lock(runs / f"{job_id(5)}.lock")
-    answer_leases(server, [NOTHING])
-    try:
-        assert run_client(server, tmp_path / "ws", "--max-runs", "2") == 1
-    finally:
-        worker.release_lock(survivor)
+    released: list[bool] = []
 
-    assert [body["alive"] for body in server.bodies(LEASE)] == [[job_id(5)], [job_id(5)]]
+    def hook(path: str, body: Any) -> tuple[int, Any] | None:
+        if path != LEASE:
+            return None
+        if not released:  # the first lease: then the survivor exits
+            released.append(True)
+            worker.release_lock(survivor)
+            return NOTHING
+        return error(401, "unauthorized")
+
+    server.hook = hook
+    try:
+        assert run_client(server, tmp_path / "ws") == 1  # one slot, full of the survivor
+    finally:
+        if not released:
+            worker.release_lock(survivor)
+
+    assert server.bodies(LEASE) == [
+        {"wait_s": 0, "take": False, "alive": [job_id(5)], "gone": [job_id(4)]},  # at once
+        {"wait_s": 25, "take": True, "alive": [], "gone": [job_id(5)]},
+    ]
+    assert not (runs / f"{job_id(4)}.lock").exists()  # acknowledged, then deleted
+    assert (runs / f"{job_id(5)}.lock").exists()  # its `gone` got a 401: reported again later
 
 
 @pytest.mark.parametrize("end", ["exit", "kill"])
@@ -380,21 +387,6 @@ def test_a_run_worker_holds_its_lock_until_its_process_ends(
             proc.kill()
             proc.wait()
     eventually(lambda: not worker.lock_held(lock), "the OS to release the dead worker's lock")
-
-
-def test_each_client_process_leases_as_its_own_instance(
-    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    instances: list[set[str]] = []
-    for started in range(2):  # the same token and root, started twice
-        monkeypatch.setenv("AGENTOS_CLIENT_TOKEN", CLIENT_TOKEN)  # main pops it
-        answer_leases(server, [NOTHING])
-        assert run_client(server, tmp_path / "ws") == 1
-        bodies = server.bodies(LEASE)[started * 2 :]  # NOTHING, then the 401
-        instances.append({body["instance"] for body in bodies})
-
-    assert [len(i) for i in instances] == [1, 1]
-    assert instances[0] != instances[1]
 
 
 def test_a_job_id_that_cant_name_a_file_is_a_malformed_answer(

@@ -117,9 +117,9 @@ def judge(job: JobFacts, now: datetime, status: JobStatus | None, mailbox: bool)
 def job_ended(job: JobFacts, now: datetime, status: JobStatus | None) -> bool:
     """Whether the job of a run that ended without its result can no longer publish: past its
     `not_after` (any route); push: its provider says `ended` (`status`). A pull job also ends when
-    the client instance that last listed it leaves it out of a lease, which the lease itself
-    stamps (`worker_api.service.lease_client`): only that instance can see its worker exit, and a
-    silent client proves nothing, since its workers outlive it."""
+    its client reports it `gone`, which the lease itself stamps (`worker_api.service
+    .lease_client`): only the client sees its worker exit, and a silent client proves nothing,
+    since its workers outlive it."""
     if now > job.not_after:
         return True
     return job.start == "push" and status is not None and status.state == "ended"

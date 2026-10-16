@@ -2982,8 +2982,8 @@ _ENV_ENTRY_RE = re.compile(
 _SINGLE_ESCAPE_RE = re.compile(r"\\([\\'])")
 _DOUBLE_ESCAPE_RE = re.compile(r"\\([\\'\"abfnrtv])")
 _ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
-# <run_id> workspaces, <run_id>.log logs and <job id>.lock run worker locks
-_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?|[0-9]+-[0-9]+-[0-9a-f]+\.lock")
+# <run_id> workspaces and <run_id>.log logs (a <job id>.lock goes once its `gone` is acknowledged)
+_RUN_ENTRY_RE = re.compile(r"[0-9]+(?:\.log)?")
 _JOB_ID_RE = re.compile(r"[0-9]+-[0-9]+-[0-9a-f]+")  # a job id the client puts in a file name
 
 
@@ -3084,53 +3084,14 @@ def _take_lock(lock: IO[bytes], wait: bool) -> bool:
 def hold_lock(path: Path) -> IO[bytes]:
     """Open `path` (created if missing) and take an exclusive OS lock on it, waiting while
     another holder has it (a client looking: `lock_held`). The lock lasts while the file stays
-    open, and the OS releases it when the process ends, however it ends.
-
-    POSIX: a file opened just before a cleanup deleted it (`remove_free_lock`) would be locked
-    where no client looks, so it checks the path still names the file it locked, and starts over
-    if not. Windows can't delete an open file."""
-    while True:
-        lock = path.open("a+b")
-        try:
-            _take_lock(lock, wait=True)
-            stale = sys.platform != "win32" and not _names(path, lock)
-        except BaseException:
-            lock.close()
-            raise
-        if not stale:
-            return lock
-        release_lock(lock)
-
-
-def _names(path: Path, lock: IO[bytes]) -> bool:
-    """Whether `path` is the open file `lock` (same device and inode)."""
+    open, and the OS releases it when the process ends, however it ends."""
+    lock = path.open("a+b")
     try:
-        there = path.stat()
-    except FileNotFoundError:
-        return False
-    held = os.fstat(lock.fileno())
-    return (held.st_dev, held.st_ino) == (there.st_dev, there.st_ino)
-
-
-def remove_free_lock(path: Path) -> bool:
-    """Delete a lock file no worker holds; False if one does. POSIX: unlink while holding its
-    lock (a worker that opened it just before starts over, `hold_lock`). Windows: release, then
-    unlink, which fails (OSError) if a worker opened it in between."""
-    try:
-        lock = path.open("a+b")
-    except OSError:
-        return False
-    if not _take_lock(lock, wait=False):
+        _take_lock(lock, wait=True)
+    except BaseException:
         lock.close()
-        return False
-    try:
-        if sys.platform != "win32":
-            path.unlink()
-    finally:
-        release_lock(lock)
-    if sys.platform == "win32":
-        path.unlink()
-    return True
+        raise
+    return lock
 
 
 def release_lock(lock: IO[bytes]) -> None:
@@ -3156,37 +3117,41 @@ def lock_held(path: Path) -> bool:
     return False
 
 
-def held_jobs(runs: Path) -> set[str]:
-    """The job ids whose run worker holds its `<job id>.lock` in `runs`: alive, whichever client
-    started it (a restarted client sees the workers that outlived it; a reused pid can't fool a
-    lock the OS released)."""
-    try:
-        locks = [p for p in runs.glob("*.lock") if _JOB_ID_RE.fullmatch(p.stem)]
-    except OSError:
-        return set()
-    return {p.stem for p in locks if lock_held(p)}
-
-
 class Children:
-    """The client's started workers that still run, by job id, plus the jobs `held` reports alive
-    (workers an earlier client started). A thread per started worker waits on its process: one
-    that exits while the client loop waits (`waiting`: a lease in flight, or a busy client's
-    pause) is reported at once by `report` (the job ids still running), so the server hears it
-    ended without waiting for the next lease.
+    """What the client saw of its run workers: those it started (by process handle), the
+    survivors it found holding their `<job id>.lock` in `runs` at startup (an earlier client
+    started them), and the jobs it saw end (`gone`: a process exited, or a lock was released),
+    kept until the server acknowledges them. Only `gone` ends a job on the server; `alive` is for
+    display.
 
-    Every list comes with a `seq` taken under the same lock as it is built, so a later-built list
-    has a higher seq: the report and the loop's lease travel apart and may arrive out of order,
-    and the server judges by seq, not by arrival."""
+    A thread per started worker waits on its process: one that exits while the client loop waits
+    (`waiting`: a lease in flight, or a busy client's pause) is reported at once by `report`
+    (alive, gone), so the server hears it ended without waiting for the next lease."""
 
-    def __init__(
-        self, report: Callable[[int, list[str]], object], held: Callable[[], set[str]]
-    ) -> None:
+    def __init__(self, runs: Path, report: Callable[[list[str], list[str]], object]) -> None:
+        self._runs = runs
         self._report = report
-        self._held = held
         self._lock = threading.Lock()
         self._running: dict[str, Child] = {}
+        self._survivors: set[str] = set()
+        self._gone: set[str] = set()
         self._waiting = False
-        self._seq = 0
+
+    def start(self) -> None:
+        """At startup: a held lock is a worker that outlived the last client; a free one, a worker
+        that ended while no client watched (or whose `gone` was never acknowledged)."""
+        try:
+            jobs = sorted(p.stem for p in self._runs.glob("*.lock") if _JOB_ID_RE.fullmatch(p.stem))
+        except OSError as exc:
+            say(f"cannot list {self._runs} for run workers: {exc}")
+            return
+        for job in jobs:
+            if lock_held(self._runs / f"{job}.lock"):
+                self._survivors.add(job)
+                say(f"job {job}: its worker outlived the last client; it is listed as alive")
+            else:
+                self._gone.add(job)
+                say(f"job {job}: its worker ended while no client watched; reporting it gone")
 
     def add(self, job_id: str, child: Child) -> None:
         with self._lock:
@@ -3194,34 +3159,55 @@ class Children:
         threading.Thread(target=self._watch, args=(job_id, child), daemon=True).start()
 
     @contextlib.contextmanager
-    def waiting(self) -> Iterator[tuple[int, list[str]]]:
-        """Drop the exited workers and yield a seq and the running ones' job ids, then the held
-        ones'; until the block ends, each exit is reported as it happens."""
-        held = self._held()
+    def waiting(self) -> Iterator[tuple[list[str], list[str]]]:
+        """Note the ends seen since (a started worker's process, a survivor's lock) and yield
+        the alive and the gone job ids; until the block ends, each exit is reported at once."""
         with self._lock:
-            self._running = {job: c for job, c in self._running.items() if c.poll() is None}
+            survivors = set(self._survivors)
+        freed = {job for job in survivors if not lock_held(self._runs / f"{job}.lock")}
+        with self._lock:
+            for job, child in list(self._running.items()):
+                if child.poll() is not None:
+                    del self._running[job]
+                    self._gone.add(job)
+            self._survivors -= freed
+            self._gone |= freed
             self._waiting = True
-            self._seq += 1
-            listing = (self._seq, [*self._running, *sorted(held - self._running.keys())])
+            listing = ([*self._running, *sorted(self._survivors)], sorted(self._gone))
         try:
             yield listing
         finally:
             with self._lock:
                 self._waiting = False
 
+    def acked(self, gone: list[str]) -> None:
+        """The server has ended these jobs: forget them and delete their lock files (until then
+        a lock file says "report this job gone", at the next startup too)."""
+        with self._lock:
+            self._gone -= set(gone)
+        for job in gone:
+            say(f"job {job}: reported gone")
+            try:
+                (self._runs / f"{job}.lock").unlink(missing_ok=True)
+            except OSError as exc:  # Windows: its process is still being torn down
+                say(f"cannot delete {job}.lock ({exc}); the next client reports it again")
+
     def _watch(self, job_id: str, child: Child) -> None:
         code = child.wait()
         say(f"job {job_id}: its worker (pid {child.pid}) exited with code {code}")
-        held = self._held() - {job_id}  # its process ended, whatever its lock says yet
         with self._lock:
-            if not self._waiting or self._running.pop(job_id, None) is None:
-                return  # the loop's next lease leaves it out
-            self._seq += 1
-            seq, alive = self._seq, [*self._running, *sorted(held - self._running.keys())]
+            if self._running.pop(job_id, None) is None:
+                return  # `waiting` saw it first
+            self._gone.add(job_id)
+            if not self._waiting:
+                return  # the loop's next lease, sent at once, reports it
+            alive, gone = [*self._running, *sorted(self._survivors)], sorted(self._gone)
         try:
-            self._report(seq, alive)
+            self._report(alive, gone)
         except (HttpError, Unreachable, ValueError) as exc:
             say(f"could not report the end of job {job_id} ({exc}); the next lease will")
+            return
+        self.acked(gone)
 
 
 def spawn_detached(
@@ -3262,10 +3248,10 @@ def git_repo_containing(path: Path) -> Path | None:
 
 
 def clean_workdir_root(root: Path, now: float) -> list[Path]:
-    """Delete the run workspaces (`<run_id>`), logs (`<run_id>.log`) and free worker locks
-    (`<job id>.lock`) directly under the client's own `root/CLIENT_RUNS_DIR`, last modified more
-    than WORKSPACE_MAX_AGE_S before `now` (a POSIX timestamp). Nothing outside that folder is
-    looked at, and anything else in it is left alone. Returns what was deleted."""
+    """Delete the run workspaces (`<run_id>`) and logs (`<run_id>.log`) directly under the
+    client's own `root/CLIENT_RUNS_DIR`, last modified more than WORKSPACE_MAX_AGE_S before `now`
+    (a POSIX timestamp). Nothing outside that folder is looked at, and anything else in it (lock
+    files included: `Children.acked` deletes those) is left alone. Returns what was deleted."""
     runs = root / CLIENT_RUNS_DIR
     try:
         children = sorted(runs.iterdir())
@@ -3282,10 +3268,7 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
             st = child.lstat()
             if st.st_mtime >= cutoff:
                 continue
-            if child.suffix == ".lock":
-                if not remove_free_lock(child):
-                    continue  # its worker still runs
-            elif stat.S_ISDIR(st.st_mode) and not is_link(st):
+            if stat.S_ISDIR(st.st_mode) and not is_link(st):
                 remove_tree(child)
             else:
                 child.unlink()
@@ -3305,11 +3288,11 @@ def run_client(
     spawn: Spawn,
 ) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
-    `max_runs` at once, listing the running ones as `alive` on every lease: those it started, and
-    those whose `<job id>.lock` is held (`held_jobs`: every worker holds its lock for its whole
-    life, so workers that outlived an earlier client are listed too and count against
-    `max_runs`). A worker that exits while a lease waits is reported at once by a no-take lease
-    (`Children`). With every slot busy
+    `max_runs` at once (`Children`). Every lease lists the running ones as `alive` (those it
+    started, and the survivors of an earlier client, which count against `max_runs`) and the
+    ones it saw end as `gone`; only `gone` ends a job, and a worker that exits while a lease waits
+    is reported at once by a no-take lease. The first lease goes out at once, with the survivors
+    and the lock files freed while no client watched. With every slot busy
     it sends a no-take lease every CLIENT_HEARTBEAT_S, so the server still sees it online. Network
     errors, 5xx, CLIENT_TRANSIENT_4XX and malformed answers back off (up to CLIENT_BACKOFF_CAP_S)
     forever; any other 4xx or another protocol exits 1. Started workers outlive the client.
@@ -3341,42 +3324,36 @@ def run_client(
     client = Client(server, token)
     me = Path(__file__).resolve()
     sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
-    # This process's id on every lease: only the instance that last listed a job can end it by
-    # leaving it out, so another process with this token (or on another root) never does.
-    instance = secrets.token_urlsafe(32)
     children = Children(
-        lambda seq, alive: client.post(
+        runs,
+        lambda alive, gone: client.post(
             "/api/worker/lease",
-            {"instance": instance, "seq": seq, "wait_s": 0, "take": False, "alive": alive},
+            {"wait_s": 0, "take": False, "alive": alive, "gone": gone},
             retry_budget_s=0,
         ),
-        lambda: held_jobs(runs),
     )
+    children.start()
     delay = BACKOFF_START_S
-    answered = time.monotonic()  # when the server last answered a lease
+    answered: float | None = None  # when the server last answered a lease (None: lease at once)
     say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
     try:
         while True:
             problem: str | None = None
-            with children.waiting() as (seq, alive):
+            with children.waiting() as (alive, gone):
                 busy = len(alive) >= max_runs
-                if busy and time.monotonic() - answered < CLIENT_HEARTBEAT_S:
+                quiet = answered is not None and time.monotonic() - answered < CLIENT_HEARTBEAT_S
+                if busy and not gone and quiet:
                     time.sleep(CLIENT_REAP_S)
                     continue
 
                 wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-                body = {
-                    "instance": instance,
-                    "seq": seq,
-                    "wait_s": wait_s,
-                    "take": not busy,
-                    "alive": alive,
-                }
+                body = {"wait_s": wait_s, "take": not busy, "alive": alive, "gone": gone}
                 try:
                     resp = client.post(
                         "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
                     )
                     answered = time.monotonic()
+                    children.acked(gone)
                     if resp["protocol"] != PROTOCOL:
                         say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
                         return 1

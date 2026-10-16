@@ -71,6 +71,7 @@ FILE_GRACE = timedelta(minutes=30)
 PULL_START_TIMEOUT = timedelta(minutes=2)
 NEVER_STARTED = "never started"
 WORKER_EXITED = "its worker exited without a result"
+EXITED_UNSTARTED = "its worker exited before it started"
 OVER_BUDGET = "time budget exceeded"
 
 # A client run: its owner's client leases it and it reports live.
