@@ -62,7 +62,7 @@ def test_render_context_shape() -> None:
             "tasks_md": f"{D}/TASKS.md",
             "learnings": f"{D}/learnings.log",
             "swarm": f"{D}/swarm.log",
-            "out": f"{D}/out",
+            "sync_back": ".agentos/sync_back",
         },
         "stage": {"id": "plan", "name": "Plan"},
         "run": {"id": 7},
@@ -88,6 +88,7 @@ def test_render_prompt_default_review_repo_and_no_repo() -> None:
     assert render_prompt(stage, NO_REPO, 1).startswith(
         f"Review the work for AOS-42, checking it against {D}/SKILL.md"
     )
+    assert render_prompt(stage, TICKET, 1).endswith(" .agentos/sync_back/REVIEW.md.")
 
 
 def test_render_prompt_stage_and_run() -> None:
@@ -200,7 +201,8 @@ def test_render_default_scaffold_repo_mode() -> None:
     assert agents.mode == "block"
     assert agents.content == (
         f"Working on AOS-42. Read {D}/SKILL.md first; the plan is {D}/TASKS.md. Do not run git "
-        "commit or push; AgentOS commits and pushes after each stage."
+        "commit or push; AgentOS commits and pushes after each stage. Put deliverables that "
+        "aren't repo changes in .agentos/sync_back/."
     )
     assert by_path["CLAUDE.md"].content == "@AGENTS.md"
 
@@ -208,7 +210,7 @@ def test_render_default_scaffold_repo_mode() -> None:
 def test_render_default_scaffold_no_repo_and_source_link() -> None:
     t = replace(NO_REPO, source_url="https://jira.example.com/browse/AOS-42")
     by_path = {f.path: f for f in render_scaffold(DEFAULT_SCAFFOLD, t)}
-    assert by_path["AGENTS.md"].content.endswith(f"after each stage. Put deliverables in {D}/out/.")
+    assert by_path["AGENTS.md"].content.endswith(" in .agentos/sync_back/.")
     assert "\n\nSource: https://jira.example.com/browse/AOS-42\n\n## Objective\n" in (
         by_path[f"{D}/SKILL.md"].content
     )

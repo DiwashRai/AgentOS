@@ -4,8 +4,10 @@ repo catalog (SPEC §17): repo by name, catalog changes."""
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from agentos.config import Settings
 from agentos.context import AppContext
+from agentos.db import MIGRATIONS_DIR, Database
 from agentos.main import create_app
 from agentos.models import Me, Pipeline, TicketDetail, TicketSummary
 from agentos.pipeline.scaffold import default_pipeline
@@ -195,7 +198,33 @@ def test_no_repo_ticket(authed: TestClient) -> None:
         ("open-pr", "skipped"),
     ]
     agents = authed.get(f"/api/tickets/{t.key}/files/AGENTS.md").json()["content"]
-    assert agents.endswith(f"Put deliverables in .claude/skills/{t.skill_name}/out/.")
+    assert agents.endswith(" in .agentos/sync_back/.")
+
+
+def test_a_version_1_db_with_paths_out_migrates_and_creates_tickets(
+    settings: Settings, tmp_path: Path
+) -> None:
+    v1 = tmp_path / "v1"
+    v1.mkdir()
+    shutil.copy(MIGRATIONS_DIR / "0001_schema.sql", v1)
+    db = Database(settings.db_path, v1)
+    db.migrate()
+    pipeline = default_pipeline()
+    pipeline.stages[0].prompt = "Write notes to {{paths.out}}/notes.md."
+    scaffold = [{"path": "AGENTS.md", "mode": "block", "content": "Use {{paths.out}}/."}]
+    with db.tx() as conn:
+        conn.execute(
+            "INSERT INTO templates(name, version, pipeline, scaffold, created_at)"
+            " VALUES ('default', 1, ?, ?, '2026-10-10T12:00:00.000000+00:00')",
+            (pipeline.model_dump_json(), json.dumps(scaffold)),
+        )
+
+    with started(settings) as c:
+        t = TicketDetail.model_validate(post(c, repo=None).json())
+        agents = c.get(f"/api/tickets/{t.key}/files/AGENTS.md").json()["content"]
+
+    assert agents == "Use .agentos/sync_back/."
+    assert t.pipeline.stages[0].prompt == "Write notes to {{paths.sync_back}}/notes.md."
 
 
 def test_owner(authed: TestClient, login: LoginFn, ctx: AppContext) -> None:
@@ -239,6 +268,8 @@ def test_scaffold_is_bundle_v1(authed: TestClient) -> None:
         assert f["author_run_id"] is None
     modes = {f["path"]: f["mode"] for f in files}
     assert modes["AGENTS.md"] == modes["CLAUDE.md"] == "block"
+    agents = authed.get(f"/api/tickets/{t.key}/files/AGENTS.md").json()["content"]
+    assert agents.endswith(" in .agentos/sync_back/.")
     skill = authed.get(f"/api/tickets/{t.key}/files/{d}/SKILL.md").json()["content"]
     lines = skill.split("\n")
     assert lines[0] == "---"

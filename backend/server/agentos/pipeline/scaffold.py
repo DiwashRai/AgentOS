@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentos.models import FileEntry, Pipeline, Stage, WorkspaceMode
+from agentos.validate import SYNC_BACK_DIR
 
 MAX_SKILL_NAME = 64  # Agent Skills limit on `name` (must also match the directory name)
 SKILL_PREFIX = "context-"
@@ -27,7 +28,7 @@ PROMPTS = {
         "Review the work for {{ticket.key}}{% if ticket.branch %} on this branch against "
         "origin/{{ticket.base_branch}}{% endif %}, checking it against {{paths.skill_md}} and "
         "{{paths.tasks_md}}. Fix clear defects directly. Write remaining findings to "
-        "{{paths.skill_dir}}/REVIEW.md."
+        "{{paths.sync_back}}/REVIEW.md."
     ),
     "open-pr": (
         "Open a pull request from {{ticket.branch}} into {{ticket.base_branch}}, or update the "
@@ -105,8 +106,7 @@ DEFAULT_SCAFFOLD = [
         content=(
             "Working on {{ticket.key}}. Read {{paths.skill_md}} first; the plan is "
             "{{paths.tasks_md}}. Do not run git commit or push; AgentOS commits and pushes "
-            "after each stage.{% if not ticket.branch %} Put deliverables in "
-            "{{paths.out}}/.{% endif %}"
+            "after each stage. Put deliverables that aren't repo changes in {{paths.sync_back}}/."
         ),
     ),
     FileEntry(path="CLAUDE.md", mode="block", content="@AGENTS.md"),
@@ -132,7 +132,7 @@ class TicketNames:
     tasks_md: str
     learnings: str
     swarm: str
-    out: str
+    sync_back: str
     branch: str | None
 
 
@@ -145,6 +145,6 @@ def names(key: str, workspace_mode: WorkspaceMode) -> TicketNames:
         tasks_md=f"{d}/TASKS.md",
         learnings=f"{d}/learnings.log",
         swarm=f"{d}/swarm.log",
-        out=f"{d}/out",
+        sync_back=SYNC_BACK_DIR,
         branch=f"agent/{key}" if workspace_mode == "repo" else None,
     )

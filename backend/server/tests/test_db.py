@@ -66,7 +66,7 @@ def add_run(conn: Conn, ticket_id: int, status: str) -> None:
 
 
 def test_migrate_creates_every_table(db: Database) -> None:
-    assert db.user_version() == len(migrations()) == 1
+    assert db.user_version() == len(migrations())
     with db.read() as conn:
         assert tables(conn) == TABLES
 

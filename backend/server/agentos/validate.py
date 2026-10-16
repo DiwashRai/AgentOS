@@ -32,6 +32,11 @@ MAX_PATH_CHARS = 255
 MAX_KEY_CHARS = 40  # keeps skill.name (context-{key}) within 64 chars (see scaffold.py)
 MAX_REPO_URL_CHARS = 2048
 MAX_PR_URL_CHARS = 500  # CompleteRequest.pr_url max_length
+MAX_SYNC_BACK_BYTES = 20 * 1024 * 1024  # the run's sync_back zip, compressed
+
+# The workspace folder whose files the worker returns as one zip at the end of a job (repo and
+# no-repo mode alike); `.agentos/` is excluded from git, so nothing in it is ever committed.
+SYNC_BACK_DIR = ".agentos/sync_back"
 
 # ------------------------------------------------------------------ block markers (SPEC §6)
 # The worker mirrors these (it is stdlib-only and can't import them).

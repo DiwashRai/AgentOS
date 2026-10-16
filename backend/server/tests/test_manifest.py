@@ -247,7 +247,7 @@ def test_build_manifest_no_repo_nulls_workspace() -> None:
         "branch": None,
     }
     agents = next(f for f in m.files if f.path == "AGENTS.md")
-    assert agents.content.endswith(f"Put deliverables in {D}/out/.")
+    assert agents.content.endswith(" in .agentos/sync_back/.")
 
 
 def test_fixture_shape_matches_builder() -> None:
