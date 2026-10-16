@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from types import FrameType
 
+from agentos.launchers.base import JobStart
 from agentos.launchers.local import LocalProcessLauncher
 
 CONTROL = (
@@ -58,9 +59,8 @@ def main() -> None:
         workspaces_dir=tmp / "workspaces",
         logs_dir=tmp / "logs",
         worker_env_file=None,
-        max_concurrency=None,
     )
-    launcher.launch(1, "http://127.0.0.1:9", "tok")
+    launcher.start(JobStart("1-1-0123456789abcdef", 1, "http://127.0.0.1:9", "tok"))
     worker = launcher._children[-1]  # the launcher never exposes its children; fine for a test
 
     try:

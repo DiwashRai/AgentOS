@@ -1,5 +1,6 @@
-"""GitHubActionsLauncher (SPEC §12) against httpx.MockTransport (never the real GitHub), plus the
-worker workflow template's hygiene and its installed copy."""
+"""GitHubActionsProvider against httpx.MockTransport (never the real GitHub): the dispatch, the
+job-level status over recorded answers (`fixtures/github/`), cancel, plus the worker workflow
+template's hygiene and its installed copy."""
 
 from __future__ import annotations
 
@@ -7,20 +8,15 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from agentos.launchers.github import (
-    NO_REPO,
-    ActionsRun,
-    GitHubActionsLauncher,
-    GitHubTarget,
-    LaunchError,
-    web_url,
-)
+from agentos.launchers.base import JobStart, JobStatus, Provider, ProviderError
+from agentos.launchers.github import NO_REPO, GitHubActionsProvider, GitHubTarget, web_url
 
 GH_TOKEN = "github_pat_SECRET123"  # noqa: S105 - test value
 DISPATCH_TOKEN = "dispatch-SECRET-456"  # noqa: S105 - test value
@@ -31,6 +27,7 @@ RUNS_PAGE = "https://github.com/DiwashRai/AgentOS/actions/workflows/agentos-work
 BACKEND = Path(__file__).resolve().parents[2]
 TEMPLATE = BACKEND / "deploy" / "github" / "agentos-worker.yml"
 INSTALLED = BACKEND.parent / ".github" / "workflows" / "agentos-worker.yml"
+RECORDED = Path(__file__).parent / "fixtures" / "github"
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
@@ -38,13 +35,20 @@ Handler = Callable[[httpx.Request], httpx.Response]
 TARGET = GitHubTarget(repo="DiwashRai/AgentOS", workflow="agentos-worker.yml", ref="main")
 
 
-def _launcher(handler: Handler, **kw: Any) -> GitHubActionsLauncher:
+_: Provider = GitHubActionsProvider(target=lambda: TARGET, token=GH_TOKEN)
+
+
+def _provider(handler: Handler, **kw: Any) -> GitHubActionsProvider:
     """`repo`/`workflow`/`ref` in `kw` change the target; the rest are constructor arguments."""
     fields = {k: kw.pop(k) for k in ("repo", "workflow", "ref") if k in kw}
     target = replace(TARGET, **fields)
     args: dict[str, Any] = {"target": lambda: target, "token": GH_TOKEN}
     args.update(kw)
-    return GitHubActionsLauncher(**args, transport=httpx.MockTransport(handler))
+    return GitHubActionsProvider(**args, transport=httpx.MockTransport(handler))
+
+
+def job(run_id: int) -> JobStart:
+    return JobStart(f"{run_id}-1-0123456789abcdef", run_id, SERVER, DISPATCH_TOKEN)
 
 
 def _recording(response: httpx.Response) -> tuple[Handler, list[httpx.Request]]:
@@ -73,11 +77,9 @@ def _run_details() -> httpx.Response:
 
 def test_request_shape() -> None:
     handler, seen = _recording(_run_details())
-    launcher = _launcher(handler)
+    provider = _provider(handler)
 
-    assert launcher.name == "github"
-    assert launcher.max_concurrency is None
-    assert launcher.launch(42, SERVER, DISPATCH_TOKEN) == RUN_HTML
+    assert provider.start(job(42)) == RUN_HTML
 
     [req] = seen
     assert req.method == "POST"
@@ -99,9 +101,9 @@ def test_request_shape() -> None:
 def test_api_version_2026_drops_return_run_details() -> None:
     # 2026-03-10 removed the parameter: run details are always returned.
     handler, seen = _recording(_run_details())
-    launcher = _launcher(handler, api_version="2026-03-10")
+    provider = _provider(handler, api_version="2026-03-10")
 
-    assert launcher.launch(7, SERVER, DISPATCH_TOKEN) == RUN_HTML
+    assert provider.start(job(7)) == RUN_HTML
     [req] = seen
     assert req.headers["X-GitHub-Api-Version"] == "2026-03-10"
     assert "return_run_details" not in json.loads(req.content)
@@ -109,20 +111,20 @@ def test_api_version_2026_drops_return_run_details() -> None:
 
 def test_ghes_api_url() -> None:
     handler, seen = _recording(httpx.Response(204))
-    launcher = _launcher(handler, api_url="https://ghe.example.com/api/v3/")
+    provider = _provider(handler, api_url="https://ghe.example.com/api/v3/")
 
-    ref = launcher.launch(3, SERVER, DISPATCH_TOKEN)
+    ref = provider.start(job(3))
 
     assert str(seen[0].url).startswith("https://ghe.example.com/api/v3/repos/DiwashRai/AgentOS/")
     assert ref == "https://ghe.example.com/DiwashRai/AgentOS/actions/workflows/agentos-worker.yml"
 
 
-# ---------------------------------------------------------------- launch_ref
+# ---------------------------------------------------------------- the ref
 
 
 def test_204_falls_back_to_the_workflow_runs_page() -> None:
     handler, _ = _recording(httpx.Response(204))
-    assert _launcher(handler).launch(1, SERVER, DISPATCH_TOKEN) == RUNS_PAGE
+    assert _provider(handler).start(job(1)) == RUNS_PAGE
 
 
 @pytest.mark.parametrize(
@@ -136,7 +138,7 @@ def test_204_falls_back_to_the_workflow_runs_page() -> None:
 )
 def test_200_without_a_usable_html_url_falls_back(response: httpx.Response) -> None:
     handler, _ = _recording(response)
-    assert _launcher(handler).launch(1, SERVER, DISPATCH_TOKEN) == RUNS_PAGE
+    assert _provider(handler).start(job(1)) == RUNS_PAGE
 
 
 @pytest.mark.parametrize(
@@ -179,8 +181,8 @@ def test_web_url(api_url: str, web: str) -> None:
 )
 def test_non_2xx_raises(response: httpx.Response, expected: str) -> None:
     handler, _ = _recording(response)
-    with pytest.raises(LaunchError) as info:
-        _launcher(handler).launch(1, SERVER, DISPATCH_TOKEN)
+    with pytest.raises(ProviderError) as info:
+        _provider(handler).start(job(1))
     assert str(info.value).startswith(expected)
 
 
@@ -189,8 +191,8 @@ def test_error_messages_never_contain_a_token() -> None:
     # names the status and GitHub's message with the tokens redacted.
     echo = f"bad token {GH_TOKEN} for input {DISPATCH_TOKEN} " + "x" * 400 + GH_TOKEN
     handler, _ = _recording(httpx.Response(403, json={"message": echo}))
-    with pytest.raises(LaunchError) as info:
-        _launcher(handler).launch(1, SERVER, DISPATCH_TOKEN)
+    with pytest.raises(ProviderError) as info:
+        _provider(handler).start(job(1))
     message = str(info.value)
     assert message.startswith("GitHub answered 403: bad token *** for input *** xxx")
     assert len(message) <= 300
@@ -198,12 +200,12 @@ def test_error_messages_never_contain_a_token() -> None:
         assert secret not in message
 
 
-def test_network_error_is_a_launch_error_without_tokens() -> None:
+def test_network_error_is_a_provider_error_without_tokens() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"connect failed ({DISPATCH_TOKEN}, {GH_TOKEN})", request=request)
 
-    with pytest.raises(LaunchError) as info:
-        _launcher(handler).launch(1, SERVER, DISPATCH_TOKEN)
+    with pytest.raises(ProviderError) as info:
+        _provider(handler).start(job(1))
     message = str(info.value)
     assert message.startswith("GitHub unreachable: ConnectError: connect failed")
     assert GH_TOKEN not in message
@@ -213,12 +215,12 @@ def test_network_error_is_a_launch_error_without_tokens() -> None:
     assert info.value.__suppress_context__
 
 
-def test_timeout_is_a_launch_error() -> None:
+def test_timeout_is_a_provider_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("timed out", request=request)
 
-    with pytest.raises(LaunchError, match="GitHub unreachable: ReadTimeout"):
-        _launcher(handler).launch(1, SERVER, DISPATCH_TOKEN)
+    with pytest.raises(ProviderError, match="GitHub unreachable: ReadTimeout"):
+        _provider(handler).start(job(1))
 
 
 @pytest.mark.parametrize(
@@ -231,7 +233,7 @@ def test_timeout_is_a_launch_error() -> None:
 )
 def test_constructor_rejects_bad_config(kw: dict[str, Any], match: str) -> None:
     with pytest.raises(ValueError, match=match):
-        _launcher(lambda _req: httpx.Response(204), **kw)
+        _provider(lambda _req: httpx.Response(204), **kw)
 
 
 @pytest.mark.parametrize(
@@ -245,27 +247,25 @@ def test_constructor_rejects_bad_config(kw: dict[str, Any], match: str) -> None:
         ({"ref": " "}, "ref"),
     ],
 )
-def test_a_bad_target_fails_the_launch_without_calling_github(
+def test_a_bad_target_fails_the_start_without_calling_github(
     kw: dict[str, Any], match: str
 ) -> None:
     handler, seen = _recording(httpx.Response(204))
-    with pytest.raises(LaunchError, match=re.escape(match)):
-        _launcher(handler, **kw).launch(1, SERVER, DISPATCH_TOKEN)
+    with pytest.raises(ProviderError, match=re.escape(match)):
+        _provider(handler, **kw).start(job(1))
     assert seen == []
 
 
-def test_the_target_is_read_at_every_launch() -> None:
-    """Settings > Runners is edited in the app: the next launch uses the new repo/workflow/ref."""
+def test_the_target_is_read_at_every_start() -> None:
+    """Settings > Runners is edited in the app: the next start uses the new repo/workflow/ref."""
     handler, seen = _recording(httpx.Response(204))
     current = [TARGET]
-    launcher = GitHubActionsLauncher(
+    provider = GitHubActionsProvider(
         target=lambda: current[0], token=GH_TOKEN, transport=httpx.MockTransport(handler)
     )
-    assert launcher.launch(1, SERVER, DISPATCH_TOKEN) == RUNS_PAGE
+    assert provider.start(job(1)) == RUNS_PAGE
     current[0] = GitHubTarget(repo="o/other", workflow="w.yaml", ref="release")
-    assert launcher.launch(2, SERVER, DISPATCH_TOKEN) == (
-        "https://github.com/o/other/actions/workflows/w.yaml"
-    )
+    assert provider.start(job(2)) == ("https://github.com/o/other/actions/workflows/w.yaml")
     assert [str(r.url) for r in seen] == [
         "https://api.github.com/repos/DiwashRai/AgentOS/actions/workflows/agentos-worker.yml/"
         "dispatches",
@@ -275,9 +275,9 @@ def test_the_target_is_read_at_every_launch() -> None:
 
 
 def test_token_is_not_in_the_repr_or_attributes() -> None:
-    launcher = _launcher(lambda _req: httpx.Response(204))
-    assert GH_TOKEN not in repr(launcher)
-    public = {k: v for k, v in vars(launcher).items() if not k.startswith("_")}
+    provider = _provider(lambda _req: httpx.Response(204))
+    assert GH_TOKEN not in repr(provider)
+    public = {k: v for k, v in vars(provider).items() if not k.startswith("_")}
     assert GH_TOKEN not in repr(public)
 
 
@@ -288,7 +288,7 @@ def test_dispatch_sends_the_given_inputs() -> None:
     handler, seen = _recording(_run_details())
     inputs = {"run": "42-0123456789abcdef", "worker_sha256": "a" * 64, "manifest_sha256": "b" * 64}
 
-    assert _launcher(handler).dispatch(inputs) == RUN_HTML
+    assert _provider(handler).dispatch(inputs) == RUN_HTML
 
     [req] = seen
     assert req.method == "POST"
@@ -299,17 +299,17 @@ def test_dispatch_sends_the_given_inputs() -> None:
     assert json.loads(req.content) == {"ref": "main", "inputs": inputs, "return_run_details": True}
 
 
-def test_dispatch_204_and_errors_match_launch() -> None:
+def test_dispatch_204_and_errors_match_start() -> None:
     handler, _ = _recording(httpx.Response(204))
-    assert _launcher(handler).dispatch({"run": "1-0123456789abcdef"}) == RUNS_PAGE
+    assert _provider(handler).dispatch({"run": "1-0123456789abcdef"}) == RUNS_PAGE
 
     handler, _ = _recording(httpx.Response(403, json={"message": f"nope {GH_TOKEN}"}))
-    with pytest.raises(LaunchError, match=r"^GitHub answered 403: nope \*\*\*$"):
-        _launcher(handler).dispatch({"run": "1-0123456789abcdef"})
+    with pytest.raises(ProviderError, match=r"^GitHub answered 403: nope \*\*\*$"):
+        _provider(handler).dispatch({"run": "1-0123456789abcdef"})
 
     handler, seen = _recording(httpx.Response(204))
-    with pytest.raises(LaunchError, match=re.escape(NO_REPO)):
-        _launcher(handler, repo=None).dispatch({})
+    with pytest.raises(ProviderError, match=re.escape(NO_REPO)):
+        _provider(handler, repo=None).dispatch({})
     assert seen == []
 
 
@@ -317,14 +317,42 @@ GHES_API = "https://ghe.corp/api/v3"
 GHES_RUN = "https://ghe.corp/DiwashRai/AgentOS/actions/runs/555"
 
 
+# ---------------------------------------------------------------- status and cancel
+
+
+def _at(hms: str) -> datetime:
+    return datetime.fromisoformat(f"2026-10-16T{hms}").replace(tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        ("worker_no_jobs_yet", JobStatus("pending")),
+        ("worker_queued", JobStatus("pending")),  # a queued job has a started_at too
+        ("worker_in_progress", JobStatus("running", since=_at("09:02:10"))),
+        ("worker_completed", JobStatus("ended", detail="success")),
+        ("mailbox_fetch_running", JobStatus("pending")),  # the work job, not the run
+        # work completed while publish waits (e.g. on its environment's approval): not ended
+        ("mailbox_publish_waiting", JobStatus("running", since=_at("10:00:31"))),
+        ("mailbox_completed", JobStatus("ended", detail="failure")),
+    ],
+)
+def test_status_is_the_work_jobs(recorded: str, expected: JobStatus) -> None:
+    answer = json.loads((RECORDED / f"{recorded}.json").read_text(encoding="utf-8"))
+    handler, seen = _recording(httpx.Response(200, json=answer))
+
+    assert _provider(handler).status(RUN_HTML) == expected
+    [req] = seen
+    assert (req.method, req.url.path) == (
+        "GET",
+        "/repos/DiwashRai/AgentOS/actions/runs/987654321/jobs",
+    )
+    assert req.headers["Authorization"] == f"Bearer {GH_TOKEN}"
+
+
 @pytest.mark.parametrize(
     ("api_url", "ref", "expected_url"),
     [
-        (
-            "https://api.github.com",
-            RUN_HTML,
-            "https://api.github.com/repos/DiwashRai/AgentOS/actions/runs/987654321",
-        ),
         (GHES_API, GHES_RUN, "https://ghe.corp/api/v3/repos/DiwashRai/AgentOS/actions/runs/555"),
         # Owner/repo compare case-insensitively; the request uses the configured repo's spelling.
         (
@@ -332,24 +360,20 @@ GHES_RUN = "https://ghe.corp/DiwashRai/AgentOS/actions/runs/555"
             "https://github.com/diwashrai/agentos/actions/runs/7/",
             "https://api.github.com/repos/DiwashRai/AgentOS/actions/runs/7",
         ),
+        # Only the ref's path is read, never its host.
+        (
+            GHES_API,
+            "https://evil.example/DiwashRai/AgentOS/actions/runs/9",
+            f"{GHES_API}/repos/DiwashRai/AgentOS/actions/runs/9",
+        ),
     ],
 )
-def test_run_status(api_url: str, ref: str, expected_url: str) -> None:
-    handler, seen = _recording(
-        httpx.Response(200, json={"id": 1, "status": "completed", "conclusion": "success"})
-    )
-    launcher = _launcher(handler, api_url=api_url)
-
-    assert launcher.run_status(ref) == ActionsRun(status="completed", conclusion="success")
+def test_requests_go_to_the_configured_api(api_url: str, ref: str, expected_url: str) -> None:
+    handler, seen = _recording(httpx.Response(202, json={"jobs": []}))
+    provider = _provider(handler, api_url=api_url)
+    provider.cancel(ref)
     [req] = seen
-    assert (req.method, str(req.url)) == ("GET", expected_url)
-    assert req.headers["Authorization"] == f"Bearer {GH_TOKEN}"
-    assert req.content == b""
-
-
-def test_run_status_in_progress_has_no_conclusion() -> None:
-    handler, _ = _recording(httpx.Response(200, json={"status": "queued", "conclusion": None}))
-    assert _launcher(handler).run_status(RUN_HTML) == ActionsRun(status="queued", conclusion=None)
+    assert (req.method, str(req.url)) == ("POST", f"{expected_url}/cancel")
 
 
 @pytest.mark.parametrize(
@@ -365,27 +389,20 @@ def test_run_status_in_progress_has_no_conclusion() -> None:
         "not a url",
     ],
 )
-def test_a_ref_that_names_no_run_of_the_target_is_never_asked(ref: str) -> None:
-    handler, seen = _recording(httpx.Response(200, json={"status": "completed"}))
-    launcher = _launcher(handler)
+def test_a_ref_that_names_no_run_is_unknown_and_never_asked(ref: str) -> None:
+    handler, seen = _recording(httpx.Response(200, json={"jobs": []}))
+    provider = _provider(handler)
 
-    assert launcher.run_id_of(ref) is None
-    assert launcher.run_status(ref) is None
-    launcher.cancel_run(ref)
+    assert provider.run_id_of(ref) is None
+    assert provider.status(ref).state == "unknown"
+    provider.cancel(ref)
+    provider.cleanup(ref)
     assert seen == []
 
 
-def test_only_the_ref_path_is_read_never_its_host() -> None:
-    handler, seen = _recording(httpx.Response(200, json={"status": "queued"}))
-    launcher = _launcher(handler, api_url=GHES_API)
-
-    launcher.run_status("https://evil.example/DiwashRai/AgentOS/actions/runs/9")
-    assert str(seen[0].url) == "https://ghe.corp/api/v3/repos/DiwashRai/AgentOS/actions/runs/9"
-
-
 def test_no_repo_set_means_no_run() -> None:
-    handler, seen = _recording(httpx.Response(200, json={"status": "queued"}))
-    assert _launcher(handler, repo=None).run_status(RUN_HTML) is None
+    handler, seen = _recording(httpx.Response(200, json={"jobs": []}))
+    assert _provider(handler, repo=None).status(RUN_HTML).state == "unknown"
     assert seen == []
 
 
@@ -393,46 +410,42 @@ def test_no_repo_set_means_no_run() -> None:
     "response",
     [
         httpx.Response(200, content=b"not json"),
-        httpx.Response(200, json={"conclusion": "success"}),
-        httpx.Response(200, json={"status": "completed", "conclusion": 3}),
+        httpx.Response(200, json={"status": "completed"}),  # the run, not its jobs
+        httpx.Response(200, json={"jobs": [{"name": "work"}]}),
     ],
 )
-def test_run_status_bad_answer_is_a_launch_error(response: httpx.Response) -> None:
+def test_status_bad_answer_is_a_provider_error(response: httpx.Response) -> None:
     handler, _ = _recording(response)
-    with pytest.raises(LaunchError, match="without a workflow run"):
-        _launcher(handler).run_status(RUN_HTML)
+    with pytest.raises(ProviderError, match="jobs"):
+        _provider(handler).status(RUN_HTML)
 
 
-def test_run_status_errors_are_safe() -> None:
+def test_status_errors_are_safe() -> None:
     handler, _ = _recording(httpx.Response(404, json={"message": f"Not Found {GH_TOKEN}"}))
-    with pytest.raises(LaunchError, match=r"^GitHub answered 404: Not Found \*\*\*$"):
-        _launcher(handler).run_status(RUN_HTML)
+    with pytest.raises(ProviderError, match=r"^GitHub answered 404: Not Found \*\*\*$"):
+        _provider(handler).status(RUN_HTML)
 
     def unreachable(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"refused {GH_TOKEN}", request=request)
 
-    with pytest.raises(LaunchError) as info:
-        _launcher(unreachable).run_status(RUN_HTML)
+    with pytest.raises(ProviderError) as info:
+        _provider(unreachable).status(RUN_HTML)
     assert str(info.value).startswith("GitHub unreachable: ConnectError")
     assert GH_TOKEN not in str(info.value)
     assert info.value.__cause__ is None
 
 
 @pytest.mark.parametrize("status", [202, 409])
-def test_cancel_run(status: int) -> None:
+def test_cancel_is_done_on_202_or_409(status: int) -> None:
     handler, seen = _recording(httpx.Response(status, json={}))
-    _launcher(handler, api_url=GHES_API).cancel_run(GHES_RUN)
-    [req] = seen
-    assert (req.method, str(req.url)) == (
-        "POST",
-        "https://ghe.corp/api/v3/repos/DiwashRai/AgentOS/actions/runs/555/cancel",
-    )
+    _provider(handler).cancel(RUN_HTML)
+    assert [r.method for r in seen] == ["POST"]
 
 
-def test_cancel_run_other_answers_raise() -> None:
+def test_cancel_other_answers_raise() -> None:
     handler, _ = _recording(httpx.Response(403, json={"message": "Resource not accessible"}))
-    with pytest.raises(LaunchError, match="GitHub answered 403: Resource not accessible"):
-        _launcher(handler).cancel_run(RUN_HTML)
+    with pytest.raises(ProviderError, match="GitHub answered 403: Resource not accessible"):
+        _provider(handler).cancel(RUN_HTML)
 
 
 # ---------------------------------------------------------------- the workflow template
@@ -446,11 +459,11 @@ def test_installed_workflow_matches_the_template() -> None:
     )
 
 
-def test_workflow_declares_the_launcher_inputs() -> None:
+def test_workflow_declares_the_start_inputs() -> None:
     text = TEMPLATE.read_text(encoding="utf-8")
     block = text.split("    inputs:\n", 1)[1].split("\npermissions:", 1)[0]
     declared = re.findall(r"^      ([a-z_]+):$", block, flags=re.MULTILINE)
-    # The launcher sends exactly these (see test_request_shape).
+    # `start` sends exactly these (see test_request_shape).
     assert declared == ["server", "token", "run_id"]
     assert "runs-on: [self-hosted, agentos]" in text
     # Repo access is only this job's token, limited to pushing the branch and its PR.

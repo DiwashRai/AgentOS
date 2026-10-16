@@ -1,24 +1,25 @@
-"""GitHubActionsLauncher (SPEC §12, M1): dispatches a workflow that runs `worker.py` on a runner.
+"""GitHubActionsProvider: dispatches a workflow that runs `worker.py` on a runner.
 
 The workflow (`backend/deploy/github/agentos-worker.yml`, installed as
 `.github/workflows/agentos-worker.yml` on the target repo's default branch) masks the token,
-downloads GET /api/worker/worker.py from `server_url` and runs it. GitHub queues the job, so
-`max_concurrency` is None. Which repo/workflow/ref is asked of `target()` at every launch (they
-are edited in Settings > Runners); the token and API URL/version are fixed (env).
+downloads GET /api/worker/worker.py from `server_url` and runs it in its `work` job. GitHub
+queues the job. Which repo/workflow/ref is asked of `target()` at every start (they are edited
+in Settings > Runners); the token and API URL/version are fixed (env).
 
 REST facts (docs.github.com, checked 2026-10-11):
 - `POST /repos/{repo}/actions/workflows/{workflow}/dispatches` with `{ref, inputs}`.
 - API version 2022-11-28 (the default here): the optional `return_run_details: true` (added
   2026-02-19) turns the 204 No Content into a 200 with `{workflow_run_id, run_url, html_url}`.
 - API version 2026-03-10 removed that parameter and always answers 200 with the run details.
-- GHES may predate both; a 204 is still handled (launch_ref = the workflow's runs page).
+- GHES may predate both; a 204 is still handled (ref = the workflow's runs page, naming no run).
 - Fine-grained PAT: repository permission "Actions: write" on the one repo.
+- `GET .../actions/runs/{id}/jobs` lists the latest attempt's jobs (`name`, `status`,
+  `conclusion`, `started_at`); `POST .../actions/runs/{id}/cancel` answers 202, or 409 once the
+  run has finished.
 
-Mailbox mode (`launchers/mailbox.py`) also uses `dispatch()` (its own inputs), `run_status()`
-(`GET /repos/{repo}/actions/runs/{id}`), `run_jobs()` (`GET .../jobs`) and `cancel_run()`
-(`POST .../cancel`: 202, or 409 once the run has finished). They read only the path of a
-launch_ref and must name a run of the current target repo; the request always goes to the
-configured API URL.
+Mailbox mode (`launchers/mailbox.py`) dispatches with its own inputs (`dispatch()`). `status` and
+`cancel` read only the path of a ref, which must name a run of the current target repo; the
+request always goes to the configured API URL.
 
 Neither the GitHub token nor the job token ever appears in a raised message.
 """
@@ -28,11 +29,13 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
+from agentos.launchers.base import JobStart, JobStatus, ProviderError
 from agentos.models import GITHUB_REPO_PATTERN, GITHUB_WORKFLOW_PATTERN
 
 DEFAULT_API_URL = "https://api.github.com"
@@ -41,6 +44,9 @@ DEFAULT_API_VERSION = "2022-11-28"
 _RUN_DETAILS_BUILT_IN = "2026-03-10"
 TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 _MAX_MESSAGE_CHARS = 300
+# The job of both workflows that runs the worker (its key; neither gives it a `name:`).
+WORK_JOB = "work"
+_WAITING = frozenset({"queued", "waiting", "pending", "requested"})
 
 _REPO = re.compile(GITHUB_REPO_PATTERN)
 _WORKFLOW = re.compile(GITHUB_WORKFLOW_PATTERN)
@@ -50,11 +56,6 @@ _RUN_PATH = re.compile(r"/(?P<repo>[^/]+/[^/]+)/actions/runs/(?P<id>[0-9]{1,20})
 
 
 NO_REPO = "no GitHub repo is set for runs: an admin sets it in Settings > Runners"
-
-
-class LaunchError(RuntimeError):
-    """A dispatch GitHub didn't accept (or couldn't be sent). The message is safe to store and log
-    (no tokens)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,19 +79,7 @@ class GitHubTarget:
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class ActionsRun:
-    """A workflow run as GitHub reports it: `status` is queued | in_progress | completed | waiting |
-    requested | pending; `conclusion` (success, failure, cancelled, ...) is set once completed."""
-
-    status: str
-    conclusion: str | None
-
-
-class GitHubActionsLauncher:
-    name = "github"
-    max_concurrency: int | None = None  # GitHub queues jobs; the runner pool is the limit
-
+class GitHubActionsProvider:
     def __init__(
         self,
         *,
@@ -100,7 +89,7 @@ class GitHubActionsLauncher:
         api_version: str = DEFAULT_API_VERSION,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        """`target` is called at every launch (the repo/workflow/ref are edited in the app, so a
+        """`target` is called at every start (the repo/workflow/ref are edited in the app, so a
         change applies to the next run without a restart)."""
         if not token.strip():
             raise ValueError("a GitHub token is required")
@@ -118,101 +107,87 @@ class GitHubActionsLauncher:
         return f"{self.api_url}/repos/{target.repo}/actions/workflows/{target.workflow}/dispatches"
 
     def runs_page_url(self, target: GitHubTarget) -> str:
-        """The workflow's run list in the web UI (the launch_ref when GitHub returns no run)."""
+        """The workflow's run list in the web UI (the ref when GitHub returns no run)."""
         return f"{web_url(self.api_url)}/{target.repo}/actions/workflows/{target.workflow}"
 
-    def launch(self, run_id: int, server_url: str, token: str) -> str:
-        """Dispatch the workflow for `run_id` to the current target. Returns the Actions run URL
-        (or the workflow's runs page when GitHub doesn't return the run). Raises LaunchError if
+    def start(self, job: JobStart) -> str:
+        """Dispatch the workflow for `job` to the current target. Returns the Actions run URL
+        (or the workflow's runs page when GitHub doesn't return the run). Raises ProviderError if
         no repo is set or GitHub refuses."""
-        inputs = {"server": server_url, "token": token, "run_id": str(run_id)}
-        return self._dispatch(inputs, (self._token, token))
+        inputs = {"server": job.server_url, "token": job.job_token, "run_id": str(job.run_id)}
+        return self._dispatch(inputs, (self._token, job.job_token))
 
     def dispatch(self, inputs: dict[str, str]) -> str:
         """Dispatch the current target's workflow with `inputs` (none of them secret). Returns
-        the launch_ref like `launch()` does; raises LaunchError the same way."""
+        the ref like `start()` does; raises ProviderError the same way."""
         return self._dispatch(inputs, (self._token,))
 
-    def run_id_of(self, launch_ref: str) -> int | None:
-        """The Actions run id in `launch_ref`, or None unless its path is
+    def run_id_of(self, ref: str) -> int | None:
+        """The Actions run id in `ref`, or None unless its path is
         `/<owner>/<repo>/actions/runs/<id>` with owner/repo the current target repo (any case).
         Only the path is read: requests always go to the configured `api_url`, never the ref's
         host."""
-        found = self._run_ref(launch_ref)
+        found = self._run_ref(ref)
         return None if found is None else found[1]
 
-    def run_status(self, launch_ref: str) -> ActionsRun | None:
-        """The Actions run `launch_ref` names (see `run_id_of`; None if it names none). Raises
-        LaunchError if GitHub can't be asked or answers something else than the run."""
-        data = self._get_run(launch_ref)
-        if data is None:
-            return None
-        status = data.get("status")
-        conclusion = data.get("conclusion")
-        if not isinstance(status, str) or not (conclusion is None or isinstance(conclusion, str)):
-            raise LaunchError("GitHub answered 200 without a workflow run")
-        return ActionsRun(status=status, conclusion=conclusion)
-
-    def run_jobs(self, launch_ref: str) -> dict[str, str] | None:
-        """{job name: status} of the latest attempt of the Actions run `launch_ref` names (None
-        if it names none). Raises LaunchError like `run_status`."""
-        data = self._get_run(launch_ref, "/jobs")
-        if data is None:
-            return None
-        jobs = data.get("jobs")
+    def status(self, ref: str) -> JobStatus:
+        """The `work` job of the Actions run `ref` names: pending until it has a machine, then
+        running; ended only once every job of the run has completed (a mailbox publish job may
+        still be uploading after work). Unknown when `ref` names no run (see `run_id_of`).
+        Raises ProviderError if GitHub can't be asked or answers without the run's jobs."""
+        url = self._run_url(ref)
+        if url is None:
+            return JobStatus("unknown", detail="the ref names no workflow run")
+        jobs = self._get_json(f"{url}/jobs").get("jobs")
         if not isinstance(jobs, list) or not all(
-            isinstance(job, dict)
-            and isinstance(job.get("name"), str)
-            and isinstance(job.get("status"), str)
-            for job in jobs
+            isinstance(job, dict) and isinstance(job.get("status"), str) for job in jobs
         ):
-            raise LaunchError("GitHub answered 200 without the run's jobs")
-        return {job["name"]: job["status"] for job in jobs}
+            raise ProviderError("GitHub answered 200 without the run's jobs")
 
-    def cancel_run(self, launch_ref: str) -> None:
-        """Ask GitHub to cancel the run `launch_ref` names (no-op if it names none). 202 and 409
-        (already finished) both count as done; anything else raises LaunchError."""
-        url = self._run_url(launch_ref)
+        work: dict[str, Any] = next((job for job in jobs if job.get("name") == WORK_JOB), {})
+        if jobs and all(job["status"] == "completed" for job in jobs):
+            conclusion = work.get("conclusion")
+            return JobStatus("ended", detail=conclusion if isinstance(conclusion, str) else None)
+        if work.get("status", "queued") in _WAITING:
+            return JobStatus("pending")
+        return JobStatus("running", since=_time(work.get("started_at")))
+
+    def cancel(self, ref: str) -> None:
+        """Ask GitHub to cancel the run `ref` names (no-op if it names none). 202 and 409
+        (already finished) both count as done; anything else raises ProviderError."""
+        url = self._run_url(ref)
         if url is None:
             return
         resp = self._send("POST", f"{url}/cancel", None, (self._token,))
         if resp.status_code not in (202, 409):
-            raise LaunchError(
-                _safe(
-                    f"GitHub answered {resp.status_code}: {_github_message(resp)}", (self._token,)
-                )
-            )
+            raise _refused(resp, (self._token,))
 
-    def _run_ref(self, launch_ref: str) -> tuple[str, int] | None:
-        """(the current target repo, the run id) if `launch_ref` names a run of that repo."""
+    def cleanup(self, ref: str) -> None:
+        """Nothing to delete: Actions expires the run's artifacts itself."""
+
+    def _run_ref(self, ref: str) -> tuple[str, int] | None:
+        """(the current target repo, the run id) if `ref` names a run of that repo."""
         repo = self._target().repo
         if repo is None or not _REPO.fullmatch(repo):
             return None
-        match = _RUN_PATH.fullmatch(urlsplit(launch_ref).path)
+        match = _RUN_PATH.fullmatch(urlsplit(ref).path)
         if match is None or match["repo"].lower() != repo.lower():
             return None
         return repo, int(match["id"])
 
-    def _run_url(self, launch_ref: str) -> str | None:
-        found = self._run_ref(launch_ref)
+    def _run_url(self, ref: str) -> str | None:
+        found = self._run_ref(ref)
         if found is None:
             return None
         repo, run_id = found
         return f"{self.api_url}/repos/{repo}/actions/runs/{run_id}"
 
-    def _get_run(self, launch_ref: str, path: str = "") -> dict[str, Any] | None:
-        """GET `path` under the run `launch_ref` names (None if it names none); a 200 that isn't
-        a JSON object is {}. Any other answer raises a safe LaunchError."""
-        url = self._run_url(launch_ref)
-        if url is None:
-            return None
-        resp = self._send("GET", url + path, None, (self._token,))
+    def _get_json(self, url: str) -> dict[str, Any]:
+        """GET `url`; a 200 that isn't a JSON object is {}. Any other answer raises a safe
+        ProviderError."""
+        resp = self._send("GET", url, None, (self._token,))
         if resp.status_code != 200:
-            raise LaunchError(
-                _safe(
-                    f"GitHub answered {resp.status_code}: {_github_message(resp)}", (self._token,)
-                )
-            )
+            raise _refused(resp, (self._token,))
         try:
             data = resp.json()
         except ValueError:
@@ -222,7 +197,7 @@ class GitHubActionsLauncher:
     def _dispatch(self, inputs: dict[str, str], secrets: tuple[str, ...]) -> str:
         target = self._target()
         if problem := target.problem():
-            raise LaunchError(problem)
+            raise ProviderError(problem)
         body: dict[str, Any] = {"ref": target.ref, "inputs": inputs}
         if self.api_version < _RUN_DETAILS_BUILT_IN:
             body["return_run_details"] = True
@@ -231,14 +206,12 @@ class GitHubActionsLauncher:
             return self.runs_page_url(target)
         if resp.status_code == 200:
             return _html_url(resp) or self.runs_page_url(target)
-        raise LaunchError(
-            _safe(f"GitHub answered {resp.status_code}: {_github_message(resp)}", secrets)
-        )
+        raise _refused(resp, secrets)
 
     def _send(
         self, method: str, url: str, body: dict[str, Any] | None, secrets: tuple[str, ...]
     ) -> httpx.Response:
-        """One request with the GitHub headers; network errors become a safe LaunchError."""
+        """One request with the GitHub headers; network errors become a safe ProviderError."""
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {self._token}",
@@ -250,7 +223,7 @@ class GitHubActionsLauncher:
                 return client.request(method, url, json=body, headers=headers)
         except httpx.HTTPError as exc:
             # `from None`: the chained exception carries the request, headers included.
-            raise LaunchError(
+            raise ProviderError(
                 _safe(f"GitHub unreachable: {type(exc).__name__}: {exc}", secrets)
             ) from None
 
@@ -273,6 +246,20 @@ def _html_url(resp: httpx.Response) -> str | None:
     if isinstance(url, str) and urlsplit(url).scheme in ("http", "https"):
         return url
     return None
+
+
+def _time(value: object) -> datetime | None:
+    """A GitHub timestamp (`2026-10-16T09:00:00Z`), or None if it isn't one."""
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def _refused(resp: httpx.Response, secrets: tuple[str, ...]) -> ProviderError:
+    return ProviderError(
+        _safe(f"GitHub answered {resp.status_code}: {_github_message(resp)}", secrets)
+    )
 
 
 def _github_message(resp: httpx.Response) -> str:

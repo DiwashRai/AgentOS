@@ -1,5 +1,5 @@
-"""Dispatcher (SPEC §8 "Dispatcher loop"): oldest first, concurrency, tokens, launch failures,
-and the background loops (dispatcher and reaper) wired into the lifespan."""
+"""Dispatcher: oldest first through each run's stored provider, tokens, start errors, runs held
+by an unconfigured provider, and the background loops (dispatcher and reaper) in the lifespan."""
 
 from __future__ import annotations
 
@@ -17,13 +17,17 @@ from agentos import main
 from agentos.clock import to_db, utcnow
 from agentos.config import Settings
 from agentos.context import AppContext
+from agentos.launchers.base import Provider, ProviderError
 from agentos.main import _every, create_app
-from agentos.models import Me, RunDetail, TicketDetail
+from agentos.models import Me, Route, RunDetail, TicketDetail
 from agentos.runs import dispatcher
-from tests.run_support import CSRF, FakeLauncher, RunDriver
+from tests.run_support import CSRF, FakeProvider, RunDriver
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
+
+
+_: Provider = FakeProvider()
 
 
 def queue_three(create_ticket: CreateTicket, runs: RunDriver) -> list[int]:
@@ -35,114 +39,115 @@ def status(runs: RunDriver, run_id: int) -> str:
     return s
 
 
-def test_oldest_first_within_max_concurrency(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, launcher: FakeLauncher
+def test_oldest_first(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, provider: FakeProvider
 ) -> None:
-    a, b, c = queue_three(create_ticket, runs)
-    assert runs.tick() == [a, b]  # max_concurrency = 2
-    assert [r for r, _, _ in launcher.launched] == [a, b]
-    assert [status(runs, r) for r in (a, b, c)] == ["dispatched", "dispatched", "queued"]
-    assert runs.tick() == []  # still full
-    authed.post(f"/api/runs/{a}/cancel", headers=CSRF)
-    assert runs.tick() == [c]
-
-
-def test_running_runs_count_towards_the_limit(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, launcher: FakeLauncher
-) -> None:
-    launcher.max_concurrency = 1
-    worker = runs.start(create_ticket("A", repo=None).key)
-    b = runs.queue(create_ticket("B", repo=None).key).id
-    assert runs.tick() == []
-    worker.complete()
-    assert runs.tick() == [b]
-
-
-def test_unlimited(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, launcher: FakeLauncher
-) -> None:
-    launcher.max_concurrency = None
     ids = queue_three(create_ticket, runs)
-    assert runs.tick() == ids
+    assert runs.tick() == ids  # no limit on our side: the provider queues
+    assert provider.launched == ids
+    assert [status(runs, r) for r in ids] == ["dispatched"] * 3
+    assert runs.tick() == []
 
 
 def test_job_token_and_launch_ref(
     authed: TestClient,
     create_ticket: CreateTicket,
     runs: RunDriver,
-    launcher: FakeLauncher,
+    provider: FakeProvider,
     ctx: AppContext,
 ) -> None:
     run_id = runs.queue(create_ticket(repo=None).key).id
     runs.tick()
-    [(launched_id, server_url, token)] = launcher.launched
-    assert launched_id == run_id
-    assert server_url == ctx.settings.effective_worker_url
-    assert len(token) >= 43
+    [job] = provider.started
+    assert (job.run_id, job.server_url) == (run_id, ctx.settings.effective_worker_url)
+    assert len(job.job_token) >= 43
     with ctx.db.read() as conn:
-        job = dict(conn.execute("SELECT * FROM jobs WHERE run_id = ?", (run_id,)).fetchone())
-    assert job["token_hash"] == hashlib.sha256(token.encode()).hexdigest()
-    assert token not in repr(job)  # only the hash is stored
-    row = runs.db_run(run_id)
-    assert row["dispatched_at"] is not None
-    assert row["launch_ref"] == f"fake-{run_id}"
-    assert runs.get(run_id).launch_ref == f"fake-{run_id}"
+        row = dict(conn.execute("SELECT * FROM jobs WHERE run_id = ?", (run_id,)).fetchone())
+    assert row["id"] == job.job_id
+    assert row["token_hash"] == hashlib.sha256(job.job_token.encode()).hexdigest()
+    assert job.job_token not in repr(row)  # only the hash is stored
+    assert runs.db_run(run_id)["dispatched_at"] is not None
+    detail = runs.get(run_id)
+    assert detail.launch_ref == detail.launch_url == FakeProvider.ref(run_id)
 
 
 def test_each_dispatch_gets_its_own_token(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, launcher: FakeLauncher
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, provider: FakeProvider
 ) -> None:
     queue_three(create_ticket, runs)
-    launcher.max_concurrency = 3
     runs.tick()
-    assert len({t for _, _, t in launcher.launched}) == 3
+    assert len({job.job_token for job in provider.started}) == 3
 
 
-def test_launch_failure_fails_the_run_and_carries_on(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, launcher: FakeLauncher
+def test_a_start_error_fails_the_run_and_carries_on(
+    authed: TestClient,
+    create_ticket: CreateTicket,
+    runs: RunDriver,
+    provider: FakeProvider,
+    ctx: AppContext,
 ) -> None:
-    launcher.fail = OSError("no python here")
+    provider.fail = ProviderError("GitHub answered 403: nope")
     a, b, c = queue_three(create_ticket, runs)
-    assert runs.tick() == [a, b, c]  # failed launches don't occupy a slot
+    assert runs.tick() == [a, b, c]
     detail = runs.get(a)
-    assert detail.status == "failed"
-    assert detail.error == "launch failed: no python here"
+    assert (detail.status, detail.error) == ("failed", "launch failed: GitHub answered 403: nope")
     assert detail.finished_at is not None
     assert [s.status for s in detail.stage_runs] == ["cancelled"]
-    launcher.fail = None
-    retry = runs.queue(detail.ticket_key)  # Retry works after a launch failure
+    with ctx.db.read() as conn:
+        job = conn.execute("SELECT ended_at FROM jobs WHERE run_id = ?", (a,)).fetchone()
+    assert job["ended_at"] is not None  # nothing started, so nothing can still publish
+    provider.fail = None
+    retry = runs.queue(detail.ticket_key)  # Retry works after a start error
     assert retry.from_stage == "plan"
     assert runs.tick() == [retry.id]
 
 
-@pytest.mark.parametrize("route", [{"provider": "github"}, {"report": "file"}])
-def test_runs_of_other_routes_are_left_alone(
-    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, route: dict[str, str]
+def test_a_queued_run_keeps_its_route_after_the_launcher_changes(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver, provider: FakeProvider
+) -> None:
+    before = runs.queue(create_ticket("before", repo=None).key).id
+    github = FakeProvider()
+    runs.ctx.route = Route("push", "github", "live")
+    runs.ctx.providers = {"github": github}
+    after = runs.queue(create_ticket("after", repo=None).key).id
+
+    assert runs.tick() == [after]
+    assert github.launched == [after]
+    held = runs.get(before)
+    assert held.status == "queued"
+    assert held.queue_reason is not None
+    assert "local" in held.queue_reason  # its own provider, which is no longer configured
+    assert runs.db_run(before)["provider"] == "local"
+
+    runs.ctx.providers["local"] = provider
+    assert runs.tick() == [before]
+    assert provider.launched == [before]
+    assert runs.get(before).queue_reason is None
+
+
+def test_file_report_runs_are_left_to_the_mailbox(
+    authed: TestClient, create_ticket: CreateTicket, runs: RunDriver
 ) -> None:
     run_id = runs.queue(create_ticket(repo=None).key).id
-    runs.set_run(run_id, **route)
+    runs.set_run(run_id, report="file")
     assert runs.tick() == []
+    assert runs.get(run_id).queue_reason is None
 
 
-def test_client_runs_are_neither_launched_nor_counted(
+def test_client_runs_are_never_started_by_the_dispatcher(
     client: TestClient,
     login: LoginFn,
     create_ticket: CreateTicket,
     runs: RunDriver,
-    launcher: FakeLauncher,
+    provider: FakeProvider,
 ) -> None:
     me = login("dev")
     client.post("/api/me/clients", json={"name": "laptop"}, headers=CSRF)
-    launcher.max_concurrency = 1
-    busy, waiting = (
-        runs.queue(create_ticket(title, repo=None, owner_id=me.id).key, target="client").id
-        for title in ("busy", "waiting")
-    )
-    runs.set_run(busy, status="running")  # a client is working on it
+    waiting = runs.queue(create_ticket("waiting", repo=None, owner_id=me.id).key, target="client")
     server = runs.queue(create_ticket("server", repo=None).key).id
     assert runs.tick() == [server]
-    assert [r for r, _, _ in launcher.launched] == [server]
-    assert status(runs, waiting) == "queued"
+    assert provider.launched == [server]
+    assert status(runs, waiting.id) == "queued"
 
 
 # ------------------------------------------------------------------ the loops
@@ -169,12 +174,12 @@ def test_a_failing_tick_does_not_stop_the_loop() -> None:
 
 @contextmanager
 def with_loops(
-    settings: Settings, launcher: FakeLauncher, monkeypatch: pytest.MonkeyPatch
+    settings: Settings, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[tuple[TestClient, AppContext]]:
     """The app with its background loops on, ticking every 50 ms, signed in as dev."""
     monkeypatch.setattr(dispatcher, "INTERVAL_S", 0.05)
     monkeypatch.setattr(main, "REAPER_INTERVAL_S", 0.05)
-    app = create_app(settings, launcher=launcher)  # loops on
+    app = create_app(settings, providers={"local": provider})  # loops on
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         assert client.post("/api/auth/login", json={"username": "dev"}, headers=CSRF).is_success
         yield client, app.state.ctx
@@ -198,20 +203,20 @@ def wait_for(what: str, probe: Callable[[], bool]) -> None:
 def test_the_lifespan_runs_the_dispatcher(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = FakeLauncher()
-    with with_loops(settings, launcher, monkeypatch) as (client, _):
+    provider = FakeProvider()
+    with with_loops(settings, provider, monkeypatch) as (client, _):
         run_id = dispatch(client)
-        wait_for("the launch", lambda: bool(launcher.launched))
-        assert [r for r, _, _ in launcher.launched] == [run_id]
+        wait_for("the start", lambda: bool(provider.launched))
+        assert provider.launched == [run_id]
         assert client.get(f"/api/runs/{run_id}").json()["status"] == "dispatched"
 
 
 def test_the_lifespan_runs_the_reaper(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
     """A launched worker that never starts is failed by the reaper (rule 2), seen via the API."""
-    launcher = FakeLauncher()
-    with with_loops(settings, launcher, monkeypatch) as (client, ctx):
+    provider = FakeProvider()
+    with with_loops(settings, provider, monkeypatch) as (client, ctx):
         run_id = dispatch(client)
-        wait_for("the launch", lambda: bool(launcher.launched))
+        wait_for("the start", lambda: bool(provider.launched))
         long_ago = to_db(utcnow() - timedelta(seconds=ctx.space.claim_timeout_s + 60))
         with ctx.db.tx() as conn:
             conn.execute("UPDATE runs SET dispatched_at = ? WHERE id = ?", (long_ago, run_id))

@@ -74,7 +74,7 @@ def test_the_job_of_a_cancelled_run_is_gone(ticket: TicketDetail, runs: RunDrive
     run = runs.queue(ticket.key)
     runs.tick()
     runs.client.post(f"/api/runs/{run.id}/cancel", headers=CSRF)
-    r = runs.client.get("/api/worker/job", headers=bearer(runs.launcher.token(run.id)))
+    r = runs.client.get("/api/worker/job", headers=bearer(runs.provider.token(run.id)))
     assert error(r) == (410, "run_gone")
 
 
@@ -115,7 +115,7 @@ def test_a_package_that_cannot_be_built_fails_the_run_at_dispatch(
         p["stages"][0]["prompt"] = "{{ 1 / 0 }}"
         conn.execute("UPDATE tickets SET pipeline = ? WHERE key = ?", (json.dumps(p), ticket.key))
     assert runs.tick() == [run.id]
-    assert runs.launcher.launched == []
+    assert runs.provider.launched == []
     detail = runs.get(run.id)
     assert detail.status == "failed"
     assert detail.error is not None
@@ -142,7 +142,7 @@ def test_a_repo_that_left_the_catalog_fails_the_run_at_dispatch(
     with ctx.db.tx() as conn:  # as if the catalog lost the repo between queueing and dispatch
         conn.execute("UPDATE tickets SET repo = 'gone' WHERE key = ?", (ticket.key,))
     assert runs.tick() == [run.id]
-    assert runs.launcher.launched == []
+    assert runs.provider.launched == []
     detail = runs.get(run.id)
     assert detail.status == "failed"
     assert detail.error is not None

@@ -11,6 +11,7 @@ from typing import Any, ClassVar
 
 import pytest
 
+from agentos.launchers.base import JobStart, Provider
 from agentos.launchers.local import LocalProcessLauncher
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -25,9 +26,15 @@ def _launcher(tmp_path: Path, env_file: Path | None = None, **kw: Any) -> LocalP
         workspaces_dir=tmp_path / "workspaces",
         logs_dir=tmp_path / "logs",
         worker_env_file=env_file,
-        max_concurrency=2,
         **kw,
     )
+
+
+def job(run_id: int) -> JobStart:
+    return JobStart(f"{run_id}-1-0123456789abcdef", run_id, SERVER_URL, TOKEN)
+
+
+_: Provider = _launcher(Path("unused"))
 
 
 def test_real_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,7 +53,7 @@ def test_real_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     launcher = _launcher(tmp_path, env_file)
 
-    ref = launcher.launch(42, SERVER_URL, TOKEN)
+    ref = launcher.start(job(42))
 
     child = launcher._children[-1]
     assert child.wait(timeout=60) == 0
@@ -82,7 +89,7 @@ def test_log_is_appended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     log.write_text("earlier attempt\n", encoding="utf-8")
     launcher = _launcher(tmp_path)
 
-    launcher.launch(7, SERVER_URL, TOKEN)
+    launcher.start(job(7))
 
     assert launcher._children[-1].wait(timeout=60) == 0
     text = log.read_text(encoding="utf-8")
@@ -112,7 +119,7 @@ def fake_popen(monkeypatch: pytest.MonkeyPatch) -> type[_FakePopen]:
 def test_spawn_is_detached(tmp_path: Path, fake_popen: type[_FakePopen]) -> None:
     launcher = _launcher(tmp_path)
 
-    assert launcher.launch(5, SERVER_URL, TOKEN) == "4242"
+    assert launcher.start(job(5)) == "4242"
 
     [(argv, kwargs)] = fake_popen.calls
     assert argv[0] == sys.executable
@@ -132,14 +139,14 @@ def test_spawn_is_detached(tmp_path: Path, fake_popen: type[_FakePopen]) -> None
 def test_spawn_failure_raises(tmp_path: Path) -> None:
     launcher = _launcher(tmp_path, python=str(tmp_path / "no-such-python.exe"))
     with pytest.raises(OSError):  # noqa: PT011 - the OS decides which OSError subclass
-        launcher.launch(9, SERVER_URL, TOKEN)
+        launcher.start(job(9))
     assert launcher._children == []
 
 
 def test_missing_env_file_raises(tmp_path: Path, fake_popen: type[_FakePopen]) -> None:
     launcher = _launcher(tmp_path, tmp_path / "missing.env")
     with pytest.raises(FileNotFoundError, match="worker env file"):
-        launcher.launch(9, SERVER_URL, TOKEN)
+        launcher.start(job(9))
     assert fake_popen.calls == []
 
 

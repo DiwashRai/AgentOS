@@ -15,7 +15,7 @@ from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
 from agentos.models import JobPackage, Me, Route, RunSummary, TicketDetail, TicketSummary
 from agentos.runs.service import BUDGET_GRACE, NEVER_CONNECTED, OVER_BUDGET
-from tests.run_support import CSRF, FakeLauncher, RunDriver, bearer, event, log_event
+from tests.run_support import CSRF, FakeProvider, RunDriver, bearer, event, log_event
 
 CreateTicket = Callable[..., TicketDetail]
 LoginFn = Callable[..., Me]
@@ -389,7 +389,7 @@ def test_the_package_is_built_at_dispatch(
     create_ticket: CreateTicket,
     runs: RunDriver,
     ctx: AppContext,
-    launcher: FakeLauncher,
+    provider: FakeProvider,
 ) -> None:
     t = create_ticket()
     run = runs.queue(t.key)
@@ -411,9 +411,9 @@ def test_the_package_is_built_at_dispatch(
     }
 
     # The worker's job returns the same package.
-    fetched = runs.client.get("/api/worker/job", headers=bearer(launcher.token(run.id))).json()
+    fetched = runs.client.get("/api/worker/job", headers=bearer(provider.token(run.id))).json()
     assert authed.get(f"/api/runs/{run.id}/manifest").json() == fetched
-    assert [r for r, _, _ in launcher.launched] == [run.id]
+    assert provider.launched == [run.id]
 
 
 def test_stage_names_fall_back_to_the_id(
@@ -562,7 +562,7 @@ def test_bundle_locked_from_dispatch_to_complete(
     assert put("queued", 0).status_code == 200  # a queued run doesn't lock
     runs.tick()
     assert error(put("dispatched", 1)) == (409, "bundle_locked")  # its package is built
-    worker = runs.bind(run.id, runs.launcher.token(run.id))
+    worker = runs.bind(run.id, runs.provider.token(run.id))
     assert error(put("running", 1)) == (409, "bundle_locked")
     assert error(put("new", 0, "new.md")) == (409, "bundle_locked")
     deleted = authed.delete(f"/api/tickets/{t.key}/files/notes.md?base_version=1", headers=CSRF)

@@ -4,12 +4,12 @@ runs through GitHub and the store, replays results, and ends runs that can't fin
 Per running mailbox run, each tick, in this order (each run on its own: an error is logged and the
 next run is checked):
 1. A cancel was requested → cancel the Actions run, once per run per process.
-2. Ask GitHub for the Actions run's status (unknown: no run URL, or a MailboxError).
+2. Ask GitHub for the work job's status (`JobStatus`; unknown also for no run URL or a
+   MailboxError).
 3. The outbox is in the store → replay it (an unexpected error fails the run).
-4. GitHub says `completed` and there is no outbox → cancelled (if requested) or failed.
-5. GitHub says not started for longer than the claim timeout, and the run's jobs say the work job
-   never started and none is running (the run is queued/waiting again while publish waits)
-   → cancel + failed.
+4. The job has ended (every job of the Actions run completed) and there is no outbox →
+   cancelled (if requested) or failed.
+5. The work job is still pending past the claim timeout → cancel + failed.
 6. Past `started_at + time_budget_s + BUDGET_GRACE + claim_timeout_s` → cancel + failed.
 7. The status is unknown and a cancel was requested over CANCEL_GRACE ago → cancelled.
 8. No launch_ref LAUNCH_GRACE after the start (the server died mid-launch) → failed.
@@ -30,10 +30,9 @@ from pathlib import Path
 from typing import Literal
 
 from agentos.context import AppContext
-from agentos.launchers.github import ActionsRun
+from agentos.launchers.base import JobStatus
 from agentos.launchers.mailbox import (
     RUN_FOLDER_PATTERN,
-    WORK_JOB,
     Mailbox,
     MailboxError,
     MailboxTooLarge,
@@ -48,8 +47,6 @@ INTERVAL_S = 20.0
 CANCEL_GRACE = timedelta(minutes=15)  # only while GitHub can't tell us the run's status (D5)
 LAUNCH_GRACE = timedelta(minutes=15)  # well above a bounded send() (D4)
 SWEEP_EVERY = timedelta(hours=1)
-NOT_STARTED = frozenset({"queued", "waiting", "pending", "requested"})
-JOB_STARTED = frozenset({"in_progress", "completed"})  # a queued job has a started_at too
 NOT_PICKED_UP = "no runner picked up the GitHub job"
 LAUNCH_INTERRUPTED = "launch interrupted"
 TOO_LARGE = "the run's results are over 512 MiB"
@@ -64,7 +61,6 @@ class MailboxReaper:
         self.ctx = ctx
         self.mailbox = mailbox
         self.cancelled: set[int] = set()  # runs whose Actions run this process asked to cancel
-        self.work_started: set[int] = set()  # runs whose work job this process saw started
         self.last_sweep: datetime | None = None
 
     def tick(self, now: datetime) -> dict[int, Outcome]:
@@ -80,7 +76,6 @@ class MailboxReaper:
             if outcome is not None:
                 outcomes[run.id] = outcome
                 self.cancelled.discard(run.id)
-                self.work_started.discard(run.id)
         if self.last_sweep is None or now - self.last_sweep >= SWEEP_EVERY:
             self.last_sweep = now
             self.sweep()
@@ -96,12 +91,14 @@ class MailboxReaper:
         if cancel_requested:
             self._cancel(run.id, ref)
         # 2. GitHub's view (read before the outbox: publish uploads before the run completes)
-        status: ActionsRun | None = None
+        status: JobStatus | None = None
         if ref is not None:
             try:
                 status = self.mailbox.status(ref)
             except MailboxError as exc:
                 log.warning("mailbox reaper: run %s: no GitHub status: %s", run.id, exc)
+        if status is not None and status.state == "unknown":
+            status = None
         # 3. results
         with tempfile.TemporaryDirectory(prefix="agentos-outbox-") as tmp:
             outbox = Path(tmp) / "outbox.jsonl"
@@ -117,23 +114,21 @@ class MailboxReaper:
         claim_timeout = timedelta(seconds=self.ctx.space.claim_timeout_s)
         if outbox_known and status is not None:
             # 4. the job ended without results
-            if status.status == "completed":
+            if status.state == "ended":
                 if cancel_requested:
                     return self._end(run.id, folder, "cancelled", None)
                 return self._end(
                     run.id,
                     folder,
                     "failed",
-                    f"GitHub job ended ({status.conclusion or 'no conclusion'}) without sending "
+                    f"GitHub job ended ({status.detail or 'no conclusion'}) without sending "
                     "results; see the GitHub run",
                 )
-            # 5. never picked up (`ref` is set whenever `status` is; the check narrows it)
+            # 5. never picked up
             if (
-                status.status in NOT_STARTED
+                status.state == "pending"
                 and run.started_at is not None
                 and now - run.started_at > claim_timeout
-                and ref is not None
-                and self._work_never_picked_up(run.id, ref)
             ):
                 self._cancel(run.id, ref)
                 return self._end(run.id, folder, "failed", NOT_PICKED_UP)
@@ -182,23 +177,6 @@ class MailboxReaper:
         ended = service.end(self.ctx.db, run_id, status, error)
         self._delete(run_id, folder)
         return "ended" if ended else "gone"
-
-    def _work_never_picked_up(self, run_id: int, ref: str) -> bool:
-        """The work job hasn't started and no job is running. Unknown is False (the budget rule
-        ends the run). A started work job is remembered, so publish waiting costs one call."""
-        if run_id in self.work_started:
-            return False
-        try:
-            jobs = self.mailbox.jobs(ref)
-        except MailboxError as exc:
-            log.warning("mailbox reaper: run %s: cannot list the GitHub jobs: %s", run_id, exc)
-            return False
-        if jobs is None:
-            return False
-        if jobs.get(WORK_JOB) in JOB_STARTED:
-            self.work_started.add(run_id)
-            return False
-        return "in_progress" not in jobs.values()
 
     def _cancel(self, run_id: int, ref: str | None) -> None:
         """Ask GitHub to cancel the run, once per run per process (best effort)."""

@@ -24,8 +24,7 @@ from agentos.db import MigrationError
 from agentos.files.routes import router as files_router
 from agentos.http_errors import install_error_handlers
 from agentos.intake.routes import router as intake_router
-from agentos.launchers.base import Launcher
-from agentos.launchers.mailbox import MailboxLauncher
+from agentos.launchers.base import Provider
 from agentos.mailbox import dispatcher as mailbox_dispatcher
 from agentos.mailbox.reaper import INTERVAL_S as MAILBOX_REAPER_INTERVAL_S
 from agentos.mailbox.reaper import MailboxReaper
@@ -63,18 +62,17 @@ async def _every(
 
 def _loops(ctx: AppContext, stop: asyncio.Event) -> list[Coroutine[Any, Any, None]]:
     """The background loops: the runs reaper always; the runs dispatcher, or with the mailbox
-    launcher the mailbox dispatcher and reaper instead (D8: the runs dispatcher would hand
-    mailbox runs to `launch()`, which refuses them)."""
+    the mailbox dispatcher and reaper instead."""
     reaper = Reaper(ctx)
     loops = [_every("reaper", REAPER_INTERVAL_S, lambda: reaper.tick(utcnow()), stop)]
-    launcher = ctx.launcher
-    if isinstance(launcher, MailboxLauncher):
-        mailbox_reaper = MailboxReaper(ctx, launcher)
+    mailbox = ctx.mailbox
+    if mailbox is not None:
+        mailbox_reaper = MailboxReaper(ctx, mailbox)
         loops += [
             _every(
                 "mailbox-dispatcher",
                 mailbox_dispatcher.INTERVAL_S,
-                lambda: mailbox_dispatcher.tick(ctx, launcher),
+                lambda: mailbox_dispatcher.tick(ctx, mailbox),
                 stop,
             ),
             _every(
@@ -94,20 +92,20 @@ def _loops(ctx: AppContext, stop: asyncio.Event) -> list[Coroutine[Any, Any, Non
 def create_app(
     settings: Settings | None = None,
     *,
-    launcher: Launcher | None = None,
+    providers: dict[str, Provider] | None = None,
     run_loops: bool = True,
 ) -> FastAPI:
     """`settings=None` reads AGENTOS_* env + `.env` at startup (in the lifespan).
 
-    `launcher=None` builds the configured launcher. `run_loops=False` starts no dispatcher or
-    reaper (tests drive `dispatcher.tick` / `Reaper.tick` themselves).
+    `providers=None` builds the configured ones (`build_context`). `run_loops=False` starts no
+    dispatcher or reaper (tests drive `dispatcher.tick` / `Reaper.tick` themselves).
     """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             ctx = build_context(
-                settings if settings is not None else load_settings(), launcher=launcher
+                settings if settings is not None else load_settings(), providers=providers
             )
         except (ConfigError, MigrationError) as exc:
             log.critical("AgentOS cannot start. %s", exc)  # fail fast with the readable message

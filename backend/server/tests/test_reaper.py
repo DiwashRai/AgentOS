@@ -15,6 +15,7 @@ from agentos.clock import to_db, utcnow
 from agentos.context import AppContext
 from agentos.models import LeaseResponse, Me, TicketDetail
 from agentos.runs.reaper import Reaper
+from tests.mailbox_support import FakeMailbox
 from tests.run_support import CSRF, RunDriver, Worker, bearer
 from tests.settings_support import set_space
 
@@ -251,11 +252,13 @@ def test_a_taken_client_run_must_be_started_in_time(
 def test_a_silent_client_run_is_lost_whatever_the_launcher(
     mine: ClientSide, runs: RunDriver, reaper: Reaper, configured: str
 ) -> None:
-    """Only rows of the mailbox launcher skip the heartbeat, and only with that launcher on."""
+    """Only file-report rows skip the heartbeat, and only with the mailbox on."""
     client_worker = mine.start("client")
     mailbox_worker = runs.start(mine.create_ticket("mailbox", repo=None).key)
     runs.set_run(mailbox_worker.run_id, report="file")
-    runs.launcher.name = configured
+    runs.ctx.providers = {configured: runs.provider}
+    if configured == "mailbox":
+        runs.ctx.mailbox = FakeMailbox()
     now = utcnow()
     armed(reaper, now)
     for w in (client_worker, mailbox_worker):
@@ -336,6 +339,6 @@ def test_workspace_cleanup_is_local_only(
     old.mkdir(parents=True)
     now = utcnow()
     _age(old, now - timedelta(days=8))
-    runs.launcher.name = "github"
+    runs.ctx.providers = {"github": runs.provider}
     armed(reaper, now).tick(now)
     assert old.exists()

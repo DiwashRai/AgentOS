@@ -12,10 +12,10 @@ from typing import Any
 
 from agentos.config import ConfigError, Settings, startup_checks
 from agentos.db import Database
-from agentos.launchers.base import Launcher
-from agentos.launchers.github import GitHubActionsLauncher, GitHubTarget
+from agentos.launchers.base import Provider
+from agentos.launchers.github import GitHubActionsProvider, GitHubTarget
 from agentos.launchers.local import WORKER_PATH, LocalProcessLauncher
-from agentos.launchers.mailbox import MailboxLauncher
+from agentos.launchers.mailbox import Mailbox, MailboxLauncher
 from agentos.models import FieldMapping, JiraField, Route
 from agentos.pipeline.runtime import BUILTIN_RUNTIMES, RuntimesConfig
 from agentos.pipeline.space import RunnerSection, SpaceConfig
@@ -68,9 +68,12 @@ def _jira_fields_cache() -> JiraFieldsCache:
 class AppContext:
     settings: Settings
     db: Database
-    launcher: Launcher
+    # What starts push jobs, by the provider name a run's route stores.
+    providers: dict[str, Provider]
     # The route a `target: "server"` dispatch stores; None = this server starts no workers.
     route: Route | None
+    # AGENTOS_LAUNCHER=mailbox: its own loops dispatch and watch the file-report runs.
+    mailbox: Mailbox | None = None
     # The Jira REST client when AGENTOS_JIRA_URL is set (tests swap in a MockTransport one).
     jira: JiraClient | None = None
     # Jira login attempts per (client IP, submitted email/username).
@@ -95,7 +98,7 @@ class AppContext:
 
     @property
     def runner(self) -> RunnerSection:
-        """Where the github launcher dispatches runs, as currently saved (Settings > Runners)."""
+        """Where the github provider dispatches runs, as currently saved (Settings > Runners)."""
         return read_runner(self.db)
 
     @property
@@ -123,30 +126,32 @@ class AppContext:
         return JiraSource(self.jira, creds)
 
 
-def build_context(settings: Settings, launcher: Launcher | None = None) -> AppContext:
+def build_context(settings: Settings, providers: dict[str, Provider] | None = None) -> AppContext:
     """Run the startup checks (creating data/logs/workspaces), migrate the db, seed the settings
     areas the db doesn't have yet (`seed_settings`).
 
-    `launcher=None` builds the configured one (`AGENTOS_LAUNCHER`).
+    `providers=None` builds the configured ones (`AGENTOS_LAUNCHER`, with the mailbox); the
+    default route always comes from `AGENTOS_LAUNCHER`.
     Raises config.ConfigError or db.MigrationError with a readable message.
     """
     startup_checks(settings)
     db = Database(settings.db_path)
     db.migrate()
     seed_settings(db)
-    if launcher is None:
-        launcher = _launcher(settings, db)
+    mailbox = None
+    if providers is None:
+        providers, mailbox = _providers(settings, db)
     jira = JiraClient(settings.jira_url, settings.jira_deployment) if settings.jira_url else None
-    route = server_route(launcher.name)
-    return AppContext(settings=settings, db=db, launcher=launcher, route=route, jira=jira)
+    route = server_route(settings.launcher)
+    return AppContext(settings, db, providers, route, mailbox, jira)
 
 
-def server_route(launcher_name: str) -> Route:
+def server_route(launcher: str) -> Route:
     """The route of the server's runs: `mailbox` is GitHub with file reporting; every other
-    launcher starts its own workers, which report live."""
-    if launcher_name == "mailbox":
+    launcher is the provider of the same name, whose workers report live."""
+    if launcher == "mailbox":
         return Route("push", "github", "file")
-    return Route("push", launcher_name, "live")
+    return Route("push", launcher, "live")
 
 
 def seed_settings(db: Database) -> list[Area]:
@@ -176,7 +181,7 @@ def read_runner(db: Database) -> RunnerSection:
 
 
 def runner_target(db: Database) -> Callable[[], GitHubTarget]:
-    """What the github launcher asks at every launch: Settings > Runners as currently saved."""
+    """What the github provider asks at every start: Settings > Runners as currently saved."""
 
     def target() -> GitHubTarget:
         runner = read_runner(db)
@@ -185,12 +190,12 @@ def runner_target(db: Database) -> Callable[[], GitHubTarget]:
     return target
 
 
-def _launcher(settings: Settings, db: Database) -> Launcher:
+def _providers(settings: Settings, db: Database) -> tuple[dict[str, Provider], Mailbox | None]:
     if settings.launcher == "local":
-        return LocalProcessLauncher.from_settings(settings, WORKER_PATH)
-    github = _github_launcher(settings, db)
+        return {"local": LocalProcessLauncher.from_settings(settings, WORKER_PATH)}, None
+    github = _github_provider(settings, db)
     if settings.launcher == "github":
-        return github
+        return {"github": github}, None
     url, user, password = (
         settings.artifactory_url,
         settings.artifactory_user,
@@ -199,14 +204,16 @@ def _launcher(settings: Settings, db: Database) -> Launcher:
     if url is None or user is None or password is None:  # pragma: no cover - startup_checks
         raise ConfigError(["AGENTOS_LAUNCHER=mailbox needs the AGENTOS_ARTIFACTORY_* vars"])
     artifactory = ArtifactoryStore(base_url=url, user=user, password=password.get_secret_value())
-    return MailboxLauncher(github=github, store=artifactory, worker_path=WORKER_PATH)
+    return {"github": github}, MailboxLauncher(
+        github=github, store=artifactory, worker_path=WORKER_PATH
+    )
 
 
-def _github_launcher(settings: Settings, db: Database) -> GitHubActionsLauncher:
+def _github_provider(settings: Settings, db: Database) -> GitHubActionsProvider:
     if settings.github_token is None:  # pragma: no cover - startup_checks requires it
         raise ConfigError([f"AGENTOS_LAUNCHER={settings.launcher} needs AGENTOS_GITHUB_TOKEN"])
     try:
-        return GitHubActionsLauncher(
+        return GitHubActionsProvider(
             target=runner_target(db),
             token=settings.github_token.get_secret_value(),
             api_url=settings.github_api_url,

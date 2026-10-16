@@ -6,8 +6,8 @@ The server uploads the run's manifest and worker.py to a store (Artifactory) und
 `run_folder(run_id, <the random hex of the run's job id>)`, unique per run even across servers
 and db resets.
 
-The mailbox dispatcher and reaper (`agentos.mailbox`) drive it; `launch()` is never used.
-Every method raises MailboxError (a safe message, no credentials) when GitHub or the store fails.
+The mailbox dispatcher and reaper (`agentos.mailbox`) drive it. Every method raises MailboxError
+(a safe message, no credentials) when GitHub or the store fails.
 """
 
 from __future__ import annotations
@@ -18,14 +18,13 @@ import re
 from pathlib import Path
 from typing import Protocol
 
-from agentos.launchers.github import ActionsRun, GitHubActionsLauncher, LaunchError
+from agentos.launchers.base import JobStatus, ProviderError
+from agentos.launchers.github import GitHubActionsProvider
 from agentos.stores.base import Store, StoreError, StoreTooLarge
 
 # A folder name in the store: "<run id>-<16 hex>". The workflow checks the same pattern.
 RUN_FOLDER_PATTERN = r"^[0-9]+-[0-9a-f]{16}$"
 MAX_OUTBOX_BYTES = 512 * 1024 * 1024
-# The job of agentos-mailbox.yml that runs the worker (its key; it has no `name:`).
-WORK_JOB = "work"
 
 _FOLDER = re.compile(RUN_FOLDER_PATTERN)
 log = logging.getLogger(__name__)
@@ -53,13 +52,10 @@ class Mailbox(Protocol):
         warning: liveness rules that need the run's status can't apply then)."""
         ...
 
-    def status(self, launch_ref: str) -> ActionsRun | None:
-        """The Actions run's status. None when `launch_ref` isn't a run of the current target repo
-        (e.g. a runs page). Raises MailboxError when GitHub can't be asked."""
-        ...
-
-    def jobs(self, launch_ref: str) -> dict[str, str] | None:
-        """{job name: status} of the Actions run; None and errors as for `status()`."""
+    def status(self, launch_ref: str) -> JobStatus:
+        """The work job's status (`GitHubActionsProvider.status`): unknown when `launch_ref`
+        isn't a run of the current target repo (e.g. a runs page). Raises MailboxError when
+        GitHub can't be asked."""
         ...
 
     def cancel(self, launch_ref: str) -> None:
@@ -82,18 +78,12 @@ class Mailbox(Protocol):
 
 
 class MailboxLauncher:
-    """Mailbox over a GitHubActionsLauncher (dispatch, status, cancel) and a Store."""
+    """Mailbox over a GitHubActionsProvider (dispatch, status, cancel) and a Store."""
 
-    name = "mailbox"
-    max_concurrency: int | None = None  # GitHub queues jobs
-
-    def __init__(self, *, github: GitHubActionsLauncher, store: Store, worker_path: Path) -> None:
+    def __init__(self, *, github: GitHubActionsProvider, store: Store, worker_path: Path) -> None:
         self.github = github
         self.store = store
         self.worker_path = worker_path
-
-    def launch(self, run_id: int, server_url: str, token: str) -> str:
-        raise MailboxError("mailbox runs are launched by the mailbox dispatcher")
 
     def send(self, run_id: int, folder: str, manifest_json: bytes) -> str:
         _check_folder(folder)
@@ -113,7 +103,7 @@ class MailboxLauncher:
                     "manifest_sha256": hashlib.sha256(manifest_json).hexdigest(),
                 }
             )
-        except (StoreError, LaunchError) as exc:
+        except (StoreError, ProviderError) as exc:
             raise MailboxError(str(exc)) from None
         if self.github.run_id_of(ref) is None:
             log.warning(
@@ -124,22 +114,16 @@ class MailboxLauncher:
             )
         return ref
 
-    def status(self, launch_ref: str) -> ActionsRun | None:
+    def status(self, launch_ref: str) -> JobStatus:
         try:
-            return self.github.run_status(launch_ref)
-        except LaunchError as exc:
-            raise MailboxError(str(exc)) from None
-
-    def jobs(self, launch_ref: str) -> dict[str, str] | None:
-        try:
-            return self.github.run_jobs(launch_ref)
-        except LaunchError as exc:
+            return self.github.status(launch_ref)
+        except ProviderError as exc:
             raise MailboxError(str(exc)) from None
 
     def cancel(self, launch_ref: str) -> None:
         try:
-            self.github.cancel_run(launch_ref)
-        except LaunchError as exc:
+            self.github.cancel(launch_ref)
+        except ProviderError as exc:
             raise MailboxError(str(exc)) from None
 
     def fetch_outbox(self, folder: str, dest: Path) -> bool:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -441,41 +441,38 @@ def build_job(
 
 
 def mark_next_dispatched(
-    db: Database,
-    route: Route,
-    max_concurrency: int | None,
-    report: ManifestReport,
-) -> tuple[int, tuple[str, str] | None] | None:
-    """Move the oldest `queued` run of this (push) route to `dispatched` and build its job,
-    unless the route's active (dispatched|running) runs are already at `max_concurrency`.
-    Returns the run id and `build_job`'s answer."""
+    db: Database, providers: Collection[str], report: ManifestReport
+) -> tuple[int, str, tuple[str, str] | None] | None:
+    """Move the oldest `queued` push run reporting `report.mode` whose stored provider is one of
+    `providers` to `dispatched` (clearing its `queue_reason`) and build its job. Queued push runs
+    of that report mode whose provider isn't configured stay queued with a `queue_reason`.
+    Returns the run id, its provider and `build_job`'s answer."""
     now = utcnow()
-    params = (route.provider, route.report)
+    params = (report.mode, json.dumps(list(providers)))
     with db.tx() as conn:
-        if max_concurrency is not None:
-            active = conn.execute(
-                "SELECT COUNT(*) FROM runs WHERE start = 'push' AND provider = ? AND report = ? "
-                "AND status IN ('dispatched', 'running')",
-                params,
-            ).fetchone()[0]
-            if active >= max_concurrency:
-                return None
+        conn.execute(
+            "UPDATE runs SET queue_reason = 'its runner (' || provider || ') is not configured "
+            "on this server' WHERE start = 'push' AND report = ? AND status = 'queued' "
+            "AND provider NOT IN (SELECT value FROM json_each(?))",
+            params,
+        )
         row = conn.execute(
-            "SELECT id FROM runs WHERE start = 'push' AND provider = ? AND report = ? "
-            "AND status = 'queued' ORDER BY id LIMIT 1",
+            "SELECT id, provider FROM runs WHERE start = 'push' AND report = ? "
+            "AND status = 'queued' AND provider IN (SELECT value FROM json_each(?)) "
+            "ORDER BY id LIMIT 1",
             params,
         ).fetchone()
         if row is None:
             return None
         run_id: int = row["id"]
         cursor = conn.execute(
-            "UPDATE runs SET status = 'dispatched', dispatched_at = ? "
+            "UPDATE runs SET status = 'dispatched', dispatched_at = ?, queue_reason = NULL "
             "WHERE id = ? AND status = 'queued'",
             (to_db(now), run_id),
         )
         if cursor.rowcount == 0:  # pragma: no cover - BEGIN IMMEDIATE serialises writers
             return None
-        return run_id, build_job(conn, run_row(conn, run_id), report, now)
+        return run_id, row["provider"], build_job(conn, run_row(conn, run_id), report, now)
 
 
 def take_client_run(
@@ -526,14 +523,17 @@ def start(db: Database, run_id: int) -> str | None:
 
 
 def set_launch_ref(db: Database, run_id: int, launch_ref: str) -> None:
-    """Store where the launcher started the worker (the run's `launch_url` derives from it)."""
+    """Store the provider's ref of the started worker (the run's `launch_url` derives from it)."""
     with db.tx() as conn:
         conn.execute("UPDATE runs SET launch_ref = ? WHERE id = ?", (launch_ref, run_id))
 
 
-def fail_launch(db: Database, run_id: int, error: str) -> None:
+def fail_start(db: Database, run_id: int, job_id: str, error: str) -> None:
+    """The provider didn't start the job: the run fails and the job has ended (nothing ran)."""
+    now = utcnow()
     with db.tx() as conn:
-        finish(conn, run_id, "failed", ("dispatched",), now=utcnow(), error=error)
+        finish(conn, run_id, "failed", ("dispatched",), now=now, error=error)
+        conn.execute("UPDATE jobs SET ended_at = ? WHERE id = ?", (to_db(now), job_id))
 
 
 # ------------------------------------------------------------------ reaper primitives

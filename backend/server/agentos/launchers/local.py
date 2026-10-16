@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from dotenv import dotenv_values
 
+from agentos.launchers.base import JobStart, JobStatus
+
 if TYPE_CHECKING:
     from agentos.config import Settings
 
@@ -28,8 +30,6 @@ WORKER_PATH = Path(__file__).resolve().parents[3] / "worker" / "worker.py"
 
 
 class LocalProcessLauncher:
-    name = "local"
-
     def __init__(
         self,
         *,
@@ -37,17 +37,15 @@ class LocalProcessLauncher:
         workspaces_dir: Path,
         logs_dir: Path,
         worker_env_file: Path | None,
-        max_concurrency: int | None,
         python: str = sys.executable,
     ) -> None:
         self.worker_path = worker_path
         self.workspaces_dir = workspaces_dir
         self.logs_dir = logs_dir
         self.worker_env_file = worker_env_file
-        self.max_concurrency = max_concurrency
         self.python = python
         # Children are never waited on; finished ones are polled away on the next launch so POSIX
-        # children don't linger as zombies. The dispatcher calls launch() from worker threads.
+        # children don't linger as zombies. The dispatcher calls start() from worker threads.
         self._children: list[subprocess.Popen[bytes]] = []
         self._lock = threading.Lock()
 
@@ -58,11 +56,20 @@ class LocalProcessLauncher:
             workspaces_dir=settings.workspaces_dir,
             logs_dir=settings.logs_dir,
             worker_env_file=settings.worker_env_file,
-            max_concurrency=settings.local_max_concurrency,
         )
 
-    def launch(self, run_id: int, server_url: str, token: str) -> str:
-        """Spawn the worker for `run_id` and return its PID. Raises if the spawn fails."""
+    def status(self, ref: str) -> JobStatus:
+        return JobStatus("unknown")
+
+    def cancel(self, ref: str) -> None:
+        """The worker stops itself once it sees its run cancelled."""
+
+    def cleanup(self, ref: str) -> None:
+        """The reaper deletes old workspaces."""
+
+    def start(self, job: JobStart) -> str:
+        """Spawn the worker for `job` and return its PID. Raises if the spawn fails."""
+        run_id, server_url, token = job.run_id, job.server_url, job.job_token
         with self._lock:
             self._children = [child for child in self._children if child.poll() is None]
 

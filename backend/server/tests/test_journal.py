@@ -61,7 +61,7 @@ def key(authed: TestClient, create_ticket: CreateTicket) -> str:
 def test_the_first_started_binds_the_job_to_its_instance(key: str, runs: RunDriver) -> None:
     run = runs.queue(key)
     runs.tick()
-    token = runs.launcher.token(run.id)
+    token = runs.provider.token(run.id)
     assert error(runs.client.get("/api/worker/job", headers=bearer("nope"))) == (
         401,
         "unauthorized",
@@ -89,7 +89,7 @@ def test_the_first_started_binds_the_job_to_its_instance(key: str, runs: RunDriv
 def test_an_unbound_job_takes_only_a_valid_started_first(key: str, runs: RunDriver) -> None:
     run = runs.queue(key)
     runs.tick()
-    token = runs.launcher.token(run.id)
+    token = runs.provider.token(run.id)
     package = runs.client.get("/api/worker/job", headers=bearer(token)).json()
     worker = Worker(runs.client, run.id, token, JobPackage.model_validate(package))
     assert error(worker.events(log_event(1, "plan", "early"))) == (422, "validation_error")
@@ -108,7 +108,7 @@ def test_an_unbound_job_takes_only_a_valid_started_first(key: str, runs: RunDriv
 def test_a_started_of_another_job_binds_nothing(key: str, runs: RunDriver) -> None:
     run = runs.queue(key)
     runs.tick()
-    token = runs.launcher.token(run.id)
+    token = runs.provider.token(run.id)
     package = runs.client.get("/api/worker/job", headers=bearer(token)).json()
     worker = Worker(runs.client, run.id, token, JobPackage.model_validate(package))
     foreign = event(1, "started", None, **started_data()) | {"job": "1-1-0000000000000000"}
@@ -293,7 +293,7 @@ def test_the_fixture_holds_every_record_type_and_each_validates() -> None:
 def test_the_fixture_ingests_whole(key: str, runs: RunDriver) -> None:
     run = runs.queue(key, "implement")
     runs.tick()
-    token = runs.launcher.token(run.id)
+    token = runs.provider.token(run.id)
     headers = bearer(token) | {"X-AgentOS-Instance": "fixture"}
     job = runs.client.get("/api/worker/job", headers=headers).json()["job"]["id"]
     records = [r | {"job": job} for r in fixture_records()]

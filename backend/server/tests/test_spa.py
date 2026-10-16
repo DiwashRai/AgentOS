@@ -13,7 +13,7 @@ from agentos.config import Settings
 from agentos.main import create_app
 from agentos.spa import CACHE_IMMUTABLE, CACHE_REVALIDATE, _file_under
 from tests.conftest import BASE_URL, CSRF
-from tests.run_support import FakeLauncher
+from tests.run_support import FakeProvider
 
 INDEX = "<!doctype html><title>AgentOS</title>"
 SCRIPT = "console.log('app')"
@@ -31,7 +31,7 @@ def web_dir(tmp_path: Path) -> Path:
 
 
 def serve(settings: Settings) -> Iterator[TestClient]:
-    app = create_app(settings, launcher=FakeLauncher(), run_loops=False)
+    app = create_app(settings, providers={"local": FakeProvider()}, run_loops=False)
     with TestClient(app, base_url=BASE_URL) as client:
         yield client
 

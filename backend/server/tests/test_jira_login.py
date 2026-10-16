@@ -19,7 +19,7 @@ from agentos.context import AppContext
 from agentos.main import create_app
 from agentos.models import Me
 from agentos.sources.jira import JiraClient, JiraCredentials
-from tests.run_support import FakeLauncher
+from tests.run_support import FakeProvider
 from tests.settings_support import set_space
 
 CSRF = {"X-AgentOS": "1"}
@@ -352,11 +352,11 @@ def test_rate_limit_trusts_proxy_headers_only_when_configured(
 
 
 def test_datacenter_uses_a_bearer_pat_and_the_user_key(
-    settings: Settings, fake_jira: FakeJira, launcher: FakeLauncher
+    settings: Settings, fake_jira: FakeJira, provider: FakeProvider
 ) -> None:
     dc = settings.model_copy(update={"jira_deployment": "datacenter"})
     fake_jira.add(f"Bearer {TOKEN}", "jsmith", email="j@example.com")
-    app = create_app(dc, launcher=launcher, run_loops=False)
+    app = create_app(dc, providers={"local": provider}, run_loops=False)
     with TestClient(app, base_url=BASE_URL) as client:
         ctx = app.state.ctx
         ctx.jira = JiraClient(JIRA, "datacenter", transport=httpx.MockTransport(fake_jira.handler))

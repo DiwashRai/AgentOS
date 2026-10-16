@@ -9,7 +9,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from agentos.launchers.mailbox import MAX_OUTBOX_BYTES, RUN_FOLDER_PATTERN, WORK_JOB
+from agentos.launchers.github import WORK_JOB
+from agentos.launchers.mailbox import MAX_OUTBOX_BYTES, RUN_FOLDER_PATTERN
 
 TEMPLATE = Path(__file__).resolve().parents[2] / "deploy" / "github" / "agentos-mailbox.yml"
 

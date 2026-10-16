@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from agentos.config import ConfigError, Settings, load_settings, startup_checks
 from agentos.context import build_context
-from agentos.launchers.github import GitHubActionsLauncher
+from agentos.launchers.github import GitHubActionsProvider
 from agentos.launchers.mailbox import MailboxLauncher
 from agentos.main import create_app
 from agentos.models import AppConfig, RepoInfo, RunnerSettings, RuntimeSettings, SpaceSettings
@@ -178,8 +178,9 @@ def test_github_launcher_needs_a_token_but_not_a_repo(tmp_path: Path) -> None:
 def test_github_launcher_is_built_from_settings(tmp_path: Path) -> None:
     github = {"launcher": "github", "github_token": "t0ken"}
     ctx = build_context(make(tmp_path, **github))
-    assert isinstance(ctx.launcher, GitHubActionsLauncher)
-    assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("github", None)
+    assert list(ctx.providers) == ["github"]
+    assert isinstance(ctx.providers["github"], GitHubActionsProvider)
+    assert (ctx.route, ctx.mailbox) == (("push", "github", "live"), None)
     with pytest.raises(ConfigError) as caught:
         build_context(make(tmp_path, **{**github, "github_api_version": "latest"}))
     assert "AGENTOS_GITHUB_" in str(caught.value)
@@ -230,9 +231,10 @@ def test_mailbox_launcher_is_built_from_settings(tmp_path: Path) -> None:
     ctx = build_context(
         make(tmp_path, launcher="mailbox", github_token="t0ken", **ARTIFACTORY)  # noqa: S106 - fake
     )
-    assert isinstance(ctx.launcher, MailboxLauncher)
-    assert (ctx.launcher.name, ctx.launcher.max_concurrency) == ("mailbox", None)
-    assert isinstance(ctx.launcher.github, GitHubActionsLauncher)
+    assert isinstance(ctx.mailbox, MailboxLauncher)
+    assert ctx.providers == {"github": ctx.mailbox.github}
+    assert isinstance(ctx.mailbox.github, GitHubActionsProvider)
+    assert ctx.route == ("push", "github", "file")
 
 
 def test_workspaces_inside_data_dir(tmp_path: Path) -> None:
