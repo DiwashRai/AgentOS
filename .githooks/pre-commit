@@ -1,9 +1,11 @@
 #!/bin/sh
-# Fast gates on the half of the repo being committed. Full gates: `just check`.
+# Fast checks on the half of the repo being committed, then the gates. Full checks: `just check`.
 # The generated API files (web/src/api/openapi.json, schema.ts) are committed by the backend and
-# are lint/format-ignored, so they alone never trigger the web gates. The hand-written files next to
+# are lint/format-ignored, so they alone never trigger the web checks. The hand-written files next to
 # them (client.ts, queries.ts, ...) do.
 set -e
 staged=$(git diff --cached --name-only)
 if echo "$staged" | grep -q '^backend/'; then just pre-commit-backend; fi
 if echo "$staged" | grep '^web/' | grep -Eqv '^web/src/api/(openapi\.json|schema\.ts)$'; then just pre-commit-web; fi
+# The gates measure the whole repo (a few seconds), so they run on any code or baseline change.
+if echo "$staged" | grep -Eq '^(backend/|web/|tools/gates/|quality-baseline\.json$)'; then just gates; fi
