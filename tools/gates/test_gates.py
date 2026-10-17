@@ -20,7 +20,8 @@ from gates import Finding, Measures
 def _baseline(**changes: Any) -> dict[str, Any]:
     raw: dict[str, Any] = {
         "allowed": {
-            "defensive": {"core": {"is_none": 3, "try": 1}},
+            "uncapped": {"boundary": ["try"]},
+            "defensive": {"a.py": {"isinstance": 3, "try": 1}},
             "suppressions": 5,
             "raw_tags": {"queue": 10},
         },
@@ -31,8 +32,8 @@ def _baseline(**changes: Any) -> dict[str, Any]:
 
 
 def _measures() -> Measures:
-    m = Measures()
-    m.defensive = {"core": {"is_none": ["a.py:1"] * 5, "try": []}}  # is_none up, try down
+    m = Measures(layer={"a.py": "core"})
+    m.defensive = {"a.py": {"isinstance": [1] * 5, "try": []}}  # isinstance up, try down
     m.suppressions = ["a.py:1  noqa"] * 7  # up
     m.raw_tags = {"queue": 4}  # down
     m.cognitive = [
@@ -51,8 +52,8 @@ def test_ratchet_lowers_what_improved_and_never_raises() -> None:
 
     after = gates.flatten(baseline)
     assert all(after[key] <= value for key, value in before.items() if key in after)
-    assert after["allowed.defensive.core.is_none"] == 3
-    assert after["allowed.defensive.core.try"] == 0
+    assert after["allowed.defensive.a.py.isinstance"] == 3
+    assert "allowed.defensive.a.py.try" not in after  # a cap that reaches 0 goes
     assert after["allowed.suppressions"] == 5
     assert after["allowed.raw_tags.queue"] == 4
     assert baseline["exceptions"]["cognitive"] == {"a.py::worse": 20, "a.py::better": 22}
@@ -61,13 +62,13 @@ def test_ratchet_lowers_what_improved_and_never_raises() -> None:
 def _raised(entry: dict[str, str] | None) -> list[str]:
     old = _baseline()
     new = copy.deepcopy(old)
-    new["allowed"]["defensive"]["core"]["is_none"] = 4
+    new["allowed"]["defensive"]["a.py"]["isinstance"] = 4
     new["raises"] = [entry] if entry else []
     return gates.unexplained_raises(old, new)
 
 
 def test_a_raise_needs_an_entry_with_a_reason() -> None:
-    what = "allowed.defensive.core.is_none"
+    what = "allowed.defensive.a.py.isinstance"
     assert _raised(None)
     assert _raised({"date": "2026-10-17", "what": what, "reason": " "})
     assert not _raised({"date": "2026-10-17", "what": what, "reason": "parsing a new input"})
@@ -80,6 +81,17 @@ def test_a_new_named_offender_is_a_raise() -> None:
     new["exceptions"]["cyclomatic"]["b.py::new"] = 12
     assert gates.unexplained_raises(old, new)
     assert not gates.unexplained_raises(new, old)  # dropping one only tightens
+
+
+def test_uncapping_a_kind_in_a_layer_is_a_raise() -> None:
+    old = _baseline()
+    new = copy.deepcopy(old)
+    new["allowed"]["uncapped"]["boundary"].append("broad_except")
+    new["allowed"]["uncapped"]["shell"] = ["isinstance"]
+    assert len(gates.unexplained_raises(old, new)) == 2
+    new["raises"] = [{"what": "allowed.uncapped", "reason": "the shell parses rows now"}]
+    assert not gates.unexplained_raises(old, new)
+    assert not gates.unexplained_raises(new | {"raises": []}, old)  # capping one only tightens
 
 
 def test_switching_the_python_cyclomatic_tool_needs_a_raises_entry() -> None:
@@ -102,7 +114,7 @@ def test_defensive_patterns_and_their_look_alikes() -> None:
         from typing import Optional
 
         def f(a: int | None, b: Optional[str], c: int) -> list[int] | None:
-            if a is None or b == None:
+            if a is None or b == None:  # not counted: syntax, the types carry it
                 return getattr(c, "x", None)
             if hasattr(c, "y") or isinstance(c, int):
                 getattr(c, "z")
@@ -117,8 +129,6 @@ def test_defensive_patterns_and_their_look_alikes() -> None:
                 pass
     """
     assert _hits(source) == {
-        "is_none": 2,
-        "optional": 3,
         "getattr_default": 1,
         "hasattr": 1,
         "isinstance": 2,
@@ -126,6 +136,96 @@ def test_defensive_patterns_and_their_look_alikes() -> None:
         "try": 1,
         "broad_except": 1,
     }
+
+
+def test_type_comparisons_and_a_renamed_suppress_are_look_alikes() -> None:
+    source = """
+        from contextlib import suppress as quietly
+
+        def f(run, other):
+            if type(run) is int or type(other) == str:
+                pass
+            with quietly(OSError):
+                pass
+    """
+    assert _hits(source) == {"isinstance": 2, "suppress": 1}
+
+
+def test_a_try_counts_unless_it_cleans_up_inside_a_context_manager() -> None:
+    source = """
+        import contextlib
+        from contextlib import contextmanager as cm
+
+        @cm
+        def tx(conn):
+            try:
+                yield conn
+            except BaseException:
+                conn.rollback()
+                raise
+
+        @contextlib.asynccontextmanager
+        async def session(conn):
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        class Lock:
+            def __exit__(self, *exc):
+                try:
+                    self.release()
+                except OSError:
+                    pass
+
+        def close(conn):
+            try:
+                conn.close()
+            finally:
+                pass
+    """
+    assert _hits(source) == {"try": 2}  # __exit__ swallows an error; close is no context manager
+
+
+def test_a_domain_class_with_two_optional_fields_is_flagged() -> None:
+    source = """
+        from typing import Optional
+        from pydantic import BaseModel
+        MaybeInt = int | None
+
+        class Run:
+            started_at: "datetime | None"
+            owner: MaybeInt
+            name: str
+
+        class Ticket:
+            owner: Optional[str] = None
+            title: str
+
+        class PatchModel(BaseModel):
+            pass
+
+        class TicketPatch(PatchModel):  # a wire shape: flat on purpose
+            owner: str | None = None
+            title: str | None = None
+    """
+    report = gates.analyse_python("x.py", textwrap.dedent(source))
+    found = [Finding("x.py", *c) for c in report.defensive.optional_fields]
+    result = gates._named_gate("optional_fields", found, gates.normalise({}), "classes")
+    assert {f.name: f.score for f in found} == {"Run": 2, "Ticket": 1}
+    assert [line.split()[1] for line in result.details] == ["Run"]
+
+
+def test_defensive_caps_are_per_file_and_the_boundary_checks_input_freely() -> None:
+    caps = {"uncapped": {"boundary": ["try"]}, "defensive": {"a.py": {"try": 2}}}
+    baseline = gates.normalise({"allowed": caps})
+    m = Measures(layer={"a.py": "shell", "b.py": "shell", "c.py": "boundary"})
+    m.defensive = {"a.py": {"try": [1]}, "b.py": {"try": [7]}, "c.py": {"try": [1, 2]}}
+
+    result = gates.gate_defensive(m, baseline)
+
+    assert not result.ok  # a.py's removal doesn't pay for b.py's addition
+    assert [line.split()[0] for line in result.details if "fix:" in line] == ["b.py"]
 
 
 def test_docstrings_and_comments_are_not_code_lines() -> None:

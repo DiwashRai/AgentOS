@@ -45,7 +45,7 @@ select = [
 "agentos.clock.utcnow".msg = "pure core takes `now` as an argument"
 
 [tool.ruff.lint.per-file-ignores]
-"!server/agentos/{models.py,validate.py,pipeline/**,*/board.py}" = ["TID251"]
+"!server/agentos/{models.py,validate.py,errors.py,pipeline/**,*/board.py,*/rules.py}" = ["TID251"]
 "**/tests/**" = ["S101", "S603", "S607"]
 "**/worker_tests/**" = ["S101", "S603", "S607"]
 # Running subprocesses described by the manifest is the worker's job.
@@ -86,7 +86,10 @@ include_external_packages = true
 [[tool.importlinter.contracts]]
 name = "Pure core: no web, db, http or config"
 type = "forbidden"
-source_modules = ["agentos.models", "agentos.validate", "agentos.pipeline", "agentos.*.board"]
+source_modules = [
+    "agentos.models", "agentos.validate", "agentos.errors", "agentos.pipeline",
+    "agentos.*.board", "agentos.*.rules",
+]
 forbidden_modules = ["fastapi", "starlette", "uvicorn", "httpx", "sqlite3", "agentos.db", "agentos.config"]
 broken_contract_guidance = "Pure modules take plain values as arguments. Load data in a service and pass it in."
 

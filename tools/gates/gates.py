@@ -5,10 +5,14 @@
 never raises it. `--init` writes the first baseline.
 
 The baseline (`quality-baseline.json` at the repo root) holds the limits, the layers (path globs,
-first match wins), the caps per layer and per feature, the named existing offenders and a
-`raises` list. With no baseline every cap is 0, nothing is named and the limits are the defaults.
-A number in the baseline that went up against the committed one (`git show HEAD:...`) needs a new
-`raises` entry naming it.
+first match wins: core, boundary, shell, worker), the defensive caps per file, the raw-tag caps per
+feature, the named existing offenders and a `raises` list. With no baseline every cap is 0, nothing
+is named and the limits are the defaults. A number in the baseline that went up against the
+committed one (`git show HEAD:...`) needs a new `raises` entry naming it.
+
+The core holds no `Any` (mypy with every `Any` an error, run on the core files only) and no domain
+class with optional fields that stand in for a missing state type. The baseline's
+`allowed.uncapped` names the kinds a layer may use freely (the boundary checks chaotic input).
 """
 
 from __future__ import annotations
@@ -54,32 +58,69 @@ DEFAULT_LIMITS: dict[str, Any] = {
     "cyclomatic_python_tool": "lizard",
     "file_lines": 1000,
     "fan_out": 5,
+    "optional_fields": 1,
+    "any": 0,
 }
 PY_CYCLOMATIC_TOOLS = ("lizard", "ruff")
 # fnmatch patterns ("*" also matches "/"), relative to the repo root. First match wins.
+# core: domain types and rules on parsed values. boundary: everything touching the outside (HTTP,
+# db rows, config, plugins). shell: the feature orchestration between them.
 DEFAULT_LAYERS = {
     "core": [
         f"{AGENTOS}/models.py",
-        f"{AGENTOS}/validate.py",
+        f"{AGENTOS}/errors.py",
         f"{AGENTOS}/pipeline/*",
         f"{AGENTOS}/*/board.py",
+        f"{AGENTOS}/*/rules.py",
     ],
-    "routes": [f"{AGENTOS}/*/routes.py"],
-    "services": [f"{AGENTOS}/*/service.py"],
-    "plugins": [f"{AGENTOS}/launchers/*", f"{AGENTOS}/sources/*", f"{AGENTOS}/stores/*"],
+    "boundary": [
+        f"{AGENTOS}/validate.py",  # pure, but it parses raw input
+        f"{AGENTOS}/*/routes.py",
+        f"{AGENTOS}/*/deps.py",
+        f"{AGENTOS}/launchers/*",
+        f"{AGENTOS}/sources/*",
+        f"{AGENTOS}/stores/*",
+        f"{AGENTOS}/db.py",
+        f"{AGENTOS}/config.py",
+        f"{AGENTOS}/clock.py",
+        f"{AGENTOS}/space_store.py",
+        f"{AGENTOS}/http_*.py",
+        f"{AGENTOS}/csrf.py",
+        f"{AGENTOS}/meta.py",
+        f"{AGENTOS}/spa.py",
+        f"{AGENTOS}/openapi_export.py",
+    ],
+    "shell": [
+        f"{AGENTOS}/*/service.py",
+        f"{AGENTOS}/*/loops.py",
+        f"{AGENTOS}/*/reaper.py",
+        f"{AGENTOS}/*/dispatcher.py",
+        f"{AGENTOS}/main.py",
+        f"{AGENTOS}/context.py",
+        f"{AGENTOS}/ratelimit.py",
+        f"{AGENTOS}/ttlcache.py",
+        f"{AGENTOS}/__init__.py",
+        f"{AGENTOS}/*/__init__.py",
+    ],
     "worker": ["backend/worker/worker.py"],
 }
-KINDS = (
-    "is_none",
-    "isinstance",
-    "optional",
-    "try",
-    "broad_except",
-    "getattr_default",
-    "hasattr",
-    "suppress",
-)
-EXCEPTION_GATES = ("cognitive", "cyclomatic", "file_lines", "fan_out")
+# `is None` and optional parameters are not counted: they are syntax, and capping them pushes code
+# towards `if not x`, getattr and Any. The types (the `any` and `optional_fields` gates) carry it.
+KINDS = ("isinstance", "try", "broad_except", "getattr_default", "hasattr", "suppress")
+# What `--init` leaves uncapped per layer (the baseline's `allowed.uncapped` is what applies): the
+# boundary is where chaotic input gets checked.
+DEFAULT_UNCAPPED = {"boundary": ["isinstance", "try"]}
+EXCEPTION_GATES = ("cognitive", "cyclomatic", "file_lines", "fan_out", "optional_fields", "any")
+HINTS = {
+    "isinstance": "parse it at the boundary; in the core, match on a union of your own types",
+    "try": "clean up with `with` (contextlib.closing / ExitStack); "
+    "a try belongs only inside a context manager",
+    "optional_fields": "fields that are null together: model the states as separate types",
+    "any": "parse it at the boundary into a typed value; the core never sees Any",
+}
+CONTEXT_METHODS = {"__enter__", "__exit__", "__aenter__", "__aexit__"}
+PYDANTIC_BASES = {"BaseModel", "RootModel"}
+MYPY_ERROR = re.compile(r"^(?P<path>.+?\.py):(?P<line>\d+): error: (?P<message>.*)$")
 PY_SUPPRESSION = re.compile(r"noqa|type:\s*ignore|pragma:\s*no cover")
 BROAD = {"Exception", "BaseException"}
 BUILTIN_TYPES = {
@@ -117,22 +158,125 @@ def _is_none(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
 
 
-def _is_optional(annotation: ast.expr) -> bool:
-    for sub in ast.walk(annotation):
-        match sub:
-            case ast.BinOp(op=ast.BitOr(), left=left, right=right) if _is_none(left) or _is_none(
-                right
-            ):
-                return True
-            case ast.Subscript(value=ast.Name(id="Optional") | ast.Attribute(attr="Optional")):
-                return True
-            case ast.Subscript(value=ast.Name(id="Union"), slice=ast.Tuple(elts=elts)) if any(
-                _is_none(e) for e in elts
-            ):
-                return True
+def _parse_annotation(text: str) -> ast.expr | None:
+    try:
+        return ast.parse(text, mode="eval").body
+    except SyntaxError:
+        return None
+
+
+def _is_optional(annotation: ast.expr, aliases: frozenset[str] = frozenset()) -> bool:
+    """Whether the annotation admits None anywhere: `X | None`, `Optional[X]`, `Union[.., None]`,
+    a same-module alias of one (`aliases`), or a string annotation holding one."""
+    match annotation:
+        case ast.Constant(value=str(text)):
+            parsed = _parse_annotation(text)
+            return parsed is not None and _is_optional(parsed, aliases)
+        case ast.Name(id=name):
+            return name in aliases
+        case ast.BinOp(op=ast.BitOr(), left=left, right=right) if _is_none(left) or _is_none(right):
+            return True
+        case ast.Subscript(value=ast.Name(id="Literal") | ast.Attribute(attr="Literal")):
+            return False
+        case ast.Subscript(value=ast.Name(id="Optional") | ast.Attribute(attr="Optional")):
+            return True
+        case ast.Subscript(
+            value=ast.Name(id="Union") | ast.Attribute(attr="Union"), slice=ast.Tuple(elts=elts)
+        ) if any(_is_none(e) for e in elts):
+            return True
+        case _:
+            children = ast.iter_child_nodes(annotation)
+            return any(_is_optional(c, aliases) for c in children if isinstance(c, ast.expr))
+
+
+def _alias(stmt: ast.stmt) -> tuple[str, ast.expr] | None:
+    """A module-level `Name = <type>`, `Name: TypeAlias = <type>` or `type Name = <type>`."""
+    match stmt:
+        case ast.Assign(targets=[ast.Name(id=name)], value=value) if isinstance(
+            value, ast.BinOp | ast.Subscript | ast.Name | ast.Constant
+        ):
+            return name, value
+        case ast.AnnAssign(
+            target=ast.Name(id=name),
+            annotation=ast.Name(id="TypeAlias") | ast.Attribute(attr="TypeAlias"),
+            value=ast.expr() as value,
+        ):
+            return name, value
+        case ast.TypeAlias(name=ast.Name(id=name), value=value):
+            return name, value
+        case _:
+            return None
+
+
+def _optional_aliases(tree: ast.Module) -> frozenset[str]:
+    """The module's own aliases of an optional type (`MaybeRun = RunFact | None`), chains too."""
+    candidates = [pair for stmt in tree.body if (pair := _alias(stmt))]
+    found: frozenset[str] = frozenset()
+    while new := {n for n, v in candidates if n not in found and _is_optional(v, found)}:
+        found |= new
+    return found
+
+
+@dataclass
+class Names:
+    """What one module calls the things the visitor looks for."""
+
+    contextlib: set[str] = field(default_factory=lambda: {"contextlib"})
+    suppress: set[str] = field(default_factory=lambda: {"suppress"})
+    context_managers: set[str] = field(
+        default_factory=lambda: {"contextmanager", "asynccontextmanager"}
+    )
+    optional_aliases: frozenset[str] = frozenset()
+    pydantic_models: frozenset[str] = frozenset()
+
+
+def _pydantic_models(tree: ast.Module) -> frozenset[str]:
+    """The module's classes that subclass a pydantic model, directly or through each other."""
+    classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    found: frozenset[str] = frozenset()
+
+    def is_model(base: ast.expr) -> bool:
+        match base:
+            case ast.Name(id=name):
+                return name in PYDANTIC_BASES or name in found
+            case ast.Attribute(attr=name):
+                return name in PYDANTIC_BASES
+            case _:
+                return False
+
+    while new := {c.name for c in classes if c.name not in found and any(map(is_model, c.bases))}:
+        found |= new
+    return found
+
+
+def _names(tree: ast.Module) -> Names:
+    names = Names(optional_aliases=_optional_aliases(tree), pydantic_models=_pydantic_models(tree))
+    for node in ast.walk(tree):
+        match node:
+            case ast.Import(names=aliases):
+                names.contextlib |= {
+                    a.asname for a in aliases if a.name == "contextlib" and a.asname
+                }
+            case ast.ImportFrom(module="contextlib", names=aliases):
+                for a in aliases:
+                    local = a.asname or a.name
+                    if a.name == "suppress":
+                        names.suppress.add(local)
+                    elif a.name in ("contextmanager", "asynccontextmanager"):
+                        names.context_managers.add(local)
             case _:
                 pass
-    return False
+    return names
+
+
+def _reraises(handler: ast.ExceptHandler) -> bool:
+    match handler.body[-1]:
+        case ast.Raise(exc=None):
+            return True
+        case ast.Raise(exc=ast.Name(id=name)):
+            return name == handler.name
+        case _:
+            return False
 
 
 def _is_broad(handler: ast.ExceptHandler) -> bool:
@@ -147,7 +291,7 @@ def _is_broad(handler: ast.ExceptHandler) -> bool:
             return False
 
 
-def _call_kind(node: ast.Call) -> str | None:
+def _call_kind(node: ast.Call, names: Names) -> str | None:
     match node.func:
         case ast.Name(id="isinstance" | "issubclass"):
             return "isinstance"
@@ -155,30 +299,58 @@ def _call_kind(node: ast.Call) -> str | None:
             return "getattr_default"
         case ast.Name(id="hasattr"):
             return "hasattr"
-        case ast.Name(id="suppress") | ast.Attribute(attr="suppress", value=ast.Name("contextlib")):
+        case ast.Name(id=name) if name in names.suppress:
+            return "suppress"
+        case ast.Attribute(attr="suppress", value=ast.Name(id=module)) if (
+            module in names.contextlib
+        ):
             return "suppress"
         case _:
             return None
 
 
-class Defensive(ast.NodeVisitor):
-    """Collects the line of each defensive pattern, by kind, plus each function's qualname."""
+def _is_type_call(node: ast.expr) -> bool:
+    match node:
+        case ast.Call(func=ast.Name(id="type"), args=[_]):
+            return True
+        case _:
+            return False
 
-    def __init__(self) -> None:
+
+def _is_field_optional(stmt: ast.stmt, aliases: frozenset[str]) -> bool:
+    match stmt:
+        case ast.AnnAssign(annotation=ast.Subscript(value=ast.Name(id="ClassVar"))):
+            return False
+        case ast.AnnAssign(target=ast.Name(), annotation=annotation):
+            return _is_optional(annotation, aliases)
+        case _:
+            return False
+
+
+class Defensive(ast.NodeVisitor):
+    """Collects the line of each defensive pattern, by kind, each function's qualname, and each
+    class with optional fields."""
+
+    def __init__(self, names: Names | None = None) -> None:
+        self.names = names or Names()
         self.hits: dict[str, list[int]] = {kind: [] for kind in KINDS}
         self.qualnames: dict[int, str] = {}  # def line (and decorator lines) -> qualname
         self.scope: list[str] = []
+        self.in_context_manager = [False]  # per enclosing function (or class body)
+        self.cleanup_try: list[int] = []  # try blocks in context managers, not counted
+        self.optional_fields: list[tuple[int, str, int]] = []  # (line, class qualname, fields)
 
     def visit_Compare(self, node: ast.Compare) -> None:
         ops = (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)
-        if any(isinstance(op, ops) for op in node.ops) and any(
-            _is_none(x) for x in [node.left, *node.comparators]
+        operands = [node.left, *node.comparators]
+        if any(isinstance(op, (*ops, ast.In, ast.NotIn)) for op in node.ops) and any(
+            _is_type_call(x) for x in operands
         ):
-            self.hits["is_none"].append(node.lineno)
+            self.hits["isinstance"].append(node.lineno)  # `type(x) is int`
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        kind = _call_kind(node)
+        kind = _call_kind(node, self.names)
         if kind:
             self.hits[kind].append(node.lineno)
         self.generic_visit(node)
@@ -189,13 +361,21 @@ class Defensive(ast.NodeVisitor):
             self.hits["isinstance"].append(node.lineno)
         self.generic_visit(node)
 
-    def visit_Try(self, node: ast.Try) -> None:
-        self.hits["try"].append(node.lineno)
-        self.generic_visit(node)
+    def _try(self, node: ast.Try | ast.TryStar) -> None:
+        """A try that only cleans up (finally, or excepts that re-raise) directly inside a context
+        manager is how cleanup is written; its broad excepts don't swallow anything."""
+        if not (self.in_context_manager[-1] and all(map(_reraises, node.handlers))):
+            self.hits["try"].append(node.lineno)
+            self.generic_visit(node)
+            return
+        self.cleanup_try.append(node.lineno)
+        for handler in node.handlers:
+            self.generic_visit(handler)
+        for stmt in [*node.body, *node.orelse, *node.finalbody]:
+            self.visit(stmt)
 
-    def visit_TryStar(self, node: ast.TryStar) -> None:
-        self.hits["try"].append(node.lineno)
-        self.generic_visit(node)
+    visit_Try = _try
+    visit_TryStar = _try
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if _is_broad(node):
@@ -203,22 +383,38 @@ class Defensive(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Pydantic models are wire shapes (they flatten state on purpose): only domain classes
+        count their optional fields."""
+        aliases = self.names.optional_aliases
+        fields = sum(_is_field_optional(stmt, aliases) for stmt in node.body)
         self.scope.append(node.name)
+        if fields and node.name not in self.names.pydantic_models:
+            self.optional_fields.append((node.lineno, ".".join(self.scope), fields))
+        self.in_context_manager.append(False)
         self.generic_visit(node)
+        self.in_context_manager.pop()
         self.scope.pop()
+
+    def _is_context_manager(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        def marks(decorator: ast.expr) -> bool:
+            match decorator:
+                case ast.Name(id=name):
+                    return name in self.names.context_managers
+                case ast.Attribute(attr="contextmanager" | "asynccontextmanager", value=module):
+                    return isinstance(module, ast.Name) and module.id in self.names.contextlib
+                case _:
+                    return False
+
+        return node.name in CONTEXT_METHODS or any(map(marks, node.decorator_list))
 
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         name = ".".join([*self.scope, node.name])
         for line in [node.lineno, *(d.lineno for d in node.decorator_list)]:
             self.qualnames.setdefault(line, name)
-        args = node.args
-        params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
-        annotations = [p.annotation for p in params if p and p.annotation]
-        for annotation in [*annotations, *([node.returns] if node.returns else [])]:
-            if _is_optional(annotation):
-                self.hits["optional"].append(annotation.lineno)
         self.scope.append(node.name)
+        self.in_context_manager.append(self._is_context_manager(node))
         self.generic_visit(node)
+        self.in_context_manager.pop()
         self.scope.pop()
 
     visit_FunctionDef = _function
@@ -248,7 +444,7 @@ def _docstrings(tree: ast.Module) -> set[tuple[int, int]]:
 
 def analyse_python(path: str, source: str) -> PyFile:
     tree = ast.parse(source, filename=path)
-    walker = Defensive()
+    walker = Defensive(_names(tree))
     walker.visit(tree)
     docstrings = _docstrings(tree)
     code: set[int] = set()
@@ -348,6 +544,31 @@ def cyclomatic_ruff(files: list[PyFile], limit: int) -> list[Finding]:
     return found
 
 
+def start_any(paths: list[str]) -> subprocess.Popen[str]:
+    """mypy on the core files with every `Any` an error, beside the normal `just check` mypy (its
+    own cache, so neither invalidates the other's). Imported modules' errors are not reported."""
+    command = [sys.executable, "-m", "mypy", "--disallow-any-explicit", "--disallow-any-expr"]
+    command += ["--follow-imports=silent", "--cache-dir=.mypy_cache/gates-any"]
+    command += ["--no-error-summary", "--no-color-output"]
+    command += [p.removeprefix("backend/") for p in paths]
+    return subprocess.Popen(
+        command, cwd=ROOT / "backend", stdout=subprocess.PIPE, text=True, encoding="utf-8"
+    )
+
+
+def finish_any(run: subprocess.Popen[str]) -> dict[str, list[tuple[int, str]]]:
+    """Per core file, its `Any` errors as (line, message)."""
+    out, _ = run.communicate()
+    if run.returncode not in (0, 1):
+        raise RuntimeError(f"mypy exited with {run.returncode}")
+    errors: dict[str, list[tuple[int, str]]] = {}
+    for line in out.splitlines():
+        if hit := MYPY_ERROR.match(line):
+            path = "backend/" + hit["path"].replace("\\", "/")
+            errors.setdefault(path, []).append((int(hit["line"]), hit["message"]))
+    return errors
+
+
 def fan_out() -> dict[str, set[str]]:
     """Per direct child of agentos (subpackage or module), the other subpackages it imports."""
     sys.path.insert(0, str(ROOT / "backend" / "server"))
@@ -439,8 +660,14 @@ class Measures:
     cyclomatic: list[Finding] = field(default_factory=list[Finding])
     file_lines: list[Finding] = field(default_factory=list[Finding])
     fan_out: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
-    # layer -> kind -> ["path:line"]
-    defensive: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    layer: dict[str, str] = field(default_factory=dict[str, str])  # Python path -> layer
+    # path -> kind -> lines
+    defensive: dict[str, dict[str, list[int]]] = field(default_factory=dict)
+    cleanup_try: list[str] = field(default_factory=list[str])  # "path:line", not counted
+    optional_fields: list[Finding] = field(default_factory=list[Finding])  # core classes
+    any: list[Finding] = field(default_factory=list[Finding])  # core files
+    # core path -> (line, message) per `Any` error
+    any_errors: dict[str, list[tuple[int, str]]] = field(default_factory=dict)
     suppressions: list[str] = field(default_factory=list[str])  # "path:line  marker"
     raw_tags: dict[str, int] = field(default_factory=dict[str, int])  # feature -> count
 
@@ -448,35 +675,52 @@ class Measures:
         """The current score per named id for an exception gate (the worst on a name clash)."""
         if gate == "fan_out":
             return {k: len(v) for k, v in self.fan_out.items() if k not in FAN_OUT_EXEMPT}
-        found = {"cognitive": self.cognitive, "cyclomatic": self.cyclomatic}.get(gate)
         out: dict[str, int] = {}
-        for f in self.file_lines if found is None else found:
+        for f in self.findings(gate):
             out[f.id] = max(out.get(f.id, 0), f.score)
         return out
 
-    def counts(self) -> dict[str, dict[str, int]]:
-        return {
-            layer: {kind: len(places) for kind, places in kinds.items()}
-            for layer, kinds in self.defensive.items()
+    def findings(self, gate: str) -> list[Finding]:
+        found: dict[str, list[Finding]] = {
+            "cognitive": self.cognitive,
+            "cyclomatic": self.cyclomatic,
+            "file_lines": self.file_lines,
+            "optional_fields": self.optional_fields,
+            "any": self.any,
         }
+        return found[gate]
+
+    def counts(self, uncapped_kinds: dict[str, list[str]]) -> dict[str, dict[str, int]]:
+        """Per file, its counts of the kinds its layer caps."""
+        out: dict[str, dict[str, int]] = {}
+        for path, kinds in self.defensive.items():
+            uncapped = uncapped_kinds.get(self.layer[path], [])
+            row = {k: len(lines) for k, lines in kinds.items() if lines and k not in uncapped}
+            if row:
+                out[path] = row
+        return out
 
 
 def measure(layers: dict[str, list[str]], limits: dict[str, Any]) -> Measures:
     ts = start_ts(limits)
-    py = [analyse_python(p, (ROOT / p).read_text(encoding="utf-8")) for p in python_files()]
-    m = Measures(files=len(py) + len(ts.files))
+    paths = python_files()
+    m = Measures(layer={p: layer_of(p, layers) for p in paths})
+    mypy = start_any([p for p in paths if m.layer[p] == "core"])
+    py = [analyse_python(p, (ROOT / p).read_text(encoding="utf-8")) for p in paths]
+    m.files = len(py) + len(ts.files)
     m.cognitive = cognitive_python(py)
     m.cyclomatic = cyclomatic_python(py, limits)
     m.fan_out = fan_out()
-    for layer in [*layers, "other"]:
-        m.defensive[layer] = {kind: [] for kind in KINDS}
     for f in py:
         m.file_lines.append(Finding(f.path, 1, "file", f.code_lines))
         m.suppressions += [f"{f.path}:{line}  {marker}" for line, marker in f.suppressions]
-        hits = m.defensive[layer_of(f.path, layers)]
-        for kind, lines in f.defensive.hits.items():
-            hits[kind] += [f"{f.path}:{line}" for line in sorted(lines)]
+        m.defensive[f.path] = f.defensive.hits
+        m.cleanup_try += [f"{f.path}:{line}" for line in f.defensive.cleanup_try]
+        if m.layer[f.path] == "core":
+            m.optional_fields += [Finding(f.path, *c) for c in f.defensive.optional_fields]
 
+    m.any_errors = finish_any(mypy)
+    m.any = [Finding(p, errors[0][0], "Any", len(errors)) for p, errors in m.any_errors.items()]
     ts_measures, cognitive, cyclomatic = finish_ts(ts)
     m.cognitive += cognitive
     m.cyclomatic += cyclomatic
@@ -501,6 +745,7 @@ def normalise(raw: dict[str, Any]) -> dict[str, Any]:
         "layers": raw.get("layers", DEFAULT_LAYERS),
         "limits": DEFAULT_LIMITS | raw.get("limits", {}),
         "allowed": {
+            "uncapped": allowed.get("uncapped", {}),
             "defensive": allowed.get("defensive", {}),
             "suppressions": allowed.get("suppressions", 0),
             "raw_tags": allowed.get("raw_tags", {}),
@@ -513,8 +758,10 @@ def normalise(raw: dict[str, Any]) -> dict[str, Any]:
 def flatten(baseline: dict[str, Any]) -> dict[str, int]:
     flat = {f"limits.{k}": v for k, v in baseline["limits"].items() if isinstance(v, int)}
     allowed = baseline["allowed"]
-    for layer, kinds in allowed["defensive"].items():
-        flat |= {f"allowed.defensive.{layer}.{kind}": n for kind, n in kinds.items()}
+    for layer, uncapped in allowed["uncapped"].items():  # a kind uncapped counts as 1: a raise
+        flat |= {f"allowed.uncapped.{layer}.{kind}": 1 for kind in uncapped}
+    for path, kinds in allowed["defensive"].items():
+        flat |= {f"allowed.defensive.{path}.{kind}": n for kind, n in kinds.items()}
     flat["allowed.suppressions"] = allowed["suppressions"]
     flat |= {f"allowed.raw_tags.{f}": n for f, n in allowed["raw_tags"].items()}
     for gate, named in baseline["exceptions"].items():
@@ -549,17 +796,28 @@ def git_show(path: str) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
-def ratchet(baseline: dict[str, Any], m: Measures) -> list[str]:
-    """Lower every cap and named score the code now beats. Never raises one."""
+def _ratchet_defensive(allowed: dict[str, Any], m: Measures) -> list[str]:
+    """Lower each file's caps to its counts; a cap that reaches 0 (and then its file) goes."""
     changes: list[str] = []
-    allowed = baseline["allowed"]
-    counts = m.counts()
-    for layer, kinds in allowed["defensive"].items():
-        for kind, cap in kinds.items():
-            now = counts.get(layer, {}).get(kind, 0)
+    caps: dict[str, dict[str, int]] = allowed["defensive"]
+    counts = m.counts(allowed["uncapped"])
+    for path, kinds in list(caps.items()):
+        for kind, cap in list(kinds.items()):
+            now = counts.get(path, {}).get(kind, 0)
             if now < cap:
                 kinds[kind] = now
-                changes.append(f"allowed.defensive.{layer}.{kind}: {cap} -> {now}")
+                changes.append(f"allowed.defensive.{path}.{kind}: {cap} -> {now}")
+            if not kinds[kind]:
+                del kinds[kind]
+        if not kinds:
+            del caps[path]
+    return changes
+
+
+def ratchet(baseline: dict[str, Any], m: Measures) -> list[str]:
+    """Lower every cap and named score the code now beats. Never raises one."""
+    allowed = baseline["allowed"]
+    changes = _ratchet_defensive(allowed, m)
     if len(m.suppressions) < allowed["suppressions"]:
         changes.append(f"allowed.suppressions: {allowed['suppressions']} -> {len(m.suppressions)}")
         allowed["suppressions"] = len(m.suppressions)
@@ -585,11 +843,12 @@ def ratchet(baseline: dict[str, Any], m: Measures) -> list[str]:
 def initial_baseline(m: Measures) -> dict[str, Any]:
     limits = dict(DEFAULT_LIMITS)
     return {
-        "version": 1,
+        "version": 2,
         "layers": DEFAULT_LAYERS,
         "limits": limits,
         "allowed": {
-            "defensive": m.counts(),
+            "uncapped": DEFAULT_UNCAPPED,
+            "defensive": dict(sorted(m.counts(DEFAULT_UNCAPPED).items())),
             "suppressions": len(m.suppressions),
             "raw_tags": dict(sorted(m.raw_tags.items())),
         },
@@ -614,9 +873,11 @@ class Result:
     ok: bool
     summary: str
     details: list[str] = field(default_factory=list[str])
+    hint: str = ""  # how to fix a failure
 
 
-def _named_gate(name: str, found: list[Finding], baseline: dict[str, Any], what: str) -> Result:
+def _over(name: str, found: list[Finding], baseline: dict[str, Any]) -> list[Finding]:
+    """The worst finding per id that is over its named score or the limit, worst first."""
     limit: int = baseline["limits"][name]
     named: dict[str, int] = baseline["exceptions"][name]
     worst: dict[str, Finding] = {}
@@ -624,30 +885,54 @@ def _named_gate(name: str, found: list[Finding], baseline: dict[str, Any], what:
         if f.id not in worst or f.score > worst[f.id].score:
             worst[f.id] = f
     over = [f for f in worst.values() if f.score > named.get(f.id, limit)]
-    over.sort(key=lambda f: (-f.score, f.path, f.line))
+    return sorted(over, key=lambda f: (-f.score, f.path, f.line))
+
+
+def _named_gate(name: str, found: list[Finding], baseline: dict[str, Any], what: str) -> Result:
+    limit: int = baseline["limits"][name]
+    named: dict[str, int] = baseline["exceptions"][name]
+    over = _over(name, found, baseline)
     details = [f"{f.path}:{f.line}  {f.name}  {f.score} > {named.get(f.id, limit)}" for f in over]
     top = max((f.score for f in found), default=0)
     summary = f"{len(over)} {what} over the limit {limit} ({len(named)} named), worst {top}"
-    return Result(name, not over, summary, details)
+    return Result(name, not over, summary, details, HINTS.get(name, ""))
+
+
+def gate_any(m: Measures, baseline: dict[str, Any]) -> Result:
+    """mypy's `Any` errors per core file, each offending file's errors listed."""
+    result = _named_gate("any", m.any, baseline, "core files with Any errors")
+    for f in _over("any", m.any, baseline):
+        result.details += [f"    {f.path}:{line}  {msg}" for line, msg in m.any_errors[f.path]]
+    return result
 
 
 def gate_defensive(m: Measures, baseline: dict[str, Any]) -> Result:
+    """Each file's capped kinds against its own caps; a per-layer table as the summary."""
     caps: dict[str, dict[str, int]] = baseline["allowed"]["defensive"]
-    header = "".join(f"{kind[:10]:>11}" for kind in KINDS)
-    details: list[str] = [f"{'layer':<9}{header}"]
+    uncapped_kinds: dict[str, list[str]] = baseline["allowed"]["uncapped"]
+    table = {layer: {kind: [0, 0] for kind in KINDS} for layer in [*baseline["layers"], "other"]}
     places: list[str] = []
-    failed = 0
-    for layer, kinds in m.defensive.items():
-        cells = ""
-        for kind, hits in kinds.items():
-            cap = caps.get(layer, {}).get(kind, 0)
-            cells += f"{len(hits)}/{cap}".rjust(11)
-            if len(hits) > cap:
-                failed += 1
-                places += [f"{layer} {kind}: {len(hits)} > {cap}"]
-                places += [f"    {place}  {kind}" for place in hits]
-        details.append(f"{layer:<9}{cells}")
-    summary = f"{failed} layer/kind counts over their cap (count/cap per layer below)"
+    for path, kinds in sorted(m.defensive.items()):
+        layer = m.layer[path]
+        for kind, lines in kinds.items():
+            cap = caps.get(path, {}).get(kind, 0)
+            table[layer][kind][0] += len(lines)
+            table[layer][kind][1] += cap
+            if len(lines) > cap and kind not in uncapped_kinds.get(layer, []):
+                fix = f"  fix: {HINTS[kind]}" if kind in HINTS else ""
+                places += [f"{path}  {kind}  {len(lines)} > {cap}{fix}"]
+                places += [f"    {path}:{line}" for line in lines]
+    header = "".join(f"{kind[:10]:>11}" for kind in KINDS)
+    details = [f"{'layer':<9}{header}"]
+    for layer, kinds in table.items():
+        uncapped = uncapped_kinds.get(layer, [])
+        cells = (f"{n}/{'-' if kind in uncapped else cap}" for kind, (n, cap) in kinds.items())
+        details.append(f"{layer:<9}" + "".join(cell.rjust(11) for cell in cells))
+    failed = sum(not line.startswith(" ") for line in places)
+    summary = (
+        f"{failed} file/kind counts over their cap (per layer below: count/cap, - is uncapped); "
+        f"{len(m.cleanup_try)} try blocks cleaning up in context managers not counted"
+    )
     return Result("defensive", not failed, summary, details + places)
 
 
@@ -702,6 +987,8 @@ def run_gates(baseline: dict[str, Any], m: Measures) -> list[Result]:
         _named_gate("cognitive", m.cognitive, baseline, "functions"),
         _named_gate("cyclomatic", m.cyclomatic, baseline, "functions"),
         gate_defensive(m, baseline),
+        _named_gate("optional_fields", m.optional_fields, baseline, "core domain classes"),
+        gate_any(m, baseline),
         gate_fan_out(m, baseline),
         gate_suppressions(m, baseline),
         _named_gate("file_lines", m.file_lines, baseline, "files"),
@@ -713,8 +1000,10 @@ def run_gates(baseline: dict[str, Any], m: Measures) -> list[Result]:
 def report(results: list[Result], m: Measures, seconds: float, can_ratchet: bool) -> Iterator[str]:
     yield f"gates: {m.files} files in {seconds:.1f} s"
     for r in results:
-        yield f"  {'ok  ' if r.ok else 'FAIL'} {r.name:<13} {r.summary}"
+        yield f"  {'ok  ' if r.ok else 'FAIL'} {r.name:<15} {r.summary}"
         yield from (f"         {line}" for line in r.details)
+        if not r.ok and r.hint:
+            yield f"         fix: {r.hint}"
     if can_ratchet:
         yield "ratchet available: run `just ratchet`"
     failed = [r.name for r in results if not r.ok]
