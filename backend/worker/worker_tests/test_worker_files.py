@@ -127,7 +127,7 @@ def test_unreadable_declared_files_are_warnings(tmp_path: Path) -> None:
     m = manifest()
     state = materialise(tmp_path, m)
     skill = tmp_path / SKILL_DIR
-    (skill / "TASKS.md").write_bytes(b"x" * (m.limits["max_file_bytes"] + 1))
+    (skill / "TASKS.md").write_bytes(b"x" * (m.limits.max_file_bytes + 1))
     (skill / "SKILL.md").write_bytes(b"\xff\xfe\x00")
     (tmp_path / "CLAUDE.md").write_bytes(b"markers removed by the agent\n")
     batch = state.collect(tmp_path)

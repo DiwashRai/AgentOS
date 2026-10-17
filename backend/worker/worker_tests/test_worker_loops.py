@@ -622,7 +622,11 @@ def test_a_mailbox_run_records_rounds_and_verdicts(tmp_path: Path) -> None:
     ],
 )
 def test_verdict_error(value: object, error: str | None) -> None:
-    assert worker.verdict_error(value) == error
+    match worker.checked_verdict(value):
+        case worker.Unfit(why=why):
+            assert why == error
+        case worker.Verdict():
+            assert error is None
 
 
 def test_file_verdict(tmp_path: Path) -> None:

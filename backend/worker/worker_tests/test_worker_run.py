@@ -350,7 +350,11 @@ def test_run_gone_after_binding_means_no_commit_and_no_push(
 
 @pytest.mark.parametrize("mode", ["live", "file"])
 def test_nothing_is_published_after_the_jobs_not_after(
-    server: FakeServer, origin: Origin, tmp_path: Path, mode: str
+    server: FakeServer,
+    origin: Origin,
+    tmp_path: Path,
+    mode: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     package = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     package["job"]["not_after"] = "2000-01-01T00:00:00Z"
@@ -366,6 +370,8 @@ def test_nothing_is_published_after_the_jobs_not_after(
         args = ["--manifest", str(manifest), "--outbox", str(outbox), "--workdir", str(workdir)]
         assert worker.main(args) == 1
     assert not origin.has_branch(BRANCH)
+    # Said as the parsed time, not the wire's text.
+    assert "the job's not_after (2000-01-01T00:00:00+00:00) has passed" in capsys.readouterr().err
 
 
 def test_over_budget_kills_the_stage_still_publishes_then_fails(

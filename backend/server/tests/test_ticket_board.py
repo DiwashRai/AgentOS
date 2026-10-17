@@ -12,6 +12,7 @@ from typing import get_args
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from agentos.context import AppContext
 from agentos.db import Conn
@@ -181,6 +182,63 @@ def test_attention_since_follows_the_latest_run(
     add_run(t.key, "running", [("implement", "running")], start=start + timedelta(hours=1))
     s = board(authed)[t.key]
     assert (s.attention, s.attention_since) == ("running", start + timedelta(hours=1))
+
+
+def test_a_run_row_missing_what_its_status_implies(
+    authed: TestClient, create_ticket: CreateTicket, add_run: AddRun, ctx: AppContext
+) -> None:
+    """Never expected, but read the same way: a missing start or end falls back to the run's
+    created_at, and a run without stage_runs counts its planned stages as pending."""
+    start = datetime(2026, 10, 10, 9, 0, tzinfo=UTC)
+    running, failed, bare = create_ticket("running"), create_ticket("failed"), create_ticket("bare")
+    plan_then_implement = [("plan", "succeeded"), ("implement", "running")]
+    no_start = add_run(running.key, "running", plan_then_implement, start=start)
+    no_end = add_run(failed.key, "failed", [("plan", "failed")], start=start)
+    add_run(bare.key, "gated", [("plan", "succeeded")])
+    rest = [("implement", "cancelled"), ("review", "cancelled"), ("open-pr", "cancelled")]
+    no_stage_runs = add_run(bare.key, "failed", rest)
+    with ctx.db.tx() as conn:
+        conn.execute("UPDATE runs SET started_at = NULL WHERE id = ?", (no_start,))
+        conn.execute("UPDATE runs SET finished_at = NULL WHERE id = ?", (no_end,))
+        conn.execute("DELETE FROM stage_runs WHERE run_id = ?", (no_stage_runs,))
+
+    tickets = board(authed)
+    created = start - timedelta(minutes=1)
+    assert tickets[running.key].attention_since == created
+    assert tickets[failed.key].attention_since == created
+    assert rail(tickets[bare.key]) == "done failed skipped pending pending"
+
+
+def test_a_dispatched_run_shows_no_leftover_queue_reason(
+    authed: TestClient, create_ticket: CreateTicket, add_run: AddRun, ctx: AppContext
+) -> None:
+    """Both writers to `dispatched` clear `queue_reason`; a row that kept one still reads as a
+    run handed to its runner."""
+    t = create_ticket()
+    run_id = add_run(t.key, "dispatched", [("plan", "pending")])
+    with ctx.db.tx() as conn:
+        conn.execute("UPDATE runs SET queue_reason = 'held' WHERE id = ?", (run_id,))
+    assert board(authed)[t.key].now.text == "queued for a runner"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        pytest.param("UPDATE runs SET status = 'bogus'", id="unknown-status"),
+        pytest.param("UPDATE runs SET stage_ids = '[\"plan\", 42]'", id="stage-id-not-text"),
+        pytest.param("UPDATE runs SET stage_ids = '[]'", id="no-planned-stage"),
+        pytest.param("UPDATE stage_runs SET idx = 'zero'", id="stage-run-idx-not-a-number"),
+    ],
+)
+def test_a_corrupt_run_row_raises(
+    authed: TestClient, create_ticket: CreateTicket, add_run: AddRun, ctx: AppContext, damage: str
+) -> None:
+    t = create_ticket()
+    add_run(t.key, "failed", [("plan", "failed")])
+    with ctx.db.tx() as conn:
+        conn.execute(damage)
+    with pytest.raises(ValidationError):
+        board(authed)
 
 
 def test_detail_plan_is_the_current_tasks_md(
