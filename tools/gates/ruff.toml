@@ -8,6 +8,6 @@ extend = "../../backend/pyproject.toml"
 
 [lint.isort]
 known-first-party = [
-    "baseline", "common", "defensive", "gates", "measures", "mypy_any", "python_measures",
-    "python_names", "ts_measures",
+    "baseline", "common", "defaults", "gates", "measures", "mypy_any", "pyfile",
+    "python_measures", "python_names", "results", "schema", "ts_measures",
 ]

@@ -1,6 +1,6 @@
-"""What one Python module calls the things the defensive visitor looks for: its contextlib
-aliases, its own aliases of optional types, its pydantic models. And whether an annotation is
-optional."""
+"""What one Python module calls the things the visitor looks for (contextlib and typing members,
+resolved through its imports; its own aliases of optional types; its pydantic models), and whether
+a class field is optional."""
 
 from __future__ import annotations
 
@@ -8,10 +8,43 @@ import ast
 from dataclasses import dataclass, field
 
 PYDANTIC_BASES = {"BaseModel", "RootModel"}
+TYPING_MODULES = {"typing", "typing_extensions"}
+# typing members recognised by their bare name too (lenient: counting more is the safe side)
+TYPING_BARE = {"Optional", "Union", "Annotated", "Final", "ClassVar", "cast", "no_type_check"}
+CONTEXT_MANAGERS = {"contextmanager", "asynccontextmanager"}
 
 
-def _is_none(node: ast.expr) -> bool:
-    return isinstance(node, ast.Constant) and node.value is None
+@dataclass
+class Names:
+    """What one module calls the things the visitor looks for."""
+
+    contextlib: set[str] = field(default_factory=set[str])  # local names of the module
+    context_managers: set[str] = field(default_factory=set[str])  # imported from contextlib
+    suppress: set[str] = field(default_factory=lambda: {"suppress"})
+    typing: set[str] = field(default_factory=lambda: set(TYPING_MODULES))  # module names
+    typing_members: dict[str, str] = field(default_factory=dict[str, str])  # local -> member
+    optional_aliases: set[str] = field(default_factory=set[str])
+    pydantic_models: frozenset[str] = frozenset()
+
+    def typing_member(self, node: ast.expr) -> str | None:
+        """The typing member a name or attribute stands for (`Opt` -> Optional, `t.Final`)."""
+        match node:
+            case ast.Name(id=name):
+                return self.typing_members.get(name, name if name in TYPING_BARE else None)
+            case ast.Attribute(attr=attr, value=ast.Name(id=module)) if module in self.typing:
+                return attr
+            case _:
+                return None
+
+    def is_context_manager(self, decorator: ast.expr) -> bool:
+        """The real contextlib.(async)contextmanager, as this module imported it."""
+        match decorator:
+            case ast.Name(id=name):
+                return name in self.context_managers
+            case ast.Attribute(attr=attr, value=ast.Name(id=module)):
+                return attr in CONTEXT_MANAGERS and module in self.contextlib
+            case _:
+                return False
 
 
 def _parse_annotation(text: str) -> ast.expr | None:
@@ -21,36 +54,60 @@ def _parse_annotation(text: str) -> ast.expr | None:
         return None
 
 
-def _is_optional(annotation: ast.expr, aliases: frozenset[str] = frozenset()) -> bool:
-    """Whether the annotation admits None anywhere: `X | None`, `Optional[X]`, `Union[.., None]`,
-    a same-module alias of one (`aliases`), or a string annotation holding one."""
-    match annotation:
+def is_optional_type(node: ast.expr, names: Names) -> bool:
+    """Whether a value of this type may be None itself: `X | None`, `Optional[X]`, `Union[..,
+    None]`, a same-module alias of one, a string holding one, through `Annotated`/`Final`. What it
+    contains doesn't count: `list[int | None]` is never None."""
+    match node:
+        case ast.Constant(value=None):
+            return True
         case ast.Constant(value=str(text)):
             parsed = _parse_annotation(text)
-            return parsed is not None and _is_optional(parsed, aliases)
+            return parsed is not None and is_optional_type(parsed, names)
         case ast.Name(id=name):
-            return name in aliases
-        case ast.BinOp(op=ast.BitOr(), left=left, right=right) if _is_none(left) or _is_none(right):
-            return True
-        case ast.Subscript(value=ast.Name(id="Literal") | ast.Attribute(attr="Literal")):
-            return False
-        case ast.Subscript(value=ast.Name(id="Optional") | ast.Attribute(attr="Optional")):
-            return True
-        case ast.Subscript(
-            value=ast.Name(id="Union") | ast.Attribute(attr="Union"), slice=ast.Tuple(elts=elts)
-        ) if any(_is_none(e) for e in elts):
-            return True
+            return name in names.optional_aliases
+        case ast.BinOp(op=ast.BitOr(), left=left, right=right):
+            return is_optional_type(left, names) or is_optional_type(right, names)
+        case ast.Subscript(value=form, slice=inner):
+            args = inner.elts if isinstance(inner, ast.Tuple) else [inner]
+            match names.typing_member(form):
+                case "Optional":
+                    return True
+                case "Union":
+                    return any(is_optional_type(arg, names) for arg in args)
+                case "Annotated" | "Final":
+                    return is_optional_type(args[0], names)
+                case _:
+                    return False
         case _:
-            children = ast.iter_child_nodes(annotation)
-            return any(_is_optional(c, aliases) for c in children if isinstance(c, ast.expr))
+            return False
+
+
+def _is_classvar(node: ast.expr, names: Names) -> bool:
+    match node:
+        case ast.Constant(value=str(text)):
+            parsed = _parse_annotation(text)
+            return parsed is not None and _is_classvar(parsed, names)
+        case ast.Subscript(value=form):
+            return names.typing_member(form) == "ClassVar"
+        case _:
+            return names.typing_member(node) == "ClassVar"
+
+
+def is_optional_field(stmt: ast.stmt, names: Names) -> bool:
+    match stmt:
+        case ast.AnnAssign(target=ast.Name(), annotation=annotation):
+            return not _is_classvar(annotation, names) and is_optional_type(annotation, names)
+        case _:
+            return False
 
 
 def _alias(stmt: ast.stmt) -> tuple[str, ast.expr] | None:
     """A module-level `Name = <type>`, `Name: TypeAlias = <type>` or `type Name = <type>`."""
     match stmt:
         case ast.Assign(targets=[ast.Name(id=name)], value=value) if isinstance(
-            value, ast.BinOp | ast.Subscript | ast.Name | ast.Constant
-        ):
+            value, ast.BinOp | ast.Subscript | ast.Name
+        ) or (isinstance(value, ast.Constant) and isinstance(value.value, str)):
             return name, value
         case ast.AnnAssign(
             target=ast.Name(id=name),
@@ -64,26 +121,12 @@ def _alias(stmt: ast.stmt) -> tuple[str, ast.expr] | None:
             return None
 
 
-def _optional_aliases(tree: ast.Module) -> frozenset[str]:
+def _add_optional_aliases(tree: ast.Module, names: Names) -> None:
     """The module's own aliases of an optional type (`MaybeRun = RunFact | None`), chains too."""
     candidates = [pair for stmt in tree.body if (pair := _alias(stmt))]
-    found: frozenset[str] = frozenset()
-    while new := {n for n, v in candidates if n not in found and _is_optional(v, found)}:
-        found |= new
-    return found
-
-
-@dataclass
-class Names:
-    """What one module calls the things the visitor looks for."""
-
-    contextlib: set[str] = field(default_factory=lambda: {"contextlib"})
-    suppress: set[str] = field(default_factory=lambda: {"suppress"})
-    context_managers: set[str] = field(
-        default_factory=lambda: {"contextmanager", "asynccontextmanager"}
-    )
-    optional_aliases: frozenset[str] = frozenset()
-    pydantic_models: frozenset[str] = frozenset()
+    known = names.optional_aliases
+    while new := {n for n, v in candidates if n not in known and is_optional_type(v, names)}:
+        known |= new
 
 
 def _pydantic_models(tree: ast.Module) -> frozenset[str]:
@@ -105,31 +148,25 @@ def _pydantic_models(tree: ast.Module) -> frozenset[str]:
     return found
 
 
-def module_names(tree: ast.Module) -> Names:
-    names = Names(optional_aliases=_optional_aliases(tree), pydantic_models=_pydantic_models(tree))
-    for node in ast.walk(tree):
-        match node:
-            case ast.Import(names=aliases):
-                names.contextlib |= {
-                    a.asname for a in aliases if a.name == "contextlib" and a.asname
-                }
-            case ast.ImportFrom(module="contextlib", names=aliases):
-                for a in aliases:
-                    local = a.asname or a.name
-                    if a.name == "suppress":
-                        names.suppress.add(local)
-                    elif a.name in ("contextmanager", "asynccontextmanager"):
-                        names.context_managers.add(local)
-            case _:
-                pass
-    return names
-
-
-def is_field_optional(stmt: ast.stmt, aliases: frozenset[str]) -> bool:
-    match stmt:
-        case ast.AnnAssign(annotation=ast.Subscript(value=ast.Name(id="ClassVar"))):
-            return False
-        case ast.AnnAssign(target=ast.Name(), annotation=annotation):
-            return _is_optional(annotation, aliases)
+def _add_import(names: Names, node: ast.Import | ast.ImportFrom) -> None:
+    pairs = [(a.name, a.asname or a.name) for a in node.names]
+    match node:
+        case ast.Import():
+            names.contextlib |= {local for name, local in pairs if name == "contextlib"}
+            names.typing |= {local for name, local in pairs if name in TYPING_MODULES}
+        case ast.ImportFrom(module="contextlib"):
+            names.suppress |= {local for name, local in pairs if name == "suppress"}
+            names.context_managers |= {local for name, local in pairs if name in CONTEXT_MANAGERS}
+        case ast.ImportFrom(module=module) if module in TYPING_MODULES:
+            names.typing_members |= {local: name for name, local in pairs}
         case _:
-            return False
+            pass
+
+
+def module_names(tree: ast.Module) -> Names:
+    names = Names(pydantic_models=_pydantic_models(tree))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            _add_import(names, node)
+    _add_optional_aliases(tree, names)
+    return names

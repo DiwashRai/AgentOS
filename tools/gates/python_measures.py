@@ -16,10 +16,10 @@ import grimp
 import lizard  # type: ignore[import-untyped]  # lizard ships no type hints
 
 from common import AGENTOS, ROOT, Finding
-from defensive import PyFile
+from defaults import PY_CYCLOMATIC_TOOLS
+from pyfile import PyFile
 
 PY_SCOPE = (f"{AGENTOS}/**/*.py", "backend/worker/worker.py")
-PY_CYCLOMATIC_TOOLS = ("lizard", "ruff")
 
 
 def python_files() -> list[str]:
@@ -32,7 +32,7 @@ def cognitive_python(files: list[PyFile]) -> list[Finding]:
     for f in files:
         report = complexipy.file_complexity(str(ROOT / f.path), no_ignore=True)
         for fn in report.functions:
-            name = f.defensive.qualnames.get(fn.line_start, fn.name.replace("::", "."))
+            name = f.qualname(fn.line_start, fn.name.replace("::", "."))
             found.append(Finding(f.path, fn.line_start, name, fn.complexity))
     return found
 
@@ -76,7 +76,7 @@ def cyclomatic_lizard(files: list[PyFile]) -> list[Finding]:
     for f in files:
         source = (ROOT / f.path).read_text(encoding="utf-8")
         for fn in _LIZARD.analyze_source_code(f.path, source).function_list:
-            name = f.defensive.qualnames.get(fn.start_line, fn.name)
+            name = f.qualname(fn.start_line, fn.name)
             found.append(Finding(f.path, fn.start_line, name, fn.cyclomatic_complexity))
     return found
 
@@ -96,7 +96,7 @@ def cyclomatic_ruff(files: list[PyFile], limit: int) -> list[Finding]:
         score = re.search(r"\((\d+) > \d+\)", item["message"])
         if not score:
             raise RuntimeError(f"unexpected ruff C901 message: {item['message']}")
-        name = f.defensive.qualnames.get(line, f"<line {line}>")
+        name = f.qualname(line, f"<line {line}>")
         found.append(Finding(f.path, line, name, int(score[1])))
     return found
 

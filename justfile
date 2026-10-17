@@ -35,9 +35,14 @@ check-tools:
     uv run --project backend pytest -q -p no:randomly -p no:cacheprovider tools/gates
 
 # Every gate (measured limits on how the code grows; tools/gates/gates.py). Fails listing each
-# offender as path:line  name  score > limit.
-gates:
-    uv run --project backend python tools/gates/gates.py
+# offender as path:line  name  score > limit. Raises are checked against HEAD's baseline; pass
+# `--base REF` to check against the merge base with REF instead.
+gates *args:
+    uv run --project backend python tools/gates/gates.py {{ args }}
+
+# The gates for a branch: raises checked, and new `raises` entries listed, against its merge base.
+gates-pr base="origin/cleanup":
+    uv run --project backend python tools/gates/gates.py --base {{ base }}
 
 # Lower quality-baseline.json where the code improved (never raises it). Commit it with the change.
 ratchet:

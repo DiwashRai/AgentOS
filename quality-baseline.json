@@ -54,7 +54,14 @@
     "uncapped": {
       "boundary": [
         "isinstance",
-        "try"
+        "try",
+        "cast"
+      ],
+      "shell": [
+        "cast"
+      ],
+      "worker": [
+        "cast"
       ]
     },
     "defensive": {
@@ -139,7 +146,21 @@
         "suppress": 8
       }
     },
-    "suppressions": 21,
+    "suppressions": {
+      "backend/server/agentos/auth/service.py": 2,
+      "backend/server/agentos/context.py": 2,
+      "backend/server/agentos/files/service.py": 1,
+      "backend/server/agentos/mailbox/dispatcher.py": 1,
+      "backend/server/agentos/runs/dispatcher.py": 1,
+      "backend/server/agentos/runs/service.py": 3,
+      "backend/server/agentos/tickets/service.py": 1,
+      "backend/server/agentos/workflows/service.py": 1,
+      "backend/worker/worker.py": 5,
+      "web/src/features/actions/ResolveConfirm.tsx": 1,
+      "web/src/features/ticket/Overview.tsx": 1,
+      "web/src/features/workflows/WorkflowStrip.tsx": 1,
+      "web/src/ui/Dialog.tsx": 1
+    },
     "raw_tags": {
       "actions": 3,
       "auth": 30,
@@ -401,6 +422,20 @@
       "from": "none",
       "to": "8 named core files",
       "reason": "new gate: mypy Any errors per core file, seeded from today's code (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "allowed.suppressions",
+      "from": "21 in total",
+      "to": "caps per file (13 files, 21 in total)",
+      "reason": "a total let fixing a suppression in one file pay for a new one in another (reviews of gates/3-types); each file seeded from today's code; `# mypy:` comments and `@no_type_check` now count (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "allowed.uncapped",
+      "from": "boundary: isinstance, try",
+      "to": "boundary: isinstance, try, cast; shell: cast; worker: cast",
+      "reason": "`cast` is a new defensive kind, capped in the core only (reviews of gates/3-types) (proposed by agent, for the owner to approve)"
     }
   ]
 }

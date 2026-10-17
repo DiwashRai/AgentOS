@@ -1,24 +1,17 @@
-"""The tricky parts of the gates: the ratchet, raise detection, pattern detection, layers."""
+"""The tricky parts of the gates: the ratchet, raise detection, the baseline's schema, reading
+mypy, and the gates' verdicts (per-file caps, layers)."""
 
 from __future__ import annotations
 
 import copy
-import json
-import os
-import shutil
-import subprocess
-import textwrap
-from pathlib import Path
 from typing import Any
-
-import pytest
 
 import baseline as bl
 import common
-import defensive
 import gates
-import python_measures
-import ts_measures
+import mypy_any
+import results
+import schema
 from common import Finding
 from measures import Measures
 
@@ -28,7 +21,7 @@ def _baseline(**changes: Any) -> dict[str, Any]:
         "allowed": {
             "uncapped": {"boundary": ["try"]},
             "defensive": {"a.py": {"isinstance": 3, "try": 1}},
-            "suppressions": 5,
+            "suppressions": {"a.py": 5, "b.py": 2},
             "raw_tags": {"queue": 10},
         },
         "exceptions": {"cognitive": {"a.py::worse": 20, "a.py::better": 30, "a.py::fixed": 18}},
@@ -40,7 +33,7 @@ def _baseline(**changes: Any) -> dict[str, Any]:
 def _measures() -> Measures:
     m = Measures(layer={"a.py": "core"})
     m.defensive = {"a.py": {"isinstance": [1] * 5, "try": []}}  # isinstance up, try down
-    m.suppressions = ["a.py:1  noqa"] * 7  # up
+    m.suppressions = [("a.py", 1, "noqa")] * 7 + [("b.py", 1, "noqa")]  # a up, b down
     m.raw_tags = {"queue": 4}  # down
     m.cognitive = [
         Finding("a.py", 1, "worse", 25),
@@ -60,7 +53,8 @@ def test_ratchet_lowers_what_improved_and_never_raises() -> None:
     assert all(after[key] <= value for key, value in before.items() if key in after)
     assert after["allowed.defensive.a.py.isinstance"] == 3
     assert "allowed.defensive.a.py.try" not in after  # a cap that reaches 0 goes
-    assert after["allowed.suppressions"] == 5
+    assert after["allowed.suppressions.a.py"] == 5
+    assert after["allowed.suppressions.b.py"] == 1
     assert after["allowed.raw_tags.queue"] == 4
     assert baseline["exceptions"]["cognitive"] == {"a.py::worse": 20, "a.py::better": 22}
 
@@ -109,117 +103,55 @@ def test_switching_the_python_cyclomatic_tool_needs_a_raises_entry() -> None:
     assert not bl.unexplained_raises(old, new)
 
 
-def _hits(source: str) -> dict[str, int]:
-    report = defensive.analyse_python("x.py", textwrap.dedent(source))
-    return {kind: len(lines) for kind, lines in report.defensive.hits.items() if lines}
+def test_the_schema_rejects_what_the_raise_check_cannot_compare() -> None:
+    entry = {"date": "2026-10-17", "what": "limits", "from": 1, "to": 2, "reason": "why"}
+    assert not schema.problems({"limits": {"cognitive": 15}, "raises": [entry]})
+    assert schema.problems({"limits": {"cognitive": 999.0}})  # a float would skip the raise check
+    assert schema.problems({"limits": {"cognitive": True}})
+    assert schema.problems({"allowed": {"suppressions": {"a.py": -1}}})
+    assert schema.problems({"allowed": {"defensive": {"a.py": {"is_none": 1}}}})  # unknown kind
+    assert schema.problems({"allowed": {"uncapped": {"nowhere": ["try"]}}})  # unknown layer
+    assert schema.problems({"limit": {}})  # unknown key
+    assert schema.problems({"raises": [entry | {"reason": " "}]})
+    assert schema.problems({"raises": [{k: v for k, v in entry.items() if k != "to"}]})
 
 
-def test_defensive_patterns_and_their_look_alikes() -> None:
-    source = """
-        import contextlib
-        from typing import Optional
-
-        def f(a: int | None, b: Optional[str], c: int) -> list[int] | None:
-            if a is None or b == None:  # not counted: syntax, the types carry it
-                return getattr(c, "x", None)
-            if hasattr(c, "y") or isinstance(c, int):
-                getattr(c, "z")
-            with contextlib.suppress(OSError):
-                pass
-            match c:
-                case int():
-                    pass
-            try:
-                pass
-            except Exception:
-                pass
-    """
-    assert _hits(source) == {
-        "getattr_default": 1,
-        "hasattr": 1,
-        "isinstance": 2,
-        "suppress": 1,
-        "try": 1,
-        "broad_except": 1,
-    }
+def _diagnostic(code: str, message: str, line: int = 3) -> str:
+    return (
+        f'{{"file": "server\\\\agentos\\\\models.py", "line": {line}, "column": 1, '
+        f'"message": "{message}", "hint": null, "code": "{code}", "severity": "error"}}'
+    )
 
 
-def test_type_comparisons_and_a_renamed_suppress_are_look_alikes() -> None:
-    source = """
-        from contextlib import suppress as quietly
-
-        def f(run, other):
-            if type(run) is int or type(other) == str:
-                pass
-            with quietly(OSError):
-                pass
-    """
-    assert _hits(source) == {"isinstance": 2, "suppress": 1}
-
-
-def test_a_try_counts_unless_it_cleans_up_inside_a_context_manager() -> None:
-    source = """
-        import contextlib
-        from contextlib import contextmanager as cm
-
-        @cm
-        def tx(conn):
-            try:
-                yield conn
-            except BaseException:
-                conn.rollback()
-                raise
-
-        @contextlib.asynccontextmanager
-        async def session(conn):
-            try:
-                yield conn
-            finally:
-                conn.close()
-
-        class Lock:
-            def __exit__(self, *exc):
-                try:
-                    self.release()
-                except OSError:
-                    pass
-
-        def close(conn):
-            try:
-                conn.close()
-            finally:
-                pass
-    """
-    assert _hits(source) == {"try": 2}  # __exit__ swallows an error; close is no context manager
+def test_only_any_diagnostics_are_budget_and_unreadable_mypy_output_fails() -> None:
+    out = "\n".join(
+        [
+            _diagnostic("misc", 'Expression has type \\"Any\\"'),
+            _diagnostic("explicit-any", 'Explicit \\"Any\\" is not allowed', line=4),
+            _diagnostic("assignment", "Incompatible types in assignment", line=9),
+        ]
+    )
+    run = mypy_any.parse_mypy(1, out, "")
+    assert [line for line, _ in run.errors["backend/server/agentos/models.py"]] == [3, 4]
+    assert len(run.problems) == 1  # the assignment error is no budget
+    assert mypy_any.parse_mypy(1, "models.py:3:1: error: Expression has type Any", "").problems
+    assert mypy_any.parse_mypy(2, "", "Traceback ...\nINTERNAL ERROR").problems
+    assert not mypy_any.parse_mypy(0, "", "").problems
 
 
-def test_a_domain_class_with_two_optional_fields_is_flagged() -> None:
-    source = """
-        from typing import Optional
-        from pydantic import BaseModel
-        MaybeInt = int | None
+def test_a_mypy_override_naming_a_core_module_is_found() -> None:
+    pyproject = """
+        [[tool.mypy.overrides]]
+        module = ["tests.*"]
+        disallow_any_expr = false
 
-        class Run:
-            started_at: "datetime | None"
-            owner: MaybeInt
-            name: str
-
-        class Ticket:
-            owner: Optional[str] = None
-            title: str
-
-        class PatchModel(BaseModel):
-            pass
-
-        class TicketPatch(PatchModel):  # a wire shape: flat on purpose
-            owner: str | None = None
-            title: str | None = None
-    """
-    report = defensive.analyse_python("x.py", textwrap.dedent(source))
-    found = [Finding("x.py", *c) for c in report.defensive.optional_fields]
-    result = gates._named_gate("optional_fields", found, bl.normalise({}), "classes")
-    assert {f.name: f.score for f in found} == {"Run": 2, "Ticket": 1}
-    assert [line.split()[1] for line in result.details] == ["Run"]
+        [[tool.mypy.overrides]]
+        module = "agentos.pipeline.*"
+        ignore_errors = true
+    """.replace("\n        ", "\n")
+    core = ["agentos.models", "agentos.pipeline", "agentos.pipeline.space"]
+    assert len(mypy_any.core_overrides(core, pyproject)) == 1
+    assert not mypy_any.core_overrides(["agentos.models"], pyproject)
 
 
 def test_defensive_caps_are_per_file_and_the_boundary_checks_input_freely() -> None:
@@ -228,103 +160,42 @@ def test_defensive_caps_are_per_file_and_the_boundary_checks_input_freely() -> N
     m = Measures(layer={"a.py": "shell", "b.py": "shell", "c.py": "boundary"})
     m.defensive = {"a.py": {"try": [1]}, "b.py": {"try": [7]}, "c.py": {"try": [1, 2]}}
 
-    result = gates.gate_defensive(m, baseline)
+    result = results.gate_defensive(m, baseline)
 
     assert not result.ok  # a.py's removal doesn't pay for b.py's addition
     assert [line.split()[0] for line in result.details if "fix:" in line] == ["b.py"]
 
 
-def test_docstrings_and_comments_are_not_code_lines() -> None:
-    source = '"""Module.\n\nMore."""\n\n# a comment\ndef f():\n    """Doc."""\n    return 1\n'
-    assert defensive.analyse_python("x.py", source).code_lines == 2
+def test_suppression_caps_are_per_file() -> None:
+    baseline = bl.normalise({"allowed": {"suppressions": {"a.py": 2}}})
+    m = Measures()
+    m.suppressions = [("a.py", 1, "noqa"), ("b.py", 3, "type: ignore")]  # total 2, as allowed
+
+    result = results.gate_suppressions(m, baseline)
+
+    assert not result.ok
+    assert result.details[0].split()[0] == "b.py"
 
 
-def test_the_first_matching_layer_wins() -> None:
+def test_a_python_file_in_no_layer_fails() -> None:
     layers = {"core": ["pkg/*/board.py"], "services": ["pkg/*"]}
     assert common.layer_of("pkg/tickets/board.py", layers) == "core"
     assert common.layer_of("pkg/tickets/service.py", layers) == "services"
-    assert common.layer_of("elsewhere.py", layers) == "other"
+    m = Measures(layer={p: common.layer_of(p, layers) for p in ["pkg/a.py", "elsewhere.py"]})
+
+    result = results.gate_layers(m)
+
+    assert not result.ok
+    assert [line.split()[0] for line in result.details] == ["elsewhere.py"]
 
 
-def _py_file(tmp_path: Path, source: str) -> defensive.PyFile:
-    path = tmp_path / "f.py"
-    path.write_text(textwrap.dedent(source), encoding="utf-8", newline="\n")
-    report = defensive.analyse_python(str(path), path.read_text(encoding="utf-8"))
-    report.path = str(path)  # absolute, so ROOT / path is the file
-    return report
+def test_new_raises_are_listed_for_approval() -> None:
+    entry = {"date": "2026-10-17", "what": "layers", "from": "a", "to": "b", "reason": "why"}
+    base = _baseline(raises=[entry])
+    current = _baseline(raises=[entry, entry | {"what": "allowed.suppressions"}])
 
+    lines = gates.to_approve(current, base, "HEAD")
 
-def _cyclomatic(report: defensive.PyFile, tool: str, limit: int = 10) -> dict[str, int]:
-    limits = bl.DEFAULT_LIMITS | {"cyclomatic": limit, "cyclomatic_python_tool": tool}
-    return {f.name: f.score for f in python_measures.cyclomatic_python([report], limits)}
-
-
-def test_lizard_ignores_its_forgive_comments(tmp_path: Path) -> None:
-    report = _py_file(
-        tmp_path,
-        """\
-        def f(xs, flag):  # lizard forgives
-            #lizard forgives
-            ys = [x for x in xs if x] if flag and xs else []
-            match flag:
-                case 1:
-                    return ys
-                case _:
-                    return None
-        # GENERATED CODE
-        def g(x):
-            return x or 1
-        """,
-    )
-
-    assert _cyclomatic(report, "lizard") == {"f": 7, "g": 2}  # f: 1 + for, if, ternary, and, cases
-
-
-def test_both_python_tools_score_and_only_lizard_counts_boolean_operators(tmp_path: Path) -> None:
-    report = _py_file(
-        tmp_path,
-        """\
-        def h(a, b, c):  # noqa: C901
-            if a and b or c:
-                return 1
-            return 0
-        """,
-    )
-
-    assert _cyclomatic(report, "lizard") == {"h": 4}
-    assert _cyclomatic(report, "ruff", limit=1) == {"h": 2}  # ruff lists only those over the limit
-
-
-def _ts_measures(tmp_path: Path, source: str) -> dict[str, Any]:
-    (tmp_path / "Page.tsx").write_text(textwrap.dedent(source), encoding="utf-8", newline="\n")
-    rel = os.path.relpath(tmp_path / "Page.tsx", ts_measures.WEB)
-    script = Path(ts_measures.__file__).with_name("ts_measures.mjs")
-    out = subprocess.run(
-        ["node", str(script), str(ts_measures.WEB), rel], capture_output=True, text=True, check=True
-    )
-    measured: dict[str, Any] = next(iter(json.loads(out.stdout).values()))
-    return measured
-
-
-@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
-def test_ts_measures_reads_comments_tags_and_names(tmp_path: Path) -> None:
-    measured = _ts_measures(
-        tmp_path,
-        """\
-        // eslint-disable-next-line no-console
-        export function Page() {
-          return (
-            <div>
-              // text, not a comment
-              <Card onClick={() => 1} />
-              <span />
-            </div>
-          );
-        }
-        """,
-    )
-
-    assert measured["code_lines"] == 9
-    assert [marker for _, marker in measured["suppressions"]] == ["eslint-disable-next-line"]
-    assert measured["raw_tags"] == [4, 7]
-    assert [f["name"] for f in measured["functions"]] == ["Page", "Page.onClick(callback)"]
+    assert len(lines) == 3  # the heading, then the one new entry on two lines
+    assert "allowed.suppressions" in lines[1]
+    assert not gates.to_approve(base, base, "HEAD")

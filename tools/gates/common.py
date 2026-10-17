@@ -13,7 +13,9 @@ FEATURES = "web/src/features/"
 FAN_OUT_EXEMPT = {"main"}
 # `is None` and optional parameters are not counted: they are syntax, and capping them pushes code
 # towards `if not x`, getattr and Any. The types (the `any` and `optional_fields` gates) carry it.
-KINDS = ("isinstance", "try", "broad_except", "getattr_default", "hasattr", "suppress")
+KINDS = ("isinstance", "try", "broad_except", "getattr_default", "hasattr", "suppress", "cast")
+# A Python file no layer's globs match: the `layers` gate fails on it.
+NO_LAYER = "other"
 
 
 @dataclass(frozen=True)
@@ -34,4 +36,10 @@ def layer_of(path: str, layers: dict[str, list[str]]) -> str:
     for layer, patterns in layers.items():
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
             return layer
-    return "other"
+    return NO_LAYER
+
+
+def module_of(path: str) -> str:
+    """`backend/server/agentos/pipeline/space.py` -> `agentos.pipeline.space`."""
+    dotted = path.removeprefix("backend/server/").removesuffix(".py").replace("/", ".")
+    return dotted.removesuffix(".__init__")
