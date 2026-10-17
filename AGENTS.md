@@ -55,8 +55,8 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 ## Checks
 - `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
 - `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `check:spacing` (no raw px/em/rem spacing in CSS modules; `web/scripts/check-spacing.ts`), `vitest run`.
-- The pre-commit hook runs the fast checks (format + lint) for each half that has staged files. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web checks. Run the full scoped check yourself before committing.
-- No CI runs the test suites: the hook runs format and lint only, so the scoped check (or an AgentOS run's check stage) is the only place tests run before review.
+- The pre-commit hook runs the fast checks (format + lint) for each half that has staged files, then `just gates` for any code or baseline change. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web checks. Run the full scoped check yourself before committing. Never skip the hook (`--no-verify`).
+- No CI runs the test suites: the hook runs format, lint and the gates only, so the scoped check (or an AgentOS run's check stage) is the only place tests run before review.
 - **Never weaken a check or a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
 - New code goes where the architecture puts it. import-linter contracts in `backend/pyproject.toml` enforce the pure core, the feature layers, the plugin boundaries and acyclic subpackages; read them there, and see `backend/AGENTS.md`.
 - `worker.py` imports only the standard library (a test enforces it) and must run on Python 3.11; ruff targets py311 for the whole backend for that reason.
@@ -65,6 +65,7 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 ## Gates
 Measured limits on how the code grows, separate from the checks: `just gates` (`tools/gates/gates.py`). No function over cognitive complexity 15 or cyclomatic complexity 10 (TypeScript: ESLint `complexity`; Python: `limits.cyclomatic_python_tool`, `lizard` by default or `ruff` C901; the named cyclomatic exceptions are that tool's scores, so a switch goes with `--rebaseline-cyclomatic` and a `raises` entry); no defensive patterns (`is None`, `isinstance`, optional parameters, `try`, broad excepts, `getattr` defaults, `hasattr`, `suppress`) beyond each layer's cap; no subpackage importing more than 5 others (`main` exempt); the suppression count only goes down; no file over 1,000 code lines; raw DOM tags per feature folder only go down. Python and TypeScript alike.
 - Existing offenders are named in `quality-baseline.json` (repo root): they may not get worse, and nothing new may join them (with no baseline every cap is 0). `just ratchet` locks in an improvement; commit the lower baseline with the change. Raising a number needs a `raises` entry (`date`, `what`, `from`, `to`, `reason`); `gates` checks against the committed baseline.
+- Run `just gates` before finishing a change, alongside the scoped check.
 - A failing gate means simplifying the code, not splitting it to dodge a limit or disguising a pattern (look-alikes are counted too).
 
 ## API contract
