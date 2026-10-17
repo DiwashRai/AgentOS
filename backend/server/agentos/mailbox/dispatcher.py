@@ -40,7 +40,7 @@ def tick(ctx: AppContext, mailbox: Mailbox) -> list[int]:
         # Outside any transaction: uploads and a GitHub call (bounded by the plugins' timeouts).
         try:
             ref = mailbox.send(run_id, folder, package.encode("utf-8"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 any plugin failure fails this run; the loop goes on
             log.warning("run %s: launch failed: %s", run_id, exc)
             service.end(ctx.db, run_id, "failed", f"launch failed: {exc}")
             _delete(mailbox, run_id, folder)

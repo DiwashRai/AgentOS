@@ -28,9 +28,24 @@ target-version = "py311"
 src = ["server", "worker"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "RUF", "PT", "ASYNC", "C4", "RET", "PTH", "ERA", "DTZ"]
+select = [
+    "E", "F", "W", "I", "B", "UP", "SIM", "S", "RUF", "PT", "ASYNC", "C4", "RET", "PTH", "ERA", "DTZ",
+    "BLE001", "PGH003", "TID251",
+]
+
+# The pure core (import-linter's first contract) never reads the clock. TID251 applies only
+# there: every other file ignores it (the negated glob below).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "pure core takes `now` as an argument"
+"datetime.datetime.utcnow".msg = "pure core takes `now` as an argument"
+"datetime.datetime.today".msg = "pure core takes `now` as an argument"
+"datetime.date.today".msg = "pure core takes `now` as an argument"
+"time.time".msg = "pure core takes `now` as an argument"
+"time.monotonic".msg = "pure core takes `now` as an argument"
+"agentos.clock.utcnow".msg = "pure core takes `now` as an argument"
 
 [tool.ruff.lint.per-file-ignores]
+"!server/agentos/{models.py,validate.py,pipeline/**,*/board.py}" = ["TID251"]
 "**/tests/**" = ["S101", "S603", "S607"]
 "**/worker_tests/**" = ["S101", "S603", "S607"]
 # Running subprocesses described by the manifest is the worker's job.
@@ -134,7 +149,9 @@ broken_contract_guidance = "Direction: worker_api -> runs -> social -> tickets -
 
 [dependency-groups]
 dev = [
+    "complexipy==8.0.1",
     "import-linter>=2.15",
+    "lizard==1.24.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-randomly>=5.0.0",

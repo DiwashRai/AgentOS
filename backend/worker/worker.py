@@ -1207,7 +1207,7 @@ class Echo:
             return
         try:
             lines = self.lines(text, truncated)
-        except Exception as exc:  # cosmetic: a formatting bug must never stop the output reader
+        except Exception as exc:  # noqa: BLE001 cosmetic: a formatting bug must not stop the reader
             self.broken = True
             lines = [f"(echo stopped: {type(exc).__name__})"]
         if lines:
@@ -2248,11 +2248,11 @@ class Run:
             if self.repo and self.ready:
                 self._save_offline()
             return 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 the run's top-level handler: report any failure
             say(f"worker error:\n{traceback.format_exc()}")
             try:
                 self._finish("failed", self.current_stage, f"worker error: {exc}")
-            except Exception as again:
+            except Exception as again:  # noqa: BLE001 last resort: reporting the failure failed too
                 say(f"could not report the failure: {again}")
             return 1
 

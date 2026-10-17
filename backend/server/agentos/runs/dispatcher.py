@@ -38,7 +38,7 @@ def tick(ctx: AppContext) -> list[int]:
         job_id, token = built
         try:
             ref = ctx.providers[name].start(JobStart(job_id, run_id, url, token))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 any provider failure fails this run; the loop goes on
             log.warning("run %s: start failed: %s", run_id, exc)
             service.fail_start(ctx.db, run_id, job_id, f"launch failed: {exc}")
             continue

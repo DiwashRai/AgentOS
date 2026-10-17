@@ -28,6 +28,7 @@ Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (
 | `.github/workflows/agentos-worker.yml` | Installed copy of `backend/deploy/github/agentos-worker.yml`; a test keeps them byte-identical |
 | `Containerfile`, `.dockerignore` | Server image (API + built SPA) |
 | `justfile`, `.githooks/` | Task runner and the pre-commit hook |
+| `tools/gates/` | The gates (`gates.py`, `ts_measures.mjs`, their tests); `web/eslint.gates.config.js` is theirs too |
 
 ## Setup
 Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh on Windows).
@@ -38,24 +39,33 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 | Command | What |
 |---|---|
 | `just setup` | Install deps, enable git hooks |
-| `just check` | Every gate, both halves (the default recipe) |
-| `just check-backend` / `just check-web` | One half's gates. Prefer these |
+| `just check` | Every check, both halves plus `check-tools` (the default recipe) |
+| `just check-backend` / `just check-web` | One half's checks. Prefer these |
+| `just check-tools` | The gate scripts' own checks (`tools/gates`: format, lint, mypy, tests) |
+| `just gates` | Every gate: pass/fail per gate, each offender as `path:line  name  score > limit` |
+| `just ratchet` | Lower `quality-baseline.json` where the code improved; never raises it |
 | `just fmt-backend` / `just fmt-web` | Auto-format one half (`just fmt` does both) |
 | `just gen-api` | Export the backend's OpenAPI schema to `web/src/api/openapi.json` and regenerate `schema.ts` |
 | `just dev-backend` | Server on `127.0.0.1:8000` with `--reload`; refuses to start if :8000 is taken |
 | `just dev-web` | Vite on `127.0.0.1:5173` (strict port), proxying `/api` to :8000 (`AGENTOS_BACKEND_URL` overrides) |
-| `just pre-commit-backend` / `just pre-commit-web` | The fast gates the hook runs |
+| `just pre-commit-backend` / `just pre-commit-web` | The fast checks the hook runs |
 | `just setup-hooks` | Only the `core.hooksPath` step of setup |
 | `just container-build` / `-run` / `-logs` / `-stop` | Server image. Docker by default (`just engine=podman ...` or `CONTAINER_ENGINE`); host port 8080; needs `backend/deploy/.env.container` copied from `container.env.example`. See `backend/deploy/README.md` |
 
-## Gates
+## Checks
 - `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
 - `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `check:spacing` (no raw px/em/rem spacing in CSS modules; `web/scripts/check-spacing.ts`), `vitest run`.
-- The pre-commit hook runs the fast gates (format + lint) for each half that has staged files. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web gates. Run the full scoped gate yourself before committing.
-- No CI runs the test suites: the hook runs format and lint only, so the scoped gate (or an AgentOS run's check stage) is the only place tests run before review.
-- **Never weaken a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
+- The pre-commit hook runs the fast checks (format + lint) for each half that has staged files. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web checks. Run the full scoped check yourself before committing.
+- No CI runs the test suites: the hook runs format and lint only, so the scoped check (or an AgentOS run's check stage) is the only place tests run before review.
+- **Never weaken a check or a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
 - New code goes where the architecture puts it. import-linter contracts in `backend/pyproject.toml` enforce the pure core, the feature layers, the plugin boundaries and acyclic subpackages; read them there, and see `backend/AGENTS.md`.
 - `worker.py` imports only the standard library (a test enforces it) and must run on Python 3.11; ruff targets py311 for the whole backend for that reason.
+- ruff also bans broad excepts outside top-level handlers (`BLE001`; each allowed one says why) and clock reads in the pure core (`TID251`: it takes `now` as an argument).
+
+## Gates
+Measured limits on how the code grows, separate from the checks: `just gates` (`tools/gates/gates.py`). No function over cognitive complexity 15 or cyclomatic complexity 10 (TypeScript: ESLint `complexity`; Python: `limits.cyclomatic_python_tool`, `lizard` by default or `ruff` C901; the named cyclomatic exceptions are that tool's scores, so a switch goes with `--rebaseline-cyclomatic` and a `raises` entry); no defensive patterns (`is None`, `isinstance`, optional parameters, `try`, broad excepts, `getattr` defaults, `hasattr`, `suppress`) beyond each layer's cap; no subpackage importing more than 5 others (`main` exempt); the suppression count only goes down; no file over 1,000 code lines; raw DOM tags per feature folder only go down. Python and TypeScript alike.
+- Existing offenders are named in `quality-baseline.json` (repo root): they may not get worse, and nothing new may join them (with no baseline every cap is 0). `just ratchet` locks in an improvement; commit the lower baseline with the change. Raising a number needs a `raises` entry (`date`, `what`, `from`, `to`, `reason`); `gates` checks against the committed baseline.
+- A failing gate means simplifying the code, not splitting it to dodge a limit or disguising a pattern (look-alikes are counted too).
 
 ## API contract
 - The API shapes are `backend/server/agentos/models.py` plus the route signatures. The web types are generated from them; never hand-edit `web/src/api/openapi.json` or `schema.ts`.

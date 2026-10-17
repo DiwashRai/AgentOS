@@ -1,0 +1,10 @@
+# The gate scripts follow the backend's ruff rules (they run in the backend's environment).
+extend = "../../backend/pyproject.toml"
+
+[lint.extend-per-file-ignores]
+"test_*.py" = ["S101", "S603", "S607"]
+# Running ruff, git and node is the gate script's job.
+"gates.py" = ["S603", "S607"]
+
+[lint.isort]
+known-first-party = ["gates"]
