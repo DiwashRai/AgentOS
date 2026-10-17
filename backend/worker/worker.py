@@ -535,8 +535,9 @@ def parse(
     """`value` (decoded JSON) as a `tp`, or where and why it first doesn't fit, reading fields in
     declared order. The grammar: frozen dataclasses (exactly their keys, or unknown keys ignored
     with `extra="ignore"`; a field with a default is an optional key), tuple[X, ...],
-    dict[str, X], X | None, Literal (of strings), str, int (not bool), bool, a datetime (ISO,
-    with a time zone), and a Stage (read flat as a _StageRecord, then made one by _stage).
+    dict[str, X], X | None, Literal (of strings), str, int (not bool), bool, object (any value,
+    unchecked), a datetime (ISO, with a time zone), and a Stage (read flat as a _StageRecord,
+    then made one by _stage).
     Any other annotation is a bug in our types: TypeError, naming it."""
     fit = _Fit(extra)
     try:
@@ -577,6 +578,8 @@ class _Fit:
             return self.record(tp, value)
         if tp in _LEAVES:
             return _expect(tp, value)
+        if tp is object:  # any JSON value, as it came
+            return value
         raise _unsupported(tp)
 
     def item(self, step: str, tp: type[object], value: object) -> object:
@@ -3596,14 +3599,87 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
     return removed
 
 
-def run_client(
-    server: str,
-    token: str,
-    root: Path,
-    max_runs: int,
-    env_file: Path | None,
-    spawn: Spawn,
-) -> int:
+@dataclass(frozen=True)
+class LeasedJob:
+    job_id: str  # names its lock file: checked against _JOB_ID_RE
+    run_id: int
+    job_token: str
+
+
+@dataclass(frozen=True)
+class Speaks:
+    """The protocol a lease answer speaks, read before the rest (another protocol may shape the
+    rest differently): any value but PROTOCOL itself is another protocol."""
+
+    protocol: object
+
+
+@dataclass(frozen=True)
+class LeaseAnswer:
+    """A lease answered 200, read with unknown keys ignored: servers add fields."""
+
+    job: LeasedJob | None
+    worker_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class Retry:
+    """No usable answer (unreachable, 5xx, a transient 4xx, malformed): back off, lease again."""
+
+    problem: str
+
+
+@dataclass(frozen=True)
+class Stop:
+    """The client exits with `code` (a refusing server, another protocol, a root it can't use)."""
+
+    code: int
+
+
+Outcome = LeasedJob | None | Retry | Stop  # what one lease came to (None: no run to start)
+
+
+@dataclass(frozen=True)
+class ClientRoot:
+    """A client's root, checked and held: its `runs` folder, the env file's values and the held
+    CLIENT_LOCK."""
+
+    runs: Path
+    env: dict[str, str | None]
+    lock: IO[bytes]
+
+
+def _open_root(root: Path, env_file: Path | None) -> ClientRoot | Stop:
+    """Refuse a root inside a git repo, an unreadable env file (2), a `runs` that can't be made
+    (1) and a root another client holds (2), in that order; then delete its old workspaces."""
+    repo = git_repo_containing(root)
+    if repo is not None:
+        say(f"--workdir-root {root} is inside the git repo {repo}; choose a directory outside it")
+        return Stop(2)
+    try:
+        env = read_env_file(env_file) if env_file is not None else {}
+    except (OSError, EnvFileError) as exc:
+        say(f"cannot read the env file {env_file}: {exc}")
+        return Stop(2)
+    runs = root / CLIENT_RUNS_DIR
+    try:
+        runs.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        say(f"cannot create {runs}: {exc}")
+        return Stop(1)
+    # One client per root, for its whole life: another would misread this one's workers' locks.
+    lock = (runs / CLIENT_LOCK).open("a+b")
+    if not _take_lock(lock, wait=False):
+        lock.close()
+        say(f"another client already runs on {root}; stop it or choose another --workdir-root")
+        return Stop(2)
+    removed = clean_workdir_root(root, time.time())
+    if removed:
+        say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
+    return ClientRoot(runs, env, lock)
+
+
+def run_client(mode: ClientMode, token: str, spawn: Spawn) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
     `max_runs` at once (`Children`). Every lease lists the running ones as `alive` (those it
     started, and the survivors of an earlier client, which count against `max_runs`) and the
@@ -3618,118 +3694,153 @@ def run_client(
     `--workdir <root>/runs/<run_id>` and `--lock-file <root>/runs/<job id>.lock`, logs to
     `<run_id>.log` and gets its job token in child_env. It holds `<root>/runs/client.lock`
     (CLIENT_LOCK) for its whole life; a second client on that root exits 2."""
-    root = root.expanduser().resolve()
-    repo = git_repo_containing(root)
-    if repo is not None:
-        say(f"--workdir-root {root} is inside the git repo {repo}; choose a directory outside it")
-        return 2
-    try:
-        env_values = read_env_file(env_file) if env_file is not None else {}
-    except (OSError, EnvFileError) as exc:
-        say(f"cannot read the env file {env_file}: {exc}")
-        return 2
-    runs = root / CLIENT_RUNS_DIR
-    try:
-        runs.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        say(f"cannot create {runs}: {exc}")
-        return 1
-    # One client per root, for its whole life: another would misread this one's workers' locks.
-    client_lock = (runs / CLIENT_LOCK).open("a+b")
-    if not _take_lock(client_lock, wait=False):
-        client_lock.close()
-        say(f"another client already runs on {root}; stop it or choose another --workdir-root")
-        return 2
+    match _open_root(mode.root, mode.env_file):
+        case Stop(code=code):
+            return code
+        case ClientRoot() as root:
+            try:
+                return ClientLoop(mode, token, root, spawn).run()
+            except KeyboardInterrupt:
+                say("client stopped; started workers keep running")
+                return 130
+            finally:
+                release_lock(root.lock)
 
-    removed = clean_workdir_root(root, time.time())
-    if removed:
-        say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
 
-    client = Client(server, token)
-    me = Path(__file__).resolve()
-    sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
-    children = Children(
-        runs,
-        lambda alive, gone: client.post(
-            "/api/worker/lease",
-            {"wait_s": 0, "take": False, "alive": alive, "gone": gone},
-            retry_budget_s=0,
-        ),
-    )
-    children.start()
-    delay = BACKOFF_START_S
-    answered: float | None = None  # when the server last answered a lease (None: lease at once)
-    say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
-    try:
+class ClientLoop:
+    """Lease after lease on an open root, each one's outcome a value: `_lease` says what it came
+    to, `run` acts on it, `_start` starts a leased job's worker."""
+
+    def __init__(self, mode: ClientMode, token: str, root: ClientRoot, spawn: Spawn) -> None:
+        self.mode, self.root, self.spawn = mode, root, spawn
+        self.client = Client(mode.server, token)
+        self.me = Path(__file__).resolve()
+        self.sha256 = hashlib.sha256(self.me.read_bytes()).hexdigest()
+        self.said_differs = False  # said once
+        self.answered: float | None = None  # when the server last answered (None: lease at once)
+        self.children = Children(root.runs, lambda alive, gone: self._post(False, alive, gone))
+
+    def run(self) -> int:
+        mode, runs = self.mode, self.root.runs
+        self.children.start()
+        delay = BACKOFF_START_S
+        say(f"client: leasing jobs from {mode.server}, at most {mode.max_runs} at once, in {runs}")
         while True:
-            problem: str | None = None
-            with children.waiting() as (alive, gone):
-                busy = len(alive) >= max_runs
-                quiet = answered is not None and time.monotonic() - answered < CLIENT_HEARTBEAT_S
+            with self.children.waiting() as (alive, gone):
+                busy = len(alive) >= mode.max_runs
+                last = self.answered
+                quiet = last is not None and time.monotonic() - last < CLIENT_HEARTBEAT_S
                 if busy and not gone and quiet:
                     time.sleep(CLIENT_REAP_S)
                     continue
+                outcome = self._lease(busy, alive, gone)
+            match outcome:
+                case Stop(code=code):
+                    return code
+                case Retry(problem=problem):
+                    say(f"lease failed ({problem}); leasing again in {delay:.1f}s")
+                    time.sleep(delay)
+                    delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
+                case LeasedJob() as job:
+                    delay = BACKOFF_START_S
+                    self._start(job)
+                case None:
+                    delay = BACKOFF_START_S
 
-                wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-                body = {"wait_s": wait_s, "take": not busy, "alive": alive, "gone": gone}
-                try:
-                    resp = client.post(
-                        "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
-                    )
-                    answered = time.monotonic()
-                    children.acked(gone)
-                    if resp["protocol"] != PROTOCOL:
-                        say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
-                        return 1
-                    job = resp["job"]
-                    leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
-                    if leased and not _JOB_ID_RE.fullmatch(leased[0]):
-                        raise ValueError(f"a job id that isn't one: {leased[0]!r}")
-                except HttpError as exc:
-                    if exc.status not in CLIENT_TRANSIENT_4XX:
-                        say(f"the server refused this client ({exc}); stopping")
-                        return 1
-                    problem = str(exc)
-                except (Unreachable, ValueError) as exc:
-                    problem = str(exc)
-                except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
-                    problem = f"a malformed answer ({exc!r})"
+    def _post(
+        self, take: bool, alive: list[str], gone: list[str], timeout_s: float | None = None
+    ) -> Any:
+        """A lease: one that takes waits for a run; a no-take one (heartbeat, report) doesn't."""
+        wait_s = CLIENT_POLL_WAIT_S if take else 0
+        body = {"wait_s": wait_s, "take": take, "alive": alive, "gone": gone}
+        return self.client.post("/api/worker/lease", body, timeout_s=timeout_s, retry_budget_s=0)
 
-            if problem is None:
-                delay = BACKOFF_START_S
-                if sha256 is not None and resp.get("worker_sha256") != sha256:
-                    say(f"this worker.py differs from the server's ({server}/api/worker/worker.py)")
-                    sha256 = None
-                if not leased:
-                    continue
-                job_id, run_id, job_token = leased
-                workdir = runs / str(run_id)
-                argv = [sys.executable, str(me), "--server", server, "--workdir", str(workdir)]
-                argv += ["--lock-file", str(runs / f"{job_id}.lock")]
-                log = runs / f"{run_id}.log"
-                try:
-                    child = spawn(argv, runs, child_env(job_token, env_values), log)
-                except OSError as exc:
-                    say(f"run {run_id}: cannot start its worker: {exc}")
-                    continue
-                children.add(job_id, child)
-                say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
-                continue
+    def _lease(self, busy: bool, alive: list[str], gone: list[str]) -> Outcome:
+        """One lease (a heartbeat when `busy`); its answer acknowledges `gone`, then is read."""
+        try:
+            resp = self._post(not busy, alive, gone, CLIENT_POLL_TIMEOUT_S)
+        except HttpError as exc:
+            if exc.status not in CLIENT_TRANSIENT_4XX:
+                say(f"the server refused this client ({exc}); stopping")
+                return Stop(1)
+            return Retry(str(exc))
+        except (Unreachable, ValueError) as exc:
+            return Retry(str(exc))
+        self.answered = time.monotonic()
+        self.children.acked(gone)
+        return self._read(resp)
 
-            say(f"lease failed ({problem}); leasing again in {delay:.1f}s")
-            time.sleep(delay)
-            delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
-    except KeyboardInterrupt:
-        say("client stopped; started workers keep running")
-        return 130
-    finally:
-        release_lock(client_lock)
+    def _read(self, resp: object) -> Outcome:
+        """An answer: its protocol first, then the rest; another worker.py is said once."""
+        match parse(Speaks, resp, extra="ignore"):
+            case Unfit(why=why):
+                return Retry(f"a malformed answer ({why})")
+            case Speaks(protocol=protocol) if protocol != PROTOCOL:
+                say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
+                return Stop(1)
+        match parse(LeaseAnswer, resp, extra="ignore"):
+            case Unfit(why=why):
+                return Retry(f"a malformed answer ({why})")
+            case LeaseAnswer(job=LeasedJob(job_id=job_id)) if not _JOB_ID_RE.fullmatch(job_id):
+                return Retry(f"a job id that isn't one: {job_id!r}")
+            case LeaseAnswer(job=job, worker_sha256=sha256):
+                if sha256 != self.sha256 and not self.said_differs:
+                    url = f"{self.mode.server}/api/worker/worker.py"
+                    say(f"this worker.py differs from the server's ({url})")
+                    self.said_differs = True
+                return job
+
+    def _start(self, job: LeasedJob) -> None:
+        runs, server = self.root.runs, self.mode.server
+        workdir = runs / str(job.run_id)
+        argv = [sys.executable, str(self.me), "--server", server, "--workdir", str(workdir)]
+        argv += ["--lock-file", str(runs / f"{job.job_id}.lock")]
+        log = runs / f"{job.run_id}.log"
+        try:
+            child = self.spawn(argv, runs, child_env(job.job_token, self.root.env), log)
+        except OSError as exc:
+            say(f"run {job.run_id}: cannot start its worker: {exc}")
+            return
+        self.children.add(job.job_id, child)
+        say(f"run {job.run_id}: started its worker (pid {child.pid}), log {log}")
 
 
 # ---------------------------------------------------------------- entry point
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+@dataclass(frozen=True)
+class LiveMode:
+    """One job from the server; with `lock_file`, a client's run worker."""
+
+    server: str
+    token: str
+    workdir: Path | None  # None: ./agentos-run-<run_id>
+    lock_file: Path | None
+
+
+@dataclass(frozen=True)
+class FileMode:
+    """Mailbox mode: the package is a file, the journal goes to the outbox."""
+
+    manifest: Path
+    outbox: Path
+    workdir: Path
+
+
+@dataclass(frozen=True)
+class ClientMode:
+    """Lease this user's runs and start a worker for each (the token: $AGENTOS_CLIENT_TOKEN)."""
+
+    server: str
+    root: Path  # absolute
+    max_runs: int
+    env_file: Path | None
+
+
+Mode = LiveMode | FileMode | ClientMode
+
+
+def parse_args(argv: list[str]) -> Mode:
     """Exactly one mode: HTTP (--server [--token]), mailbox (--manifest --outbox --workdir) or
     client (--client --server, the client token in $AGENTOS_CLIENT_TOKEN)."""
     parser = argparse.ArgumentParser(prog="worker.py", description=__doc__)
@@ -3755,76 +3866,86 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--env-file", help="client mode: KEY=value lines added to every run worker's environment"
     )
     args = parser.parse_args(argv)
-    client_only = (args.max_runs, args.workdir_root, args.env_file)
     if args.client:
-        used = [args.token, args.workdir, args.lock_file, args.manifest, args.outbox]
-        if any(value is not None for value in used):
-            parser.error(
-                "--client can't be used with --token, --workdir, --lock-file, --manifest or "
-                "--outbox"
-            )
-        if args.server is None:
-            parser.error("--client needs --server")
-        if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
-            parser.error("--server must be an http:// or https:// URL")
-        if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
-            parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
-        args.max_runs = 1 if args.max_runs is None else args.max_runs
-        if not 1 <= args.max_runs <= 100:  # a lease lists at most 100 `alive` jobs
-            parser.error("--max-runs must be between 1 and 100")
-        args.workdir_root = args.workdir_root or "~/.agentos/workspaces"
-        args.mailbox = False
-        return args
-    if any(value is not None for value in client_only):
+        return _client_mode(parser, args)
+    if any(value is not None for value in (args.max_runs, args.workdir_root, args.env_file)):
         parser.error("--max-runs, --workdir-root and --env-file need --client")
-    args.mailbox = args.manifest is not None or args.outbox is not None
-    if args.mailbox:
-        if args.server is not None or args.token is not None:
-            parser.error("--manifest/--outbox (mailbox mode) can't be used with --server/--token")
-        if not (args.manifest and args.outbox and args.workdir):
-            parser.error("mailbox mode needs --manifest, --outbox and --workdir")
-        return args
+    if args.manifest is not None or args.outbox is not None:
+        return _file_mode(parser, args)
+    return _live_mode(parser, args)
+
+
+def _file_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> FileMode:
+    if args.server is not None or args.token is not None:
+        parser.error("--manifest/--outbox (mailbox mode) can't be used with --server/--token")
+    if not (args.manifest and args.outbox and args.workdir):
+        parser.error("mailbox mode needs --manifest, --outbox and --workdir")
+    return FileMode(Path(args.manifest), Path(args.outbox), Path(args.workdir))
+
+
+def _live_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> LiveMode:
     if args.server is None:
         parser.error("the following arguments are required: --server")
-    args.token = args.token or os.environ.get("AGENTOS_TOKEN")
-    if not args.token:
+    token = args.token or os.environ.get("AGENTOS_TOKEN")
+    if not token:
         parser.error("a job token is required (--token or AGENTOS_TOKEN)")
     if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
         parser.error("--server must be an http:// or https:// URL")
-    return args
+    workdir = Path(args.workdir) if args.workdir else None
+    lock_file = None if args.lock_file is None else Path(args.lock_file)
+    return LiveMode(args.server, token, workdir, lock_file)
+
+
+def _client_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> ClientMode:
+    used = [args.token, args.workdir, args.lock_file, args.manifest, args.outbox]
+    if any(value is not None for value in used):
+        parser.error(
+            "--client can't be used with --token, --workdir, --lock-file, --manifest or --outbox"
+        )
+    if args.server is None:
+        parser.error("--client needs --server")
+    if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
+        parser.error("--server must be an http:// or https:// URL")
+    if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
+        parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
+    max_runs = 1 if args.max_runs is None else args.max_runs
+    if not 1 <= max_runs <= 100:  # a lease lists at most 100 `alive` jobs
+        parser.error("--max-runs must be between 1 and 100")
+    root = Path(args.workdir_root or "~/.agentos/workspaces").expanduser().resolve()
+    env_file = Path(args.env_file) if args.env_file else None
+    return ClientMode(args.server, root, max_runs, env_file)
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    mode = parse_args(sys.argv[1:] if argv is None else argv)
     os.environ.pop("AGENTOS_TOKEN", None)  # never handed to git or to stages
     client_token = os.environ.pop("AGENTOS_CLIENT_TOKEN", "").strip()  # nor to run workers
-    if args.client:
-        env_file = Path(args.env_file) if args.env_file else None
-        root = Path(args.workdir_root)
-        return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
-    if args.mailbox:
-        return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
-    if args.lock_file is None:
-        return run_live(args)
+    match mode:
+        case ClientMode():
+            return run_client(mode, client_token, spawn_detached)
+        case FileMode(manifest=manifest, outbox=outbox, workdir=workdir):
+            return run_mailbox(manifest, outbox, workdir)
+        case LiveMode(lock_file=Path() as lock_file):
+            # A client's run worker: its client lists the job as alive while this lock is held.
+            try:
+                lock = hold_lock(lock_file)
+            except OSError as exc:
+                say(f"cannot lock {lock_file}: {exc}")
+                return 1
+            try:
+                return run_live(mode)
+            finally:
+                release_lock(lock)
+        case LiveMode():
+            return run_live(mode)
 
-    # A client's run worker: its client lists the job as alive while this lock is held.
-    try:
-        lock = hold_lock(Path(args.lock_file))
-    except OSError as exc:
-        say(f"cannot lock {args.lock_file}: {exc}")
-        return 1
-    try:
-        return run_live(args)
-    finally:
-        release_lock(lock)
 
-
-def run_live(args: argparse.Namespace) -> int:
+def run_live(mode: LiveMode) -> int:
     """Live mode: fetch the job, then bind it to a new instance id by posting `started` and
     waiting for its ack, all before the workdir is touched."""
-    client = Client(args.server, args.token, secrets.token_urlsafe(32))
+    client = Client(mode.server, mode.token, secrets.token_urlsafe(32))
     reporter = HttpReporter(client)
-    say(f"fetching the job from {args.server}")
+    say(f"fetching the job from {mode.server}")
     try:
         package = load_package(client.get("/api/worker/job"))
         sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -3844,8 +3965,8 @@ def run_live(args: argparse.Namespace) -> int:
     say(f"bound to job {package.job.id} ({package.ticket.key}, {len(package.stages)} stage(s))")
     events = EventSink(reporter, package.job.id, package.journal.first_seq + 1)
     events.start()
-    workdir = Path(args.workdir or f"agentos-run-{package.run_id}").resolve()
-    return Run(events, package, workdir, client).execute()
+    workdir = Path(f"agentos-run-{package.run_id}") if mode.workdir is None else mode.workdir
+    return Run(events, package, workdir.resolve(), client).execute()
 
 
 def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:

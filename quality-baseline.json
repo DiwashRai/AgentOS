@@ -207,9 +207,7 @@
       "backend/worker/worker.py::SyncState.collect": 22,
       "backend/worker/worker.py::_check_loops": 26,
       "backend/worker/worker.py::_walk_files": 18,
-      "backend/worker/worker.py::parse_args": 30,
       "backend/worker/worker.py::path_error": 16,
-      "backend/worker/worker.py::run_client": 41,
       "backend/worker/worker.py::run_process": 17,
       "web/src/domain/actions.ts::actionsFor": 16,
       "web/src/domain/counts.ts::counts": 21,
@@ -283,9 +281,7 @@
       "backend/worker/worker.py::_walk_files": 11,
       "backend/worker/worker.py::classify": 12,
       "backend/worker/worker.py::github_repo": 15,
-      "backend/worker/worker.py::parse_args": 23,
       "backend/worker/worker.py::path_error": 11,
-      "backend/worker/worker.py::run_client": 28,
       "backend/worker/worker.py::run_process": 15,
       "web/src/domain/actions.ts::actionsFor": 18,
       "web/src/domain/counts.ts::counts": 17,
@@ -348,7 +344,7 @@
       "web/src/ui/glyph.ts::stageCaption": 12
     },
     "file_lines": {
-      "backend/worker/worker.py::file": 2961
+      "backend/worker/worker.py::file": 3024
     },
     "fan_out": {
       "runs": 7,
@@ -429,6 +425,13 @@
       "from": "2794",
       "to": "2961",
       "reason": "the job package parsed once into typed records (AgentStage | ShellStage, typed sections) plus a 107-line stdlib parser; the worker must stay one stdlib-only file, so the records can't live elsewhere (refactor area 2; proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "exceptions.file_lines.backend/worker/worker.py::file",
+      "from": "2961",
+      "to": "3024",
+      "reason": "the command line (LiveMode | FileMode | ClientMode) and each lease's outcome as typed records; run_client 41 -> 3 and parse_args 30 -> 5 cognitive; the worker must stay one stdlib-only file (refactor area 3; proposed by the orchestrator, for the owner to approve)"
     }
   ]
 }

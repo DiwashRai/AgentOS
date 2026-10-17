@@ -35,4 +35,4 @@ def test_token_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_token_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENTOS_TOKEN", "t" * 43)
     args = worker.parse_args(["--server", "http://127.0.0.1:8000"])
-    assert args.token == "t" * 43
+    assert args == worker.LiveMode("http://127.0.0.1:8000", "t" * 43, None, None)
