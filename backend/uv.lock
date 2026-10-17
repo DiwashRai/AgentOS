@@ -24,6 +24,7 @@ dependencies = [
 dev = [
     { name = "complexipy" },
     { name = "import-linter" },
+    { name = "lizard" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-randomly" },
@@ -46,6 +47,7 @@ requires-dist = [
 dev = [
     { name = "complexipy", specifier = "==8.0.1" },
     { name = "import-linter", specifier = ">=2.15" },
+    { name = "lizard", specifier = "==1.24.1" },
     { name = "mypy", specifier = ">=2.4.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-randomly", specifier = ">=5.0.0" },
@@ -604,6 +606,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/ea/7421d9e6db894cd6cd788b604b3394a163ded6b942052b6f96c23ccf08e1/librt-0.16.0-cp315-cp315t-win32.whl", hash = "sha256:375bfe6b572a8f6cfc398709356046173bf27e64c4c5edaf5f7062f051fb4bf9", size = 104355, upload-time = "2026-09-29T00:55:04.533Z" },
     { url = "https://files.pythonhosted.org/packages/85/6d/7c31a506eb847bc58aeb2402d58e17605e821f68ab5df5e66fe274a6df41/librt-0.16.0-cp315-cp315t-win_amd64.whl", hash = "sha256:bd3150023d3dc2bc70f3784e59ffa1140d56ddba3d8125b3d6f9f85221279bfc", size = 126134, upload-time = "2026-09-29T00:55:06.017Z" },
     { url = "https://files.pythonhosted.org/packages/36/69/7a5d10ac409c4da0355e054a14371871da9b5557fcc42772cd00181c6cce/librt-0.16.0-cp315-cp315t-win_arm64.whl", hash = "sha256:8ceafb70f2a4f0826f11031942e59c0728fd98da112dc346d4352bde1e486866", size = 116391, upload-time = "2026-09-29T00:55:07.484Z" },
+]
+
+[[package]]
+name = "lizard"
+version = "1.24.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pathspec" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/87/0352f911886e8b10b06b36dca674b9da91a25112bd08253b84346a1815e5/lizard-1.24.1.tar.gz", hash = "sha256:c022cf1aac8170994b175e2a700f0535088f66da7e6bdf6c59fbd3b716cd10ac", size = 112474, upload-time = "2026-10-05T22:50:11.007Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/2d/6e9562b7f3aa3f4e3b8899be26b4dbc67752340b2f63beeba441956aff58/lizard-1.24.1-py2.py3-none-any.whl", hash = "sha256:746060a3e9a375af7340b2d4c6aab307b8a8b4199339c36ddc7afc4188b53d1c", size = 122005, upload-time = "2026-10-05T22:50:09.48Z" },
 ]
 
 [[package]]

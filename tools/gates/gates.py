@@ -6,8 +6,9 @@ never raises it. `--init` writes the first baseline.
 
 The baseline (`quality-baseline.json` at the repo root) holds the limits, the layers (path globs,
 first match wins), the caps per layer and per feature, the named existing offenders and a
-`raises` list. With no baseline every cap is 0 and nothing is named. A number in the baseline that
-went up against the committed one (`git show HEAD:...`) needs a new `raises` entry naming it.
+`raises` list. With no baseline every cap is 0, nothing is named and the limits are the defaults.
+A number in the baseline that went up against the committed one (`git show HEAD:...`) needs a new
+`raises` entry naming it.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from typing import Any
 
 import complexipy
 import grimp
+import lizard  # type: ignore[import-untyped]  # lizard ships no type hints
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
@@ -42,7 +44,18 @@ FEATURES = "web/src/features/"
 # The composition root wires every feature together; its fan-out is its job.
 FAN_OUT_EXEMPT = {"main"}
 
-DEFAULT_LIMITS = {"cognitive": 15, "cyclomatic": 10, "file_lines": 1000, "fan_out": 5}
+# `cyclomatic_python_tool` picks the Python cyclomatic counter: "lizard" (and/or, ternaries and
+# comprehensions count; what the reference ranges were measured with) or "ruff" (C901, McCabe:
+# they don't). The named cyclomatic exceptions are that tool's scores, so a switch goes with
+# `--rebaseline-cyclomatic` and a `raises` entry naming both changes.
+DEFAULT_LIMITS: dict[str, Any] = {
+    "cognitive": 15,
+    "cyclomatic": 10,
+    "cyclomatic_python_tool": "lizard",
+    "file_lines": 1000,
+    "fan_out": 5,
+}
+PY_CYCLOMATIC_TOOLS = ("lizard", "ruff")
 # fnmatch patterns ("*" also matches "/"), relative to the repo root. First match wins.
 DEFAULT_LAYERS = {
     "core": [
@@ -271,23 +284,67 @@ def cognitive_python(files: list[PyFile]) -> list[Finding]:
     return found
 
 
-def cyclomatic_python(files: list[PyFile], limit: int) -> list[Finding]:
-    """ruff C901, run with its own threshold and no project config; `# noqa` can't hide one."""
+def _ignore_comments(tokens: Iterator[str], reader: Any) -> Iterator[str]:
+    """Lizard's comment step without its directives: `#lizard forgive*` and "GENERATED CODE"
+    comments would drop functions from the count, so comments are only skipped here."""
+    for token in tokens:
+        comment = reader.get_comment_from_token(token)
+        if comment is None:
+            yield token
+        else:
+            yield from "\n" * comment.count("\n")
+
+
+_LIZARD = lizard.FileAnalyzer(
+    [
+        lizard.preprocessing,
+        _ignore_comments,
+        lizard.line_counter,
+        lizard.token_counter,
+        lizard.condition_counter,
+    ]
+)
+
+
+def cyclomatic_python(files: list[PyFile], limits: dict[str, Any]) -> list[Finding]:
+    tool = limits["cyclomatic_python_tool"]
+    if tool == "ruff":
+        return cyclomatic_ruff(files, limits["cyclomatic"])
+    if tool != "lizard":
+        raise ValueError(
+            f"limits.cyclomatic_python_tool: {tool!r}, not one of {PY_CYCLOMATIC_TOOLS}"
+        )
+    return cyclomatic_lizard(files)
+
+
+def cyclomatic_lizard(files: list[PyFile]) -> list[Finding]:
+    """Lizard's cyclomatic complexity, every function (its forgive comments don't count)."""
+    found: list[Finding] = []
+    for f in files:
+        source = (ROOT / f.path).read_text(encoding="utf-8")
+        for fn in _LIZARD.analyze_source_code(f.path, source).function_list:
+            name = f.defensive.qualnames.get(fn.start_line, fn.name)
+            found.append(Finding(f.path, fn.start_line, name, fn.cyclomatic_complexity))
+    return found
+
+
+def cyclomatic_ruff(files: list[PyFile], limit: int) -> list[Finding]:
+    """ruff C901 (McCabe), the functions over `limit`: run with its own threshold and no project
+    config, so `# noqa` can't hide one."""
     command = [sys.executable, "-m", "ruff", "check", "--isolated", "--select", "C901"]
     command += ["--config", f"lint.mccabe.max-complexity={limit}", "--ignore-noqa", "--no-cache"]
-    command += ["--exit-zero", "--output-format", "json", *(f.path for f in files)]
+    by_path = {(ROOT / f.path).resolve(): f for f in files}
+    command += ["--exit-zero", "--output-format", "json", *map(str, by_path)]
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=True)
-    by_path = {f.path: f for f in files}
     found: list[Finding] = []
     for item in json.loads(result.stdout):
-        path = Path(item["filename"]).resolve().relative_to(ROOT).as_posix()
+        f = by_path[Path(item["filename"]).resolve()]
         line = int(item["location"]["row"])
         score = re.search(r"\((\d+) > \d+\)", item["message"])
-        named = re.search(r"`([^`]+)`", item["message"])
-        if not score or not named:
+        if not score:
             raise RuntimeError(f"unexpected ruff C901 message: {item['message']}")
-        name = by_path[path].defensive.qualnames.get(line, named[1])
-        found.append(Finding(path, line, name, int(score[1])))
+        name = f.defensive.qualnames.get(line, f"<line {line}>")
+        found.append(Finding(f.path, line, name, int(score[1])))
     return found
 
 
@@ -320,7 +377,7 @@ def ts_files() -> list[str]:
     return [p for p in rel if not any(fnmatch.fnmatchcase(p, x) for x in TS_EXCLUDE)]
 
 
-def start_ts(limits: dict[str, int]) -> TsRun:
+def start_ts(limits: dict[str, Any]) -> TsRun:
     """Start both node processes at once; they run while Python is measured."""
     node = shutil.which("node") or "node"
     files = ts_files()
@@ -347,7 +404,7 @@ def _innermost(functions: list[dict[str, Any]], line: int, column: int) -> str:
 
 
 def finish_ts(run: TsRun) -> tuple[dict[str, Any], list[Finding], list[Finding]]:
-    """The per-file measures, then the cognitive and cyclomatic findings."""
+    """The per-file measures, then the cognitive (sonarjs) and cyclomatic (complexity) findings."""
     out, _ = run.measures.communicate()
     if run.measures.returncode != 0:
         raise RuntimeError("ts_measures.mjs failed")
@@ -404,12 +461,12 @@ class Measures:
         }
 
 
-def measure(layers: dict[str, list[str]], limits: dict[str, int]) -> Measures:
+def measure(layers: dict[str, list[str]], limits: dict[str, Any]) -> Measures:
     ts = start_ts(limits)
     py = [analyse_python(p, (ROOT / p).read_text(encoding="utf-8")) for p in python_files()]
     m = Measures(files=len(py) + len(ts.files))
     m.cognitive = cognitive_python(py)
-    m.cyclomatic = cyclomatic_python(py, limits["cyclomatic"])
+    m.cyclomatic = cyclomatic_python(py, limits)
     m.fan_out = fan_out()
     for layer in [*layers, "other"]:
         m.defensive[layer] = {kind: [] for kind in KINDS}
@@ -454,7 +511,7 @@ def normalise(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def flatten(baseline: dict[str, Any]) -> dict[str, int]:
-    flat = {f"limits.{k}": v for k, v in baseline["limits"].items()}
+    flat = {f"limits.{k}": v for k, v in baseline["limits"].items() if isinstance(v, int)}
     allowed = baseline["allowed"]
     for layer, kinds in allowed["defensive"].items():
         flat |= {f"allowed.defensive.{layer}.{kind}": n for kind, n in kinds.items()}
@@ -475,6 +532,9 @@ def unexplained_raises(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     raised = [k for k, v in flatten(new).items() if v > before.get(k, 0)]
     if new["layers"] != old["layers"]:
         raised.append("layers")
+    tool = "cyclomatic_python_tool"
+    if new["limits"][tool] != old["limits"][tool]:
+        raised.append(f"limits.{tool}")
     return [
         f"{key}: {before.get(key, 'none')} -> {flatten(new).get(key, 'changed')}"
         for key in sorted(raised)
@@ -666,6 +726,11 @@ def main(argv: list[str]) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--ratchet", action="store_true", help="lower the baseline, never raise")
     group.add_argument("--init", action="store_true", help="write the first baseline")
+    group.add_argument(
+        "--rebaseline-cyclomatic",
+        action="store_true",
+        help="rewrite the named cyclomatic exceptions (after switching the Python tool)",
+    )
     args = parser.parse_args(argv)
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")  # a Windows pipe may not be UTF-8
@@ -676,14 +741,21 @@ def main(argv: list[str]) -> int:
     if args.init and exists:
         print(f"{BASELINE.name} exists already; edit it or run `just ratchet`")
         return 2
-    if args.ratchet and not exists:
-        print(f"no {BASELINE.name} to ratchet; write the first one with --init")
+    if (args.ratchet or args.rebaseline_cyclomatic) and not exists:
+        print(f"no {BASELINE.name} yet; write the first one with --init")
         return 2
     m = measure(baseline["layers"], baseline["limits"])
 
     if args.init:
         save(initial_baseline(m))
         print(f"wrote {BASELINE.name}")
+        return 0
+    if args.rebaseline_cyclomatic:
+        limit = baseline["limits"]["cyclomatic"]
+        scores = sorted(m.scores("cyclomatic").items())
+        baseline["exceptions"]["cyclomatic"] = {k: v for k, v in scores if v > limit}
+        save(baseline)
+        print("rewrote exceptions.cyclomatic: add a `raises` entry for it, with the reason")
         return 0
     if args.ratchet:
         changes = ratchet(baseline, m)

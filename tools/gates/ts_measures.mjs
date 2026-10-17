@@ -8,10 +8,10 @@
 //   functions     [{name, start: [line, col], end: [line, col]}], 1-based, to name ESLint findings
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const [webDir, ...files] = process.argv.slice(2);
-const ts = createRequire(join(webDir, "package.json"))("typescript");
+const ts = createRequire(resolve(webDir, "package.json"))("typescript");
 const MARKERS = /eslint-disable(?:-next-line|-line)?|@ts-ignore|@ts-expect-error/g;
 
 function functionName(node) {

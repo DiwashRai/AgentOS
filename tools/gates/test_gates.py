@@ -82,6 +82,15 @@ def test_a_new_named_offender_is_a_raise() -> None:
     assert not gates.unexplained_raises(new, old)  # dropping one only tightens
 
 
+def test_switching_the_python_cyclomatic_tool_needs_a_raises_entry() -> None:
+    old = _baseline()
+    new = copy.deepcopy(old)
+    new["limits"]["cyclomatic_python_tool"] = "ruff"
+    assert gates.unexplained_raises(old, new)
+    new["raises"] = [{"what": "limits.cyclomatic_python_tool", "reason": "McCabe as upstream"}]
+    assert not gates.unexplained_raises(old, new)
+
+
 def _hits(source: str) -> dict[str, int]:
     report = gates.analyse_python("x.py", textwrap.dedent(source))
     return {kind: len(lines) for kind, lines in report.defensive.hits.items() if lines}
@@ -131,9 +140,71 @@ def test_the_first_matching_layer_wins() -> None:
     assert gates.layer_of("elsewhere.py", layers) == "other"
 
 
+def _py_file(tmp_path: Path, source: str) -> gates.PyFile:
+    path = tmp_path / "f.py"
+    path.write_text(textwrap.dedent(source), encoding="utf-8", newline="\n")
+    report = gates.analyse_python(str(path), path.read_text(encoding="utf-8"))
+    report.path = str(path)  # absolute, so ROOT / path is the file
+    return report
+
+
+def _cyclomatic(report: gates.PyFile, tool: str, limit: int = 10) -> dict[str, int]:
+    limits = gates.DEFAULT_LIMITS | {"cyclomatic": limit, "cyclomatic_python_tool": tool}
+    return {f.name: f.score for f in gates.cyclomatic_python([report], limits)}
+
+
+def test_lizard_ignores_its_forgive_comments(tmp_path: Path) -> None:
+    report = _py_file(
+        tmp_path,
+        """\
+        def f(xs, flag):  # lizard forgives
+            #lizard forgives
+            ys = [x for x in xs if x] if flag and xs else []
+            match flag:
+                case 1:
+                    return ys
+                case _:
+                    return None
+        # GENERATED CODE
+        def g(x):
+            return x or 1
+        """,
+    )
+
+    assert _cyclomatic(report, "lizard") == {"f": 7, "g": 2}  # f: 1 + for, if, ternary, and, cases
+
+
+def test_both_python_tools_score_and_only_lizard_counts_boolean_operators(tmp_path: Path) -> None:
+    report = _py_file(
+        tmp_path,
+        """\
+        def h(a, b, c):  # noqa: C901
+            if a and b or c:
+                return 1
+            return 0
+        """,
+    )
+
+    assert _cyclomatic(report, "lizard") == {"h": 4}
+    assert _cyclomatic(report, "ruff", limit=1) == {"h": 2}  # ruff lists only those over the limit
+
+
+def _ts_measures(tmp_path: Path, source: str) -> dict[str, Any]:
+    (tmp_path / "Page.tsx").write_text(textwrap.dedent(source), encoding="utf-8", newline="\n")
+    rel = os.path.relpath(tmp_path / "Page.tsx", gates.WEB)
+    script = Path(gates.__file__).with_name("ts_measures.mjs")
+    out = subprocess.run(
+        ["node", str(script), str(gates.WEB), rel], capture_output=True, text=True, check=True
+    )
+    measured: dict[str, Any] = next(iter(json.loads(out.stdout).values()))
+    return measured
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
 def test_ts_measures_reads_comments_tags_and_names(tmp_path: Path) -> None:
-    source = textwrap.dedent("""\
+    measured = _ts_measures(
+        tmp_path,
+        """\
         // eslint-disable-next-line no-console
         export function Page() {
           return (
@@ -144,15 +215,8 @@ def test_ts_measures_reads_comments_tags_and_names(tmp_path: Path) -> None:
             </div>
           );
         }
-    """)
-    (tmp_path / "Page.tsx").write_text(source, encoding="utf-8", newline="\n")
-    rel = os.path.relpath(tmp_path / "Page.tsx", gates.WEB)
-    script = Path(gates.__file__).with_name("ts_measures.mjs")
-    out = subprocess.run(
-        ["node", str(script), str(gates.WEB), rel], capture_output=True, text=True, check=True
+        """,
     )
-
-    measured = next(iter(json.loads(out.stdout).values()))
 
     assert measured["code_lines"] == 9
     assert [marker for _, marker in measured["suppressions"]] == ["eslint-disable-next-line"]
