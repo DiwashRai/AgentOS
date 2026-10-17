@@ -1,4 +1,4 @@
-"""The tricky parts of gates.py: the ratchet, raise detection, pattern detection, layers."""
+"""The tricky parts of the gates: the ratchet, raise detection, pattern detection, layers."""
 
 from __future__ import annotations
 
@@ -13,8 +13,14 @@ from typing import Any
 
 import pytest
 
+import baseline as bl
+import common
+import defensive
 import gates
-from gates import Finding, Measures
+import python_measures
+import ts_measures
+from common import Finding
+from measures import Measures
 
 
 def _baseline(**changes: Any) -> dict[str, Any]:
@@ -28,7 +34,7 @@ def _baseline(**changes: Any) -> dict[str, Any]:
         "exceptions": {"cognitive": {"a.py::worse": 20, "a.py::better": 30, "a.py::fixed": 18}},
     }
     raw.update(changes)
-    return gates.normalise(raw)
+    return bl.normalise(raw)
 
 
 def _measures() -> Measures:
@@ -46,11 +52,11 @@ def _measures() -> Measures:
 
 def test_ratchet_lowers_what_improved_and_never_raises() -> None:
     baseline = _baseline()
-    before = gates.flatten(copy.deepcopy(baseline))
+    before = bl.flatten(copy.deepcopy(baseline))
 
-    gates.ratchet(baseline, _measures())
+    bl.ratchet(baseline, _measures())
 
-    after = gates.flatten(baseline)
+    after = bl.flatten(baseline)
     assert all(after[key] <= value for key, value in before.items() if key in after)
     assert after["allowed.defensive.a.py.isinstance"] == 3
     assert "allowed.defensive.a.py.try" not in after  # a cap that reaches 0 goes
@@ -64,7 +70,7 @@ def _raised(entry: dict[str, str] | None) -> list[str]:
     new = copy.deepcopy(old)
     new["allowed"]["defensive"]["a.py"]["isinstance"] = 4
     new["raises"] = [entry] if entry else []
-    return gates.unexplained_raises(old, new)
+    return bl.unexplained_raises(old, new)
 
 
 def test_a_raise_needs_an_entry_with_a_reason() -> None:
@@ -79,8 +85,8 @@ def test_a_new_named_offender_is_a_raise() -> None:
     old = _baseline()
     new = copy.deepcopy(old)
     new["exceptions"]["cyclomatic"]["b.py::new"] = 12
-    assert gates.unexplained_raises(old, new)
-    assert not gates.unexplained_raises(new, old)  # dropping one only tightens
+    assert bl.unexplained_raises(old, new)
+    assert not bl.unexplained_raises(new, old)  # dropping one only tightens
 
 
 def test_uncapping_a_kind_in_a_layer_is_a_raise() -> None:
@@ -88,23 +94,23 @@ def test_uncapping_a_kind_in_a_layer_is_a_raise() -> None:
     new = copy.deepcopy(old)
     new["allowed"]["uncapped"]["boundary"].append("broad_except")
     new["allowed"]["uncapped"]["shell"] = ["isinstance"]
-    assert len(gates.unexplained_raises(old, new)) == 2
+    assert len(bl.unexplained_raises(old, new)) == 2
     new["raises"] = [{"what": "allowed.uncapped", "reason": "the shell parses rows now"}]
-    assert not gates.unexplained_raises(old, new)
-    assert not gates.unexplained_raises(new | {"raises": []}, old)  # capping one only tightens
+    assert not bl.unexplained_raises(old, new)
+    assert not bl.unexplained_raises(new | {"raises": []}, old)  # capping one only tightens
 
 
 def test_switching_the_python_cyclomatic_tool_needs_a_raises_entry() -> None:
     old = _baseline()
     new = copy.deepcopy(old)
     new["limits"]["cyclomatic_python_tool"] = "ruff"
-    assert gates.unexplained_raises(old, new)
+    assert bl.unexplained_raises(old, new)
     new["raises"] = [{"what": "limits.cyclomatic_python_tool", "reason": "McCabe as upstream"}]
-    assert not gates.unexplained_raises(old, new)
+    assert not bl.unexplained_raises(old, new)
 
 
 def _hits(source: str) -> dict[str, int]:
-    report = gates.analyse_python("x.py", textwrap.dedent(source))
+    report = defensive.analyse_python("x.py", textwrap.dedent(source))
     return {kind: len(lines) for kind, lines in report.defensive.hits.items() if lines}
 
 
@@ -209,16 +215,16 @@ def test_a_domain_class_with_two_optional_fields_is_flagged() -> None:
             owner: str | None = None
             title: str | None = None
     """
-    report = gates.analyse_python("x.py", textwrap.dedent(source))
+    report = defensive.analyse_python("x.py", textwrap.dedent(source))
     found = [Finding("x.py", *c) for c in report.defensive.optional_fields]
-    result = gates._named_gate("optional_fields", found, gates.normalise({}), "classes")
+    result = gates._named_gate("optional_fields", found, bl.normalise({}), "classes")
     assert {f.name: f.score for f in found} == {"Run": 2, "Ticket": 1}
     assert [line.split()[1] for line in result.details] == ["Run"]
 
 
 def test_defensive_caps_are_per_file_and_the_boundary_checks_input_freely() -> None:
     caps = {"uncapped": {"boundary": ["try"]}, "defensive": {"a.py": {"try": 2}}}
-    baseline = gates.normalise({"allowed": caps})
+    baseline = bl.normalise({"allowed": caps})
     m = Measures(layer={"a.py": "shell", "b.py": "shell", "c.py": "boundary"})
     m.defensive = {"a.py": {"try": [1]}, "b.py": {"try": [7]}, "c.py": {"try": [1, 2]}}
 
@@ -230,27 +236,27 @@ def test_defensive_caps_are_per_file_and_the_boundary_checks_input_freely() -> N
 
 def test_docstrings_and_comments_are_not_code_lines() -> None:
     source = '"""Module.\n\nMore."""\n\n# a comment\ndef f():\n    """Doc."""\n    return 1\n'
-    assert gates.analyse_python("x.py", source).code_lines == 2
+    assert defensive.analyse_python("x.py", source).code_lines == 2
 
 
 def test_the_first_matching_layer_wins() -> None:
     layers = {"core": ["pkg/*/board.py"], "services": ["pkg/*"]}
-    assert gates.layer_of("pkg/tickets/board.py", layers) == "core"
-    assert gates.layer_of("pkg/tickets/service.py", layers) == "services"
-    assert gates.layer_of("elsewhere.py", layers) == "other"
+    assert common.layer_of("pkg/tickets/board.py", layers) == "core"
+    assert common.layer_of("pkg/tickets/service.py", layers) == "services"
+    assert common.layer_of("elsewhere.py", layers) == "other"
 
 
-def _py_file(tmp_path: Path, source: str) -> gates.PyFile:
+def _py_file(tmp_path: Path, source: str) -> defensive.PyFile:
     path = tmp_path / "f.py"
     path.write_text(textwrap.dedent(source), encoding="utf-8", newline="\n")
-    report = gates.analyse_python(str(path), path.read_text(encoding="utf-8"))
+    report = defensive.analyse_python(str(path), path.read_text(encoding="utf-8"))
     report.path = str(path)  # absolute, so ROOT / path is the file
     return report
 
 
-def _cyclomatic(report: gates.PyFile, tool: str, limit: int = 10) -> dict[str, int]:
-    limits = gates.DEFAULT_LIMITS | {"cyclomatic": limit, "cyclomatic_python_tool": tool}
-    return {f.name: f.score for f in gates.cyclomatic_python([report], limits)}
+def _cyclomatic(report: defensive.PyFile, tool: str, limit: int = 10) -> dict[str, int]:
+    limits = bl.DEFAULT_LIMITS | {"cyclomatic": limit, "cyclomatic_python_tool": tool}
+    return {f.name: f.score for f in python_measures.cyclomatic_python([report], limits)}
 
 
 def test_lizard_ignores_its_forgive_comments(tmp_path: Path) -> None:
@@ -291,10 +297,10 @@ def test_both_python_tools_score_and_only_lizard_counts_boolean_operators(tmp_pa
 
 def _ts_measures(tmp_path: Path, source: str) -> dict[str, Any]:
     (tmp_path / "Page.tsx").write_text(textwrap.dedent(source), encoding="utf-8", newline="\n")
-    rel = os.path.relpath(tmp_path / "Page.tsx", gates.WEB)
-    script = Path(gates.__file__).with_name("ts_measures.mjs")
+    rel = os.path.relpath(tmp_path / "Page.tsx", ts_measures.WEB)
+    script = Path(ts_measures.__file__).with_name("ts_measures.mjs")
     out = subprocess.run(
-        ["node", str(script), str(gates.WEB), rel], capture_output=True, text=True, check=True
+        ["node", str(script), str(ts_measures.WEB), rel], capture_output=True, text=True, check=True
     )
     measured: dict[str, Any] = next(iter(json.loads(out.stdout).values()))
     return measured
