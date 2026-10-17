@@ -1,4 +1,4 @@
-# AgentOS task runner. `just check` runs every gate.
+# AgentOS task runner. `just check` runs every check; `just gates` runs the gates.
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
 default: check
@@ -9,10 +9,10 @@ setup:
     cd web; npm ci
     git config core.hooksPath .githooks
 
-# Every gate, both halves.
-check: check-backend check-web
+# Every check: both halves and the gate scripts' own.
+check: check-backend check-web check-tools
 
-# Backend gates: format, lint, types (incl. the worker on 3.11), architecture, tests.
+# Backend checks: format, lint, types (incl. the worker on 3.11), architecture, tests.
 [working-directory('backend')]
 check-backend:
     uv run ruff format --check .
@@ -22,10 +22,26 @@ check-backend:
     uv run lint-imports
     uv run pytest -n auto
 
-# Web gates: types, lint, format, tests.
+# Web checks: types, lint, format, tests.
 [working-directory('web')]
 check-web:
     npm run check
+
+# The gate scripts' own checks (tools/gates, run in the backend's environment).
+check-tools:
+    uv run --project backend ruff format --check tools/gates
+    uv run --project backend ruff check tools/gates
+    uv run --project backend mypy --strict tools/gates
+    uv run --project backend pytest -q -p no:randomly -p no:cacheprovider tools/gates
+
+# Every gate (measured limits on how the code grows; tools/gates/gates.py). Fails listing each
+# offender as path:line  name  score > limit.
+gates:
+    uv run --project backend python tools/gates/gates.py
+
+# Lower quality-baseline.json where the code improved (never raises it). Commit it with the change.
+ratchet:
+    uv run --project backend python tools/gates/gates.py --ratchet
 
 # Auto-fix formatting. Sessions use only their own half: fmt-backend or fmt-web.
 fmt: fmt-backend fmt-web
@@ -56,7 +72,7 @@ dev-backend:
 dev-web:
     npm run dev
 
-# Fast gates used by the pre-commit hook, scoped to the staged half.
+# Fast checks used by the pre-commit hook, scoped to the staged half.
 [working-directory('backend')]
 pre-commit-backend:
     uv run ruff format --check .
