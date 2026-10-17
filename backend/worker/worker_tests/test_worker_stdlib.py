@@ -1,4 +1,5 @@
-"""Gate: worker.py must import only the Python standard library."""
+"""Gate: the worker (worker.py and the agentos_worker package) imports only the Python standard
+library and itself, absolutely and at module level, so a replaced zip is never re-read mid-run."""
 
 from __future__ import annotations
 
@@ -10,20 +11,34 @@ import pytest
 
 import worker
 
-WORKER = Path(__file__).resolve().parents[1] / "worker.py"
+WORKER_DIR = Path(__file__).resolve().parents[1]
+SOURCES = [WORKER_DIR / "worker.py", *sorted((WORKER_DIR / "agentos_worker").rglob("*.py"))]
+ALLOWED = set(sys.stdlib_module_names) | {"__future__", "agentos_worker"}
 
 
-def test_worker_imports_only_stdlib() -> None:
-    tree = ast.parse(WORKER.read_text(encoding="utf-8"))
+def _imports(tree: ast.AST) -> list[ast.Import | ast.ImportFrom]:
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Import | ast.ImportFrom)]
+
+
+def _in_functions(tree: ast.AST) -> list[int]:
+    functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
+    return sorted({node.lineno for fn in functions for node in _imports(fn)})
+
+
+@pytest.mark.parametrize("source", SOURCES, ids=lambda p: p.relative_to(WORKER_DIR).as_posix())
+def test_worker_imports_only_stdlib_at_module_level(source: Path) -> None:
+    tree = ast.parse(source.read_text(encoding="utf-8"))
     imported: set[str] = set()
-    for node in ast.walk(tree):
+    for node in _imports(tree):
         if isinstance(node, ast.Import):
-            imported.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            assert node.level == 0, "worker.py must not use relative imports"
-            imported.add((node.module or "").split(".")[0])
-    allowed = set(sys.stdlib_module_names) | {"__future__"}
-    assert imported - allowed == set(), f"non-stdlib imports: {sorted(imported - allowed)}"
+            imported.update(alias.name for alias in node.names)
+        else:
+            assert node.level == 0, f"{source.name}:{node.lineno}: a relative import"
+            assert node.module != "agentos_worker.tunables", "read tunables as `tunables.X`"
+            imported.add(node.module or "")
+    tops = {name.split(".")[0] for name in imported}
+    assert tops - ALLOWED == set(), f"non-stdlib imports: {sorted(tops - ALLOWED)}"
+    assert _in_functions(tree) == [], "imports inside a function"
 
 
 def test_token_is_required(monkeypatch: pytest.MonkeyPatch) -> None:

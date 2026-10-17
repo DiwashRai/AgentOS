@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import worker
+from agentos_worker import archive
 from worker_tests.worker_support import (
     JOB,
     JOB_TOKEN,
@@ -94,7 +95,7 @@ def test_a_live_run_journals_every_step_in_seq_order(
         *("stage_started", "verdict_repair", "verdict", "sync", "stage_finished"),
         *("sync_back", "result"),
     ]
-    sha256 = hashlib.sha256(Path(worker.__file__).read_bytes()).hexdigest()
+    sha256 = hashlib.sha256(archive.build(Path(worker.__file__).parent)).hexdigest()
     assert records[0]["data"] == {"protocol": 2, "worker_sha256": sha256}
     [pushed] = server.records("pushed")
     head = git(origin.bare, "rev-parse", BRANCH).strip()

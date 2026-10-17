@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentos.config import WORKER_PATH, ConfigError, Settings, startup_checks
+from agentos.config import ConfigError, Settings, startup_checks
 from agentos.db import Database
 from agentos.launchers.base import Provider
 from agentos.launchers.github import GitHubActionsProvider, GitHubTarget
@@ -38,6 +38,7 @@ from agentos.space_store import (
 )
 from agentos.stores.artifactory import ArtifactoryStore
 from agentos.ttlcache import TtlCache
+from agentos.worker_archive import worker_file
 
 log = logging.getLogger(__name__)
 
@@ -126,14 +127,16 @@ class AppContext:
 
 
 def build_context(settings: Settings, providers: dict[str, Provider] | None = None) -> AppContext:
-    """Run the startup checks (creating the data dir), migrate the db, seed the settings
-    areas the db doesn't have yet (`seed_settings`).
+    """Run the startup checks (creating the data dir), build the served worker.py once
+    (`worker_file`), migrate the db, seed the settings areas the db doesn't have yet
+    (`seed_settings`).
 
     `providers=None` builds the configured ones (`AGENTOS_LAUNCHER`, with the mailbox); the
     default route always comes from `AGENTOS_LAUNCHER`.
     Raises config.ConfigError or db.MigrationError with a readable message.
     """
     startup_checks(settings)
+    worker_file()  # build worker.py now: a missing worker source fails startup, not a request
     db = Database(settings.db_path)
     db.migrate()
     seed_settings(db)
@@ -202,7 +205,7 @@ def _providers(settings: Settings, db: Database) -> tuple[dict[str, Provider], M
     if url is None or user is None or password is None:  # pragma: no cover - startup_checks
         raise ConfigError(["the mailbox needs the AGENTOS_ARTIFACTORY_* vars"])
     artifactory = ArtifactoryStore(base_url=url, user=user, password=password.get_secret_value())
-    mailbox = MailboxLauncher(github=github, store=artifactory, worker_path=WORKER_PATH)
+    mailbox = MailboxLauncher(github=github, store=artifactory, worker=worker_file().data)
     return {"github": github}, mailbox
 
 

@@ -23,7 +23,8 @@
       "backend/server/agentos/csrf.py",
       "backend/server/agentos/meta.py",
       "backend/server/agentos/spa.py",
-      "backend/server/agentos/openapi_export.py"
+      "backend/server/agentos/openapi_export.py",
+      "backend/server/agentos/worker_archive.py"
     ],
     "shell": [
       "backend/server/agentos/*/service.py",
@@ -38,7 +39,8 @@
       "backend/server/agentos/*/__init__.py"
     ],
     "worker": [
-      "backend/worker/worker.py"
+      "backend/worker/worker.py",
+      "backend/worker/agentos_worker/*"
     ]
   },
   "limits": {
@@ -432,6 +434,13 @@
       "from": "2961",
       "to": "3024",
       "reason": "the command line (LiveMode | FileMode | ClientMode) and each lease's outcome as typed records; run_client 41 -> 3 and parse_args 30 -> 5 cognitive; the worker must stay one stdlib-only file (refactor area 3; proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "layers",
+      "from": "worker: backend/worker/worker.py; boundary: no backend/server/agentos/worker_archive.py",
+      "to": "worker: + backend/worker/agentos_worker/*; boundary: + backend/server/agentos/worker_archive.py",
+      "reason": "worker.py is served as a zip built from backend/worker: the new agentos_worker package joins the worker layer, and the server's worker_archive.py (it builds the zip once and serves it) joins the boundary (proposed by the orchestrator, for the owner to approve)"
     }
   ]
 }

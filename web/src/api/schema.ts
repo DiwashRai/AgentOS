@@ -880,7 +880,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Worker Source */
+        /**
+         * Worker Source
+         * @description The worker as one file: a zip built from backend/worker that `python worker.py` runs.
+         */
         get: operations["worker_source_api_worker_worker_py_get"];
         put?: never;
         post?: never;
@@ -5518,7 +5521,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/octet-stream": string;
                 };
             };
             /** @description Client error */
@@ -5527,7 +5530,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["ErrorBody"];
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             /** @description Server error */
@@ -5536,7 +5539,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["ErrorBody"];
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

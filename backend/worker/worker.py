@@ -1,7 +1,8 @@
 """AgentOS worker: runs one job of a run, reporting it as the run's journal, then exits.
 
-Single file, Python >= 3.11 standard library only (enforced by a test). Served by the server at
-GET /api/worker/worker.py so runners always get the matching version. See SPEC §9.
+Python >= 3.11 standard library only (enforced by a test). The server serves it, with the
+`agentos_worker` package beside it, as one zip at GET /api/worker/worker.py (agentos_worker.archive)
+so runners always get the matching version; a checkout runs it in place. See SPEC §9.
 
 Flow: fetch the job package -> bind (post `started`, wait for its ack) -> workspace (clone, or
 `git init` in no-repo mode) -> write its context and notes -> emit its warnings -> for each stage
@@ -93,6 +94,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import NoneType, UnionType
 from typing import IO, Any, ClassVar, Literal, Protocol, TypeVar, cast
+
+from agentos_worker.archive import this_worker
 
 if sys.platform == "win32":
     import msvcrt
@@ -3714,8 +3717,7 @@ class ClientLoop:
     def __init__(self, mode: ClientMode, token: str, root: ClientRoot, spawn: Spawn) -> None:
         self.mode, self.root, self.spawn = mode, root, spawn
         self.client = Client(mode.server, token)
-        self.me = Path(__file__).resolve()
-        self.sha256 = hashlib.sha256(self.me.read_bytes()).hexdigest()
+        self.me = this_worker()  # what runs, and its sha256 to compare with the server's
         self.said_differs = False  # said once
         self.answered: float | None = None  # when the server last answered (None: lease at once)
         self.children = Children(root.runs, lambda alive, gone: self._post(False, alive, gone))
@@ -3784,7 +3786,7 @@ class ClientLoop:
             case LeaseAnswer(job=LeasedJob(job_id=job_id)) if not _JOB_ID_RE.fullmatch(job_id):
                 return Retry(f"a job id that isn't one: {job_id!r}")
             case LeaseAnswer(job=job, worker_sha256=sha256):
-                if sha256 != self.sha256 and not self.said_differs:
+                if sha256 != self.me.sha256 and not self.said_differs:
                     url = f"{self.mode.server}/api/worker/worker.py"
                     say(f"this worker.py differs from the server's ({url})")
                     self.said_differs = True
@@ -3793,7 +3795,7 @@ class ClientLoop:
     def _start(self, job: LeasedJob) -> None:
         runs, server = self.root.runs, self.mode.server
         workdir = runs / str(job.run_id)
-        argv = [sys.executable, str(self.me), "--server", server, "--workdir", str(workdir)]
+        argv = [sys.executable, str(self.me.path), "--server", server, "--workdir", str(workdir)]
         argv += ["--lock-file", str(runs / f"{job.job_id}.lock")]
         log = runs / f"{job.run_id}.log"
         try:
@@ -3948,7 +3950,7 @@ def run_live(mode: LiveMode) -> int:
     say(f"fetching the job from {mode.server}")
     try:
         package = load_package(client.get("/api/worker/job"))
-        sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        sha256 = this_worker().sha256
         started = {"seq": package.journal.first_seq, "ts": _now(), "job": package.job.id}
         data = {"protocol": PROTOCOL, "worker_sha256": sha256}
         reporter.send([{**started, "type": "started", "stage_id": None, "data": data}])

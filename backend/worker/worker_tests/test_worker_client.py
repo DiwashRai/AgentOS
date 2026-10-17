@@ -16,11 +16,12 @@ from typing import IO, Any
 import pytest
 
 import worker
+from agentos_worker import archive
 from worker_tests.worker_support import FakeServer, error, eventually
 
 CLIENT_TOKEN = "c" * 43
 LEASE = "/api/worker/lease"
-SHA256 = hashlib.sha256(Path(worker.__file__).read_bytes()).hexdigest()
+SHA256 = hashlib.sha256(archive.build(Path(worker.__file__).parent)).hexdigest()
 TAKE = {"wait_s": 25, "take": True, "alive": [], "gone": []}
 
 

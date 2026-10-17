@@ -22,7 +22,7 @@ Read next, as your task needs: `README.md` (setup, running), `ARCHITECTURE.md` (
 |---|---|
 | `backend/server/agentos/` | Server: one subpackage per feature (`tickets`, `runs`, `files`, ...), pure core (`models.py`, `validate.py`, `pipeline/`), plugins (`launchers/`, `stores/`), the Jira adapter (`sources/jira.py`), SQL migrations (`migrations/000N_*.sql`) |
 | `backend/server/tests/` | Server tests |
-| `backend/worker/worker.py`, `worker_tests/` | The worker (stdlib only, Python 3.11; also the personal client, `worker.py --client`) and its tests |
+| `backend/worker/worker.py`, `agentos_worker/`, `worker_tests/` | The worker (stdlib only, Python 3.11; also the personal client, `worker.py --client`): the entry script, its package and its tests. The server serves both as one zip named `worker.py` |
 | `backend/deploy/` | Container env example, the GitHub Actions worker workflow template, deploy README |
 | `web/src/` | `app/`, `features/`, `domain/`, `ui/`, `editor/` (the editor kit), `styles/`, `api/` (generated `openapi.json` + `schema.ts`, plus hand-written client code) |
 | `.github/workflows/agentos-worker.yml` | Installed copy of `backend/deploy/github/agentos-worker.yml`; a test keeps them byte-identical |
@@ -54,13 +54,13 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 | `just container-build` / `-run` / `-logs` / `-stop` | Server image. Docker by default (`just engine=podman ...` or `CONTAINER_ENGINE`); host port 8080; needs `backend/deploy/.env.container` copied from `container.env.example`. See `backend/deploy/README.md` |
 
 ## Checks
-- `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
+- `check-backend`: `ruff format --check`, `ruff check`, `mypy` (strict, pydantic plugin), `mypy --python-version 3.11 worker/worker.py worker/agentos_worker`, `lint-imports`, `pytest -n auto` (parallel, random order; see `backend/AGENTS.md` › Testing).
 - `check-web` = `npm run check`: `tsc`, `eslint --max-warnings 0`, `prettier --check`, `check:spacing` (no raw px/em/rem spacing in CSS modules; `web/scripts/check-spacing.ts`), `vitest run`.
 - The pre-commit hook runs the fast checks (format + lint) for each half that has staged files, then `just gates` for any code or baseline change. The generated `web/src/api/openapi.json` and `schema.ts` alone don't trigger the web checks. Run the full scoped check yourself before committing. Never skip the hook (`--no-verify`).
 - No CI runs the test suites: the hook runs format, lint and the gates only, so the scoped check (or an AgentOS run's check stage) is the only place tests run before review.
 - **Never weaken a check or a gate to make it pass.** No blanket `# noqa`, `# type: ignore`, `eslint-disable` or `as any`: each suppression names the specific code and gives a one-line reason.
 - New code goes where the architecture puts it. import-linter contracts in `backend/pyproject.toml` enforce the pure core, the feature layers, the plugin boundaries and acyclic subpackages; read them there, and see `backend/AGENTS.md`.
-- `worker.py` imports only the standard library (a test enforces it) and must run on Python 3.11; ruff targets py311 for the whole backend for that reason.
+- `worker.py` and `agentos_worker` import only the standard library and themselves (a test enforces it) and must run on Python 3.11; ruff targets py311 for the whole backend for that reason.
 - ruff also bans broad excepts outside top-level handlers (`BLE001`; each allowed one says why) and clock reads in the pure core (`TID251`: it takes `now` as an argument).
 
 ## Gates

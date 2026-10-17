@@ -27,6 +27,7 @@ from agentos.context import AppContext, build_context
 from agentos.launchers.base import Provider
 from agentos.main import create_app
 from agentos.models import Me, Role, RunStatus, StageRunStatus, TicketDetail
+from agentos.worker_archive import worker_file
 from tests.run_support import FakeProvider, RunDriver
 from tests.settings_support import seed_test_settings
 
@@ -64,6 +65,15 @@ def _strip_agentos_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _user_git_config(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("git") / "config"
     path.write_bytes(b"[user]\n\tname = Test User\n\temail = test@example.com\n")
+    return path
+
+
+@pytest.fixture(scope="session")
+def built_worker(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The worker.py this server serves (the zip, `worker_file().data`), as a file: every test
+    that runs a real worker process runs it, the way a runner does."""
+    path = tmp_path_factory.mktemp("served") / "worker.py"
+    path.write_bytes(worker_file().data)
     return path
 
 

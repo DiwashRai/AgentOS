@@ -19,7 +19,11 @@ from common import AGENTOS, ROOT, Finding
 from defaults import PY_CYCLOMATIC_TOOLS
 from pyfile import PyFile
 
-PY_SCOPE = (f"{AGENTOS}/**/*.py", "backend/worker/worker.py")
+PY_SCOPE = (
+    f"{AGENTOS}/**/*.py",
+    "backend/worker/worker.py",
+    "backend/worker/agentos_worker/**/*.py",
+)
 
 
 def python_files() -> list[str]:

@@ -15,7 +15,6 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from agentos.config import WORKER_PATH
 from agentos.context import AppContext
 from agentos.models import ClientToken, LeasedJob, LeaseResponse, Me, Role, TicketDetail
 from agentos.worker_api import service
@@ -218,7 +217,8 @@ def test_a_busy_clients_heartbeat_keeps_it_online_and_takes_nothing(
     answer = LeaseResponse.model_validate(r.json())
     assert answer.job is None
     assert time.monotonic() - began < 5  # answered at once
-    assert answer.worker_sha256 == hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()
+    served = client.get("/api/worker/worker.py").content
+    assert answer.worker_sha256 == hashlib.sha256(served).hexdigest()  # the bytes runners get
 
     assert runs.db_run(run_id)["status"] == "queued"
     assert ClientToken.model_validate(client.get("/api/me/clients").json()[0]).online

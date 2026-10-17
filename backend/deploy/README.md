@@ -328,8 +328,9 @@ browser uses; the app shows it in the command).
 the agent CLIs your runtimes use, logged in. Agents run with a shell as you, so they can use
 everything your account can reach.
 
-**1. Get `worker.py`** (from a checkout of the server's version, `backend/worker/worker.py`, or
-from the server):
+**1. Get `worker.py`**: run it in place in a checkout of the server's version
+(`python backend/worker/worker.py ...`; it needs the `agentos_worker` folder beside it, so don't copy
+the file alone), or download it from the server (one file: a zip that Python runs as is):
 
 ```
 Invoke-WebRequest https://agentos.example.com/api/worker/worker.py -OutFile worker.py   # pwsh

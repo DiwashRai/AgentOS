@@ -17,9 +17,6 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from agentos.models import LauncherName
 
-# backend/worker/worker.py, served at GET /api/worker/worker.py so runners get this version.
-WORKER_PATH = Path(__file__).resolve().parents[2] / "worker" / "worker.py"
-
 
 class ConfigError(Exception):
     """Invalid configuration. `problems` lists every problem found, so one restart fixes all."""

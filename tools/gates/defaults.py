@@ -48,6 +48,7 @@ DEFAULT_LAYERS = {
         f"{AGENTOS}/meta.py",
         f"{AGENTOS}/spa.py",
         f"{AGENTOS}/openapi_export.py",
+        f"{AGENTOS}/worker_archive.py",
     ],
     "shell": [
         f"{AGENTOS}/*/service.py",
@@ -61,7 +62,7 @@ DEFAULT_LAYERS = {
         f"{AGENTOS}/__init__.py",
         f"{AGENTOS}/*/__init__.py",
     ],
-    "worker": ["backend/worker/worker.py"],
+    "worker": ["backend/worker/worker.py", "backend/worker/agentos_worker/*"],
 }
 # What `--init` leaves uncapped per layer (the baseline's `allowed.uncapped` is what applies): the
 # boundary is where chaotic input gets checked; `cast` is capped in the core only.

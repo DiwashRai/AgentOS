@@ -148,7 +148,7 @@ flowchart LR
   - Result rejected (its seq in an answer's `rejected`: the server consumed it without ending the run) → a failure to complete: nothing more is published, the workdir is kept, exit 1. The reaper then fails the run.
 
   Where: `backend/worker/worker.py` module docstring, `HttpReporter`, `EventSink`, `RunGone`, `AlreadyClaimed`, `ResultRejected`, `Unreachable`, `RETRY_BUDGET_S`.
-- **`worker.py` is one stdlib-only file (Python ≥ 3.11), served publicly at `GET /api/worker/worker.py`.** Runners install nothing, and the worker always matches the server's version. The exception is a client: it runs its own local copy (and starts that copy for each run), never one fetched from the server, so its user updates it along with the server; there is no version check. Worker routes skip CSRF because they use bearer tokens, not cookies. Where: `worker_api/routes.py`, `csrf.py`, `backend/worker/worker_tests/test_worker_stdlib.py`.
+- **`worker.py` is one stdlib-only file to its users (Python ≥ 3.11), served publicly at `GET /api/worker/worker.py`.** The server builds it once per process from `backend/worker` (the entry script `worker.py` plus the `agentos_worker` package) as a deterministic zip that `python worker.py` runs; the download, the mailbox upload, the lease's `worker_sha256` and the `started` check all carry those bytes. Runners install nothing, and the worker always matches the server's version. The exception is a client: it runs its own local copy (and starts that copy for each run), never one fetched from the server, so its user updates it along with the server; there is no version check. Worker routes skip CSRF because they use bearer tokens, not cookies. Where: `agentos_worker/archive.py`, `worker_archive.py`, `worker_api/routes.py`, `csrf.py`, `backend/worker/worker_tests/test_worker_stdlib.py`.
 
 ## Context files & git safety
 - **A ticket's context is a versioned file bundle.** By default it holds `.claude/skills/context-<key>/` (`SKILL.md`, `TASKS.md`, `learnings.log`, `swarm.log`) plus `AGENTS.md` and `CLAUDE.md` in block mode. Agents get context as files, the convention they already understand. Where: `pipeline/scaffold.py`.
@@ -212,7 +212,7 @@ flowchart LR
 - **Live updates come from polling** (3 s for lists, 1 s for an active run). TanStack pauses it in background tabs. Where: `web/src/api/queries.ts`.
 
 ## Enforcement
-- **import-linter** (`backend/pyproject.toml`, 7 contracts):
+- **import-linter** (`backend/pyproject.toml`, 9 contracts):
   1. The pure core (`models`, `validate`, `pipeline`, `*.board`) imports no web, db, HTTP client or config.
   2. Inside a feature, the layers run `routes → deps → loops → service → board`.
   3. Routes, deps and `meta` reach the database only through services.
@@ -220,9 +220,11 @@ flowchart LR
   5. Only the HTTP layer imports FastAPI/Starlette/uvicorn; services raise the pure `ApiError`, which `http_errors.py` translates.
   6. Plugins (`launchers`, `sources`, `stores`) import no db, services, routes or FastAPI.
   7. There are no import cycles between subpackages. The direction is `worker_api → runs → social → tickets → workflows → templates | files | clients → auth`; `clients` is a leaf (its tokens, who is online, and a ticket's waiting client run).
+  8. The worker (`agentos_worker`) imports nothing from the server.
+  9. The server imports the worker only in `agentos.worker_archive`, and only `agentos_worker.archive`, to build `worker.py`.
 - **Drift test:** `server/tests/test_api_drift.py` fails when the committed `web/src/api/openapi.json` doesn't match the backend.
 - **Shared fixtures:** `server/tests/fixtures/job_v2.json` is the server ↔ worker contract (a protocol 2 job package): the server suite validates it as `JobPackage` and compares its keys with `build_package()`, and the worker suite loads it with `load_package()`. `fixtures/journal_v2.jsonl` holds one journal record per type: the server suite validates and ingests it, and the worker suite checks the records it emits have the same keys. `fixtures/path_cases.json` is one table of path rules, run against both `validate.validate_path` and `worker.path_error`.
-- **The worker on Python 3.11:** `check-backend` type-checks `worker.py` as 3.11, and `test_worker_stdlib.py` forbids non-stdlib imports.
+- **The worker on Python 3.11:** `check-backend` type-checks `worker.py` and `agentos_worker` as 3.11, and `test_worker_stdlib.py` forbids non-stdlib imports and imports inside functions.
 - **Closed error codes:** `models.ErrorCode` is the full set, and the UI branches on them (e.g. 409 `stale_version` / `run_active` / `bundle_locked`).
 
 ## Planned, not built

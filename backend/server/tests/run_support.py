@@ -14,11 +14,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agentos.clock import to_db, utcnow
-from agentos.config import WORKER_PATH
 from agentos.context import AppContext
 from agentos.launchers.base import JobStart, JobStatus
 from agentos.models import JobPackage, RunDetail, RunSummary
 from agentos.runs import dispatcher
+from agentos.worker_archive import worker_file
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -88,8 +88,8 @@ def finished(seq: int, stage_id: str, status: str = "succeeded", code: int | Non
 
 
 def started_data() -> dict[str, Any]:
-    """A `started` record's data, from this server's own worker.py."""
-    return {"protocol": 2, "worker_sha256": hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()}
+    """A `started` record's data, from the worker.py this server serves."""
+    return {"protocol": 2, "worker_sha256": worker_file().sha256}
 
 
 @dataclass

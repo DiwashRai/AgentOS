@@ -8,6 +8,7 @@
 !backend/uv.lock
 !backend/server/agentos
 !backend/worker/worker.py
+!backend/worker/agentos_worker
 !web
 
 # ...minus what never belongs in it, wherever it is.

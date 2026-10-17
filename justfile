@@ -18,7 +18,7 @@ check-backend:
     uv run ruff format --check .
     uv run ruff check .
     uv run mypy
-    uv run mypy --python-version 3.11 worker/worker.py
+    uv run mypy --python-version 3.11 worker/worker.py worker/agentos_worker
     uv run lint-imports
     uv run pytest -n auto
 
