@@ -139,7 +139,7 @@
         "try": 2
       },
       "backend/worker/worker.py": {
-        "isinstance": 33,
+        "isinstance": 28,
         "try": 67,
         "broad_except": 4,
         "getattr_default": 1,
@@ -199,14 +199,13 @@
       "backend/worker/worker.py::EventSink._loop": 26,
       "backend/worker/worker.py::GitHub.call": 16,
       "backend/worker/worker.py::Recorder.send": 20,
-      "backend/worker/worker.py::Run._exec_check": 19,
       "backend/worker/worker.py::Run._execute": 22,
       "backend/worker/worker.py::Run._run_loop": 16,
       "backend/worker/worker.py::Run._send_sync_back": 17,
       "backend/worker/worker.py::Run._setup_workspace": 18,
-      "backend/worker/worker.py::Run._verdict_call": 17,
+      "backend/worker/worker.py::Run._verdict_call": 16,
       "backend/worker/worker.py::SyncState.collect": 22,
-      "backend/worker/worker.py::_check_loops": 28,
+      "backend/worker/worker.py::_check_loops": 26,
       "backend/worker/worker.py::_walk_files": 18,
       "backend/worker/worker.py::parse_args": 30,
       "backend/worker/worker.py::path_error": 16,
@@ -274,23 +273,20 @@
       "backend/worker/worker.py::EventSink._loop": 17,
       "backend/worker/worker.py::Recorder.send": 14,
       "backend/worker/worker.py::Run._exec": 11,
-      "backend/worker/worker.py::Run._exec_check": 14,
       "backend/worker/worker.py::Run._execute": 18,
       "backend/worker/worker.py::Run._protect": 13,
       "backend/worker/worker.py::Run._run_loop": 11,
       "backend/worker/worker.py::Run._send_sync_back": 15,
       "backend/worker/worker.py::Run._setup_workspace": 15,
       "backend/worker/worker.py::SyncState.collect": 17,
-      "backend/worker/worker.py::_check_loops": 22,
+      "backend/worker/worker.py::_check_loops": 19,
       "backend/worker/worker.py::_walk_files": 11,
       "backend/worker/worker.py::classify": 12,
       "backend/worker/worker.py::github_repo": 15,
-      "backend/worker/worker.py::load_package": 11,
       "backend/worker/worker.py::parse_args": 23,
       "backend/worker/worker.py::path_error": 11,
       "backend/worker/worker.py::run_client": 28,
       "backend/worker/worker.py::run_process": 15,
-      "backend/worker/worker.py::verdict_error": 13,
       "web/src/domain/actions.ts::actionsFor": 18,
       "web/src/domain/counts.ts::counts": 17,
       "web/src/domain/groups.ts::groups": 11,
@@ -352,7 +348,7 @@
       "web/src/ui/glyph.ts::stageCaption": 12
     },
     "file_lines": {
-      "backend/worker/worker.py::file": 2794
+      "backend/worker/worker.py::file": 2961
     },
     "fan_out": {
       "runs": 7,
@@ -426,6 +422,13 @@
       "from": "boundary: isinstance, try",
       "to": "boundary: isinstance, try, cast; shell: cast; worker: cast",
       "reason": "`cast` is a new defensive kind, capped in the core only (reviews of gates/3-types) (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "exceptions.file_lines.backend/worker/worker.py::file",
+      "from": "2794",
+      "to": "2961",
+      "reason": "the job package parsed once into typed records (AgentStage | ShellStage, typed sections) plus a 107-line stdlib parser; the worker must stay one stdlib-only file, so the records can't live elsewhere (refactor area 2; proposed by the orchestrator, for the owner to approve)"
     }
   ]
 }
