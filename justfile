@@ -44,6 +44,11 @@ gates *args:
 gates-pr base="origin/cleanup":
     uv run --project backend python tools/gates/gates.py --base {{ base }}
 
+# Markdown for a PR description: the gate numbers before (the baseline at the merge base with
+# `base`) and after (the working baseline, ratcheted), what improved, what got worse, the raises.
+card base="origin/cleanup":
+    @uv run --project backend python tools/gates/card.py --base {{ base }}
+
 # Lower quality-baseline.json where the code improved (never raises it). Commit it with the change.
 ratchet:
     uv run --project backend python tools/gates/gates.py --ratchet

@@ -7,6 +7,7 @@ import copy
 from typing import Any
 
 import baseline as bl
+import card
 import common
 import gates
 import mypy_any
@@ -199,3 +200,37 @@ def test_new_raises_are_listed_for_approval() -> None:
     assert len(lines) == 3  # the heading, then the one new entry on two lines
     assert "allowed.suppressions" in lines[1]
     assert not gates.to_approve(base, base, "HEAD")
+
+
+def test_the_card_lists_improvements_biggest_gain_first_and_removed_offenders() -> None:
+    before = _baseline()
+    after = copy.deepcopy(before)
+    after["exceptions"]["cognitive"] = {"a.py::worse": 20, "a.py::better": 22}  # fixed: removed
+    now = {"exceptions.cognitive.a.py::fixed": 9}
+
+    lines = card.improved(before, after, now)
+
+    assert [line.split("`")[1] for line in lines] == [
+        "cognitive  a.py::fixed",
+        "cognitive  a.py::better",
+    ]
+    assert "18 → 9 (removed)" in lines[0]
+    assert not card.worse(before, after)
+    assert not card.improved(before, before, now)
+
+
+def test_a_raise_shows_in_the_card_as_worse_and_to_approve() -> None:
+    entry = {"date": "2026-10-17", "what": "allowed.suppressions", "from": 2, "to": 3}
+    before = _baseline()
+    after = copy.deepcopy(before)
+    after["allowed"]["suppressions"]["b.py"] = 3
+    after["raises"] = [entry | {"reason": "a | in the reason"}]
+
+    out = card.card(before, after, {}, "**Gates pass**")
+
+    worse = card.worse(before, after)
+    assert len(worse) == 1
+    assert "suppressions  b.py" in worse[0]
+    assert "a | in the reason" in worse[0]
+    assert "| `allowed.suppressions` | 2 → 3 | a \\| in the reason |" in out
+    assert "No change to the gate numbers." not in out

@@ -74,23 +74,34 @@ def flatten(baseline: dict[str, Any]) -> dict[str, int]:
     return flat
 
 
+def raised(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """Every key that went up from `old` to `new` (the layers and the Python tool count as one)."""
+    before = flatten(old)
+    keys = [k for k, v in flatten(new).items() if v > before.get(k, 0)]
+    if new["layers"] != old["layers"]:
+        keys.append("layers")
+    tool = "cyclomatic_python_tool"
+    if new["limits"][tool] != old["limits"][tool]:
+        keys.append(f"limits.{tool}")
+    return sorted(keys)
+
+
+def covers(what: str, key: str) -> bool:
+    """Whether a `raises` entry's `what` names `key` (itself or a section holding it)."""
+    return key == what or key.startswith(f"{what}.")
+
+
 def unexplained_raises(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     """What went up from `old` to `new` without a new `raises` entry (with a reason) naming it."""
     kept = len(old["raises"])
     if new["raises"][:kept] != old["raises"]:
         return ["raises: earlier entries were changed or removed"]
     named = [e.get("what", "") for e in new["raises"][kept:] if str(e.get("reason", "")).strip()]
-    before = flatten(old)
-    raised = [k for k, v in flatten(new).items() if v > before.get(k, 0)]
-    if new["layers"] != old["layers"]:
-        raised.append("layers")
-    tool = "cyclomatic_python_tool"
-    if new["limits"][tool] != old["limits"][tool]:
-        raised.append(f"limits.{tool}")
+    before, after = flatten(old), flatten(new)
     return [
-        f"{key}: {before.get(key, 'none')} -> {flatten(new).get(key, 'changed')}"
-        for key in sorted(raised)
-        if not any(key == what or key.startswith(f"{what}.") for what in named)
+        f"{key}: {before.get(key, 'none')} -> {after.get(key, 'changed')}"
+        for key in raised(old, new)
+        if not any(covers(what, key) for what in named)
     ]
 
 

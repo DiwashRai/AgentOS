@@ -44,6 +44,7 @@ Prerequisites: Python 3.12 + uv, Node 24, `just`, pwsh (the recipes run in pwsh 
 | `just check-tools` | The gate scripts' own checks (`tools/gates`: format, lint, mypy, tests) |
 | `just gates` | Every gate: pass/fail per gate, each offender as `path:line  name  score > limit` |
 | `just ratchet` | Lower `quality-baseline.json` where the code improved; never raises it |
+| `just card` | Markdown for a PR description: the gate numbers before and after against the merge base with `origin/cleanup` (`base=REF` for another) |
 | `just fmt-backend` / `just fmt-web` | Auto-format one half (`just fmt` does both) |
 | `just gen-api` | Export the backend's OpenAPI schema to `web/src/api/openapi.json` and regenerate `schema.ts` |
 | `just dev-backend` | Server on `127.0.0.1:8000` with `--reload`; refuses to start if :8000 is taken |
@@ -68,6 +69,7 @@ Measured limits on how the code grows, separate from the checks: `just gates` (`
 - A `try` that only cleans up (a `finally` with no `return`/`break`/`continue`, and excepts that end in a bare `raise` with no way out before it) directly inside a function decorated with contextlib's own `contextmanager`/`asynccontextmanager` (as imported) or an `__enter__`/`__exit__` method isn't counted, nor is its re-raising broad except. Everywhere else, clean up with `with` (`contextlib.closing`, `ExitStack`).
 - Existing offenders are named in `quality-baseline.json` (repo root): they may not get worse, and nothing new may join them (with no baseline every cap is 0). `just ratchet` locks in an improvement; commit the lower baseline with the change. Raising a number needs a `raises` entry (`date`, `what`, `from`, `to`, `reason`); `gates` checks against the committed baseline (`just gates-pr` against the branch's merge base with `origin/cleanup`, `just gates --base REF` with any ref) and lists every new entry under "raises to approve". The baseline is checked against its schema on load. `raises` entries are added by the owner; an agent proposes one in its report instead.
 - Known gaps, for reviewers (the gates don't see these): sentinel defaults instead of None (`owner: str = ""`); a dataclass turned into a pydantic model; fields set in `__init__` or inherited; optional aliases imported from another module; edits to `tools/gates` that loosen a measure.
+- `just card` (`tools/gates/card.py`) adds no measures: it compares the baseline at the merge base ("before") with the working one ratcheted to today's code ("after"), and lists what improved, what got worse and the raises to approve. Paste it into the PR description.
 - Run `just gates` before finishing a change, alongside the scoped check.
 - A failing gate means simplifying the code, not splitting it to dodge a limit or disguising a pattern (look-alikes are counted too).
 
