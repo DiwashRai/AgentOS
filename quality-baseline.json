@@ -1,22 +1,41 @@
 {
-  "version": 1,
+  "version": 2,
   "layers": {
     "core": [
       "backend/server/agentos/models.py",
-      "backend/server/agentos/validate.py",
+      "backend/server/agentos/errors.py",
       "backend/server/agentos/pipeline/*",
-      "backend/server/agentos/*/board.py"
+      "backend/server/agentos/*/board.py",
+      "backend/server/agentos/*/rules.py"
     ],
-    "routes": [
-      "backend/server/agentos/*/routes.py"
-    ],
-    "services": [
-      "backend/server/agentos/*/service.py"
-    ],
-    "plugins": [
+    "boundary": [
+      "backend/server/agentos/validate.py",
+      "backend/server/agentos/*/routes.py",
+      "backend/server/agentos/*/deps.py",
       "backend/server/agentos/launchers/*",
       "backend/server/agentos/sources/*",
-      "backend/server/agentos/stores/*"
+      "backend/server/agentos/stores/*",
+      "backend/server/agentos/db.py",
+      "backend/server/agentos/config.py",
+      "backend/server/agentos/clock.py",
+      "backend/server/agentos/space_store.py",
+      "backend/server/agentos/http_*.py",
+      "backend/server/agentos/csrf.py",
+      "backend/server/agentos/meta.py",
+      "backend/server/agentos/spa.py",
+      "backend/server/agentos/openapi_export.py"
+    ],
+    "shell": [
+      "backend/server/agentos/*/service.py",
+      "backend/server/agentos/*/loops.py",
+      "backend/server/agentos/*/reaper.py",
+      "backend/server/agentos/*/dispatcher.py",
+      "backend/server/agentos/main.py",
+      "backend/server/agentos/context.py",
+      "backend/server/agentos/ratelimit.py",
+      "backend/server/agentos/ttlcache.py",
+      "backend/server/agentos/__init__.py",
+      "backend/server/agentos/*/__init__.py"
     ],
     "worker": [
       "backend/worker/worker.py"
@@ -27,72 +46,121 @@
     "cyclomatic": 10,
     "cyclomatic_python_tool": "lizard",
     "file_lines": 1000,
-    "fan_out": 5
+    "fan_out": 5,
+    "optional_fields": 1,
+    "any": 0
   },
   "allowed": {
+    "uncapped": {
+      "boundary": [
+        "isinstance",
+        "try",
+        "cast"
+      ],
+      "shell": [
+        "cast"
+      ],
+      "worker": [
+        "cast"
+      ]
+    },
     "defensive": {
-      "core": {
-        "is_none": 49,
-        "isinstance": 7,
-        "optional": 49,
-        "try": 6,
-        "broad_except": 1,
-        "getattr_default": 0,
-        "hasattr": 0,
-        "suppress": 0
+      "backend/server/agentos/auth/service.py": {
+        "try": 2
       },
-      "routes": {
-        "is_none": 2,
-        "isinstance": 0,
-        "optional": 8,
+      "backend/server/agentos/context.py": {
+        "try": 1
+      },
+      "backend/server/agentos/db.py": {
+        "broad_except": 1
+      },
+      "backend/server/agentos/http_deps.py": {
+        "getattr_default": 1
+      },
+      "backend/server/agentos/intake/service.py": {
+        "isinstance": 3,
+        "try": 2
+      },
+      "backend/server/agentos/mailbox/dispatcher.py": {
+        "try": 3,
+        "broad_except": 1
+      },
+      "backend/server/agentos/mailbox/reaper.py": {
+        "try": 8,
+        "broad_except": 3
+      },
+      "backend/server/agentos/mailbox/service.py": {
+        "isinstance": 2,
+        "try": 2
+      },
+      "backend/server/agentos/main.py": {
         "try": 1,
-        "broad_except": 0,
-        "getattr_default": 0,
-        "hasattr": 0,
-        "suppress": 0
-      },
-      "services": {
-        "is_none": 168,
-        "isinstance": 6,
-        "optional": 72,
-        "try": 15,
-        "broad_except": 0,
-        "getattr_default": 0,
-        "hasattr": 0,
-        "suppress": 0
-      },
-      "plugins": {
-        "is_none": 15,
-        "isinstance": 61,
-        "optional": 23,
-        "try": 22,
         "broad_except": 1,
-        "getattr_default": 0,
-        "hasattr": 0,
-        "suppress": 0
+        "suppress": 1
       },
-      "worker": {
-        "is_none": 102,
-        "isinstance": 29,
-        "optional": 88,
-        "try": 68,
+      "backend/server/agentos/models.py": {
+        "isinstance": 2
+      },
+      "backend/server/agentos/pipeline/manifest.py": {
+        "isinstance": 2
+      },
+      "backend/server/agentos/pipeline/render.py": {
+        "try": 3,
+        "broad_except": 1
+      },
+      "backend/server/agentos/pipeline/space.py": {
+        "isinstance": 2
+      },
+      "backend/server/agentos/runs/dispatcher.py": {
+        "try": 1,
+        "broad_except": 1
+      },
+      "backend/server/agentos/runs/reaper.py": {
+        "try": 3,
+        "broad_except": 1
+      },
+      "backend/server/agentos/runs/service.py": {
+        "try": 2
+      },
+      "backend/server/agentos/settings/service.py": {
+        "try": 2
+      },
+      "backend/server/agentos/stores/artifactory.py": {
+        "broad_except": 1
+      },
+      "backend/server/agentos/tickets/service.py": {
+        "try": 1
+      },
+      "backend/server/agentos/worker_api/service.py": {
+        "isinstance": 1,
+        "try": 2
+      },
+      "backend/server/agentos/workflows/service.py": {
+        "try": 2
+      },
+      "backend/worker/worker.py": {
+        "isinstance": 33,
+        "try": 67,
         "broad_except": 4,
         "getattr_default": 1,
-        "hasattr": 0,
         "suppress": 8
-      },
-      "other": {
-        "is_none": 68,
-        "isinstance": 2,
-        "optional": 36,
-        "try": 30,
-        "broad_except": 9,
-        "getattr_default": 1,
-        "hasattr": 0,
-        "suppress": 1
       }
     },
-    "suppressions": 21,
+    "suppressions": {
+      "backend/server/agentos/auth/service.py": 2,
+      "backend/server/agentos/context.py": 2,
+      "backend/server/agentos/files/service.py": 1,
+      "backend/server/agentos/mailbox/dispatcher.py": 1,
+      "backend/server/agentos/runs/dispatcher.py": 1,
+      "backend/server/agentos/runs/service.py": 3,
+      "backend/server/agentos/tickets/service.py": 1,
+      "backend/server/agentos/workflows/service.py": 1,
+      "backend/worker/worker.py": 5,
+      "web/src/features/actions/ResolveConfirm.tsx": 1,
+      "web/src/features/ticket/Overview.tsx": 1,
+      "web/src/features/workflows/WorkflowStrip.tsx": 1,
+      "web/src/ui/Dialog.tsx": 1
+    },
     "raw_tags": {
       "actions": 3,
       "auth": 30,
@@ -298,7 +366,76 @@
       "settings": 6,
       "tickets": 7,
       "worker_api": 6
+    },
+    "optional_fields": {
+      "backend/server/agentos/pipeline/mapping.py::MappingResult": 3,
+      "backend/server/agentos/pipeline/render.py::TicketRef": 3,
+      "backend/server/agentos/pipeline/space.py::ResolvedRepo": 4,
+      "backend/server/agentos/tickets/board.py::RunFact": 4,
+      "backend/server/agentos/tickets/board.py::StageRunFact": 2,
+      "backend/server/agentos/tickets/board.py::TicketBoard": 4,
+      "backend/server/agentos/tickets/board.py::TicketFacts": 5
+    },
+    "any": {
+      "backend/server/agentos/models.py::Any": 21,
+      "backend/server/agentos/pipeline/manifest.py::Any": 2,
+      "backend/server/agentos/pipeline/mapping.py::Any": 1,
+      "backend/server/agentos/pipeline/plan.py::Any": 3,
+      "backend/server/agentos/pipeline/render.py::Any": 25,
+      "backend/server/agentos/pipeline/runtime.py::Any": 3,
+      "backend/server/agentos/pipeline/space.py::Any": 8,
+      "backend/server/agentos/tickets/board.py::Any": 4
     }
   },
-  "raises": []
+  "raises": [
+    {
+      "date": "2026-10-17",
+      "what": "layers",
+      "from": "core/routes/services/plugins/worker",
+      "to": "core/boundary/shell/worker, validate.py in the boundary",
+      "reason": "core/shell/boundary per the design review, 2026-10-17; validate.py is boundary (it parses raw input) (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "allowed.uncapped",
+      "from": "none",
+      "to": "boundary: isinstance, try",
+      "reason": "the boundary checks chaotic input, so isinstance and try are uncapped there (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "allowed.defensive",
+      "from": "caps per layer",
+      "to": "caps per file",
+      "reason": "per-layer totals let a removal in one file pay for an addition in another (design review, 2026-10-17); each file seeded from today's code; is_none and optional no longer counted (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "exceptions.optional_fields",
+      "from": "none",
+      "to": "7 named core domain classes",
+      "reason": "new gate: core domain classes (not pydantic models) with 2+ optional fields, seeded from today's code (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "exceptions.any",
+      "from": "none",
+      "to": "8 named core files",
+      "reason": "new gate: mypy Any errors per core file, seeded from today's code (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "allowed.suppressions",
+      "from": "21 in total",
+      "to": "caps per file (13 files, 21 in total)",
+      "reason": "a total let fixing a suppression in one file pay for a new one in another (reviews of gates/3-types); each file seeded from today's code; `# mypy:` comments and `@no_type_check` now count (proposed by agent, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "allowed.uncapped",
+      "from": "boundary: isinstance, try",
+      "to": "boundary: isinstance, try, cast; shell: cast; worker: cast",
+      "reason": "`cast` is a new defensive kind, capped in the core only (reviews of gates/3-types) (proposed by agent, for the owner to approve)"
+    }
+  ]
 }

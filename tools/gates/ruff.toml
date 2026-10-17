@@ -3,8 +3,11 @@ extend = "../../backend/pyproject.toml"
 
 [lint.extend-per-file-ignores]
 "test_*.py" = ["S101", "S603", "S607"]
-# Running ruff, git and node is the gate script's job.
-"gates.py" = ["S603", "S607"]
+# Running ruff, git, mypy and node is the gate scripts' job.
+"{baseline,mypy_any,python_measures,ts_measures}.py" = ["S603", "S607"]
 
 [lint.isort]
-known-first-party = ["gates"]
+known-first-party = [
+    "baseline", "common", "defaults", "gates", "measures", "mypy_any", "pyfile",
+    "python_measures", "python_names", "results", "schema", "ts_measures",
+]
