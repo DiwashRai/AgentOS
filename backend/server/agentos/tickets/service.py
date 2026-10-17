@@ -14,7 +14,10 @@ import json
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from datetime import datetime
+from typing import Annotated, Any
+
+from pydantic import BaseModel, Field, Json, StrictInt, StrictStr
 
 from agentos.clients.service import online_user_ids, waiting_client_run_id
 from agentos.clock import from_db, from_db_opt, to_db, utcnow
@@ -38,8 +41,10 @@ from agentos.models import (
     Resolution,
     ResolveOutcome,
     ResolveRequest,
+    RunStatus,
     RunSummary,
     SourceLink,
+    StageRunStatus,
     StartMode,
     TaskProgress,
     TicketCreate,
@@ -61,7 +66,20 @@ from agentos.pipeline.segment import validate_pipeline
 from agentos.pipeline.space import ResolvedRepo, SpaceConfig
 from agentos.sources.jira import JiraNotFound, JiraSource, JiraUnauthorized, JiraUnavailable
 from agentos.templates import service as templates
-from agentos.tickets.board import ACTIVE, RunFact, StageRunFact, TicketFacts, derive, for_viewer
+from agentos.tickets.board import (
+    ACTIVE,
+    Dispatched,
+    Failed,
+    Finished,
+    Queued,
+    RunFact,
+    Running,
+    RunState,
+    StageRunFact,
+    TicketFacts,
+    derive,
+    for_viewer,
+)
 from agentos.validate import validate_base_branch, validate_key
 from agentos.workflows import service as workflows
 
@@ -283,31 +301,80 @@ def person(id_: int | None, name: str | None, avatar: str | None) -> Person | No
     return Person(id=id_, display_name=name, avatar_url=avatar)
 
 
+class _StageRunRow(BaseModel):
+    """The `stage_runs` columns the board reads."""
+
+    idx: StrictInt
+    stage_id: StrictStr
+    status: StageRunStatus
+    round: StrictInt
+    started_at: StrictStr | None
+
+
+class _RunRow(BaseModel):
+    """The `runs` columns (and the creator's name) the board reads. A run plans at least one
+    stage: dispatch writes its `stage_ids` in the transaction that inserts it."""
+
+    id: StrictInt
+    status: RunStatus
+    from_stage: StrictStr
+    stage_ids: Json[Annotated[list[StrictStr], Field(min_length=1)]]
+    created_at: StrictStr
+    started_at: StrictStr | None
+    finished_at: StrictStr | None
+    queue_reason: StrictStr | None
+    start: StartMode
+    creator_name: StrictStr | None
+
+
 def stage_run_fact(sr: Row) -> StageRunFact:
+    """A stage_run row that doesn't fit `_StageRunRow` is corrupt: ValidationError."""
+    row = _StageRunRow.model_validate(dict(sr))
     return StageRunFact(
-        idx=sr["idx"],
-        stage_id=sr["stage_id"],
-        status=sr["status"],
-        started_at=from_db_opt(sr["started_at"]),
-        finished_at=from_db_opt(sr["finished_at"]),
-        round=sr["round"],
+        idx=row.idx,
+        stage_id=row.stage_id,
+        status=row.status,
+        round=row.round,
+        started=row.started_at is not None,
     )
 
 
 def run_fact(run: Row, stage_runs: list[StageRunFact]) -> RunFact:
+    """The board's view of a run row, the only place the board's run rows are read; one that
+    doesn't fit `_RunRow` is corrupt: ValidationError. `stage_runs` come in idx order; a run
+    without any (never expected) counts its planned stages as pending."""
+    row = _RunRow.model_validate(dict(run))
+    created_at = from_db(row.created_at)
+    first_id, *more_ids = row.stage_ids
+    pending = [
+        StageRunFact(idx=i, stage_id=s, status="pending") for i, s in enumerate(row.stage_ids)
+    ]
+    first_run, *more_runs = stage_runs or pending
     return RunFact(
-        id=run["id"],
-        status=run["status"],
-        from_stage=run["from_stage"],
-        stage_ids=tuple(json.loads(run["stage_ids"])),
-        stage_runs=tuple(stage_runs),
-        created_at=from_db(run["created_at"]),
-        started_at=from_db_opt(run["started_at"]),
-        finished_at=from_db_opt(run["finished_at"]),
-        target=run_target(run["start"]),
-        creator_name=run["creator_name"],
-        queue_reason=run["queue_reason"],
+        id=row.id,
+        state=_run_state(row, created_at),
+        from_stage=row.from_stage,
+        stage_ids=(first_id, *more_ids),
+        stage_runs=(first_run, *more_runs),
+        created_at=created_at,
+        target=run_target(row.start),
+        creator_name=row.creator_name,
     )
+
+
+def _run_state(row: _RunRow, created_at: datetime) -> RunState:
+    """A missing `started_at` or `finished_at` (never expected) reads as `created_at`."""
+    match row.status:
+        case "queued":
+            return Queued(row.queue_reason)
+        case "dispatched":
+            return Dispatched()
+        case "running":
+            return Running(from_db_opt(row.started_at) or created_at)
+        case "gated" | "succeeded" as status:
+            return Finished(status, from_db_opt(row.finished_at) or created_at)
+        case "failed" | "cancelled" as status:
+            return Failed(status, from_db_opt(row.finished_at) or created_at)
 
 
 def run_summary(run: Row, ticket_key: str, online: set[int]) -> RunSummary:

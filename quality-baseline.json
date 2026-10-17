@@ -189,9 +189,6 @@
       "backend/server/agentos/pipeline/segment.py::plan_run": 17,
       "backend/server/agentos/runs/reaper.py::Reaper.tick": 23,
       "backend/server/agentos/runs/reaper.py::judge": 21,
-      "backend/server/agentos/tickets/board.py::_now": 25,
-      "backend/server/agentos/tickets/board.py::_phase_state": 17,
-      "backend/server/agentos/tickets/board.py::_rail": 27,
       "backend/server/agentos/tickets/service.py::_load_facts": 21,
       "backend/server/agentos/tickets/service.py::patch_ticket": 34,
       "backend/server/agentos/validate.py::repo_url_problem": 23,
@@ -262,11 +259,7 @@
       "backend/server/agentos/sources/jira.py::JiraSource.parse_ref": 13,
       "backend/server/agentos/sources/jira.py::_jira_messages": 11,
       "backend/server/agentos/stores/artifactory.py::_storage_url": 13,
-      "backend/server/agentos/tickets/board.py::_focus": 11,
-      "backend/server/agentos/tickets/board.py::_now": 19,
-      "backend/server/agentos/tickets/board.py::_phase_state": 17,
-      "backend/server/agentos/tickets/board.py::_rail": 16,
-      "backend/server/agentos/tickets/board.py::next_stage": 15,
+      "backend/server/agentos/tickets/board.py::_now": 11,
       "backend/server/agentos/tickets/service.py::_load_facts": 19,
       "backend/server/agentos/tickets/service.py::import_ticket": 13,
       "backend/server/agentos/tickets/service.py::patch_ticket": 32,
@@ -371,8 +364,6 @@
       "backend/server/agentos/pipeline/mapping.py::MappingResult": 3,
       "backend/server/agentos/pipeline/render.py::TicketRef": 3,
       "backend/server/agentos/pipeline/space.py::ResolvedRepo": 4,
-      "backend/server/agentos/tickets/board.py::RunFact": 4,
-      "backend/server/agentos/tickets/board.py::StageRunFact": 2,
       "backend/server/agentos/tickets/board.py::TicketBoard": 4,
       "backend/server/agentos/tickets/board.py::TicketFacts": 5
     },
@@ -383,8 +374,7 @@
       "backend/server/agentos/pipeline/plan.py::Any": 3,
       "backend/server/agentos/pipeline/render.py::Any": 25,
       "backend/server/agentos/pipeline/runtime.py::Any": 3,
-      "backend/server/agentos/pipeline/space.py::Any": 8,
-      "backend/server/agentos/tickets/board.py::Any": 4
+      "backend/server/agentos/pipeline/space.py::Any": 8
     }
   },
   "raises": [
