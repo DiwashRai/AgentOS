@@ -23,8 +23,13 @@ from agentos.models import (
 )
 from agentos.pipeline.scaffold import default_pipeline
 from agentos.tickets.board import (
-    ACTIVE,
+    Dispatched,
+    Failed,
+    Finished,
+    Queued,
     RunFact,
+    Running,
+    RunState,
     StageRunFact,
     TicketFacts,
     derive,
@@ -79,31 +84,36 @@ def run(
     start: float = 0,
     unstarted: Collection[str] = (),
 ) -> RunFact:
-    """Stage i starts at start+4i and ends 3 minutes later; `pending` and `unstarted` stages never
-    started (terminal side effects mark unfinished stage_runs `cancelled` without a start)."""
-
-    def began(sid: str, st: StageRunStatus) -> bool:
-        return st != "pending" and sid not in unstarted
-
+    """Created a minute before `start`; it starts at `start` and ends 4 minutes per stage later.
+    `pending` and `unstarted` stages never started (terminal side effects mark unfinished
+    stage_runs `cancelled` without a start)."""
+    first_id, *more_ids = [s for s, _ in stages]
+    first_run, *more_runs = [
+        StageRunFact(idx=i, stage_id=s, status=st, started=st != "pending" and s not in unstarted)
+        for i, (s, st) in enumerate(stages)
+    ]
     return RunFact(
         id=7,
-        status=status,
-        from_stage=stages[0][0],
-        stage_ids=tuple(s for s, _ in stages),
-        stage_runs=tuple(
-            StageRunFact(
-                idx=i,
-                stage_id=s,
-                status=st,
-                started_at=at(start + 4 * i) if began(s, st) else None,
-                finished_at=at(start + 4 * i + 3) if began(s, st) and st != "running" else None,
-            )
-            for i, (s, st) in enumerate(stages)
-        ),
+        state=run_state(status, start=at(start), end=at(start + 4 * len(stages))),
+        from_stage=first_id,
+        stage_ids=(first_id, *more_ids),
+        stage_runs=(first_run, *more_runs),
         created_at=at(start - 1),
-        started_at=None if status in ("queued", "dispatched") else at(start),
-        finished_at=None if status in ACTIVE else at(start + 4 * len(stages)),
     )
+
+
+def run_state(status: RunStatus, *, start: datetime, end: datetime) -> RunState:
+    match status:
+        case "queued":
+            return Queued()
+        case "dispatched":
+            return Dispatched()
+        case "running":
+            return Running(start)
+        case "gated" | "succeeded":
+            return Finished(status, end)
+        case "failed" | "cancelled":
+            return Failed(status, end)
 
 
 def facts(
@@ -286,11 +296,6 @@ PLAN_OK = {"plan"}
             facts(NEVER_CONNECTED, ever=PLAN_OK),
             "done failed skipped pending pending",
             id="worker-never-connected",
-        ),
-        pytest.param(
-            facts(replace(NEVER_CONNECTED, stage_runs=()), ever=PLAN_OK),
-            "done failed skipped pending pending",
-            id="no-stage-runs",
         ),
         pytest.param(
             facts(
@@ -658,11 +663,6 @@ PLAN_THEN_IMPLEMENT: list[tuple[str, StageRunStatus]] = [
             at(30),
             id="running-run-start-not-stage-start",
         ),
-        pytest.param(
-            facts(replace(run("running", PLAN_THEN_IMPLEMENT, start=30), started_at=None)),
-            at(29),
-            id="running-without-start-falls-back-to-created",
-        ),
         pytest.param(facts(run("gated", [("plan", "succeeded")], start=30)), at(34), id="gated"),
         pytest.param(
             facts(run("succeeded", [("review", "succeeded")], start=30)), at(34), id="succeeded"
@@ -674,11 +674,6 @@ PLAN_THEN_IMPLEMENT: list[tuple[str, StageRunStatus]] = [
         ),
         pytest.param(
             facts(run("cancelled", [("plan", "cancelled")], start=30)), at(34), id="cancelled"
-        ),
-        pytest.param(
-            facts(replace(run("failed", [("plan", "failed")], start=30), finished_at=None)),
-            at(29),
-            id="finished-without-timestamp-falls-back-to-created",
         ),
     ],
 )
@@ -789,12 +784,6 @@ def test_attention_since(f: TicketFacts, since: datetime) -> None:
             "review",
             id="no-culprit-all-succeeded-last-stage",
         ),
-        pytest.param(
-            DEFAULT,
-            replace(FAILED_REVIEW, stage_ids=(), stage_runs=()),
-            "plan",
-            id="empty-run",
-        ),
     ],
 )
 def test_next_stage(pipeline: Pipeline, latest: RunFact | None, expected: str | None) -> None:
@@ -866,7 +855,7 @@ TASKS = TaskProgress(done=2, total=5)
             id="queued-for-a-client-without-a-creator",
         ),
         pytest.param(
-            facts(replace(run("queued", [("plan", "pending")]), queue_reason="held for a reason")),
+            facts(replace(run("queued", [("plan", "pending")]), state=Queued("held for a reason"))),
             now("held for a reason"),
             id="queued-with-a-reason",
         ),

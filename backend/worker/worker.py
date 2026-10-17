@@ -28,7 +28,7 @@ file shows the run live; AGENTOS_ECHO=0 turns that off.
 Loop blocks (`loops`): the block's stages run in rounds, at most `max_rounds`. Its checks decide
 each round, by code: a shell check by its exit code; an agent check by a JSON verdict
 ({"verdict": "pass"|"fail", "notes"}) read from the CLI's result line or `.agentos/verdict.json`,
-checked by `verdict_error`, and repaired by resuming the check's session at most `verdict_repairs`
+checked by `checked_verdict`, and repaired by resuming the check's session at most `verdict_repairs`
 times. Every check runs each round. No failing check ends the block; otherwise the next round's
 calls get the failing checks' notes appended. Still failing after the last round, or a check
 without a valid verdict, fails the run. The worker only appends text to prompts, never substitutes.
@@ -65,6 +65,7 @@ import contextlib
 import ctypes
 import hashlib
 import http.client
+import inspect
 import io
 import json
 import os
@@ -79,6 +80,7 @@ import sys
 import threading
 import time
 import traceback
+import typing
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -86,10 +88,11 @@ import urllib.request
 import zipfile
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any, Protocol
+from types import NoneType, UnionType
+from typing import IO, Any, ClassVar, Literal, Protocol, TypeVar, cast
 
 if sys.platform == "win32":
     import msvcrt
@@ -476,11 +479,166 @@ def block_write(existing: bytes | None, key: str, content: str) -> bytes:
     return data + b"\n" + block if data else block
 
 
+# ---------------------------------------------------------------- reading JSON into our types
+
+T = TypeVar("T")
+
+# A misfit names what was expected, and the JSON type it got.
+_EXPECTED: dict[type, str] = {
+    str: "a string",
+    int: "an integer",
+    bool: "a boolean",
+    list: "an array",
+    dict: "a JSON object",
+}
+_LEAVES = (str, int, bool)
+
+
+@dataclass(frozen=True)
+class Unfit:
+    """Why a JSON value doesn't fit our type: where (a path such as `stages[1].argv`), then why."""
+
+    why: str
+
+
+class _Misfit(ValueError):
+    """A record that breaks a rule between its fields: `field` is the one named in the path."""
+
+    def __init__(self, field: str, why: str) -> None:
+        super().__init__(why)
+        self.field = field
+
+
+def _json_type(value: object) -> str:
+    if value is None:
+        return "null"
+    for kind, name in ((bool, "boolean"), (str, "string"), (list, "array"), (dict, "object")):
+        if isinstance(value, kind):
+            return name
+    return "number" if isinstance(value, int | float) else type(value).__name__
+
+
+def _expect(tp: type[T], value: object) -> T:
+    """`value` if its type is exactly `tp` (so True is not an int), else a misfit."""
+    if type(value) is not tp:
+        raise ValueError(f"expected {_EXPECTED[tp]}, got {_json_type(value)}")
+    return value
+
+
+def _unsupported(tp: object) -> TypeError:
+    return TypeError(f"parse can't read {tp!r}: see parse() for the types it reads")
+
+
+def parse(
+    tp: type[T], value: object, *, extra: Literal["forbid", "ignore"] = "forbid"
+) -> T | Unfit:
+    """`value` (decoded JSON) as a `tp`, or where and why it first doesn't fit, reading fields in
+    declared order. The grammar: frozen dataclasses (exactly their keys, or unknown keys ignored
+    with `extra="ignore"`; a field with a default is an optional key), tuple[X, ...],
+    dict[str, X], X | None, Literal (of strings), str, int (not bool), bool, object (any value,
+    unchecked), a datetime (ISO, with a time zone), and a Stage (read flat as a _StageRecord,
+    then made one by _stage).
+    Any other annotation is a bug in our types: TypeError, naming it."""
+    fit = _Fit(extra)
+    try:
+        return cast(T, fit.value(tp, value))
+    except _Misfit as exc:  # a rule between fields: the path goes on to the field
+        return fit.unfit(exc, f".{exc.field}")
+    except ValueError as exc:  # a misfit; `fit.at` is where
+        return fit.unfit(exc)
+
+
+class _Fit:
+    """One parse: a reader per kind, each raising ValueError where the value doesn't fit. The
+    type forms come from typing (get_type_hints, get_args), which hands them over untyped."""
+
+    def __init__(self, extra: Literal["forbid", "ignore"]) -> None:
+        self.extra = extra
+        self.at: list[str] = []  # the path being read: a step per field, item or key
+
+    def unfit(self, exc: ValueError, *steps: str) -> Unfit:
+        where = "".join([*self.at, *steps]).removeprefix(".")
+        return Unfit(f"{where}: {exc}" if where else str(exc))
+
+    def value(self, tp: type[object], value: object) -> object:
+        origin = typing.get_origin(tp)
+        if tp == Stage:
+            return _stage(self.record(_StageRecord, value))
+        if origin is tuple:
+            return self.items(tp, value)
+        if origin is dict:
+            return self.mapping(tp, value)
+        if origin in (UnionType, typing.Union):
+            return self.optional(tp, value)
+        if origin is Literal:
+            return self.literal(typing.get_args(tp), value)
+        if tp is datetime:
+            return self.stamp(value)
+        if is_dataclass(tp):
+            return self.record(tp, value)
+        if tp in _LEAVES:
+            return _expect(tp, value)
+        if tp is object:  # any JSON value, as it came
+            return value
+        raise _unsupported(tp)
+
+    def item(self, step: str, tp: type[object], value: object) -> object:
+        self.at.append(step)
+        read = self.value(tp, value)
+        self.at.pop()
+        return read
+
+    def record(self, tp: type[T], value: object) -> T:
+        raw = _expect(dict, value)
+        hints = typing.get_type_hints(tp)
+        fields = inspect.signature(tp).parameters  # a dataclass's are its fields, in order
+        missing = [k for k, f in fields.items() if k not in raw and f.default is f.empty]
+        if missing:
+            raise ValueError(f"missing key: {missing[0]}")
+        unexpected = sorted(map(str, raw.keys() - fields.keys()))
+        if unexpected and self.extra == "forbid":
+            raise ValueError(f"unexpected key: {unexpected[0]}")
+        return tp(**{k: self.item(f".{k}", hints[k], raw[k]) for k in fields if k in raw})
+
+    def items(self, tp: type[object], value: object) -> tuple[object, ...]:
+        args = typing.get_args(tp)
+        if len(args) != 2 or args[1] is not Ellipsis:
+            raise _unsupported(tp)
+        return tuple(self.item(f"[{i}]", args[0], v) for i, v in enumerate(_expect(list, value)))
+
+    def mapping(self, tp: type[object], value: object) -> dict[str, object]:
+        key, item = typing.get_args(tp)
+        if key is not str:
+            raise _unsupported(tp)
+        raw = _expect(dict, value)
+        return {_expect(str, k): self.item(f".{k}", item, v) for k, v in raw.items()}
+
+    def optional(self, tp: type[object], value: object) -> object:
+        """X | None, in either order."""
+        rest = [arg for arg in typing.get_args(tp) if arg is not NoneType]
+        if len(rest) != 1:
+            raise _unsupported(tp)
+        return None if value is None else self.value(rest[0], value)
+
+    def literal(self, options: tuple[object, ...], value: object) -> object:
+        if value not in options:
+            listed = " or ".join(json.dumps(option) for option in options)
+            raise ValueError(f"expected {listed}, got {_clip(json.dumps(value), 100)}")
+        return value
+
+    def stamp(self, value: object) -> datetime:
+        stamp = datetime.fromisoformat(_expect(str, value))
+        if stamp.tzinfo is None:
+            raise ValueError("expected a time zone")
+        return stamp
+
+
 # ---------------------------------------------------------------- the job package (protocol 2)
 
 
 class PackageError(ValueError):
-    """The job's package isn't protocol 2, or its loop blocks don't fit its stages."""
+    """The job's package isn't protocol 2, doesn't fit its types, or its loop blocks don't fit
+    its stages."""
 
 
 @dataclass(frozen=True)
@@ -501,10 +659,16 @@ class Invocation:
     """Another call of a loop stage's agent: a later round, or a verdict repair. The prompt is
     `argv[prompt_arg]`, or `stdin` when `prompt_arg` is None."""
 
-    argv: list[str]
+    argv: tuple[str, ...]
     stdin: str | None
     prompt_arg: int | None
     tail: str
+
+    def __post_init__(self) -> None:
+        if not self.argv:
+            raise _Misfit("argv", "expected a program and its arguments, got none")
+        if self.prompt_arg is not None and not 0 <= self.prompt_arg < len(self.argv):
+            raise _Misfit("prompt_arg", f"expected an index into argv (0 to {len(self.argv) - 1})")
 
     def build(self, text: str) -> tuple[list[str], str | None]:
         """(argv, stdin) with `text`, then `tail`, appended to the prompt. Nothing else changes."""
@@ -516,19 +680,95 @@ class Invocation:
 
 
 @dataclass(frozen=True)
-class Stage:
+class AgentCheck:
+    """What makes an agent stage a loop block's check: its JSON verdict is read from
+    `verdict_from`, and an invalid one is repaired at most `verdict_repairs` times a round by
+    that round's call in `repairs` (none, and 0 repairs: the runtime has no sessions)."""
+
+    verdict_from: Literal["structured_output", "file"]
+    verdict_repairs: int
+    repairs: tuple[Invocation, ...]
+
+
+@dataclass(frozen=True)
+class AgentStage:
+    """An agent's call: round 1 is `argv` with `stdin`, used exactly as given. In a loop block,
+    `rounds` are the calls of rounds 2..max_rounds, and `check` makes it decide the round."""
+
+    kind: ClassVar[str] = "agent"  # for messages; branch on the type
+
     id: str
     name: str
-    kind: str  # "agent" | "shell"
     timeout_s: int
-    argv: list[str] | None  # agent: round 1's call (with stdin), used exactly as given
+    argv: tuple[str, ...]
     stdin: str | None
-    command: str | None  # shell: every round's call
-    check: bool = False  # in a loop block: the stage decides the round
-    rounds: tuple[Invocation, ...] = ()  # agent stages in a block: rounds 2..max_rounds
-    repairs: tuple[Invocation, ...] = ()  # agent checks: one repair call per round, or none
-    verdict_from: str | None = None  # agent checks: "structured_output" | "file"
-    verdict_repairs: int = 0  # agent checks: at most this many repairs per round
+    rounds: tuple[Invocation, ...]
+    check: AgentCheck | None
+
+
+@dataclass(frozen=True)
+class ShellStage:
+    """A shell command, the same every round. In a loop block, `check` makes its exit code
+    decide the round."""
+
+    kind: ClassVar[str] = "shell"
+
+    id: str
+    name: str
+    timeout_s: int
+    command: str
+    check: bool
+
+
+Stage = AgentStage | ShellStage
+
+
+@dataclass(frozen=True)
+class _StageRecord:
+    """A stage as the package has it (agentos.models.ManifestStage); _stage makes it a Stage."""
+
+    id: str
+    name: str
+    kind: Literal["agent", "shell"]
+    timeout_s: int
+    argv: tuple[str, ...] | None = None
+    stdin: str | None = None
+    command: str | None = None
+    check: bool = False
+    rounds: tuple[Invocation, ...] = ()
+    repairs: tuple[Invocation, ...] = ()
+    verdict_from: Literal["structured_output", "file"] | None = None
+    verdict_repairs: int = 0
+
+
+def _stage(s: _StageRecord) -> Stage:
+    """The stage's variant: the one place the agent and shell rules live (a misfit otherwise)."""
+    match s.kind:
+        case "shell":
+            if s.command is None:
+                raise _Misfit("command", "a shell stage needs a command")
+            if s.argv is not None or s.stdin is not None:
+                raise ValueError("a shell stage takes no argv or stdin")
+            if s.rounds or s.repairs:
+                raise ValueError("a shell stage takes no rounds or repairs")
+            return ShellStage(s.id, s.name, s.timeout_s, s.command, s.check)
+        case "agent":
+            if not s.argv:  # null or empty
+                raise _Misfit("argv", "expected a program and its arguments, got none")
+            if s.command is not None:
+                raise _Misfit("command", "an agent stage takes no command")
+            return AgentStage(s.id, s.name, s.timeout_s, s.argv, s.stdin, s.rounds, _check_of(s))
+
+
+def _check_of(s: _StageRecord) -> AgentCheck | None:
+    """An agent stage's check, if it is one."""
+    if not s.check:
+        if s.repairs:
+            raise _Misfit("repairs", "only an agent check is repaired")
+        return None
+    if s.verdict_from is None:
+        raise _Misfit("verdict_from", "an agent check needs structured_output or file")
+    return AgentCheck(s.verdict_from, s.verdict_repairs if s.repairs else 0, s.repairs)
 
 
 @dataclass(frozen=True)
@@ -539,30 +779,77 @@ class Loop:
 
 
 @dataclass(frozen=True)
+class Job:
+    id: str
+    run_id: int
+    segment: int
+    segments: int
+    budget_s: int
+    not_after: datetime  # nothing is published after it
+
+
+@dataclass(frozen=True)
+class Journal:
+    first_seq: int  # the seq of the job's `started` record
+
+
+@dataclass(frozen=True)
+class Report:
+    mode: Literal["live", "file"]
+    url: str | None
+
+
+@dataclass(frozen=True)
+class Ticket:
+    key: str
+    title: str
+
+
+@dataclass(frozen=True)
+class Workspace:
+    """Checked where it is set up (Run._setup_workspace), not here."""
+
+    mode: Literal["repo", "none"]
+    repo_url: str | None
+    base_branch: str | None
+    branch: str | None
+    protect: tuple[str, ...]  # folders kept out of git besides the declared files
+    blocks: tuple[str, ...]  # every block name in `context`
+
+
+@dataclass(frozen=True)
+class SyncBackSpec:
+    dir: str
+    max_bytes: int
+
+
+@dataclass(frozen=True)
+class Limits:
+    max_file_bytes: int
+    max_line_bytes: int
+
+
+@dataclass(frozen=True)
 class Package:
     """A protocol 2 job package (agentos.models.JobPackage). Paths are checked where they are
     written (resolve_inside), the workspace where it is set up."""
 
     protocol: int
-    job: dict[str, Any]  # id, run_id, segment, segments, budget_s, not_after
-    journal: dict[str, int]  # first_seq: the seq of the job's `started` record
-    report: dict[str, Any]  # mode (live | file), url
+    job: Job
+    journal: Journal
+    report: Report
     run_id: int
-    ticket: dict[str, str]
-    workspace: dict[str, Any]  # mode, repo_url, base_branch, branch, protect, blocks
+    ticket: Ticket
+    workspace: Workspace
     context: tuple[ContextFile, ...]
     notes: tuple[ContextFile, ...]
-    sync_back: dict[str, Any]
+    sync_back: SyncBackSpec
     env: dict[str, str]
     stages: tuple[Stage, ...]
-    limits: dict[str, int]
+    limits: Limits
     loops: tuple[Loop, ...] = ()
     start_stage: str | None = None  # where round 1 starts; None = the first stage
     warnings: tuple[str, ...] = ()  # emitted as warning events once the workspace is ready
-
-    @property
-    def key(self) -> str:
-        return self.ticket["key"]
 
     @property
     def files(self) -> tuple[ContextFile, ...]:
@@ -570,27 +857,29 @@ class Package:
 
 
 def _check_loop_stage(stage: Stage, loop: Loop, where: str) -> None:
-    """A loop block stage's calls must cover every round (and every repair)."""
-    if stage.kind == "shell":
-        if stage.rounds or stage.repairs:
-            raise PackageError(f"{where}: a shell stage takes no rounds or repairs")
-        return
-    if len(stage.rounds) != loop.max_rounds - 1:
-        raise PackageError(
-            f"{where}.rounds: expected {loop.max_rounds - 1} (max_rounds - 1), "
-            f"got {len(stage.rounds)}"
-        )
-    if not stage.check:
-        if stage.repairs:
-            raise PackageError(f"{where}.repairs: only an agent check is repaired")
-        return
-    if stage.verdict_from is None:
-        raise PackageError(f"{where}.verdict_from: an agent check needs structured_output or file")
-    if len(stage.repairs) not in (0, loop.max_rounds):
-        raise PackageError(
-            f"{where}.repairs: expected 0 or {loop.max_rounds} (max_rounds), "
-            f"got {len(stage.repairs)}"
-        )
+    """An agent stage in a loop block has a call for every round, and an agent check a repair
+    call for every round or none."""
+    match stage:
+        case AgentStage(rounds=rounds, check=check):
+            if len(rounds) != loop.max_rounds - 1:
+                raise PackageError(
+                    f"{where}.rounds: expected {loop.max_rounds - 1} (max_rounds - 1), "
+                    f"got {len(rounds)}"
+                )
+            if check is not None and len(check.repairs) not in (0, loop.max_rounds):
+                raise PackageError(
+                    f"{where}.repairs: expected 0 or {loop.max_rounds} (max_rounds), "
+                    f"got {len(check.repairs)}"
+                )
+
+
+def _block_only(stage: Stage) -> bool:
+    """Whether the stage has what only a loop block's stages have: a check, or later rounds."""
+    match stage:
+        case AgentStage():
+            return stage.check is not None or bool(stage.rounds)
+        case ShellStage():
+            return stage.check
 
 
 def _check_loops(p: Package) -> None:
@@ -605,7 +894,7 @@ def _check_loops(p: Package) -> None:
     after = 0  # the first stage index the next block may start at
     for i, loop in enumerate(p.loops):
         where = f"loops[{i}]"
-        if type(loop.max_rounds) is not int or loop.max_rounds < 1:
+        if loop.max_rounds < 1:
             raise PackageError(f"{where}.max_rounds: expected an integer >= 1")
         for name, stage_id in (("start", loop.start), ("end", loop.end)):
             if stage_id not in index:
@@ -620,7 +909,7 @@ def _check_loops(p: Package) -> None:
             _check_loop_stage(stages[j], loop, f"stages[{j}]")
             covered.add(j)
     for j, stage in enumerate(stages):
-        if j not in covered and (stage.check or stage.rounds or stage.repairs):
+        if j not in covered and _block_only(stage):
             raise PackageError(f"stages[{j}]: check, rounds and repairs need a loop block")
 
     if p.start_stage is not None:
@@ -632,38 +921,17 @@ def _check_loops(p: Package) -> None:
 
 
 def load_package(raw: object) -> Package:
-    """The job's package, built straight from its JSON. Checks only the protocol and the loop
-    shape (_check_loops); anything else malformed is a PackageError too."""
+    """The job's package: its protocol first, then the whole of it read into our types (parse),
+    then its loop shape (_check_loops). Anything that doesn't fit is a PackageError."""
     protocol = raw.get("protocol") if isinstance(raw, dict) else None
-    if not isinstance(raw, dict) or protocol != PROTOCOL:
+    if protocol != PROTOCOL:
         raise PackageError(f"unsupported protocol {protocol!r} (worker speaks {PROTOCOL})")
-
-    try:
-        stages = tuple(
-            Stage(
-                **{
-                    **s,
-                    "rounds": tuple(Invocation(**c) for c in s.get("rounds", ())),
-                    "repairs": tuple(Invocation(**c) for c in s.get("repairs", ())),
-                }
-            )
-            for s in raw["stages"]
-        )
-        package = Package(
-            **{
-                **raw,
-                "context": tuple(ContextFile(**e) for e in raw["context"]),
-                "notes": tuple(ContextFile(**n) for n in raw["notes"]),
-                "stages": stages,
-                "loops": tuple(Loop(**lp) for lp in raw.get("loops", ())),
-                "warnings": tuple(raw.get("warnings", ())),
-            }
-        )
-    except (KeyError, TypeError) as exc:
-        raise PackageError(f"malformed package: {exc!r}") from exc
-
-    _check_loops(package)
-    return package
+    match parse(Package, raw):
+        case Unfit(why=why):
+            raise PackageError(f"malformed package: {why}")
+        case Package() as package:
+            _check_loops(package)
+            return package
 
 
 # ---------------------------------------------------------------- verdicts (loop block checks)
@@ -673,43 +941,25 @@ def load_package(raw: object) -> Package:
 class Verdict:
     """A check's valid verdict in one round."""
 
-    verdict: str  # "pass" | "fail"
+    verdict: Literal["pass", "fail"]
     notes: str
 
 
-def _json_type(value: object) -> str:
-    if value is None:
-        return "null"
-    for kind, name in ((bool, "boolean"), (str, "string"), (list, "array"), (dict, "object")):
-        if isinstance(value, kind):
-            return name
-    return "number" if isinstance(value, int | float) else type(value).__name__
+def checked_verdict(value: object) -> Verdict | Unfit:
+    """`value` as a check's verdict, or why it isn't one. The shape is
+    agentos.models.VERDICT_SCHEMA ({"verdict": "pass"|"fail", "notes": str}, nothing else), plus
+    the notes rules."""
+    verdict = parse(Verdict, value)
+    match verdict:
+        case Verdict(notes=notes) if len(notes) > VERDICT_NOTES_MAX:
+            return Unfit(f"notes: longer than {VERDICT_NOTES_MAX} characters")
+        case Verdict(verdict="fail", notes=notes) if not notes.strip():
+            return Unfit('notes: must not be empty when the verdict is "fail"')
+        case _:
+            return verdict
 
 
-def verdict_error(value: object) -> str | None:
-    """Why `value` is not a valid verdict, or None. The shape is agentos.models.VERDICT_SCHEMA
-    ({"verdict": "pass"|"fail", "notes": str}, nothing else), plus the notes rules."""
-    if not isinstance(value, dict):
-        return f"expected a JSON object, got {_json_type(value)}"
-    for key in ("verdict", "notes"):
-        if key not in value:
-            return f"missing key: {key}"
-    extra = sorted(str(k) for k in value if k not in ("verdict", "notes"))
-    if extra:
-        return f"unexpected key: {extra[0]}"
-    verdict, notes = value["verdict"], value["notes"]
-    if not isinstance(verdict, str) or verdict not in ("pass", "fail"):
-        return f'verdict: expected "pass" or "fail", got {_clip(json.dumps(verdict), 100)}'
-    if not isinstance(notes, str):
-        return f"notes: expected a string, got {_json_type(notes)}"
-    if len(notes) > VERDICT_NOTES_MAX:
-        return f"notes: longer than {VERDICT_NOTES_MAX} characters"
-    if verdict == "fail" and not notes.strip():
-        return 'notes: must not be empty when the verdict is "fail"'
-    return None
-
-
-def result_verdict(result: dict[str, Any] | None) -> tuple[Any, str | None]:
+def result_verdict(result: dict[str, Any] | None) -> tuple[object, str | None]:
     """(value, error): the `structured_output` of a CLI's last stream-json result line."""
     if result is None:
         return None, "the CLI printed no result line"
@@ -721,7 +971,7 @@ def result_verdict(result: dict[str, Any] | None) -> tuple[Any, str | None]:
     return value, None
 
 
-def file_verdict(root: Path) -> tuple[Any, str | None]:
+def file_verdict(root: Path) -> tuple[object, str | None]:
     """(value, error): the JSON in the workspace's verdict file (a regular file, no symlinks)."""
     data, err = read_regular(root, VERDICT_FILE, limit=VERDICT_FILE_BYTES)
     if err:
@@ -1656,7 +1906,7 @@ class SyncState:
 
     def _declared_content(self, f: ContextFile, data: bytes) -> tuple[str, str | None]:
         """(content to sync, why not) for a declared write file's bytes."""
-        limit = self.package.limits["max_file_bytes"]
+        limit = self.package.limits.max_file_bytes
         if f.mode == "block":
             try:
                 content = block_read(data, str(f.block))
@@ -1703,7 +1953,7 @@ class SyncState:
                 self.known[path] = content
 
         not_kept: list[str] = []
-        for folder in self.package.workspace["protect"]:
+        for folder in self.package.workspace.protect:
             files, skipped = _walk_files(root, folder)
             not_kept += [p for p in files if p.lower() not in self.declared_lower] + skipped
         if not_kept:
@@ -2198,9 +2448,9 @@ class Run:
         self.upload = upload
         self.m = package
         self.workdir = workdir
-        self.repo = package.workspace["mode"] == "repo"
-        self.branch = str(package.workspace["branch"])
-        self.max_line_bytes = package.limits["max_line_bytes"]
+        self.repo = package.workspace.mode == "repo"
+        self.branch = str(package.workspace.branch)
+        self.max_line_bytes = package.limits.max_line_bytes
         self.sync = SyncState(package)
         self.owns_workdir = False
         self.ready = False  # workspace set up (offline commit + push is possible)
@@ -2210,7 +2460,7 @@ class Run:
         self.index = {s.id: i for i, s in enumerate(package.stages)}
         self.protected = [
             *dict.fromkeys(f.path for f in package.files),
-            *package.workspace["protect"],
+            *package.workspace.protect,
             AGENTOS_DIR,
         ]
         self._protected_lower = [p.lower() for p in self.protected]
@@ -2218,8 +2468,7 @@ class Run:
         self.api_mode = self.repo and api_publish(os.environ)  # publish through the GitHub API
         self.github: GitHub | None = None  # set up by _setup_github in API mode
         self.branch_exists = False  # the branch was on the remote at clone or has been published
-        self.not_after = datetime.fromisoformat(package.job["not_after"])  # never publish after
-        self.deadline = time.monotonic() + package.job["budget_s"]
+        self.deadline = time.monotonic() + package.job.budget_s
 
         base = {k: v for k, v in os.environ.items() if k.upper() != "AGENTOS_TOKEN"}
         base.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
@@ -2229,7 +2478,7 @@ class Run:
             **base,
             **package.env,
             "AGENTOS_RUN_ID": str(package.run_id),
-            "AGENTOS_TICKET_KEY": package.key,
+            "AGENTOS_TICKET_KEY": package.ticket.key,
         }
 
     # ------------------------------------------------------------ top level
@@ -2271,14 +2520,14 @@ class Run:
         if clash:
             return self._finish("failed", None, f"the repo already has agent {', '.join(clash)}")
         self._write_files()
-        sync_back, problem = resolve_inside(self.workdir, self.m.sync_back["dir"])
+        sync_back, problem = resolve_inside(self.workdir, self.m.sync_back.dir)
         try:
             if not problem:
                 sync_back.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             problem = str(exc)
         if problem:
-            self.events.warn(None, f"cannot create {self.m.sync_back['dir']}: {problem}")
+            self.events.warn(None, f"cannot create {self.m.sync_back.dir}: {problem}")
         if self.repo:
             self._protect()
         self.ready = True
@@ -2360,7 +2609,7 @@ class Run:
         `sync_back.max_bytes`, then record `sync_back`. Files stream into the zip in chunks, and
         zipping stops as soon as the zip passes the cap. Only RunGone (401/410) escapes; any
         other failure is a warning."""
-        folder, cap = self.m.sync_back["dir"], self.m.sync_back["max_bytes"]
+        folder, cap = self.m.sync_back.dir, self.m.sync_back.max_bytes
         files, skipped = _walk_files(self.workdir, folder)
         if not files and not skipped:
             return
@@ -2400,7 +2649,7 @@ class Run:
         data = buf.getvalue()
 
         digest = hashlib.sha256(data).hexdigest()
-        path = f"/api/worker/jobs/{self.m.job['id']}/sync-back?sha256={digest}&files={len(files)}"
+        path = f"/api/worker/jobs/{self.m.job.id}/sync-back?sha256={digest}&files={len(files)}"
         try:
             self.upload.put(path, data)
         except (HttpError, Unreachable) as exc:
@@ -2435,7 +2684,7 @@ class Run:
             r = self._git("init", "-q", show=True)
             return f"git init failed: {r.tail()}" if r.code else None
         ws = self.m.workspace
-        repo_url, base_branch, branch = ws["repo_url"], ws["base_branch"], ws["branch"]
+        repo_url, base_branch, branch = ws.repo_url, ws.base_branch, ws.branch
         if not repo_url or repo_url.startswith("-"):
             return "workspace.repo_url: required in repo mode, must not start with -"
         for name, value in (("base_branch", base_branch), ("branch", branch)):
@@ -2453,7 +2702,7 @@ class Run:
         exists = self._git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}").code == 0
         self.branch_exists = exists
         start = f"origin/{branch}" if exists else f"origin/{base_branch}"
-        r = self._git("checkout", "-q", "-B", branch, start, show=True)
+        r = self._git("checkout", "-q", "-B", self.branch, start, show=True)
         if r.code:
             return f"git checkout failed: cannot start {branch} from {start}: {r.tail()}"
         r = self._git("rev-parse", "HEAD")
@@ -2560,7 +2809,7 @@ class Run:
             )
             if r.code:
                 self.events.warn(None, f"git update-index --skip-worktree failed: {r.tail()}")
-        lines = "".join(f"/{p}\n" for p in [*exclude, *self.m.workspace["protect"]])
+        lines = "".join(f"/{p}\n" for p in [*exclude, *self.m.workspace.protect])
         junk = "".join(f"{p}\n" for p in JUNK_PATTERNS)
         try:
             info = self.workdir / ".git" / "info"
@@ -2584,13 +2833,7 @@ class Run:
         label = f", round {round_} of {loop.max_rounds}" if loop else ""
         say(f"stage {stage.id} ({stage.kind}) started{label}")
         self.events.emit("stage_started", stage.id, {"round": round_})
-        verdict: Verdict | None = None
-        if loop is not None and stage.check:
-            status, exit_code, reason, verdict = self._exec_check(
-                stage, round_, loop.max_rounds, feedback
-            )
-        else:
-            status, exit_code, reason = self._exec(stage, *self._call(stage, round_, feedback))
+        status, exit_code, reason, verdict = self._exec_round(stage, round_, loop, feedback)
         problem = self._after_stage(stage.id)
         if problem:
             verdict = None
@@ -2607,18 +2850,31 @@ class Run:
         say(f"stage {stage.id} {status}" + (f": {reason}" if reason else ""))
         return status, reason, verdict
 
+    def _exec_round(
+        self, stage: Stage, round_: int, loop: Loop | None, feedback: str
+    ) -> tuple[str, int | None, str | None, Verdict | None]:
+        """The stage's call(s) in this round: (status, exit code, reason, a check's verdict)."""
+        match stage:
+            case ShellStage(check=True) if loop is not None:
+                return self._shell_check(stage, round_, loop.max_rounds, feedback)
+            case AgentStage(check=AgentCheck() as check) if loop is not None:
+                return self._agent_check(stage, check, round_, loop.max_rounds, feedback)
+            case _:
+                return *self._exec(stage, *self._call(stage, round_, feedback)), None
+
     def _call(self, stage: Stage, round_: int, feedback: str) -> tuple[list[str], str | None]:
         """(argv, stdin) of `stage` in `round_`: round 1 as given, later rounds with feedback."""
-        if stage.kind == "shell":
-            return [*shell_prefix(), stage.command or ""], None
-        if round_ == 1:
-            return list(stage.argv or ()), stage.stdin
-        return stage.rounds[round_ - 2].build(feedback)
+        match stage:
+            case ShellStage():
+                return [*shell_prefix(), stage.command], None
+            case AgentStage() if round_ == 1:
+                return list(stage.argv), stage.stdin
+            case AgentStage():
+                return stage.rounds[round_ - 2].build(feedback)
 
-    def _resolve(self, kind: str, argv: list[str]) -> tuple[list[str], str | None]:
+    def _resolve(self, what: str, argv: list[str]) -> tuple[list[str], str | None]:
         program = shutil.which(argv[0], path=self.stage_env.get("PATH"))
         if program is None:
-            what = "program" if kind == "agent" else "shell (set AGENTOS_SHELL)"
             return [], f"{what} not found: {argv[0]}"
         if os.name == "nt":
             problem = cmd_guard_error(program, argv)
@@ -2643,11 +2899,17 @@ class Run:
         """One call of `stage`; its output goes out as log events (and to `collect`), and an
         agent's also to stderr (Echo). The exit code is None when the call didn't run to its end
         (not started, timeout, cancel)."""
-        argv, problem = self._resolve(stage.kind, argv)
+        short = min(SHELL_LINE_BYTES, self.max_line_bytes)
+        match stage:
+            case AgentStage():
+                what, stdout_cap = "program", self.max_line_bytes
+                echo = Echo(stage.id) if self.echo else None
+            case ShellStage():
+                what, stdout_cap, echo = "shell (set AGENTOS_SHELL)", short, None
+        argv, problem = self._resolve(what, argv)
         if problem:
             return "failed", None, problem
         stage_id = stage.id
-        echo = Echo(stage_id) if self.echo and stage.kind == "agent" else None
 
         def on_line(stream: str, text: str, truncated: bool) -> None:
             self.events.log(stage_id, stream, text, truncated)
@@ -2656,14 +2918,13 @@ class Run:
             if echo is not None:
                 echo(stream, text, truncated)
 
-        short = min(SHELL_LINE_BYTES, self.max_line_bytes)
         result = run_process(
             argv,
             cwd=self.workdir,
             env=self.stage_env,
             stdin=stdin,
             timeout_s=stage.timeout_s,
-            caps=(self.max_line_bytes if stage.kind == "agent" else short, short),
+            caps=(stdout_cap, short),
             on_line=on_line,
             interrupt=self._interrupt,
         )
@@ -2682,30 +2943,38 @@ class Run:
         return "failed", result.exit_code, f"exited with code {result.exit_code}"
 
     # ------------------------------------------------------------ loop block checks
+    # A check's call(s) and verdict: (status, exit code, reason, verdict). No verdict means the
+    # stage failed or was cancelled: an invalid verdict is never a pass, nor a fail.
 
-    def _exec_check(
-        self, stage: Stage, round_: int, max_rounds: int, feedback: str
+    def _shell_check(
+        self, stage: ShellStage, round_: int, max_rounds: int, feedback: str
     ) -> tuple[str, int | None, str | None, Verdict | None]:
-        """A check's call(s) and verdict: (status, exit code, reason, verdict). No verdict means
-        the stage failed or was cancelled: an invalid verdict is never a pass, nor a fail."""
+        """A shell check: its exit code is the verdict."""
         argv, stdin = self._call(stage, round_, feedback)
-        if stage.kind == "shell":
-            lines: deque[str] = deque(maxlen=SHELL_CHECK_LINES)
-            status, code, reason = self._exec(stage, argv, stdin, lambda _s, t, _c: lines.append(t))
-            if code is None:
-                return status, None, reason, None
-            verdict = shell_verdict(code, list(lines))
-            return self._decided(stage, round_, max_rounds, verdict, "exit_code", 0, code)
+        lines: deque[str] = deque(maxlen=SHELL_CHECK_LINES)
+        status, code, reason = self._exec(stage, argv, stdin, lambda _s, t, _c: lines.append(t))
+        if code is None:
+            return status, None, reason, None
+        verdict = shell_verdict(code, list(lines))
+        return self._decided(stage, round_, max_rounds, verdict, "exit_code", 0, code)
+
+    def _agent_check(
+        self, stage: AgentStage, check: AgentCheck, round_: int, max_rounds: int, feedback: str
+    ) -> tuple[str, int | None, str | None, Verdict | None]:
+        """An agent check: its JSON verdict, repaired while it is invalid and repairs are left."""
+        argv, stdin = self._call(stage, round_, feedback)
         attempt, error = 0, ""
         while True:
-            status, code, reason, found = self._verdict_call(stage, argv, stdin)
+            status, code, reason, found = self._verdict_call(stage, check, argv, stdin)
             if code is None:  # not started, timed out or cancelled: never repaired
                 return status, None, reason, None
-            if isinstance(found, Verdict):
-                source = stage.verdict_from or "file"
-                return self._decided(stage, round_, max_rounds, found, source, attempt, code)
-            error = _clip(found)
-            if not stage.repairs or attempt >= stage.verdict_repairs:
+            match found:
+                case Verdict():
+                    source = check.verdict_from
+                    return self._decided(stage, round_, max_rounds, found, source, attempt, code)
+                case Unfit(why=why):
+                    error = _clip(why)
+            if attempt >= check.verdict_repairs:
                 break
             attempt += 1
             say(f"stage {stage.id}: invalid verdict ({error}), repair {attempt}")
@@ -2716,19 +2985,16 @@ class Run:
                 return "cancelled", code, CANCELLED, None
             if time.monotonic() >= self.deadline:
                 return "failed", code, OVER_BUDGET, None
-            argv, stdin = stage.repairs[round_ - 1].build(error)
-        if stage.repairs and stage.verdict_repairs:
-            after = f" after {attempt} repair{'s' if attempt != 1 else ''}"
-        else:
-            after = ""
+            argv, stdin = check.repairs[round_ - 1].build(error)
+        after = f" after {attempt} repair{'s' if attempt != 1 else ''}" if attempt else ""
         return "failed", code, f"{stage.name} gave no valid verdict{after}: {error}", None
 
     def _verdict_call(
-        self, stage: Stage, argv: list[str], stdin: str | None
-    ) -> tuple[str, int | None, str | None, Verdict | str]:
-        """One call of an agent check, and its valid verdict or why there is none. The status and
-        reason are the call's, for when it didn't run to its end (exit code None)."""
-        from_file = stage.verdict_from != "structured_output"
+        self, stage: AgentStage, check: AgentCheck, argv: list[str], stdin: str | None
+    ) -> tuple[str, int | None, str | None, Verdict | Unfit | None]:
+        """One call of an agent check, and its valid verdict or why there is none; neither when it
+        didn't run to its end (exit code None), and then the status and reason are the call's."""
+        from_file = check.verdict_from == "file"
         if from_file:
             self._clear_verdict(stage.id)
         results: list[dict[str, Any]] = []  # the last result line only
@@ -2742,15 +3008,14 @@ class Run:
 
         status, code, reason = self._exec(stage, argv, stdin, None if from_file else collect)
         if code is None:
-            return status, None, reason, ""
+            return status, None, reason, None
         if code != 0:
-            return status, code, reason, f"exited with code {code}"
+            return status, code, reason, Unfit(f"exited with code {code}")
         if from_file:
             value, error = file_verdict(self.workdir)
         else:
             value, error = result_verdict(results[-1] if results else None)
-        error = error or verdict_error(value)
-        return status, code, reason, error or Verdict(value["verdict"], value["notes"])
+        return status, code, reason, checked_verdict(value) if error is None else Unfit(error)
 
     def _clear_verdict(self, stage_id: str) -> None:
         """Delete the verdict file (and make `.agentos/`), so a stale verdict is never read."""
@@ -2837,7 +3102,7 @@ class Run:
             return f"refusing to commit context files: {', '.join(leaked[:5])}"
         if not staged:
             return None
-        message = f"{self.m.key} [{stage_id}] wip"
+        message = f"{self.m.ticket.key} [{stage_id}] wip"
         r = self._git("commit", "-q", "-m", message, show=True)
         return f"git commit failed: {r.tail()}" if r.code else None
 
@@ -2853,7 +3118,7 @@ class Run:
         r = self._git("log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", span)
         if r.code:
             return f"pre-push guard: git log failed: {r.tail()}"
-        if any(f"agentos:begin {b}".encode() in r.out for b in self.m.workspace["blocks"]):
+        if any(f"agentos:begin {b}".encode() in r.out for b in self.m.workspace.blocks):
             return "pre-push guard: commits contain the agentos context block"
         return None
 
@@ -2880,8 +3145,8 @@ class Run:
         """Before every publish: never once the run was taken away, nor after `not_after`."""
         if isinstance(self.events.failure, RunGone):  # taken away while we were committing
             raise self.events.failure
-        if datetime.now(UTC) >= self.not_after:
-            raise RunGone(f"the job's not_after ({self.m.job['not_after']}) has passed")
+        if datetime.now(UTC) >= self.m.job.not_after:
+            raise RunGone(f"the job's not_after ({self.m.job.not_after.isoformat()}) has passed")
 
     def _publish(self, stage_id: str | None, github: GitHub) -> str | None:
         """API mode's push: publish through the Git Data API, then make the local branch the
@@ -3334,14 +3599,87 @@ def clean_workdir_root(root: Path, now: float) -> list[Path]:
     return removed
 
 
-def run_client(
-    server: str,
-    token: str,
-    root: Path,
-    max_runs: int,
-    env_file: Path | None,
-    spawn: Spawn,
-) -> int:
+@dataclass(frozen=True)
+class LeasedJob:
+    job_id: str  # names its lock file: checked against _JOB_ID_RE
+    run_id: int
+    job_token: str
+
+
+@dataclass(frozen=True)
+class Speaks:
+    """The protocol a lease answer speaks, read before the rest (another protocol may shape the
+    rest differently): any value but PROTOCOL itself is another protocol."""
+
+    protocol: object
+
+
+@dataclass(frozen=True)
+class LeaseAnswer:
+    """A lease answered 200, read with unknown keys ignored: servers add fields."""
+
+    job: LeasedJob | None
+    worker_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class Retry:
+    """No usable answer (unreachable, 5xx, a transient 4xx, malformed): back off, lease again."""
+
+    problem: str
+
+
+@dataclass(frozen=True)
+class Stop:
+    """The client exits with `code` (a refusing server, another protocol, a root it can't use)."""
+
+    code: int
+
+
+Outcome = LeasedJob | None | Retry | Stop  # what one lease came to (None: no run to start)
+
+
+@dataclass(frozen=True)
+class ClientRoot:
+    """A client's root, checked and held: its `runs` folder, the env file's values and the held
+    CLIENT_LOCK."""
+
+    runs: Path
+    env: dict[str, str | None]
+    lock: IO[bytes]
+
+
+def _open_root(root: Path, env_file: Path | None) -> ClientRoot | Stop:
+    """Refuse a root inside a git repo, an unreadable env file (2), a `runs` that can't be made
+    (1) and a root another client holds (2), in that order; then delete its old workspaces."""
+    repo = git_repo_containing(root)
+    if repo is not None:
+        say(f"--workdir-root {root} is inside the git repo {repo}; choose a directory outside it")
+        return Stop(2)
+    try:
+        env = read_env_file(env_file) if env_file is not None else {}
+    except (OSError, EnvFileError) as exc:
+        say(f"cannot read the env file {env_file}: {exc}")
+        return Stop(2)
+    runs = root / CLIENT_RUNS_DIR
+    try:
+        runs.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        say(f"cannot create {runs}: {exc}")
+        return Stop(1)
+    # One client per root, for its whole life: another would misread this one's workers' locks.
+    lock = (runs / CLIENT_LOCK).open("a+b")
+    if not _take_lock(lock, wait=False):
+        lock.close()
+        say(f"another client already runs on {root}; stop it or choose another --workdir-root")
+        return Stop(2)
+    removed = clean_workdir_root(root, time.time())
+    if removed:
+        say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
+    return ClientRoot(runs, env, lock)
+
+
+def run_client(mode: ClientMode, token: str, spawn: Spawn) -> int:
     """Client mode: lease this user's jobs and start a detached worker for each, at most
     `max_runs` at once (`Children`). Every lease lists the running ones as `alive` (those it
     started, and the survivors of an earlier client, which count against `max_runs`) and the
@@ -3356,118 +3694,153 @@ def run_client(
     `--workdir <root>/runs/<run_id>` and `--lock-file <root>/runs/<job id>.lock`, logs to
     `<run_id>.log` and gets its job token in child_env. It holds `<root>/runs/client.lock`
     (CLIENT_LOCK) for its whole life; a second client on that root exits 2."""
-    root = root.expanduser().resolve()
-    repo = git_repo_containing(root)
-    if repo is not None:
-        say(f"--workdir-root {root} is inside the git repo {repo}; choose a directory outside it")
-        return 2
-    try:
-        env_values = read_env_file(env_file) if env_file is not None else {}
-    except (OSError, EnvFileError) as exc:
-        say(f"cannot read the env file {env_file}: {exc}")
-        return 2
-    runs = root / CLIENT_RUNS_DIR
-    try:
-        runs.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        say(f"cannot create {runs}: {exc}")
-        return 1
-    # One client per root, for its whole life: another would misread this one's workers' locks.
-    client_lock = (runs / CLIENT_LOCK).open("a+b")
-    if not _take_lock(client_lock, wait=False):
-        client_lock.close()
-        say(f"another client already runs on {root}; stop it or choose another --workdir-root")
-        return 2
+    match _open_root(mode.root, mode.env_file):
+        case Stop(code=code):
+            return code
+        case ClientRoot() as root:
+            try:
+                return ClientLoop(mode, token, root, spawn).run()
+            except KeyboardInterrupt:
+                say("client stopped; started workers keep running")
+                return 130
+            finally:
+                release_lock(root.lock)
 
-    removed = clean_workdir_root(root, time.time())
-    if removed:
-        say(f"deleted {len(removed)} run workspace(s) and log(s) older than 7 days")
 
-    client = Client(server, token)
-    me = Path(__file__).resolve()
-    sha256: str | None = hashlib.sha256(me.read_bytes()).hexdigest()  # None once mentioned
-    children = Children(
-        runs,
-        lambda alive, gone: client.post(
-            "/api/worker/lease",
-            {"wait_s": 0, "take": False, "alive": alive, "gone": gone},
-            retry_budget_s=0,
-        ),
-    )
-    children.start()
-    delay = BACKOFF_START_S
-    answered: float | None = None  # when the server last answered a lease (None: lease at once)
-    say(f"client: leasing jobs from {server}, at most {max_runs} at once, in {runs}")
-    try:
+class ClientLoop:
+    """Lease after lease on an open root, each one's outcome a value: `_lease` says what it came
+    to, `run` acts on it, `_start` starts a leased job's worker."""
+
+    def __init__(self, mode: ClientMode, token: str, root: ClientRoot, spawn: Spawn) -> None:
+        self.mode, self.root, self.spawn = mode, root, spawn
+        self.client = Client(mode.server, token)
+        self.me = Path(__file__).resolve()
+        self.sha256 = hashlib.sha256(self.me.read_bytes()).hexdigest()
+        self.said_differs = False  # said once
+        self.answered: float | None = None  # when the server last answered (None: lease at once)
+        self.children = Children(root.runs, lambda alive, gone: self._post(False, alive, gone))
+
+    def run(self) -> int:
+        mode, runs = self.mode, self.root.runs
+        self.children.start()
+        delay = BACKOFF_START_S
+        say(f"client: leasing jobs from {mode.server}, at most {mode.max_runs} at once, in {runs}")
         while True:
-            problem: str | None = None
-            with children.waiting() as (alive, gone):
-                busy = len(alive) >= max_runs
-                quiet = answered is not None and time.monotonic() - answered < CLIENT_HEARTBEAT_S
+            with self.children.waiting() as (alive, gone):
+                busy = len(alive) >= mode.max_runs
+                last = self.answered
+                quiet = last is not None and time.monotonic() - last < CLIENT_HEARTBEAT_S
                 if busy and not gone and quiet:
                     time.sleep(CLIENT_REAP_S)
                     continue
+                outcome = self._lease(busy, alive, gone)
+            match outcome:
+                case Stop(code=code):
+                    return code
+                case Retry(problem=problem):
+                    say(f"lease failed ({problem}); leasing again in {delay:.1f}s")
+                    time.sleep(delay)
+                    delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
+                case LeasedJob() as job:
+                    delay = BACKOFF_START_S
+                    self._start(job)
+                case None:
+                    delay = BACKOFF_START_S
 
-                wait_s = 0 if busy else CLIENT_POLL_WAIT_S
-                body = {"wait_s": wait_s, "take": not busy, "alive": alive, "gone": gone}
-                try:
-                    resp = client.post(
-                        "/api/worker/lease", body, timeout_s=CLIENT_POLL_TIMEOUT_S, retry_budget_s=0
-                    )
-                    answered = time.monotonic()
-                    children.acked(gone)
-                    if resp["protocol"] != PROTOCOL:
-                        say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
-                        return 1
-                    job = resp["job"]
-                    leased = job and (str(job["job_id"]), int(job["run_id"]), str(job["job_token"]))
-                    if leased and not _JOB_ID_RE.fullmatch(leased[0]):
-                        raise ValueError(f"a job id that isn't one: {leased[0]!r}")
-                except HttpError as exc:
-                    if exc.status not in CLIENT_TRANSIENT_4XX:
-                        say(f"the server refused this client ({exc}); stopping")
-                        return 1
-                    problem = str(exc)
-                except (Unreachable, ValueError) as exc:
-                    problem = str(exc)
-                except (KeyError, TypeError) as exc:  # an answer that isn't a lease answer
-                    problem = f"a malformed answer ({exc!r})"
+    def _post(
+        self, take: bool, alive: list[str], gone: list[str], timeout_s: float | None = None
+    ) -> Any:
+        """A lease: one that takes waits for a run; a no-take one (heartbeat, report) doesn't."""
+        wait_s = CLIENT_POLL_WAIT_S if take else 0
+        body = {"wait_s": wait_s, "take": take, "alive": alive, "gone": gone}
+        return self.client.post("/api/worker/lease", body, timeout_s=timeout_s, retry_budget_s=0)
 
-            if problem is None:
-                delay = BACKOFF_START_S
-                if sha256 is not None and resp.get("worker_sha256") != sha256:
-                    say(f"this worker.py differs from the server's ({server}/api/worker/worker.py)")
-                    sha256 = None
-                if not leased:
-                    continue
-                job_id, run_id, job_token = leased
-                workdir = runs / str(run_id)
-                argv = [sys.executable, str(me), "--server", server, "--workdir", str(workdir)]
-                argv += ["--lock-file", str(runs / f"{job_id}.lock")]
-                log = runs / f"{run_id}.log"
-                try:
-                    child = spawn(argv, runs, child_env(job_token, env_values), log)
-                except OSError as exc:
-                    say(f"run {run_id}: cannot start its worker: {exc}")
-                    continue
-                children.add(job_id, child)
-                say(f"run {run_id}: started its worker (pid {child.pid}), log {log}")
-                continue
+    def _lease(self, busy: bool, alive: list[str], gone: list[str]) -> Outcome:
+        """One lease (a heartbeat when `busy`); its answer acknowledges `gone`, then is read."""
+        try:
+            resp = self._post(not busy, alive, gone, CLIENT_POLL_TIMEOUT_S)
+        except HttpError as exc:
+            if exc.status not in CLIENT_TRANSIENT_4XX:
+                say(f"the server refused this client ({exc}); stopping")
+                return Stop(1)
+            return Retry(str(exc))
+        except (Unreachable, ValueError) as exc:
+            return Retry(str(exc))
+        self.answered = time.monotonic()
+        self.children.acked(gone)
+        return self._read(resp)
 
-            say(f"lease failed ({problem}); leasing again in {delay:.1f}s")
-            time.sleep(delay)
-            delay = min(delay * 2, CLIENT_BACKOFF_CAP_S)
-    except KeyboardInterrupt:
-        say("client stopped; started workers keep running")
-        return 130
-    finally:
-        release_lock(client_lock)
+    def _read(self, resp: object) -> Outcome:
+        """An answer: its protocol first, then the rest; another worker.py is said once."""
+        match parse(Speaks, resp, extra="ignore"):
+            case Unfit(why=why):
+                return Retry(f"a malformed answer ({why})")
+            case Speaks(protocol=protocol) if protocol != PROTOCOL:
+                say(f"the server speaks another protocol than {PROTOCOL}; update worker.py")
+                return Stop(1)
+        match parse(LeaseAnswer, resp, extra="ignore"):
+            case Unfit(why=why):
+                return Retry(f"a malformed answer ({why})")
+            case LeaseAnswer(job=LeasedJob(job_id=job_id)) if not _JOB_ID_RE.fullmatch(job_id):
+                return Retry(f"a job id that isn't one: {job_id!r}")
+            case LeaseAnswer(job=job, worker_sha256=sha256):
+                if sha256 != self.sha256 and not self.said_differs:
+                    url = f"{self.mode.server}/api/worker/worker.py"
+                    say(f"this worker.py differs from the server's ({url})")
+                    self.said_differs = True
+                return job
+
+    def _start(self, job: LeasedJob) -> None:
+        runs, server = self.root.runs, self.mode.server
+        workdir = runs / str(job.run_id)
+        argv = [sys.executable, str(self.me), "--server", server, "--workdir", str(workdir)]
+        argv += ["--lock-file", str(runs / f"{job.job_id}.lock")]
+        log = runs / f"{job.run_id}.log"
+        try:
+            child = self.spawn(argv, runs, child_env(job.job_token, self.root.env), log)
+        except OSError as exc:
+            say(f"run {job.run_id}: cannot start its worker: {exc}")
+            return
+        self.children.add(job.job_id, child)
+        say(f"run {job.run_id}: started its worker (pid {child.pid}), log {log}")
 
 
 # ---------------------------------------------------------------- entry point
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+@dataclass(frozen=True)
+class LiveMode:
+    """One job from the server; with `lock_file`, a client's run worker."""
+
+    server: str
+    token: str
+    workdir: Path | None  # None: ./agentos-run-<run_id>
+    lock_file: Path | None
+
+
+@dataclass(frozen=True)
+class FileMode:
+    """Mailbox mode: the package is a file, the journal goes to the outbox."""
+
+    manifest: Path
+    outbox: Path
+    workdir: Path
+
+
+@dataclass(frozen=True)
+class ClientMode:
+    """Lease this user's runs and start a worker for each (the token: $AGENTOS_CLIENT_TOKEN)."""
+
+    server: str
+    root: Path  # absolute
+    max_runs: int
+    env_file: Path | None
+
+
+Mode = LiveMode | FileMode | ClientMode
+
+
+def parse_args(argv: list[str]) -> Mode:
     """Exactly one mode: HTTP (--server [--token]), mailbox (--manifest --outbox --workdir) or
     client (--client --server, the client token in $AGENTOS_CLIENT_TOKEN)."""
     parser = argparse.ArgumentParser(prog="worker.py", description=__doc__)
@@ -3493,80 +3866,90 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--env-file", help="client mode: KEY=value lines added to every run worker's environment"
     )
     args = parser.parse_args(argv)
-    client_only = (args.max_runs, args.workdir_root, args.env_file)
     if args.client:
-        used = [args.token, args.workdir, args.lock_file, args.manifest, args.outbox]
-        if any(value is not None for value in used):
-            parser.error(
-                "--client can't be used with --token, --workdir, --lock-file, --manifest or "
-                "--outbox"
-            )
-        if args.server is None:
-            parser.error("--client needs --server")
-        if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
-            parser.error("--server must be an http:// or https:// URL")
-        if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
-            parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
-        args.max_runs = 1 if args.max_runs is None else args.max_runs
-        if not 1 <= args.max_runs <= 100:  # a lease lists at most 100 `alive` jobs
-            parser.error("--max-runs must be between 1 and 100")
-        args.workdir_root = args.workdir_root or "~/.agentos/workspaces"
-        args.mailbox = False
-        return args
-    if any(value is not None for value in client_only):
+        return _client_mode(parser, args)
+    if any(value is not None for value in (args.max_runs, args.workdir_root, args.env_file)):
         parser.error("--max-runs, --workdir-root and --env-file need --client")
-    args.mailbox = args.manifest is not None or args.outbox is not None
-    if args.mailbox:
-        if args.server is not None or args.token is not None:
-            parser.error("--manifest/--outbox (mailbox mode) can't be used with --server/--token")
-        if not (args.manifest and args.outbox and args.workdir):
-            parser.error("mailbox mode needs --manifest, --outbox and --workdir")
-        return args
+    if args.manifest is not None or args.outbox is not None:
+        return _file_mode(parser, args)
+    return _live_mode(parser, args)
+
+
+def _file_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> FileMode:
+    if args.server is not None or args.token is not None:
+        parser.error("--manifest/--outbox (mailbox mode) can't be used with --server/--token")
+    if not (args.manifest and args.outbox and args.workdir):
+        parser.error("mailbox mode needs --manifest, --outbox and --workdir")
+    return FileMode(Path(args.manifest), Path(args.outbox), Path(args.workdir))
+
+
+def _live_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> LiveMode:
     if args.server is None:
         parser.error("the following arguments are required: --server")
-    args.token = args.token or os.environ.get("AGENTOS_TOKEN")
-    if not args.token:
+    token = args.token or os.environ.get("AGENTOS_TOKEN")
+    if not token:
         parser.error("a job token is required (--token or AGENTOS_TOKEN)")
     if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
         parser.error("--server must be an http:// or https:// URL")
-    return args
+    workdir = Path(args.workdir) if args.workdir else None
+    lock_file = None if args.lock_file is None else Path(args.lock_file)
+    return LiveMode(args.server, token, workdir, lock_file)
+
+
+def _client_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> ClientMode:
+    used = [args.token, args.workdir, args.lock_file, args.manifest, args.outbox]
+    if any(value is not None for value in used):
+        parser.error(
+            "--client can't be used with --token, --workdir, --lock-file, --manifest or --outbox"
+        )
+    if args.server is None:
+        parser.error("--client needs --server")
+    if urllib.parse.urlsplit(args.server).scheme not in ("http", "https"):
+        parser.error("--server must be an http:// or https:// URL")
+    if not os.environ.get("AGENTOS_CLIENT_TOKEN", "").strip():
+        parser.error("client mode needs a client token in AGENTOS_CLIENT_TOKEN")
+    max_runs = 1 if args.max_runs is None else args.max_runs
+    if not 1 <= max_runs <= 100:  # a lease lists at most 100 `alive` jobs
+        parser.error("--max-runs must be between 1 and 100")
+    root = Path(args.workdir_root or "~/.agentos/workspaces").expanduser().resolve()
+    env_file = Path(args.env_file) if args.env_file else None
+    return ClientMode(args.server, root, max_runs, env_file)
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    mode = parse_args(sys.argv[1:] if argv is None else argv)
     os.environ.pop("AGENTOS_TOKEN", None)  # never handed to git or to stages
     client_token = os.environ.pop("AGENTOS_CLIENT_TOKEN", "").strip()  # nor to run workers
-    if args.client:
-        env_file = Path(args.env_file) if args.env_file else None
-        root = Path(args.workdir_root)
-        return run_client(args.server, client_token, root, args.max_runs, env_file, spawn_detached)
-    if args.mailbox:
-        return run_mailbox(Path(args.manifest), Path(args.outbox), Path(args.workdir))
-    if args.lock_file is None:
-        return run_live(args)
+    match mode:
+        case ClientMode():
+            return run_client(mode, client_token, spawn_detached)
+        case FileMode(manifest=manifest, outbox=outbox, workdir=workdir):
+            return run_mailbox(manifest, outbox, workdir)
+        case LiveMode(lock_file=Path() as lock_file):
+            # A client's run worker: its client lists the job as alive while this lock is held.
+            try:
+                lock = hold_lock(lock_file)
+            except OSError as exc:
+                say(f"cannot lock {lock_file}: {exc}")
+                return 1
+            try:
+                return run_live(mode)
+            finally:
+                release_lock(lock)
+        case LiveMode():
+            return run_live(mode)
 
-    # A client's run worker: its client lists the job as alive while this lock is held.
-    try:
-        lock = hold_lock(Path(args.lock_file))
-    except OSError as exc:
-        say(f"cannot lock {args.lock_file}: {exc}")
-        return 1
-    try:
-        return run_live(args)
-    finally:
-        release_lock(lock)
 
-
-def run_live(args: argparse.Namespace) -> int:
+def run_live(mode: LiveMode) -> int:
     """Live mode: fetch the job, then bind it to a new instance id by posting `started` and
     waiting for its ack, all before the workdir is touched."""
-    client = Client(args.server, args.token, secrets.token_urlsafe(32))
+    client = Client(mode.server, mode.token, secrets.token_urlsafe(32))
     reporter = HttpReporter(client)
-    say(f"fetching the job from {args.server}")
+    say(f"fetching the job from {mode.server}")
     try:
         package = load_package(client.get("/api/worker/job"))
         sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-        started = {"seq": package.journal["first_seq"], "ts": _now(), "job": package.job["id"]}
+        started = {"seq": package.journal.first_seq, "ts": _now(), "job": package.job.id}
         data = {"protocol": PROTOCOL, "worker_sha256": sha256}
         reporter.send([{**started, "type": "started", "stage_id": None, "data": data}])
     except AlreadyClaimed as exc:
@@ -3579,11 +3962,11 @@ def run_live(args: argparse.Namespace) -> int:
         say(f"cannot start the job: {exc}")
         return 1
 
-    say(f"bound to job {package.job['id']} ({package.key}, {len(package.stages)} stage(s))")
-    events = EventSink(reporter, package.job["id"], package.journal["first_seq"] + 1)
+    say(f"bound to job {package.job.id} ({package.ticket.key}, {len(package.stages)} stage(s))")
+    events = EventSink(reporter, package.job.id, package.journal.first_seq + 1)
     events.start()
-    workdir = Path(args.workdir or f"agentos-run-{package.run_id}").resolve()
-    return Run(events, package, workdir, client).execute()
+    workdir = Path(f"agentos-run-{package.run_id}") if mode.workdir is None else mode.workdir
+    return Run(events, package, workdir.resolve(), client).execute()
 
 
 def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:
@@ -3602,8 +3985,8 @@ def run_mailbox(manifest_path: Path, outbox: Path, workdir: Path) -> int:
     except OSError as exc:
         say(f"cannot create the outbox {outbox}: {exc}")
         return 1
-    say(f"mailbox run {package.run_id} ({package.key}, {len(package.stages)} stage(s))")
-    events = EventSink(recorder, package.job["id"], package.journal["first_seq"] + 1)
+    say(f"mailbox run {package.run_id} ({package.ticket.key}, {len(package.stages)} stage(s))")
+    events = EventSink(recorder, package.job.id, package.journal.first_seq + 1)
     events.start()
     try:
         return Run(events, package, workdir.resolve(), None).execute()

@@ -137,8 +137,9 @@ def test_each_mode_needs_its_options(argv: list[str]) -> None:
 
 def test_mailbox_args(tmp_path: Path) -> None:
     args = worker.parse_args(["--manifest", "m.json", "--outbox", "o.jsonl", "--workdir", "ws"])
-    assert args.mailbox
-    assert not worker.parse_args(["--server", "http://127.0.0.1:8000", "--token", "t"]).mailbox
+    assert args == worker.FileMode(Path("m.json"), Path("o.jsonl"), Path("ws"))
+    live = worker.parse_args(["--server", "http://127.0.0.1:8000", "--token", "t"])
+    assert live == worker.LiveMode("http://127.0.0.1:8000", "t", None, None)
 
 
 def test_an_existing_outbox_is_refused(tmp_path: Path) -> None:

@@ -483,6 +483,40 @@ def test_another_protocol_stops_the_client(
     assert (spawn.count(), leases(server)) == (0, 1)
 
 
+@pytest.mark.parametrize("protocol", ["3", "2", None, True])
+def test_a_protocol_that_isnt_ours_stops_before_the_job_is_read(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, protocol: object
+) -> None:
+    job = assigned(5, "d" * 43)[1]["job"]
+    answer_leases(server, [answer(job, protocol=protocol)])
+
+    assert run_client(server, tmp_path / "ws") == 1
+
+    assert (spawn.count(), leases(server)) == (0, 1)
+
+
+def test_an_answer_without_a_protocol_is_malformed(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path
+) -> None:
+    _, body = assigned(5, "d" * 43)
+    del body["protocol"]
+    answer_leases(server, [(200, body)])
+
+    assert run_client(server, tmp_path / "ws") == 1  # backed off, then the 401
+
+    assert (spawn.count(), leases(server)) == (0, 2)
+
+
+def test_a_null_worker_sha256_is_mentioned_once(
+    server: FakeServer, spawn: FakeSpawn, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    answer_leases(server, [answer(None, worker_sha256=None)] * 2)
+
+    assert run_client(server, tmp_path / "ws") == 1
+
+    assert capsys.readouterr().err.count("differs") == 1
+
+
 def test_another_worker_py_is_mentioned_once(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
