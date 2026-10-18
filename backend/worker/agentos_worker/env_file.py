@@ -23,6 +23,15 @@ class EnvFileError(ValueError):
     """An env file line outside the supported subset."""
 
 
+# Named, not lambdas: `re.sub`'s overloads would type a lambda's match as Any.
+def _single_escape(m: re.Match[str]) -> str:
+    return m.group(1)
+
+
+def _double_escape(m: re.Match[str]) -> str:
+    return _ESCAPES.get(m.group(1), m.group(1))
+
+
 def parse_env(text: str) -> dict[str, str | None]:
     """The python-dotenv subset a client's `--env-file` uses: `KEY=value` lines, `#`
     comments (whole-line, or after whitespace in an unquoted value), an optional `export `,
@@ -41,9 +50,9 @@ def parse_env(text: str) -> dict[str, str | None]:
             raise EnvFileError(f"line {line}: expected KEY=value, KEY or a comment")
         single, double, bare = entry.group("single", "double", "bare")
         if single is not None:
-            value: str | None = _SINGLE_ESCAPE_RE.sub(lambda m: m.group(1), single)
+            value: str | None = _SINGLE_ESCAPE_RE.sub(_single_escape, single)
         elif double is not None:
-            value = _DOUBLE_ESCAPE_RE.sub(lambda m: _ESCAPES.get(m.group(1), m.group(1)), double)
+            value = _DOUBLE_ESCAPE_RE.sub(_double_escape, double)
         elif bare is not None:
             value = re.sub(r"\s+#.*", "", bare).rstrip()
         else:

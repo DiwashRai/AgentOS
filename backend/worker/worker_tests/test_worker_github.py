@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from agentos_worker import github, publication
+from agentos_worker import github, publication, publishing
 from agentos_worker.git import GitResult, GitRunner
 from worker_tests.worker_support import (
     KEY,
@@ -319,7 +319,7 @@ def test_a_rewrite_of_published_commits_is_refused_before_any_github_call(
     git(work, "commit", "-q", "--amend", "-m", "one, amended")
 
     with pytest.raises(publication.PublishError, match="rejected"):
-        github.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
+        publishing.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
 
 
 def test_a_merge_is_refused_before_any_github_call(origin: Origin, tmp_path: Path) -> None:
@@ -333,14 +333,14 @@ def test_a_merge_is_refused_before_any_github_call(origin: Origin, tmp_path: Pat
     git(work, "merge", "-q", "--no-ff", "-m", "merge side", "side")
 
     with pytest.raises(publication.PublishError, match="merge"):
-        github.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
+        publishing.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
 
 
 def test_a_published_head_looks_pushed(origin: Origin, tmp_path: Path) -> None:
     work = clone(origin, tmp_path)
     head = git(work, "rev-parse", "HEAD").strip()
 
-    assert github.track_published(runner(work), BRANCH, head) is None
+    assert publishing.track_published(runner(work), BRANCH, head) is None
 
     assert git(work, "rev-parse", f"refs/remotes/origin/{BRANCH}").strip() == head
     assert git(work, "config", f"branch.{BRANCH}.remote").strip() == "origin"
@@ -357,7 +357,7 @@ def test_a_different_remote_commit_is_fetched_and_becomes_head(
     remote = remote.strip()
     git(origin.bare, "update-ref", f"refs/heads/{BRANCH}", remote)
 
-    assert github.track_published(runner(work), BRANCH, remote) is None
+    assert publishing.track_published(runner(work), BRANCH, remote) is None
 
     assert git(work, "rev-parse", "HEAD").strip() == remote
     assert git(work, "rev-parse", f"refs/remotes/origin/{BRANCH}").strip() == remote
@@ -373,7 +373,7 @@ def test_read_blobs_splits_cat_file_batch_by_size(tmp_path: Path) -> None:
         (tmp_path / f"f{i}").write_bytes(data)
         shas.append(git(tmp_path, "hash-object", "-w", f"f{i}").strip())
 
-    assert github._read_blobs(runner(tmp_path), shas) == dict(zip(shas, contents, strict=True))
+    assert publishing._read_blobs(runner(tmp_path), shas) == dict(zip(shas, contents, strict=True))
 
 
 def test_a_token_off_actions_still_pushes_with_git(

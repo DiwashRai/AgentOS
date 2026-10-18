@@ -27,7 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from agentos_worker import files, publication
 from agentos_worker.git import GitResult, GitRunner
-from agentos_worker.github import GitHub, GitHubError, publish_branch, track_published
+from agentos_worker.github import GitHub, GitHubError
+from agentos_worker.publishing import publish_branch, track_published
 
 GIT_TIMEOUT_S = 300
 

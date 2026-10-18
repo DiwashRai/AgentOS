@@ -10,7 +10,6 @@ import re
 import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from agentos_worker.text import clip, decode_utf8
 
@@ -124,7 +123,7 @@ def inline_text(data: bytes) -> str | None:
     return decode_utf8(data)
 
 
-def tree_entry(d: DiffEntry, data: bytes | None) -> tuple[dict[str, Any], bytes | None]:
+def tree_entry(d: DiffEntry, data: bytes | None) -> tuple[dict[str, str | None], bytes | None]:
     """The `POST /git/trees` entry for `d`, plus the bytes to upload as a blob first (None when
     the entry needs no upload). `data` is the new content when `d.needs_content`."""
     mode = d.old_mode if d.deleted else d.new_mode
@@ -134,7 +133,7 @@ def tree_entry(d: DiffEntry, data: bytes | None) -> tuple[dict[str, Any], bytes 
         kind = "blob"
     else:
         raise PublishError(f"push failed: {d.path} has an unsupported mode {mode}")
-    entry: dict[str, Any] = {"path": d.path, "mode": mode, "type": kind}
+    entry: dict[str, str | None] = {"path": d.path, "mode": mode, "type": kind}
 
     if d.deleted:
         entry["sha"] = None

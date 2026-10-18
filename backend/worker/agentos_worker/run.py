@@ -38,7 +38,7 @@ from agentos_worker.files import (
 )
 from agentos_worker.fit import Unfit
 from agentos_worker.git import GitResult
-from agentos_worker.github import GitHub, GitHubError, publish_branch, track_published
+from agentos_worker.github import GitHub, GitHubError
 from agentos_worker.package import AgentCheck, AgentStage, Loop, Package, ShellStage, Stage
 from agentos_worker.paths import branch_error, pr_url_error
 from agentos_worker.process import (
@@ -49,6 +49,7 @@ from agentos_worker.process import (
     shell_prefix,
 )
 from agentos_worker.publication import PUSH_REJECTED, PublishError, api_publish, github_repo
+from agentos_worker.publishing import publish_branch, track_published
 from agentos_worker.sync import SyncState
 from agentos_worker.text import clip
 from agentos_worker.verdict_reading import checked_verdict, file_verdict, result_verdict
