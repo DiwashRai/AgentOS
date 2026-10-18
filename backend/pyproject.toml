@@ -49,10 +49,10 @@ select = [
 "**/tests/**" = ["S101", "S603", "S607"]
 "**/worker_tests/**" = ["S101", "S603", "S607"]
 # Running subprocesses described by the manifest is the worker's job.
-"worker/worker.py" = ["S603", "S607"]
+"worker/agentos_worker/**" = ["S603", "S607"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agentos", "agentos_worker", "worker"]
+known-first-party = ["agentos", "agentos_worker"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]

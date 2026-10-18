@@ -1,4 +1,4 @@
-"""Whole runs through worker.main(): fake server + temp bare repo as origin + fake agent.
+"""Whole runs through main.main(): fake server + temp bare repo as origin + fake agent.
 
 Covers binding and the journal (every step a record, in seq order, resent from the ack), the
 commit procedure (context files and notes never committed, repo edits committed), the pre-push
@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-import worker
-from agentos_worker import archive
+from agentos_worker import archive, main, run, tunables
+from agentos_worker.files import existing_entry
 from worker_tests.worker_support import (
     JOB,
     JOB_TOKEN,
@@ -95,7 +95,7 @@ def test_a_live_run_journals_every_step_in_seq_order(
         *("stage_started", "verdict_repair", "verdict", "sync", "stage_finished"),
         *("sync_back", "result"),
     ]
-    sha256 = hashlib.sha256(archive.build(Path(worker.__file__).parent)).hexdigest()
+    sha256 = hashlib.sha256(archive.build(archive.this_worker().path.parent)).hexdigest()
     assert records[0]["data"] == {"protocol": 2, "worker_sha256": sha256}
     [pushed] = server.records("pushed")
     head = git(origin.bare, "rev-parse", BRANCH).strip()
@@ -122,7 +122,7 @@ def test_a_live_run_journals_every_step_in_seq_order(
 def test_a_short_ack_or_a_lost_answer_resends_from_ack_plus_1(
     server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "FLUSH_INTERVAL_S", 0.3)  # a few records per batch
+    monkeypatch.setattr(tunables, "FLUSH_INTERVAL_S", 0.3)  # a few records per batch
     tripped: list[list[int]] = []
 
     def hook(path: str, body: Any) -> tuple[int, Any] | None:
@@ -369,7 +369,7 @@ def test_nothing_is_published_after_the_jobs_not_after(
         manifest.write_text(json.dumps(package), encoding="utf-8", newline="\n")
         outbox, workdir = tmp_path / "outbox.jsonl", tmp_path / "ws"
         args = ["--manifest", str(manifest), "--outbox", str(outbox), "--workdir", str(workdir)]
-        assert worker.main(args) == 1
+        assert main.main(args) == 1
     assert not origin.has_branch(BRANCH)
     # Said as the parsed time, not the wire's text.
     assert "the job's not_after (2000-01-01T00:00:00+00:00) has passed" in capsys.readouterr().err
@@ -397,7 +397,7 @@ def test_over_budget_kills_the_stage_still_publishes_then_fails(
     assert server.complete() == {
         "status": "failed",
         "failed_stage": "implement",
-        "error": worker.OVER_BUDGET,
+        "error": run.OVER_BUDGET,
     }
     assert [e["stage_id"] for e in stage_events(server, "stage_started")] == ["implement"]
     assert synced(server, "implement")
@@ -419,7 +419,7 @@ def test_the_pre_push_hook_refuses_an_agent_push_but_not_the_workers(
 def test_unreachable_server_saves_the_work_and_exits_1(
     server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "RETRY_BUDGET_S", 0.5)
+    monkeypatch.setattr(tunables, "RETRY_BUDGET_S", 0.5)
     server.hook = trip_on("stage_started", error(503, "internal_error"))
     server.manifest = make_package(
         [agent_stage("implement", "edit", "sleep=30")], repo_url=origin.url
@@ -613,8 +613,8 @@ def test_a_dangling_symlink_counts_as_an_existing_entry(tmp_path: Path) -> None:
         (tmp_path / ".claude" / "agents" / "X.md").symlink_to(tmp_path / "missing.md")
     except OSError:
         pytest.skip("symlinks need a privilege here")
-    assert worker.existing_entry(tmp_path, AGENT) == ".claude/agents/X.md"
-    assert worker.existing_entry(tmp_path, ".claude/agents/y.md") is None
+    assert existing_entry(tmp_path, AGENT) == ".claude/agents/X.md"
+    assert existing_entry(tmp_path, ".claude/agents/y.md") is None
 
 
 def test_a_shipped_agent_is_written_and_never_committed(
@@ -670,7 +670,7 @@ def test_token_from_env_never_reaches_stages(
 ) -> None:
     monkeypatch.setenv("AGENTOS_TOKEN", JOB_TOKEN)
     server.manifest = make_package([agent_stage("plan", "env")])
-    assert worker.main(["--server", server.url, "--workdir", str(tmp_path / "ws")]) == 0
+    assert main.main(["--server", server.url, "--workdir", str(tmp_path / "ws")]) == 0
     assert server.requests[0].auth == f"Bearer {JOB_TOKEN}"
     env = json.loads(next(t for t in server.logs("stdout") if t.startswith("{")))
     assert "AGENTOS_TOKEN" not in env

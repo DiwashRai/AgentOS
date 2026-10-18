@@ -10,25 +10,25 @@ from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import events, tunables, worker_api
 from worker_tests.worker_support import JOURNAL, FakeServer, error, eventually, make_package
 
 
-def _reporter(server: FakeServer) -> worker.HttpReporter:
+def _reporter(server: FakeServer) -> worker_api.HttpReporter:
     server.manifest = make_package([])
-    return worker.HttpReporter(worker.Client(server.url, "j" * 43, "i" * 43))
+    return worker_api.HttpReporter(worker_api.Client(server.url, "j" * 43, "i" * 43))
 
 
-def _sink(server: FakeServer) -> worker.EventSink:
-    reporter: worker.Reporter = _reporter(server)
-    return worker.EventSink(reporter, server.manifest["job"]["id"], 1)
+def _sink(server: FakeServer) -> events.EventSink:
+    reporter: worker_api.Reporter = _reporter(server)
+    return events.EventSink(reporter, server.manifest["job"]["id"], 1)
 
 
 def test_retries_5xx_then_succeeds(server: FakeServer) -> None:
     server.manifest = make_package([])
     answers = [error(503, "internal_error"), error(502, "upstream_error")]
     server.hook = lambda path, body: answers.pop(0) if answers else None
-    client = worker.Client(server.url, "t" * 43, "i" * 43)
+    client = worker_api.Client(server.url, "t" * 43, "i" * 43)
     assert client.post(JOURNAL, {"records": []}) == {"ack": 0, "cancel": False, "rejected": []}
     assert len(server.requests) == 3
     assert {(r.auth, r.instance) for r in server.requests} == {("Bearer " + "t" * 43, "i" * 43)}
@@ -36,39 +36,39 @@ def test_retries_5xx_then_succeeds(server: FakeServer) -> None:
 
 def test_4xx_is_not_retried(server: FakeServer) -> None:
     server.hook = lambda path, body: error(422, "validation_error")
-    with pytest.raises(worker.HttpError) as info:
-        worker.Client(server.url, "t" * 43).post(JOURNAL, {})
+    with pytest.raises(worker_api.HttpError) as info:
+        worker_api.Client(server.url, "t" * 43).post(JOURNAL, {})
     assert (info.value.status, info.value.code) == (422, "validation_error")
     assert len(server.requests) == 1
 
 
 def test_unreachable_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(worker, "RETRY_BUDGET_S", 0.3)
+    monkeypatch.setattr(tunables, "RETRY_BUDGET_S", 0.3)
     with socket.socket() as s:  # a port nobody listens on
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     started = time.monotonic()
-    with pytest.raises(worker.Unreachable):
-        worker.Client(f"http://127.0.0.1:{port}", "t" * 43).post(JOURNAL, {})
+    with pytest.raises(worker_api.Unreachable):
+        worker_api.Client(f"http://127.0.0.1:{port}", "t" * 43).post(JOURNAL, {})
     assert 0.25 <= time.monotonic() - started < 5
 
 
 def test_5xx_forever_is_unreachable(server: FakeServer, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(worker, "RETRY_BUDGET_S", 0.3)
+    monkeypatch.setattr(tunables, "RETRY_BUDGET_S", 0.3)
     server.hook = lambda path, body: error(500, "internal_error")
-    with pytest.raises(worker.Unreachable):
-        worker.Client(server.url, "t" * 43).post(JOURNAL, {})
+    with pytest.raises(worker_api.Unreachable):
+        worker_api.Client(server.url, "t" * 43).post(JOURNAL, {})
     assert len(server.requests) > 2
 
 
 @pytest.mark.parametrize(
     ("status", "raised"),
     [
-        (401, worker.RunGone),
-        (410, worker.RunGone),
-        (409, worker.AlreadyClaimed),
-        (422, worker.Unreachable),
-        (404, worker.Unreachable),
+        (401, worker_api.RunGone),
+        (410, worker_api.RunGone),
+        (409, worker_api.AlreadyClaimed),
+        (422, worker_api.Unreachable),
+        (404, worker_api.Unreachable),
     ],
 )
 def test_the_reporter_maps_4xx(server: FakeServer, status: int, raised: type[Exception]) -> None:
@@ -87,7 +87,7 @@ def test_records_have_monotonic_seq_and_batches_of_at_most_500(server: FakeServe
     sink.emit("stage_finished", "build", {"status": "succeeded", "exit_code": 0, "reason": None})
     sink.close()
     batches = [body["records"] for body in server.bodies(JOURNAL)]
-    assert all(len(b) <= worker.MAX_EVENTS_PER_POST for b in batches)
+    assert all(len(b) <= events.MAX_EVENTS_PER_POST for b in batches)
     records = [r for b in batches for r in b]
     assert [r["seq"] for r in records] == list(range(1, 1236))
     assert records[0] == {
@@ -140,9 +140,9 @@ def test_run_gone_stops_the_sender(server: FakeServer) -> None:
     server.hook = lambda path, body: error(410, "run_gone")
     sink.start()
     sink.log(None, "system", "x")
-    with pytest.raises(worker.RunGone):
+    with pytest.raises(worker_api.RunGone):
         sink.close()
-    assert isinstance(sink.failure, worker.RunGone)
+    assert isinstance(sink.failure, worker_api.RunGone)
 
 
 def test_another_4xx_stops_the_sender_as_unreachable(server: FakeServer) -> None:
@@ -151,7 +151,7 @@ def test_another_4xx_stops_the_sender_as_unreachable(server: FakeServer) -> None
     server.hook = lambda path, body: error(422, "validation_error") if body["records"] else None
     sink.start()
     sink.log(None, "system", "bad")
-    with pytest.raises(worker.Unreachable):
+    with pytest.raises(worker_api.Unreachable):
         sink.close()
     assert server.records() == []
 
@@ -159,8 +159,8 @@ def test_another_4xx_stops_the_sender_as_unreachable(server: FakeServer) -> None
 def test_log_records_beyond_the_run_cap_are_dropped_with_one_warning(
     server: FakeServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "MAX_EVENTS_PER_RUN", 60)
-    monkeypatch.setattr(worker, "EVENT_RESERVE", 10)
+    monkeypatch.setattr(events, "MAX_EVENTS_PER_RUN", 60)
+    monkeypatch.setattr(events, "EVENT_RESERVE", 10)
     sink = _sink(server)
     sink.start()
     sink.emit("stage_started", "s", {})

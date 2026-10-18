@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import worker
+from agentos_worker import cli
 
 WORKER_DIR = Path(__file__).resolve().parents[1]
 SOURCES = [WORKER_DIR / "worker.py", *sorted((WORKER_DIR / "agentos_worker").rglob("*.py"))]
@@ -44,10 +44,10 @@ def test_worker_imports_only_stdlib_at_module_level(source: Path) -> None:
 def test_token_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENTOS_TOKEN", raising=False)
     with pytest.raises(SystemExit):
-        worker.parse_args(["--server", "http://127.0.0.1:8000"])
+        cli.parse_args(["--server", "http://127.0.0.1:8000"])
 
 
 def test_token_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENTOS_TOKEN", "t" * 43)
-    args = worker.parse_args(["--server", "http://127.0.0.1:8000"])
-    assert args == worker.LiveMode("http://127.0.0.1:8000", "t" * 43, None, None)
+    args = cli.parse_args(["--server", "http://127.0.0.1:8000"])
+    assert args == cli.LiveMode("http://127.0.0.1:8000", "t" * 43, None, None)

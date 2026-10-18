@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-import worker
+from agentos_worker import client, tunables, workdir_root
+from agentos_worker.env_file import EnvFileError, parse_env
 
 PARSE_CASES = [
     ("A=1", {"A": "1"}),
@@ -37,13 +38,13 @@ PARSE_CASES = [
 
 @pytest.mark.parametrize(("text", "expected"), PARSE_CASES)
 def test_parse_env(text: str, expected: dict[str, str | None]) -> None:
-    assert worker.parse_env(text) == expected
+    assert parse_env(text) == expected
 
 
 @pytest.mark.parametrize("text", ["A='open", 'A="open', "A='x' junk", "=1", "A=1\n'B'=2"])
 def test_parse_env_rejects(text: str) -> None:
-    with pytest.raises(worker.EnvFileError):
-        worker.parse_env(text)
+    with pytest.raises(EnvFileError):
+        parse_env(text)
 
 
 BASE = {"PATH": "p", "agentos_lower": "x", "AGENTOS_CLIENT_TOKEN": "c", "DROP": "d"}
@@ -59,12 +60,12 @@ CHILD_ENV_CASES = [
 
 @pytest.mark.parametrize(("env_file", "expected"), CHILD_ENV_CASES)
 def test_child_env(env_file: dict[str, str | None], expected: dict[str, str]) -> None:
-    assert worker.child_env("tok", env_file, BASE) == expected
+    assert client.child_env("tok", env_file, BASE) == expected
 
 
 def test_cleanup_deletes_only_old_run_workspaces_and_logs_of_the_client(tmp_path: Path) -> None:
     now = time.time()
-    old = now - worker.WORKSPACE_MAX_AGE_S - 60
+    old = now - tunables.WORKSPACE_MAX_AGE_S - 60
     runs = tmp_path / "runs"
     (runs / "1" / ".git").mkdir(parents=True)
     pack = runs / "1" / ".git" / "pack"
@@ -83,7 +84,7 @@ def test_cleanup_deletes_only_old_run_workspaces_and_logs_of_the_client(tmp_path
     for path in (tmp_path / "4", tmp_path / "4.log"):
         os.utime(path, (old, old))
 
-    removed = worker.clean_workdir_root(tmp_path, now)
+    removed = workdir_root.clean_workdir_root(tmp_path, now)
 
     assert sorted(p.name for p in removed) == ["1", "1.log"]
     names = sorted(p.name for p in runs.iterdir())

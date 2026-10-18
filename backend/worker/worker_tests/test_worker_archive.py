@@ -14,6 +14,7 @@ from pathlib import Path
 from agentos_worker import archive
 
 ROOT = Path(archive.__file__).resolve().parents[1]
+HELP = Path(__file__).with_name("worker_help.txt")
 
 
 def _names(data: bytes) -> list[str]:
@@ -78,11 +79,13 @@ def test_a_built_archive_runs_and_knows_itself(tmp_path: Path) -> None:
     built = tmp_path / "worker.py"
     built.write_bytes(archive.build(ROOT))
 
+    # The help as the single-file worker.py printed it, at a fixed width.
+    env = {**os.environ, "COLUMNS": "100", "PYTHONIOENCODING": "utf-8"}
     ran = subprocess.run(
-        [sys.executable, "-I", str(built), "--help"], capture_output=True, text=True, check=False
+        [sys.executable, "-I", str(built), "--help"], env=env, capture_output=True, check=False
     )
     assert ran.returncode == 0, ran.stderr
-    assert "--client" in ran.stdout
+    assert ran.stdout.replace(b"\r\n", b"\n") == HELP.read_bytes()
 
     me = [str(built.resolve()), hashlib.sha256(built.read_bytes()).hexdigest()]
     assert _this_worker_in(built, tmp_path, str(built)) == me

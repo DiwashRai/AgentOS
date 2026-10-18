@@ -1,5 +1,5 @@
 """End-of-run PR lookup: the parsing of captured `gh` output as a table, and whole runs through
-worker.main() with a fake `gh` (PR_LOOKUP) for the lookup's preconditions."""
+main.main() with a fake `gh` (PR_LOOKUP) for the lookup's preconditions."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import worker
+from agentos_worker import process, run
 from worker_tests.worker_support import (
     KEY,
     FakeServer,
@@ -26,7 +26,7 @@ FAKE_GH = (
     "sys.stderr.write('gh: no pull requests found\\n'); sys.exit(int(sys.argv[3]))"
 )
 NO_PR = "gh: no pull requests found"
-DONE = worker.ProcResult(exit_code=0)
+DONE = process.ProcResult(exit_code=0)
 
 
 def fake_gh(
@@ -34,7 +34,7 @@ def fake_gh(
 ) -> None:
     monkeypatch.delenv("AGENTOS_PR_LOOKUP")
     monkeypatch.setattr(
-        worker,
+        run,
         "PR_LOOKUP",
         (sys.executable, "-c", FAKE_GH, str(record), "{branch}", str(exit_code), *output),
     )
@@ -51,14 +51,14 @@ def system_logs(server: FakeServer) -> list[str]:
 @pytest.mark.parametrize(
     ("result", "out", "err", "why"),
     [
-        (worker.ProcResult(exit_code=1), [], [NO_PR], "exited with code 1: gh: no pull requests"),
+        (process.ProcResult(exit_code=1), [], [NO_PR], "exited with code 1: gh: no pull requests"),
         (DONE, ["http://github.com/o/r/pull/7"], [], "not an https:// URL"),
         (DONE, ["https://user:pw@github.com/o/r/pull/7"], [], "credentials"),
         (DONE, [PR, PR], [], "got 2 lines"),
         (DONE, [], [], "got 0 lines"),
-        (worker.ProcResult(exit_code=None, stopped="timeout"), [PR], [], "timed out"),
-        (worker.ProcResult(exit_code=None, stopped="abort"), [PR], [], "server went away"),
-        (worker.ProcResult(exit_code=None, error="cannot start gh: denied"), [], [], "denied"),
+        (process.ProcResult(exit_code=None, stopped="timeout"), [PR], [], "timed out"),
+        (process.ProcResult(exit_code=None, stopped="abort"), [PR], [], "server went away"),
+        (process.ProcResult(exit_code=None, error="cannot start gh: denied"), [], [], "denied"),
     ],
     ids=[
         "gh-failed",
@@ -72,21 +72,21 @@ def system_logs(server: FakeServer) -> list[str]:
     ],
 )
 def test_no_pr_url_says_why(
-    result: worker.ProcResult, out: list[str], err: list[str], why: str
+    result: process.ProcResult, out: list[str], err: list[str], why: str
 ) -> None:
-    url, reason = worker.pr_lookup_result("gh", result, out, err)
+    url, reason = run.pr_lookup_result("gh", result, out, err)
     assert url is None
     assert why in reason
 
 
 def test_a_failed_lookup_quotes_its_last_stderr_line_clipped() -> None:
     err = ["earlier", "x" * 300]
-    _, reason = worker.pr_lookup_result("gh", worker.ProcResult(exit_code=1), [], err)
+    _, reason = run.pr_lookup_result("gh", process.ProcResult(exit_code=1), [], err)
     assert reason.endswith(": " + "x" * 197 + "...")
 
 
 def test_one_https_line_is_the_pr_url() -> None:
-    assert worker.pr_lookup_result("gh", DONE, [PR], [NO_PR]) == (PR, "")
+    assert run.pr_lookup_result("gh", DONE, [PR], [NO_PR]) == (PR, "")
 
 
 def test_a_found_pr_is_reported_even_when_the_run_fails(
@@ -113,7 +113,7 @@ def test_missing_gh_is_not_an_error(
     server: FakeServer, origin: Origin, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("AGENTOS_PR_LOOKUP")
-    monkeypatch.setattr(worker, "PR_LOOKUP", ("agentos-no-such-gh-xyz", "pr", "view", "{branch}"))
+    monkeypatch.setattr(run, "PR_LOOKUP", ("agentos-no-such-gh-xyz", "pr", "view", "{branch}"))
     server.manifest = make_package([agent_stage("implement", "edit")], repo_url=origin.url)
     assert run_worker(server, tmp_path / "ws") == 0
     assert server.complete() == {"status": "completed", "failed_stage": None, "error": None}

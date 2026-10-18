@@ -21,7 +21,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
-import worker
+from agentos_worker import main, tunables
 
 FAKE_STAGE = Path(__file__).resolve().parent / "worker_fake_stage.py"
 KEY = "AOS-42"
@@ -207,7 +207,7 @@ def fast(monkeypatch: pytest.MonkeyPatch, user_git_config: Path) -> None:
         "CLIENT_BACKOFF_CAP_S": 0.05,
         "CLIENT_REAP_S": 0.01,
     }.items():
-        monkeypatch.setattr(worker, name, value)
+        monkeypatch.setattr(tunables, name, value)
     monkeypatch.delenv("AGENTOS_SHELL", raising=False)
     monkeypatch.delenv("AGENTOS_TOKEN", raising=False)
     monkeypatch.delenv("AGENTOS_CLIENT_TOKEN", raising=False)
@@ -432,4 +432,4 @@ def make_package(
 
 
 def run_worker(server: FakeServer, workdir: Path) -> int:
-    return worker.main(["--server", server.url, "--token", JOB_TOKEN, "--workdir", str(workdir)])
+    return main.main(["--server", server.url, "--token", JOB_TOKEN, "--workdir", str(workdir)])

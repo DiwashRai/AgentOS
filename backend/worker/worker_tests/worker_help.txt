@@ -1,0 +1,67 @@
+usage: worker.py [-h] [--server SERVER] [--token TOKEN] [--workdir WORKDIR]
+                 [--lock-file LOCK_FILE] [--manifest MANIFEST] [--outbox OUTBOX] [--client]
+                 [--max-runs MAX_RUNS] [--workdir-root WORKDIR_ROOT] [--env-file ENV_FILE]
+
+AgentOS worker: runs one job of a run, reporting it as the run's journal, then exits. Python >=
+3.11 standard library only (enforced by a test). The server serves it, with the `agentos_worker`
+package beside it, as one zip at GET /api/worker/worker.py (agentos_worker.archive) so runners
+always get the matching version; a checkout runs it in place. See SPEC §9. Flow: fetch the job
+package -> bind (post `started`, wait for its ack) -> workspace (clone, or `git init` in no-repo
+mode) -> write its context and notes -> emit its warnings -> for each stage execution: run it,
+record a `sync`, then (repo mode) commit, pre-push guard, push, record `pushed` -> (repo mode)
+look up the branch's PR with `gh` -> sync_back -> record the `result`. Records go through
+EventSink, which resends from `ack + 1` with the instance id `started` bound, to a Reporter:
+HttpReporter, or Recorder in mailbox mode. Publication: `git push -u`, never forced, so a push
+after the branch moved under the run is rejected (PUSH_REJECTED; publish_branch's ref write is
+likewise `force: false` on the last published commit). That check is the protection. The clone's
+pre-push hook, which refuses a push without the worker's marker, only guards against an agent's
+accidental push: the marker is plain text in the clone's hook file, and `--no-verify` or `-c
+core.hooksPath=` skip it. Except on GitHub Actions (GITHUB_ACTIONS=true with GH_TOKEN), where each
+stage's work goes through the Git Data API of the ticket's repo at GITHUB_API_URL (see
+publish_branch) as one commit: blobs, a tree (checked against HEAD's), the commit on the branch's
+remote commit, then one ref write with `force: false`. Merges and rewrites are refused. Setup
+first checks the token can write there. A GitHub failure fails the stage; it is never a lost run
+or an unreachable server. Every output line goes out as a log event. An agent stage's output is
+also printed on stderr as it arrives, as readable `[stage id] ...` lines (see Echo), so a job
+console or the launcher's log file shows the run live; AGENTOS_ECHO=0 turns that off. Loop blocks
+(`loops`): the block's stages run in rounds, at most `max_rounds`. Its checks decide each round,
+by code: a shell check by its exit code; an agent check by a JSON verdict ({"verdict":
+"pass"|"fail", "notes"}) read from the CLI's result line or `.agentos/verdict.json`, checked by
+`checked_verdict`, and repaired by resuming the check's session at most `verdict_repairs` times.
+Every check runs each round. No failing check ends the block; otherwise the next round's calls get
+the failing checks' notes appended. Still failing after the last round, or a check without a valid
+verdict, fails the run. The worker only appends text to prompts, never substitutes. Binding: 409
+(another instance holds the job) exits 0; 401/410 or an unusable package exits 1, with the workdir
+untouched. Failure paths after it: - cancel (`cancel: true` in a journal answer): kill the stage
+tree, still sync/commit/push, result `cancelled`. - over budget (the job's `budget_s` passed since
+binding): the same, then result `failed`. - run gone (401/409/410 on any post, or the job's
+`not_after` passed before a publish): kill the stage tree, no commit, no push, exit 1. - server
+unreachable (network errors / 5xx for RETRY_BUDGET_S, or any other 4xx on the journal): kill the
+stage tree, commit and push what exists, exit 1 (the reaper fails the run). - result rejected (its
+seq in a journal answer's `rejected`): the run didn't end, so nothing more is published and the
+workdir is kept; exit 1 (the reaper fails the run). Mailbox mode (`--manifest PATH --outbox PATH
+--workdir PATH`, for runners that can't reach the server): no HTTP. The package comes from a file,
+and the journal is recorded as worker API calls, one JSONL line each, in the outbox (see
+Recorder), which the server replays later. Nothing answers, so no cancel; the only run-gone is
+`not_after`; a failed outbox write is unreachable. Client mode (`--client --server URL`, the
+client token in AGENTOS_CLIENT_TOKEN, for a user's own machine): long-polls POST /api/worker/lease
+for the jobs of the runs its user dispatched to their client and starts this file in HTTP mode as
+a detached child for each, up to `--max-runs` at once (see run_client). It backs off while the
+server is unreachable and stops on any 4xx but a transient one (401/403 included) and on another
+protocol.
+
+options:
+  -h, --help            show this help message and exit
+  --server SERVER       AgentOS server URL, e.g. http://127.0.0.1:8000
+  --token TOKEN         job token (default: $AGENTOS_TOKEN)
+  --workdir WORKDIR     workspace directory (default: ./agentos-run-<run_id>)
+  --lock-file LOCK_FILE
+                        hold an OS lock on this file while running (a client's run worker)
+  --manifest MANIFEST   mailbox mode: the run's manifest.json
+  --outbox OUTBOX       mailbox mode: the outbox.jsonl to create
+  --client              client mode: run my runs on this machine (token: $AGENTOS_CLIENT_TOKEN)
+  --max-runs MAX_RUNS   client mode: runs at once (default: 1)
+  --workdir-root WORKDIR_ROOT
+                        client mode: where run workspaces and logs go (default:
+                        ~/.agentos/workspaces)
+  --env-file ENV_FILE   client mode: KEY=value lines added to every run worker's environment

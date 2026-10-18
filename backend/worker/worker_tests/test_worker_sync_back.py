@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import main
 from worker_tests.worker_support import (
     JOB_TOKEN,
     JOURNAL,
@@ -183,7 +183,7 @@ def test_mailbox_mode_uploads_nothing_and_warns(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(make_package([agent_stage("implement", *WRITES)])))
     outbox = tmp_path / "outbox.jsonl"
     args = ["--manifest", str(manifest), "--outbox", str(outbox), "--workdir", str(tmp_path / "ws")]
-    assert worker.main(args) == 0
+    assert main.main(args) == 0
 
     calls = [json.loads(line) for line in outbox.read_text().splitlines()[1:]]
     assert {c["path"] for c in calls} == {

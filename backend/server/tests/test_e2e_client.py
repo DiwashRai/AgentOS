@@ -30,7 +30,6 @@ import pytest
 import uvicorn
 from pydantic import SecretStr
 
-import worker
 from agentos.clock import utcnow
 from agentos.config import Settings
 from agentos.context import AppContext
@@ -42,6 +41,7 @@ from agentos.runs import dispatcher
 from agentos.runs.reaper import INTERVAL_S as REAPER_INTERVAL_S
 from agentos.runs.reaper import Reaper
 from agentos.worker_api.routes import LEASE_RETRY_S
+from agentos_worker import process
 from tests.run_support import FakeProvider
 from tests.settings_support import seed_test_settings
 from tests.test_e2e import (
@@ -171,7 +171,7 @@ class ClientProcess:
     token: ClientTokenCreated
     proc: subprocess.Popen[bytes]
     log: Path
-    job: worker._Job
+    job: process._Job
 
     def output(self) -> str:
         return self.log.read_text("utf-8", "replace") if self.log.exists() else ""
@@ -229,7 +229,7 @@ class World:
                 stderr=subprocess.STDOUT,
                 creationflags=flags,
             )
-        client = ClientProcess(token, proc, log, worker._Job(proc.pid))
+        client = ClientProcess(token, proc, log, process._Job(proc.pid))
         self.clients.append(client)
         return client
 

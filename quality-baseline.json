@@ -140,12 +140,72 @@
       "backend/server/agentos/workflows/service.py": {
         "try": 2
       },
-      "backend/worker/worker.py": {
-        "isinstance": 28,
-        "try": 67,
-        "broad_except": 4,
+      "backend/worker/agentos_worker/children.py": {
+        "try": 3
+      },
+      "backend/worker/agentos_worker/client.py": {
+        "try": 5
+      },
+      "backend/worker/agentos_worker/echo.py": {
+        "broad_except": 1,
+        "isinstance": 16,
+        "suppress": 1,
+        "try": 2
+      },
+      "backend/worker/agentos_worker/events.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/files.py": {
         "getattr_default": 1,
-        "suppress": 8
+        "try": 9
+      },
+      "backend/worker/agentos_worker/github.py": {
+        "isinstance": 3,
+        "try": 5
+      },
+      "backend/worker/agentos_worker/main.py": {
+        "try": 6
+      },
+      "backend/worker/agentos_worker/outbox.py": {
+        "suppress": 1,
+        "try": 2
+      },
+      "backend/worker/agentos_worker/parse.py": {
+        "isinstance": 4,
+        "try": 1
+      },
+      "backend/worker/agentos_worker/paths.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/process.py": {
+        "suppress": 5,
+        "try": 5
+      },
+      "backend/worker/agentos_worker/publication.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/run.py": {
+        "broad_except": 2,
+        "isinstance": 3,
+        "suppress": 1,
+        "try": 15
+      },
+      "backend/worker/agentos_worker/sync.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/text.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/verdict_reading.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/workdir_root.py": {
+        "broad_except": 1,
+        "try": 5
+      },
+      "backend/worker/agentos_worker/worker_api.py": {
+        "isinstance": 2,
+        "try": 3
       }
     },
     "suppressions": {
@@ -157,7 +217,10 @@
       "backend/server/agentos/runs/service.py": 3,
       "backend/server/agentos/tickets/service.py": 1,
       "backend/server/agentos/workflows/service.py": 1,
-      "backend/worker/worker.py": 5,
+      "backend/worker/agentos_worker/echo.py": 1,
+      "backend/worker/agentos_worker/github.py": 1,
+      "backend/worker/agentos_worker/run.py": 2,
+      "backend/worker/agentos_worker/worker_api.py": 1,
       "web/src/features/actions/ResolveConfirm.tsx": 1,
       "web/src/features/ticket/Overview.tsx": 1,
       "web/src/features/workflows/WorkflowStrip.tsx": 1,
@@ -198,19 +261,19 @@
       "backend/server/agentos/worker_api/service.py::_apply": 18,
       "backend/server/agentos/worker_api/service.py::ingest": 18,
       "backend/server/agentos/worker_api/service.py::post_journal": 19,
-      "backend/worker/worker.py::EventSink._loop": 26,
-      "backend/worker/worker.py::GitHub.call": 16,
-      "backend/worker/worker.py::Recorder.send": 20,
-      "backend/worker/worker.py::Run._execute": 22,
-      "backend/worker/worker.py::Run._run_loop": 16,
-      "backend/worker/worker.py::Run._send_sync_back": 17,
-      "backend/worker/worker.py::Run._setup_workspace": 18,
-      "backend/worker/worker.py::Run._verdict_call": 16,
-      "backend/worker/worker.py::SyncState.collect": 22,
-      "backend/worker/worker.py::_check_loops": 26,
-      "backend/worker/worker.py::_walk_files": 18,
-      "backend/worker/worker.py::path_error": 16,
-      "backend/worker/worker.py::run_process": 17,
+      "backend/worker/agentos_worker/events.py::EventSink._loop": 26,
+      "backend/worker/agentos_worker/files.py::walk_files": 18,
+      "backend/worker/agentos_worker/github.py::GitHub.call": 16,
+      "backend/worker/agentos_worker/outbox.py::Recorder.send": 20,
+      "backend/worker/agentos_worker/package.py::check_loops": 26,
+      "backend/worker/agentos_worker/paths.py::path_error": 16,
+      "backend/worker/agentos_worker/process.py::run_process": 17,
+      "backend/worker/agentos_worker/run.py::Run._execute": 22,
+      "backend/worker/agentos_worker/run.py::Run._run_loop": 16,
+      "backend/worker/agentos_worker/run.py::Run._send_sync_back": 17,
+      "backend/worker/agentos_worker/run.py::Run._setup_workspace": 18,
+      "backend/worker/agentos_worker/run.py::Run._verdict_call": 16,
+      "backend/worker/agentos_worker/sync.py::SyncState.collect": 22,
       "web/src/domain/actions.ts::actionsFor": 16,
       "web/src/domain/counts.ts::counts": 21,
       "web/src/editor/ListEditor.tsx::ListEditor.rows.map(callback)": 16,
@@ -268,23 +331,23 @@
       "backend/server/agentos/worker_api/service.py::_apply": 14,
       "backend/server/agentos/worker_api/service.py::_store_events": 13,
       "backend/server/agentos/worker_api/service.py::post_journal": 16,
-      "backend/worker/worker.py::Children.waiting": 11,
-      "backend/worker/worker.py::Echo.lines": 24,
-      "backend/worker/worker.py::EventSink._loop": 17,
-      "backend/worker/worker.py::Recorder.send": 14,
-      "backend/worker/worker.py::Run._exec": 11,
-      "backend/worker/worker.py::Run._execute": 18,
-      "backend/worker/worker.py::Run._protect": 13,
-      "backend/worker/worker.py::Run._run_loop": 11,
-      "backend/worker/worker.py::Run._send_sync_back": 15,
-      "backend/worker/worker.py::Run._setup_workspace": 15,
-      "backend/worker/worker.py::SyncState.collect": 17,
-      "backend/worker/worker.py::_check_loops": 19,
-      "backend/worker/worker.py::_walk_files": 11,
-      "backend/worker/worker.py::classify": 12,
-      "backend/worker/worker.py::github_repo": 15,
-      "backend/worker/worker.py::path_error": 11,
-      "backend/worker/worker.py::run_process": 15,
+      "backend/worker/agentos_worker/children.py::Children.waiting": 11,
+      "backend/worker/agentos_worker/echo.py::Echo.lines": 24,
+      "backend/worker/agentos_worker/events.py::EventSink._loop": 17,
+      "backend/worker/agentos_worker/files.py::walk_files": 11,
+      "backend/worker/agentos_worker/outbox.py::Recorder.send": 14,
+      "backend/worker/agentos_worker/package.py::check_loops": 19,
+      "backend/worker/agentos_worker/paths.py::path_error": 11,
+      "backend/worker/agentos_worker/process.py::run_process": 15,
+      "backend/worker/agentos_worker/publication.py::classify": 12,
+      "backend/worker/agentos_worker/publication.py::github_repo": 15,
+      "backend/worker/agentos_worker/run.py::Run._exec": 11,
+      "backend/worker/agentos_worker/run.py::Run._execute": 18,
+      "backend/worker/agentos_worker/run.py::Run._protect": 13,
+      "backend/worker/agentos_worker/run.py::Run._run_loop": 11,
+      "backend/worker/agentos_worker/run.py::Run._send_sync_back": 15,
+      "backend/worker/agentos_worker/run.py::Run._setup_workspace": 15,
+      "backend/worker/agentos_worker/sync.py::SyncState.collect": 17,
       "web/src/domain/actions.ts::actionsFor": 18,
       "web/src/domain/counts.ts::counts": 17,
       "web/src/domain/groups.ts::groups": 11,
@@ -345,9 +408,7 @@
       "web/src/ui/Stepper.tsx::Stepper.glyphItems(model.stages).map(callback)": 17,
       "web/src/ui/glyph.ts::stageCaption": 12
     },
-    "file_lines": {
-      "backend/worker/worker.py::file": 3024
-    },
+    "file_lines": {},
     "fan_out": {
       "runs": 7,
       "settings": 6,
@@ -441,6 +502,34 @@
       "from": "worker: backend/worker/worker.py; boundary: no backend/server/agentos/worker_archive.py",
       "to": "worker: + backend/worker/agentos_worker/*; boundary: + backend/server/agentos/worker_archive.py",
       "reason": "worker.py is served as a zip built from backend/worker: the new agentos_worker package joins the worker layer, and the server's worker_archive.py (it builds the zip once and serves it) joins the boundary (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "allowed.defensive",
+      "from": "backend/worker/worker.py: isinstance 28, try 67, broad_except 4, getattr_default 1, suppress 8",
+      "to": "the same totals across backend/worker/agentos_worker/* (18 files)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "allowed.suppressions",
+      "from": "backend/worker/worker.py: 5",
+      "to": "the same 5 across backend/worker/agentos_worker/* (echo 1, github 1, run 2, worker_api 1)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "exceptions.cognitive",
+      "from": "13 functions in backend/worker/worker.py",
+      "to": "the same 13 functions, same scores, new paths in backend/worker/agentos_worker/* (_check_loops and _walk_files also lose their underscore)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "exceptions.cyclomatic",
+      "from": "17 functions in backend/worker/worker.py",
+      "to": "the same 17 functions, same scores, new paths in backend/worker/agentos_worker/* (_check_loops and _walk_files also lose their underscore)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
     }
   ]
 }

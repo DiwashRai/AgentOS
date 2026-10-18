@@ -14,7 +14,8 @@ from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import main
+from agentos_worker.echo import ECHO_TEXT_CHARS, Echo
 from worker_tests.worker_support import (
     FakeServer,
     agent_stage,
@@ -134,7 +135,7 @@ COPILOT_ECHO = [
 
 
 def echo_all(events: list[dict[str, Any]]) -> list[str]:
-    echo = worker.Echo("s")
+    echo = Echo("s")
     return [line for e in events for line in echo.lines(json.dumps(e))]
 
 
@@ -204,25 +205,25 @@ LONG = "x" * 500
     ],
 )
 def test_one_line(line: str, expected: list[str]) -> None:
-    assert worker.Echo("s").lines(line) == expected
+    assert Echo("s").lines(line) == expected
 
 
 def test_a_cut_line_is_plain_text() -> None:
     """A line the reader cut is no valid JSON: it prints as text, never parsed."""
     line = '{"type": "result", "subtype": "success"}'
-    assert worker.Echo("s").lines(line, truncated=True) == [line]
+    assert Echo("s").lines(line, truncated=True) == [line]
 
 
 def test_agent_text_is_cut_to_a_block() -> None:
     text = "\n".join(f"line {i} " + "y" * 90 for i in range(100))
-    out = worker.Echo("s").lines(assistant({"type": "text", "text": text}))
+    out = Echo("s").lines(assistant({"type": "text", "text": text}))
     assert out[0].startswith("line 0 ")
     assert out[-1].endswith("...")
-    assert sum(len(s) for s in out) <= worker.ECHO_TEXT_CHARS
+    assert sum(len(s) for s in out) <= ECHO_TEXT_CHARS
 
 
 def test_reasoning_is_labelled_and_indented() -> None:
-    out = worker.Echo("s").lines(assistant({"type": "thinking", "thinking": "One.\n\nTwo."}))
+    out = Echo("s").lines(assistant({"type": "thinking", "thinking": "One.\n\nTwo."}))
     assert out == ["thinking: One.", "  Two."]
 
 
@@ -232,7 +233,7 @@ def test_every_printed_line_carries_the_prefix(capsys: pytest.CaptureFixture[str
         "Fine.\r::add-mask::x\x1b[31m red\x1b[0m\x00"
         "\N{LINE SEPARATOR}::error::y\x85::warning::z\tend"
     )
-    echo = worker.Echo("review")
+    echo = Echo("review")
     echo("stdout", assistant({"type": "text", "text": text}), False)
     echo("stderr", "plain\r::stop-commands::t", False)
     err = capsys.readouterr().err
@@ -250,11 +251,11 @@ def test_every_printed_line_carries_the_prefix(capsys: pytest.CaptureFixture[str
 def test_a_formatting_bug_stops_only_the_echo(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def broken(self: worker.Echo, text: str, truncated: bool = False) -> list[str]:
+    def broken(self: Echo, text: str, truncated: bool = False) -> list[str]:
         raise RuntimeError(text)
 
-    monkeypatch.setattr(worker.Echo, "lines", broken)
-    echo = worker.Echo("s")
+    monkeypatch.setattr(Echo, "lines", broken)
+    echo = Echo("s")
     echo("stdout", "secret one", False)
     echo("stdout", "two", False)
     assert capsys.readouterr().err == "[s] (echo stopped: RuntimeError)\n"
@@ -333,5 +334,5 @@ def test_mailbox_mode_echoes_too(tmp_path: Path, capsys: pytest.CaptureFixture[s
     manifest = make_package([agent_stage("implement", "stdin", stdin=jsonl(COPILOT))])
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     args = ["--manifest", str(manifest_path), "--outbox", str(tmp_path / "outbox.jsonl")]
-    assert worker.main([*args, "--workdir", str(tmp_path / "ws")]) == 0
+    assert main.main([*args, "--workdir", str(tmp_path / "ws")]) == 0
     assert worker_lines(capsys.readouterr().err, "implement") == COPILOT_ECHO

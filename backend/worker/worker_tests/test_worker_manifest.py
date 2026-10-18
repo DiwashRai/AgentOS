@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import fit, package, parse, paths
 
 FIXTURE = Path(__file__).resolve().parents[2] / "server" / "tests" / "fixtures" / "job_v2.json"
 
@@ -24,7 +24,7 @@ def fixture() -> dict[str, Any]:
 
 
 def test_loads_the_shared_contract_fixture() -> None:
-    p = worker.load_package(fixture())
+    p = parse.load_package(fixture())
     assert (p.run_id, p.ticket.key) == (42, "AOS-42")
     assert p.job.not_after == datetime(2026, 10, 15, 16, 30, tzinfo=UTC)
     assert p.workspace.branch == "agent/AOS-42"
@@ -38,15 +38,15 @@ def test_loads_the_shared_contract_fixture() -> None:
     assert all(f.access == "write" for f in p.files)
     assert p.env["AGENTOS_SYNC_BACK"] == p.sync_back.dir == ".agentos/sync_back"
     implement, lint, review = p.stages
-    assert isinstance(implement, worker.AgentStage)
-    assert isinstance(lint, worker.ShellStage)
-    assert isinstance(review, worker.AgentStage)
+    assert isinstance(implement, package.AgentStage)
+    assert isinstance(lint, package.ShellStage)
+    assert isinstance(review, package.AgentStage)
     assert implement.argv[0] == "claude"
     assert lint.command == "ruff format . && ruff check --fix ."
-    assert p.limits == worker.Limits(max_file_bytes=1048576, max_line_bytes=8192)
+    assert p.limits == package.Limits(max_file_bytes=1048576, max_line_bytes=8192)
 
     # The loop block: implement (maker) -> lint (shell check) -> review (agent check, file).
-    assert p.loops == (worker.Loop("implement", "review", 2),)
+    assert p.loops == (package.Loop("implement", "review", 2),)
     assert (p.start_stage, p.warnings) == ("implement", ())
     assert (implement.check, lint.check) == (None, True)
     assert review.check is not None
@@ -66,9 +66,9 @@ def test_loads_the_shared_contract_fixture() -> None:
 
 
 def test_invocation_build_appends_text_then_tail() -> None:
-    on_stdin = worker.Invocation(("claude", "-p"), "Base. ", None, " Tail.")
+    on_stdin = package.Invocation(("claude", "-p"), "Base. ", None, " Tail.")
     assert on_stdin.build("Notes.") == (["claude", "-p"], "Base. Notes. Tail.")
-    as_arg = worker.Invocation(("copilot", "-p", "Base. ", "--x"), None, 2, " Tail.")
+    as_arg = package.Invocation(("copilot", "-p", "Base. ", "--x"), None, 2, " Tail.")
     assert as_arg.build("Notes.") == (["copilot", "-p", "Base. Notes. Tail.", "--x"], None)
 
 
@@ -76,14 +76,14 @@ def test_invocation_build_appends_text_then_tail() -> None:
 def test_refuses_another_protocol(protocol: object) -> None:
     data = fixture()
     data["protocol"] = protocol
-    with pytest.raises(worker.PackageError, match="protocol"):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError, match="protocol"):
+        parse.load_package(data)
 
 
 @pytest.mark.parametrize("raw", [None, [], "package", 42])
 def test_refuses_non_objects(raw: object) -> None:
-    with pytest.raises(worker.PackageError):
-        worker.load_package(raw)
+    with pytest.raises(package.PackageError):
+        parse.load_package(raw)
 
 
 @pytest.mark.parametrize(
@@ -92,8 +92,8 @@ def test_refuses_non_objects(raw: object) -> None:
 def test_refuses_a_package_missing_a_section(missing: str) -> None:
     data = fixture()
     del data[missing]
-    with pytest.raises(worker.PackageError):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError):
+        parse.load_package(data)
 
 
 REPAIR = {"argv": ["claude", "-p"], "stdin": "Fix it: ", "prompt_arg": None, "tail": ""}
@@ -133,8 +133,8 @@ def _set(path: str, value: Any) -> Callable[[dict[str, Any]], None]:
 def test_refuses_loops_the_stage_loop_cannot_run(mutate: Callable[[dict[str, Any]], None]) -> None:
     data = copy.deepcopy(fixture())
     mutate(data)
-    with pytest.raises(worker.PackageError):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError):
+        parse.load_package(data)
 
 
 @pytest.mark.parametrize(
@@ -169,8 +169,8 @@ def test_refuses_what_does_not_fit_its_type(path: str, value: Any) -> None:
     data = copy.deepcopy(fixture())
     _set(path, value)(data)
     section = path.split(".")[0]
-    with pytest.raises(worker.PackageError, match=f"malformed package: {section}"):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError, match=f"malformed package: {section}"):
+        parse.load_package(data)
 
 
 @pytest.mark.parametrize(
@@ -189,14 +189,14 @@ def test_refuses_what_does_not_fit_its_type(path: str, value: Any) -> None:
 def test_refuses_fields_that_break_a_stage_rule(path: str, value: Any, where: str) -> None:
     data = copy.deepcopy(fixture())
     _set(path, value)(data)
-    with pytest.raises(worker.PackageError, match=re.escape(f"malformed package: {where}: ")):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError, match=re.escape(f"malformed package: {where}: ")):
+        parse.load_package(data)
 
 
 def test_a_misfit_names_its_full_path() -> None:
     data = fixture()
     data["stages"][0]["rounds"][0]["prompt_arg"] = "0"
-    assert worker.parse(worker.Package, data) == worker.Unfit(
+    assert parse.parse(package.Package, data) == fit.Unfit(
         "stages[0].rounds[0].prompt_arg: expected an integer, got string"
     )
 
@@ -217,20 +217,20 @@ class Outer:
 
 
 def test_parse_reads_optional_values_either_way_round() -> None:
-    assert worker.parse(Outer, {"name": None}) == Outer(None)
-    assert worker.parse(Outer, {"name": "a", "inner": None}) == Outer("a")
-    assert worker.parse(Outer, {"name": "a", "inner": {"n": 1}, "tags": ["x"]}) == Outer(
+    assert parse.parse(Outer, {"name": None}) == Outer(None)
+    assert parse.parse(Outer, {"name": "a", "inner": None}) == Outer("a")
+    assert parse.parse(Outer, {"name": "a", "inner": {"n": 1}, "tags": ["x"]}) == Outer(
         "a", Inner(1), ("x",)
     )
-    assert worker.parse(Outer, {"inner": None}) == worker.Unfit("missing key: name")
+    assert parse.parse(Outer, {"inner": None}) == fit.Unfit("missing key: name")
     flipped = make_dataclass("Flipped", [("x", None | str)], frozen=True)
-    assert worker.parse(flipped, {"x": None}) == flipped(None)
+    assert parse.parse(flipped, {"x": None}) == flipped(None)
 
 
 def test_parse_refuses_unknown_keys_unless_told_to_ignore_them() -> None:
     data = {"name": "a", "inner": {"n": 1, "new": True}, "more": 1}
-    assert worker.parse(Outer, data) == worker.Unfit("unexpected key: more")
-    assert worker.parse(Outer, data, extra="ignore") == Outer("a", Inner(1))
+    assert parse.parse(Outer, data) == fit.Unfit("unexpected key: more")
+    assert parse.parse(Outer, data, extra="ignore") == Outer("a", Inner(1))
 
 
 @dataclass(frozen=True)
@@ -253,7 +253,7 @@ class Pair:
 )
 def test_parse_refuses_an_annotation_it_cannot_read(tp: type[object], form: str) -> None:
     with pytest.raises(TypeError, match=re.escape(form)):
-        worker.parse(tp, {"x": 1})
+        parse.parse(tp, {"x": 1})
 
 
 def plain() -> dict[str, Any]:
@@ -275,8 +275,8 @@ def plain() -> dict[str, Any]:
 def test_refuses_overlapping_or_unordered_loops(loops: list[tuple[str, str]]) -> None:
     data = plain()
     data["loops"] = [{"start": a, "end": b, "max_rounds": 1} for a, b in loops]
-    with pytest.raises(worker.PackageError):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError):
+        parse.load_package(data)
 
 
 def test_one_round_blocks_and_back_to_back_blocks_load() -> None:
@@ -286,7 +286,7 @@ def test_one_round_blocks_and_back_to_back_blocks_load() -> None:
         {"start": "lint", "end": "review", "max_rounds": 1},
     ]
     data["stages"][2].update(check=True, verdict_from="structured_output")
-    p = worker.load_package(data)
+    p = parse.load_package(data)
     assert [(lp.start, lp.end) for lp in p.loops] == [
         ("implement", "implement"),
         ("lint", "review"),
@@ -304,8 +304,8 @@ def test_one_round_blocks_and_back_to_back_blocks_load() -> None:
 def test_refuses_loop_extras_without_a_block(mutate: Callable[[dict[str, Any]], object]) -> None:
     data = plain()
     mutate(data)
-    with pytest.raises(worker.PackageError):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError):
+        parse.load_package(data)
 
 
 def test_start_stage_must_be_in_a_block_that_starts_at_the_first_stage() -> None:
@@ -313,10 +313,10 @@ def test_start_stage_must_be_in_a_block_that_starts_at_the_first_stage() -> None
     data["loops"] = [{"start": "lint", "end": "review", "max_rounds": 1}]
     data["stages"][2].update(check=True, verdict_from="file")
     data["start_stage"] = "review"
-    with pytest.raises(worker.PackageError, match="start_stage"):
-        worker.load_package(data)
+    with pytest.raises(package.PackageError, match="start_stage"):
+        parse.load_package(data)
     data["start_stage"] = "implement"
-    assert worker.load_package(data).start_stage == "implement"
+    assert parse.load_package(data).start_stage == "implement"
 
 
 @pytest.mark.parametrize(
@@ -335,4 +335,4 @@ def test_start_stage_must_be_in_a_block_that_starts_at_the_first_stage() -> None
     ],
 )
 def test_branch_names(name: str, ok: bool) -> None:
-    assert (worker.branch_error(name) is None) is ok
+    assert (paths.branch_error(name) is None) is ok

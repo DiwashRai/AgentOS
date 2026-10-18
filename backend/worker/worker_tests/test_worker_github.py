@@ -11,7 +11,8 @@ from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import github, publication
+from agentos_worker.git import GitResult, GitRunner
 from worker_tests.worker_support import (
     KEY,
     FakeServer,
@@ -40,7 +41,7 @@ Z = "0" * 40
     ],
 )
 def test_api_publish_needs_actions_and_a_token(env: dict[str, str], api: bool) -> None:
-    assert worker.api_publish(env) is api
+    assert publication.api_publish(env) is api
 
 
 @pytest.mark.parametrize(
@@ -58,7 +59,7 @@ def test_api_publish_needs_actions_and_a_token(env: dict[str, str], api: bool) -
     ],
 )
 def test_github_repo_parses_https_and_scp(url: str, server: str, slug: str) -> None:
-    assert worker.github_repo(url, server) == (slug, None)
+    assert publication.github_repo(url, server) == (slug, None)
 
 
 @pytest.mark.parametrize(
@@ -77,7 +78,7 @@ def test_github_repo_parses_https_and_scp(url: str, server: str, slug: str) -> N
     ],
 )
 def test_github_repo_refuses_other_forms(url: str, server: str, word: str) -> None:
-    slug, why = worker.github_repo(url, server)
+    slug, why = publication.github_repo(url, server)
 
     assert slug is None
     assert word in str(why)
@@ -85,7 +86,7 @@ def test_github_repo_refuses_other_forms(url: str, server: str, word: str) -> No
 
 def test_github_repo_errors_never_echo_userinfo() -> None:
     for url in ("https://user:hunter2@gitlab.com/a/b", "https://user:hunter2@github.com/a"):
-        _, why = worker.github_repo(url, SERVER)
+        _, why = publication.github_repo(url, SERVER)
         assert why is not None
         assert "hunter2" not in why
 
@@ -99,11 +100,11 @@ def test_parse_diff_tree_reads_nul_separated_entries() -> None:
         "100644", "000000", B, Z, "D", "dir/gone"
     )
 
-    assert worker.parse_diff_tree(out) == [
-        worker.DiffEntry("000000", "100644", Z, A, "A", "new file.txt"),
-        worker.DiffEntry("100644", "000000", B, Z, "D", "dir/gone"),
+    assert publication.parse_diff_tree(out) == [
+        publication.DiffEntry("000000", "100644", Z, A, "A", "new file.txt"),
+        publication.DiffEntry("100644", "000000", B, Z, "D", "dir/gone"),
     ]
-    assert worker.parse_diff_tree(b"") == []
+    assert publication.parse_diff_tree(b"") == []
 
 
 TEXT = b"line one\r\nline two\n"
@@ -113,55 +114,55 @@ TEXT = b"line one\r\nline two\n"
     ("entry", "data", "expected", "upload"),
     [
         (
-            worker.DiffEntry("000000", "100644", Z, A, "A", "a.txt"),
+            publication.DiffEntry("000000", "100644", Z, A, "A", "a.txt"),
             TEXT,
             {"path": "a.txt", "mode": "100644", "type": "blob", "content": TEXT.decode()},
             None,
         ),
         (
-            worker.DiffEntry("100644", "100755", B, A, "M", "run.sh"),
+            publication.DiffEntry("100644", "100755", B, A, "M", "run.sh"),
             b"#!/bin/sh\n",
             {"path": "run.sh", "mode": "100755", "type": "blob", "content": "#!/bin/sh\n"},
             None,
         ),
         (
-            worker.DiffEntry("100644", "000000", B, Z, "D", "gone.txt"),
+            publication.DiffEntry("100644", "000000", B, Z, "D", "gone.txt"),
             None,
             {"path": "gone.txt", "mode": "100644", "type": "blob", "sha": None},
             None,
         ),
         (
-            worker.DiffEntry("100644", "100755", A, A, "M", "tool"),
+            publication.DiffEntry("100644", "100755", A, A, "M", "tool"),
             None,
             {"path": "tool", "mode": "100755", "type": "blob", "sha": A},
             None,
         ),
         (
-            worker.DiffEntry("000000", "120000", Z, A, "A", "link"),
+            publication.DiffEntry("000000", "120000", Z, A, "A", "link"),
             b"target/file",
             {"path": "link", "mode": "120000", "type": "blob", "content": "target/file"},
             None,
         ),
         (
-            worker.DiffEntry("160000", "160000", B, A, "M", "vendor/lib"),
+            publication.DiffEntry("160000", "160000", B, A, "M", "vendor/lib"),
             None,
             {"path": "vendor/lib", "mode": "160000", "type": "commit", "sha": A},
             None,
         ),
         (
-            worker.DiffEntry("160000", "000000", B, Z, "D", "vendor/lib"),
+            publication.DiffEntry("160000", "000000", B, Z, "D", "vendor/lib"),
             None,
             {"path": "vendor/lib", "mode": "160000", "type": "commit", "sha": None},
             None,
         ),
         (
-            worker.DiffEntry("000000", "100644", Z, A, "A", "logo.png"),
+            publication.DiffEntry("000000", "100644", Z, A, "A", "logo.png"),
             b"\x89PNG\0\0",
             {"path": "logo.png", "mode": "100644", "type": "blob", "sha": A},
             b"\x89PNG\0\0",
         ),
         (
-            worker.DiffEntry("000000", "100644", Z, A, "A", "latin1.txt"),
+            publication.DiffEntry("000000", "100644", Z, A, "A", "latin1.txt"),
             b"caf\xe9",
             {"path": "latin1.txt", "mode": "100644", "type": "blob", "sha": A},
             b"caf\xe9",
@@ -169,19 +170,19 @@ TEXT = b"line one\r\nline two\n"
     ],
 )
 def test_tree_entry(
-    entry: worker.DiffEntry,
+    entry: publication.DiffEntry,
     data: bytes | None,
     expected: dict[str, object],
     upload: bytes | None,
 ) -> None:
-    assert worker.tree_entry(entry, data) == (expected, upload)
+    assert publication.tree_entry(entry, data) == (expected, upload)
 
 
 def test_large_text_goes_as_a_blob(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(worker, "INLINE_MAX_BYTES", 4)
-    entry = worker.DiffEntry("000000", "100644", Z, A, "A", "big.txt")
+    monkeypatch.setattr(publication, "INLINE_MAX_BYTES", 4)
+    entry = publication.DiffEntry("000000", "100644", Z, A, "A", "big.txt")
 
-    assert worker.tree_entry(entry, b"12345") == (
+    assert publication.tree_entry(entry, b"12345") == (
         {"path": "big.txt", "mode": "100644", "type": "blob", "sha": A},
         b"12345",
     )
@@ -191,15 +192,15 @@ def test_large_text_goes_as_a_blob(monkeypatch: pytest.MonkeyPatch) -> None:
     ("headers", "wait"),
     [
         ({"retry-after": "7"}, 7.0),
-        ({"retry-after": "0"}, worker.GITHUB_MIN_WAIT_S),
+        ({"retry-after": "0"}, publication.GITHUB_MIN_WAIT_S),
         ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1030"}, 30.0),
-        ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "900"}, worker.GITHUB_MIN_WAIT_S),
+        ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "900"}, publication.GITHUB_MIN_WAIT_S),
         ({"x-ratelimit-remaining": "12", "x-ratelimit-reset": "1030"}, None),
         ({}, None),
     ],
 )
 def test_retry_wait(headers: dict[str, str], wait: float | None) -> None:
-    assert worker.retry_wait(headers, now=1000.0) == wait
+    assert publication.retry_wait(headers, now=1000.0) == wait
 
 
 @pytest.mark.parametrize(
@@ -224,15 +225,15 @@ def test_retry_wait(headers: dict[str, str], wait: float | None) -> None:
 def test_classify(
     status: int | None, message: str, wait: float | None, ref_write: bool, action: str
 ) -> None:
-    assert worker.classify(status, message, wait, ref_write) == action
+    assert publication.classify(status, message, wait, ref_write) == action
 
 
 def test_scrub_redacts_before_clipping(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(worker, "MAX_GITHUB_MESSAGE_CHARS", 20)
+    monkeypatch.setattr(publication, "MAX_GITHUB_MESSAGE_CHARS", 20)
     token = "ghs_" + "x" * 30
 
-    assert worker.scrub(f"bad\n  token {token} here", (token, "")) == "bad token *** here"
-    assert token[:8] not in worker.scrub("y" * 10 + token, (token,))
+    assert publication.scrub(f"bad\n  token {token} here", (token, "")) == "bad token *** here"
+    assert token[:8] not in publication.scrub("y" * 10 + token, (token,))
 
 
 def test_api_mode_without_the_api_url_fails_setup(
@@ -255,10 +256,10 @@ def test_api_mode_without_the_api_url_fails_setup(
 def test_a_rate_limited_setup_check_is_not_blamed_on_the_token(
     server: FakeServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def rate_limited(self: worker.GitHub, method: str, path: str, body: Any = None) -> Any:
-        raise worker.GitHubError(403, "API rate limit exceeded", "retry")
+    def rate_limited(self: github.GitHub, method: str, path: str, body: Any = None) -> Any:
+        raise github.GitHubError(403, "API rate limit exceeded", "retry")
 
-    monkeypatch.setattr(worker.GitHub, "call", rate_limited)
+    monkeypatch.setattr(github.GitHub, "call", rate_limited)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GH_TOKEN", "ghs_secret")
     monkeypatch.setenv("GITHUB_API_URL", "https://api.github.com")
@@ -276,7 +277,7 @@ def test_a_rate_limited_setup_check_is_not_blamed_on_the_token(
     assert "only writes" not in done["error"]
 
 
-class NoGitHub(worker.GitHub):
+class NoGitHub(github.GitHub):
     """A GitHub client the test expects never to be called."""
 
     def __init__(self) -> None:
@@ -286,8 +287,8 @@ class NoGitHub(worker.GitHub):
         raise AssertionError(f"unexpected GitHub call: {method} {path}")
 
 
-def runner(cwd: Path) -> worker.GitRunner:
-    def run(*args: str, stdin: bytes | None = None) -> worker.GitResult:
+def runner(cwd: Path) -> GitRunner:
+    def run(*args: str, stdin: bytes | None = None) -> GitResult:
         p = subprocess.run(
             ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
             cwd=cwd,
@@ -295,7 +296,7 @@ def runner(cwd: Path) -> worker.GitRunner:
             capture_output=True,
             check=False,
         )
-        return worker.GitResult(p.returncode, p.stdout, p.stderr)
+        return GitResult(p.returncode, p.stdout, p.stderr)
 
     return run
 
@@ -317,8 +318,8 @@ def test_a_rewrite_of_published_commits_is_refused_before_any_github_call(
     pushed = git(work, "rev-parse", "HEAD").strip()
     git(work, "commit", "-q", "--amend", "-m", "one, amended")
 
-    with pytest.raises(worker.PublishError, match="rejected"):
-        worker.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
+    with pytest.raises(publication.PublishError, match="rejected"):
+        github.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
 
 
 def test_a_merge_is_refused_before_any_github_call(origin: Origin, tmp_path: Path) -> None:
@@ -331,15 +332,15 @@ def test_a_merge_is_refused_before_any_github_call(origin: Origin, tmp_path: Pat
     git(work, "switch", "-q", BRANCH)
     git(work, "merge", "-q", "--no-ff", "-m", "merge side", "side")
 
-    with pytest.raises(worker.PublishError, match="merge"):
-        worker.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
+    with pytest.raises(publication.PublishError, match="merge"):
+        github.publish_branch(runner(work), NoGitHub(), BRANCH, pushed, exists=True)
 
 
 def test_a_published_head_looks_pushed(origin: Origin, tmp_path: Path) -> None:
     work = clone(origin, tmp_path)
     head = git(work, "rev-parse", "HEAD").strip()
 
-    assert worker.track_published(runner(work), BRANCH, head) is None
+    assert github.track_published(runner(work), BRANCH, head) is None
 
     assert git(work, "rev-parse", f"refs/remotes/origin/{BRANCH}").strip() == head
     assert git(work, "config", f"branch.{BRANCH}.remote").strip() == "origin"
@@ -356,7 +357,7 @@ def test_a_different_remote_commit_is_fetched_and_becomes_head(
     remote = remote.strip()
     git(origin.bare, "update-ref", f"refs/heads/{BRANCH}", remote)
 
-    assert worker.track_published(runner(work), BRANCH, remote) is None
+    assert github.track_published(runner(work), BRANCH, remote) is None
 
     assert git(work, "rev-parse", "HEAD").strip() == remote
     assert git(work, "rev-parse", f"refs/remotes/origin/{BRANCH}").strip() == remote
@@ -372,7 +373,7 @@ def test_read_blobs_splits_cat_file_batch_by_size(tmp_path: Path) -> None:
         (tmp_path / f"f{i}").write_bytes(data)
         shas.append(git(tmp_path, "hash-object", "-w", f"f{i}").strip())
 
-    assert worker._read_blobs(runner(tmp_path), shas) == dict(zip(shas, contents, strict=True))
+    assert github._read_blobs(runner(tmp_path), shas) == dict(zip(shas, contents, strict=True))
 
 
 def test_a_token_off_actions_still_pushes_with_git(

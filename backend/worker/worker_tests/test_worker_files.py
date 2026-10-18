@@ -9,18 +9,18 @@ from typing import Literal
 
 import pytest
 
-import worker
+from agentos_worker import blocks, files, package, parse, sync
 from worker_tests.worker_support import AGENTS_BLOCK, KEY, SKILL_DIR, make_package
 
 
-def manifest() -> worker.Package:
-    return worker.load_package(make_package([]))
+def manifest() -> package.Package:
+    return parse.load_package(make_package([]))
 
 
-def materialise(root: Path, m: worker.Package) -> worker.SyncState:
-    state = worker.SyncState(m)
+def materialise(root: Path, m: package.Package) -> sync.SyncState:
+    state = sync.SyncState(m)
     for f in m.files:
-        problem = worker.write_entry(root, f)
+        problem = files.write_entry(root, f)
         if problem:
             state.unsynced.add(f.path)
     return state
@@ -57,7 +57,7 @@ def make_link(kind: LinkKind, link: Path, target: Path) -> None:
         raise
 
 
-def sent(batch: worker.SyncBatch) -> dict[str, tuple[str | None, str]]:
+def sent(batch: sync.SyncBatch) -> dict[str, tuple[str | None, str]]:
     return {f["path"]: (f["content"], f["mode"]) for f in batch.files}
 
 
@@ -66,7 +66,7 @@ def test_write_creates_files_and_blocks(tmp_path: Path) -> None:
     materialise(tmp_path, m)
     assert (tmp_path / SKILL_DIR / "TASKS.md").read_bytes().startswith(b"# Tasks\n")
     agents = (tmp_path / "AGENTS.md").read_bytes()
-    assert worker.block_read(agents, KEY) == AGENTS_BLOCK
+    assert blocks.block_read(agents, KEY) == AGENTS_BLOCK
     assert b"\r\n" in agents  # content bytes are written as-is, no newline translation
 
 
@@ -97,8 +97,8 @@ def test_write_skips_a_symlinked_target(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     root.mkdir()
     make_link("file", root / "CLAUDE.md", outside)
-    entry = worker.ContextFile("CLAUDE.md", KEY, "@AGENTS.md", "instructions", "block", KEY)
-    assert worker.write_entry(root, entry) == "CLAUDE.md is a symlink"
+    entry = package.ContextFile("CLAUDE.md", KEY, "@AGENTS.md", "instructions", "block", KEY)
+    assert files.write_entry(root, entry) == "CLAUDE.md is a symlink"
     assert outside.read_bytes() == b"precious\n"
 
 
@@ -109,7 +109,7 @@ def test_only_changed_blocks_are_sent(tmp_path: Path) -> None:
     agents.write_bytes(b"# Repo\n" + agents.read_bytes() + b"agent note\n")
     assert sent(state.collect(tmp_path)) == {}  # outside the block only
 
-    agents.write_bytes(worker.block_write(agents.read_bytes(), KEY, "edited"))
+    agents.write_bytes(blocks.block_write(agents.read_bytes(), KEY, "edited"))
     batch = state.collect(tmp_path)
     assert batch.warnings == []
     assert sent(batch) == {"AGENTS.md": ("edited", "block")}
@@ -152,7 +152,7 @@ def test_not_kept_names_at_most_20_files(tmp_path: Path) -> None:
 
 def test_unwritten_manifest_files_are_not_synced_as_deleted(tmp_path: Path) -> None:
     m = manifest()
-    state = worker.SyncState(m)
+    state = sync.SyncState(m)
     state.unsynced.add(f"{SKILL_DIR}/TASKS.md")
     assert f"{SKILL_DIR}/TASKS.md" not in sent(state.collect(tmp_path))
 
@@ -181,7 +181,7 @@ def test_a_linked_sync_dir_is_not_followed(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     (root / ".claude" / "skills").mkdir(parents=True)
     make_link(DIR_LINK, root / SKILL_DIR, outside_dir)
-    state = worker.SyncState(manifest())
+    state = sync.SyncState(manifest())
     batch = state.collect(root)
     assert all("secret" not in str(f["content"]) for f in batch.files)
     assert any(w.startswith("not kept") and SKILL_DIR in w for w in batch.warnings)
