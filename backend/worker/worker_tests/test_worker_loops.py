@@ -8,7 +8,6 @@ A check's pass/fail is decided by code: a shell check's exit code, or an agent c
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -333,15 +332,14 @@ def test_cancel_in_a_later_round(server: FakeServer, tmp_path: Path) -> None:
             server.cancel = True
 
     server.hook = hook
-    implement = maker("implement", "print=work", rounds=[invocation("sleep=30")])
+    implement = maker("implement", "print=work", rounds=[invocation("sleep=30", "print=woke")])
     review = checked(
         agent_stage("review", verdict_file("fail", "Fix it.")),
         rounds=[invocation(verdict_file("pass", ""))],
     )
     server.manifest = manifest([implement, review], [block("implement", "review", 2)])
-    started = time.monotonic()
     assert run_worker(server, tmp_path / "ws") == 0
-    assert time.monotonic() - started < 15
+    assert "woke" not in server.logs(), "the stage was killed mid-sleep, not waited out"
     assert server.complete() == {"status": "cancelled", "failed_stage": "implement", "error": None}
     assert events(server, "stage_finished")[-1] == (
         "implement",

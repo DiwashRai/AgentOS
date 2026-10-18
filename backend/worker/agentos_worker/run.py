@@ -211,6 +211,8 @@ class Run:
             except Exception as again:  # noqa: BLE001 last resort: reporting the failure failed too
                 say(f"could not report the failure: {again}")
             return 1
+        finally:  # a run that ended without `_finish` closing the sink must not leave it posting
+            self.events.abandon()
 
     def _execute(self) -> int:
         problem = self._prepare_workdir()

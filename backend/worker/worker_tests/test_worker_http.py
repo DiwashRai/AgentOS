@@ -4,6 +4,7 @@ batching, heartbeat, per-run cap)."""
 from __future__ import annotations
 
 import socket
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -154,6 +155,61 @@ def test_another_4xx_stops_the_sender_as_unreachable(server: FakeServer) -> None
     with pytest.raises(worker_api.Unreachable):
         sink.close()
     assert server.records() == []
+
+
+def _events_threads() -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t.name == "agentos-events"]
+
+
+def test_abandon_ends_the_retries_of_a_down_server(
+    server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the stop, abandon would wait one HTTP timeout and leave the sender retrying."""
+    monkeypatch.setattr(tunables, "RETRY_BUDGET_S", 600.0)
+    server.hook = lambda path, body: error(503, "internal_error")
+    sink = _sink(server)
+    others = set(_events_threads())
+    sink.start()
+    eventually(lambda: len(server.requests) >= 2, "the sender retrying")
+    sink.abandon()
+    assert [t for t in _events_threads() if t not in others] == [], "the sender still retries"
+    assert isinstance(sink.failure, worker_api.Unreachable)
+
+
+class _Stuck:
+    """A Reporter whose send hangs past one HTTP timeout and ignores stop (a stalled request)."""
+
+    def __init__(self) -> None:
+        self.sending = threading.Event()
+        self.release = threading.Event()
+
+    def send(self, records: list[dict[str, Any]]) -> worker_api.Ack:
+        self.sending.set()
+        self.release.wait(tunables.RETRY_BUDGET_S)
+        return worker_api.Ack(0, False, ())
+
+    def stop(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def test_abandon_waits_out_a_stuck_send_for_one_http_timeout_at_most(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tunables, "HTTP_TIMEOUT_S", tunables.RETRY_BUDGET_S / 10)
+    reporter = _Stuck()
+    sink = events.EventSink(reporter, "j", 1)
+    others = set(_events_threads())
+    sink.start()
+    assert reporter.sending.wait(tunables.RETRY_BUDGET_S)  # the heartbeat is in flight
+    sink.abandon()
+    stuck = [t for t in _events_threads() if t not in others]
+    reporter.release.set()
+    for thread in stuck:
+        thread.join()
+    assert stuck, "abandon waited the stuck send out instead of giving up after one HTTP timeout"
 
 
 def test_log_records_beyond_the_run_cap_are_dropped_with_one_warning(

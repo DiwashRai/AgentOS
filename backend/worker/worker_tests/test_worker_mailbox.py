@@ -7,7 +7,6 @@ no heartbeats, ending in the complete call. Also the CLI's one-mode rule and the
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -183,10 +182,11 @@ def test_an_outbox_write_error_aborts_the_run(
         real(fh, line)
 
     monkeypatch.setattr(Recorder, "_write", staticmethod(write))
-    started = time.monotonic()
-    code, outbox = run_mailbox(tmp_path, make_package([agent_stage("implement", "sleep=30")]))
+    stage = agent_stage("implement", "write=pre.txt:x", "sleep=30", "write=woke.txt:x")
+    code, outbox = run_mailbox(tmp_path, make_package([stage]))
     assert code == 1
-    assert time.monotonic() - started < 20
+    assert (tmp_path / "ws" / "pre.txt").exists(), "the stage ran"
+    assert not (tmp_path / "ws" / "woke.txt").exists(), "the stage was killed, not waited out"
     assert lines(outbox) == [{"outbox": 1, "run_id": 42}], "no complete after the failure"
 
 

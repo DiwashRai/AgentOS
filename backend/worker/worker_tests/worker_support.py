@@ -241,6 +241,15 @@ def server() -> Iterator[FakeServer]:
     httpd.server_close()
 
 
+@pytest.fixture(autouse=True)
+def no_leaked_events_thread() -> Iterator[None]:
+    """Fail a test that leaves a run's events thread running (it would post into later tests)."""
+    before = set(threading.enumerate())
+    yield
+    leaked = [t for t in threading.enumerate() if t.name == "agentos-events" and t not in before]
+    assert not leaked, "the run left its events thread running"
+
+
 # ---------------------------------------------------------------- git helpers
 
 

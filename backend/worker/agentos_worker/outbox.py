@@ -65,6 +65,9 @@ class Recorder:
                     raise Unreachable(f"record {call['path']}: {self._closed}") from exc
         return Ack(records[-1]["seq"] if records else 0, False, ())
 
+    def stop(self) -> None:
+        """Nothing to do: a write is never retried."""
+
     def close(self) -> None:
         with self._lock:
             self._shut("the outbox is closed")

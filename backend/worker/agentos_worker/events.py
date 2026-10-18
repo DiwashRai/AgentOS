@@ -82,6 +82,18 @@ class EventSink:
         self._reporter.close()
         self.check()
 
+    def abandon(self) -> None:
+        """Stop the thread without sending what is buffered (the run is over without a result:
+        taken away, rejected or unreachable). A no-op once `close` has run. A send in flight
+        retries no more; its last attempt is waited out for one HTTP timeout at most."""
+        with self._cond:
+            self._buf = []  # nothing left to send: the loop stops at its next wake
+            self._stopping = True
+            self._cond.notify_all()
+        self._reporter.stop()
+        if self._thread.is_alive():
+            self._thread.join(tunables.HTTP_TIMEOUT_S)
+
     def _loop(self) -> None:
         last_post = time.monotonic()
         while True:

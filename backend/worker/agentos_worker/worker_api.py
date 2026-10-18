@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -74,6 +75,12 @@ class Client:
         # A loopback server must never go through a configured proxy.
         handlers = [urllib.request.ProxyHandler({})] if host in _LOOPBACK else []
         self._opener = urllib.request.build_opener(*handlers)
+        self._stopped = threading.Event()
+
+    def stop(self) -> None:
+        """Start no new attempt: a call retrying now (or later) raises Unreachable instead, and
+        an attempt in flight ends within its timeout."""
+        self._stopped.set()
 
     def post(
         self,
@@ -130,10 +137,10 @@ class Client:
             except (OSError, http.client.HTTPException, ValueError) as exc:
                 problem = f"{type(exc).__name__}: {exc}"
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if remaining <= 0 or self._stopped.is_set():
                 raise Unreachable(f"{method} {path}: {problem}")
             say(f"{method} {path} failed ({problem}); retrying in {delay:.1f}s")
-            time.sleep(min(delay, remaining))
+            self._stopped.wait(min(delay, remaining))
             delay = min(delay * 2, tunables.BACKOFF_CAP_S)
 
 
@@ -153,6 +160,10 @@ class Reporter(Protocol):
     def send(self, records: list[dict[str, Any]]) -> Ack:
         """Deliver records in seq order; [] is a heartbeat. Raises RunGone (AlreadyClaimed
         included) or Unreachable."""
+        ...
+
+    def stop(self) -> None:
+        """Make a `send` in progress give up soon instead of retrying (it may be any thread)."""
         ...
 
     def close(self) -> None: ...
@@ -176,6 +187,9 @@ class HttpReporter:
                 raise RunGone(str(exc)) from exc
             raise Unreachable(f"the journal was refused: {exc}") from exc
         return Ack(resp["ack"], resp["cancel"] is True, tuple(resp["rejected"]))
+
+    def stop(self) -> None:
+        self._client.stop()
 
     def close(self) -> None:
         """Nothing to release: every post is a request of its own."""

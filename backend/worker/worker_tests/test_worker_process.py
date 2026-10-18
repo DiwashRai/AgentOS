@@ -36,7 +36,7 @@ def run(
         timeout_s=timeout_s,
         caps=caps,
         on_line=lambda stream, text, truncated: lines.append((stream, text, truncated)),
-        interrupt=lambda: interrupt,
+        interrupt=lambda: interrupt if lines else None,  # once the stage has said something
     )
     return result, lines
 
@@ -89,19 +89,18 @@ def test_background_child_holding_the_pipe_does_not_hang(tmp_path: Path) -> None
 
 
 def test_timeout_kills_the_tree(tmp_path: Path) -> None:
-    started = time.monotonic()
-    result, lines = run(tmp_path, "sleep=30", timeout_s=0.5)
+    result, lines = run(tmp_path, "sleep=30", "print=woke", timeout_s=0.5)
     assert result.stopped == "timeout"
-    assert time.monotonic() - started < 10
     assert ("stdout", "started", False) in lines
+    assert ("stdout", "woke", False) not in lines, "killed mid-sleep, not waited out"
 
 
 @pytest.mark.parametrize("reason", ["cancel", "abort"])
 def test_interrupt_kills_the_tree(tmp_path: Path, reason: str) -> None:
-    started = time.monotonic()
-    result, _ = run(tmp_path, "sleep=30", interrupt=reason)
+    result, lines = run(tmp_path, "sleep=30", "print=woke", interrupt=reason)
     assert result.stopped == reason
-    assert time.monotonic() - started < 10
+    assert ("stdout", "started", False) in lines
+    assert ("stdout", "woke", False) not in lines, "killed mid-sleep, not waited out"
 
 
 @pytest.mark.parametrize(("length", "truncated"), [(10, False), (11, True), (100, True)])

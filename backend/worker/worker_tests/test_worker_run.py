@@ -338,11 +338,12 @@ def test_run_gone_after_binding_means_no_commit_and_no_push(
 ) -> None:
     server.hook = trip_on("stage_started", error(status, code))
     server.manifest = make_package(
-        [agent_stage("implement", "edit", "sleep=30")], repo_url=origin.url
+        [agent_stage("implement", "edit", "write=pre.txt:x", "sleep=30", "write=woke.txt:x")],
+        repo_url=origin.url,
     )
-    started = time.monotonic()
     assert run_worker(server, tmp_path / "ws") == 1
-    assert time.monotonic() - started < 15, "the stage tree was killed"
+    assert (tmp_path / "ws" / "pre.txt").exists(), "the stage ran"
+    assert not (tmp_path / "ws" / "woke.txt").exists(), "the stage was killed, not waited out"
     assert server.complete() is None
     assert server.records("sync") == []
     assert not origin.has_branch(BRANCH)
@@ -388,12 +389,14 @@ def test_over_budget_kills_the_stage_still_publishes_then_fails(
 
     server.hook = hook
     server.manifest = make_package(
-        [agent_stage("implement", "edit", "sleep=60"), agent_stage("never", "print=no")],
+        [
+            agent_stage("implement", "edit", "sleep=30", "print=woke"),
+            agent_stage("never", "print=no"),
+        ],
         repo_url=origin.url,
     )
-    started = real()
     assert run_worker(server, tmp_path / "ws") == 0
-    assert real() - started < 45, "the stage tree was killed"
+    assert "woke" not in server.logs(), "the stage was killed mid-sleep, not waited out"
     assert server.complete() == {
         "status": "failed",
         "failed_stage": "implement",
@@ -442,13 +445,15 @@ def test_cancel_kills_the_stage_but_still_syncs_and_pushes(
 
     server.hook = hook
     server.manifest = make_package(
-        [agent_stage("implement", "edit", "sleep=30"), agent_stage("never", "print=no")],
+        [
+            agent_stage("implement", "edit", "sleep=30", "print=woke"),
+            agent_stage("never", "print=no"),
+        ],
         repo_url=origin.url,
     )
     workdir = tmp_path / "ws"
-    started = time.monotonic()
     assert run_worker(server, workdir) == 0
-    assert time.monotonic() - started < 15
+    assert "woke" not in server.logs(), "the stage was killed mid-sleep, not waited out"
     assert server.complete() == {"status": "cancelled", "failed_stage": "implement", "error": None}
     [finished] = stage_events(server, "stage_finished")
     assert finished["data"] == {
