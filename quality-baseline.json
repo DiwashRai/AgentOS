@@ -6,7 +6,17 @@
       "backend/server/agentos/errors.py",
       "backend/server/agentos/pipeline/*",
       "backend/server/agentos/*/board.py",
-      "backend/server/agentos/*/rules.py"
+      "backend/server/agentos/*/rules.py",
+      "backend/worker/agentos_worker/package.py",
+      "backend/worker/agentos_worker/verdicts.py",
+      "backend/worker/agentos_worker/publication.py",
+      "backend/worker/agentos_worker/git.py",
+      "backend/worker/agentos_worker/paths.py",
+      "backend/worker/agentos_worker/blocks.py",
+      "backend/worker/agentos_worker/env_file.py",
+      "backend/worker/agentos_worker/fit.py",
+      "backend/worker/agentos_worker/text.py",
+      "backend/worker/agentos_worker/tunables.py"
     ],
     "boundary": [
       "backend/server/agentos/validate.py",
@@ -23,7 +33,21 @@
       "backend/server/agentos/csrf.py",
       "backend/server/agentos/meta.py",
       "backend/server/agentos/spa.py",
-      "backend/server/agentos/openapi_export.py"
+      "backend/server/agentos/openapi_export.py",
+      "backend/server/agentos/worker_archive.py",
+      "backend/worker/agentos_worker/cli.py",
+      "backend/worker/agentos_worker/worker_api.py",
+      "backend/worker/agentos_worker/outbox.py",
+      "backend/worker/agentos_worker/events.py",
+      "backend/worker/agentos_worker/echo.py",
+      "backend/worker/agentos_worker/process.py",
+      "backend/worker/agentos_worker/files.py",
+      "backend/worker/agentos_worker/github.py",
+      "backend/worker/agentos_worker/verdict_reading.py",
+      "backend/worker/agentos_worker/parse.py",
+      "backend/worker/agentos_worker/workdir_root.py",
+      "backend/worker/agentos_worker/archive.py",
+      "backend/worker/agentos_worker/console.py"
     ],
     "shell": [
       "backend/server/agentos/*/service.py",
@@ -35,10 +59,15 @@
       "backend/server/agentos/ratelimit.py",
       "backend/server/agentos/ttlcache.py",
       "backend/server/agentos/__init__.py",
-      "backend/server/agentos/*/__init__.py"
-    ],
-    "worker": [
-      "backend/worker/worker.py"
+      "backend/server/agentos/*/__init__.py",
+      "backend/worker/worker.py",
+      "backend/worker/agentos_worker/__init__.py",
+      "backend/worker/agentos_worker/main.py",
+      "backend/worker/agentos_worker/client.py",
+      "backend/worker/agentos_worker/run.py",
+      "backend/worker/agentos_worker/children.py",
+      "backend/worker/agentos_worker/sync.py",
+      "backend/worker/agentos_worker/publishing.py"
     ]
   },
   "limits": {
@@ -58,9 +87,6 @@
         "cast"
       ],
       "shell": [
-        "cast"
-      ],
-      "worker": [
         "cast"
       ]
     },
@@ -138,12 +164,52 @@
       "backend/server/agentos/workflows/service.py": {
         "try": 2
       },
-      "backend/worker/worker.py": {
-        "isinstance": 28,
-        "try": 67,
-        "broad_except": 4,
-        "getattr_default": 1,
-        "suppress": 8
+      "backend/worker/agentos_worker/children.py": {
+        "try": 3
+      },
+      "backend/worker/agentos_worker/client.py": {
+        "try": 5
+      },
+      "backend/worker/agentos_worker/echo.py": {
+        "broad_except": 1,
+        "suppress": 1
+      },
+      "backend/worker/agentos_worker/files.py": {
+        "getattr_default": 1
+      },
+      "backend/worker/agentos_worker/main.py": {
+        "try": 6
+      },
+      "backend/worker/agentos_worker/outbox.py": {
+        "suppress": 1
+      },
+      "backend/worker/agentos_worker/paths.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/process.py": {
+        "suppress": 5
+      },
+      "backend/worker/agentos_worker/publication.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/publishing.py": {
+        "isinstance": 1,
+        "try": 3
+      },
+      "backend/worker/agentos_worker/run.py": {
+        "broad_except": 2,
+        "isinstance": 3,
+        "suppress": 1,
+        "try": 15
+      },
+      "backend/worker/agentos_worker/sync.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/text.py": {
+        "try": 1
+      },
+      "backend/worker/agentos_worker/workdir_root.py": {
+        "broad_except": 1
       }
     },
     "suppressions": {
@@ -155,7 +221,10 @@
       "backend/server/agentos/runs/service.py": 3,
       "backend/server/agentos/tickets/service.py": 1,
       "backend/server/agentos/workflows/service.py": 1,
-      "backend/worker/worker.py": 5,
+      "backend/worker/agentos_worker/echo.py": 1,
+      "backend/worker/agentos_worker/github.py": 1,
+      "backend/worker/agentos_worker/run.py": 2,
+      "backend/worker/agentos_worker/worker_api.py": 1,
       "web/src/features/actions/ResolveConfirm.tsx": 1,
       "web/src/features/ticket/Overview.tsx": 1,
       "web/src/features/workflows/WorkflowStrip.tsx": 1,
@@ -196,19 +265,19 @@
       "backend/server/agentos/worker_api/service.py::_apply": 18,
       "backend/server/agentos/worker_api/service.py::ingest": 18,
       "backend/server/agentos/worker_api/service.py::post_journal": 19,
-      "backend/worker/worker.py::EventSink._loop": 26,
-      "backend/worker/worker.py::GitHub.call": 16,
-      "backend/worker/worker.py::Recorder.send": 20,
-      "backend/worker/worker.py::Run._execute": 22,
-      "backend/worker/worker.py::Run._run_loop": 16,
-      "backend/worker/worker.py::Run._send_sync_back": 17,
-      "backend/worker/worker.py::Run._setup_workspace": 18,
-      "backend/worker/worker.py::Run._verdict_call": 16,
-      "backend/worker/worker.py::SyncState.collect": 22,
-      "backend/worker/worker.py::_check_loops": 26,
-      "backend/worker/worker.py::_walk_files": 18,
-      "backend/worker/worker.py::path_error": 16,
-      "backend/worker/worker.py::run_process": 17,
+      "backend/worker/agentos_worker/events.py::EventSink._loop": 26,
+      "backend/worker/agentos_worker/files.py::walk_files": 18,
+      "backend/worker/agentos_worker/github.py::GitHub.call": 16,
+      "backend/worker/agentos_worker/outbox.py::Recorder.send": 20,
+      "backend/worker/agentos_worker/package.py::check_loops": 26,
+      "backend/worker/agentos_worker/paths.py::path_error": 16,
+      "backend/worker/agentos_worker/process.py::run_process": 17,
+      "backend/worker/agentos_worker/run.py::Run._execute": 22,
+      "backend/worker/agentos_worker/run.py::Run._run_loop": 16,
+      "backend/worker/agentos_worker/run.py::Run._send_sync_back": 17,
+      "backend/worker/agentos_worker/run.py::Run._setup_workspace": 18,
+      "backend/worker/agentos_worker/run.py::Run._verdict_call": 16,
+      "backend/worker/agentos_worker/sync.py::SyncState.collect": 22,
       "web/src/domain/actions.ts::actionsFor": 16,
       "web/src/domain/counts.ts::counts": 21,
       "web/src/editor/ListEditor.tsx::ListEditor.rows.map(callback)": 16,
@@ -266,23 +335,23 @@
       "backend/server/agentos/worker_api/service.py::_apply": 14,
       "backend/server/agentos/worker_api/service.py::_store_events": 13,
       "backend/server/agentos/worker_api/service.py::post_journal": 16,
-      "backend/worker/worker.py::Children.waiting": 11,
-      "backend/worker/worker.py::Echo.lines": 24,
-      "backend/worker/worker.py::EventSink._loop": 17,
-      "backend/worker/worker.py::Recorder.send": 14,
-      "backend/worker/worker.py::Run._exec": 11,
-      "backend/worker/worker.py::Run._execute": 18,
-      "backend/worker/worker.py::Run._protect": 13,
-      "backend/worker/worker.py::Run._run_loop": 11,
-      "backend/worker/worker.py::Run._send_sync_back": 15,
-      "backend/worker/worker.py::Run._setup_workspace": 15,
-      "backend/worker/worker.py::SyncState.collect": 17,
-      "backend/worker/worker.py::_check_loops": 19,
-      "backend/worker/worker.py::_walk_files": 11,
-      "backend/worker/worker.py::classify": 12,
-      "backend/worker/worker.py::github_repo": 15,
-      "backend/worker/worker.py::path_error": 11,
-      "backend/worker/worker.py::run_process": 15,
+      "backend/worker/agentos_worker/children.py::Children.waiting": 11,
+      "backend/worker/agentos_worker/echo.py::Echo.lines": 24,
+      "backend/worker/agentos_worker/events.py::EventSink._loop": 17,
+      "backend/worker/agentos_worker/files.py::walk_files": 11,
+      "backend/worker/agentos_worker/outbox.py::Recorder.send": 14,
+      "backend/worker/agentos_worker/package.py::check_loops": 19,
+      "backend/worker/agentos_worker/paths.py::path_error": 11,
+      "backend/worker/agentos_worker/process.py::run_process": 15,
+      "backend/worker/agentos_worker/publication.py::classify": 12,
+      "backend/worker/agentos_worker/publication.py::github_repo": 15,
+      "backend/worker/agentos_worker/run.py::Run._exec": 11,
+      "backend/worker/agentos_worker/run.py::Run._execute": 18,
+      "backend/worker/agentos_worker/run.py::Run._protect": 13,
+      "backend/worker/agentos_worker/run.py::Run._run_loop": 11,
+      "backend/worker/agentos_worker/run.py::Run._send_sync_back": 15,
+      "backend/worker/agentos_worker/run.py::Run._setup_workspace": 15,
+      "backend/worker/agentos_worker/sync.py::SyncState.collect": 17,
       "web/src/domain/actions.ts::actionsFor": 18,
       "web/src/domain/counts.ts::counts": 17,
       "web/src/domain/groups.ts::groups": 11,
@@ -343,9 +412,7 @@
       "web/src/ui/Stepper.tsx::Stepper.glyphItems(model.stages).map(callback)": 17,
       "web/src/ui/glyph.ts::stageCaption": 12
     },
-    "file_lines": {
-      "backend/worker/worker.py::file": 3024
-    },
+    "file_lines": {},
     "fan_out": {
       "runs": 7,
       "settings": 6,
@@ -357,7 +424,10 @@
       "backend/server/agentos/pipeline/render.py::TicketRef": 3,
       "backend/server/agentos/pipeline/space.py::ResolvedRepo": 4,
       "backend/server/agentos/tickets/board.py::TicketBoard": 4,
-      "backend/server/agentos/tickets/board.py::TicketFacts": 5
+      "backend/server/agentos/tickets/board.py::TicketFacts": 5,
+      "backend/worker/agentos_worker/package.py::AgentStage": 2,
+      "backend/worker/agentos_worker/package.py::Invocation": 2,
+      "backend/worker/agentos_worker/package.py::Workspace": 3
     },
     "any": {
       "backend/server/agentos/models.py::Any": 21,
@@ -432,6 +502,62 @@
       "from": "2961",
       "to": "3024",
       "reason": "the command line (LiveMode | FileMode | ClientMode) and each lease's outcome as typed records; run_client 41 -> 3 and parse_args 30 -> 5 cognitive; the worker must stay one stdlib-only file (refactor area 3; proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-17",
+      "what": "layers",
+      "from": "worker: backend/worker/worker.py; boundary: no backend/server/agentos/worker_archive.py",
+      "to": "worker: + backend/worker/agentos_worker/*; boundary: + backend/server/agentos/worker_archive.py",
+      "reason": "worker.py is served as a zip built from backend/worker: the new agentos_worker package joins the worker layer, and the server's worker_archive.py (it builds the zip once and serves it) joins the boundary (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "allowed.defensive",
+      "from": "backend/worker/worker.py: isinstance 28, try 67, broad_except 4, getattr_default 1, suppress 8",
+      "to": "the same totals across backend/worker/agentos_worker/* (18 files)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "allowed.suppressions",
+      "from": "backend/worker/worker.py: 5",
+      "to": "the same 5 across backend/worker/agentos_worker/* (echo 1, github 1, run 2, worker_api 1)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "exceptions.cognitive",
+      "from": "13 functions in backend/worker/worker.py",
+      "to": "the same 13 functions, same scores, new paths in backend/worker/agentos_worker/* (_check_loops and _walk_files also lose their underscore)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "exceptions.cyclomatic",
+      "from": "17 functions in backend/worker/worker.py",
+      "to": "the same 17 functions, same scores, new paths in backend/worker/agentos_worker/* (_check_loops and _walk_files also lose their underscore)",
+      "reason": "the worker split into a package: a pure move (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "layers",
+      "from": "worker: backend/worker/worker.py, backend/worker/agentos_worker/* (and allowed.uncapped.worker: cast)",
+      "to": "core: + agentos_worker/{package,verdicts,publication,git,paths,blocks,env_file,fit,text,tunables}.py; boundary: + agentos_worker/{cli,worker_api,outbox,events,echo,process,files,github,verdict_reading,parse,workdir_root,archive,console}.py; shell: + backend/worker/worker.py, agentos_worker/{__init__,main,client,run,children,sync,publishing}.py; the worker layer and allowed.uncapped.worker go",
+      "reason": "the worker's core, boundary and shell, enforced (import-linter: shell -> boundary -> core, no cycles, no I/O in the core): each worker module joins the layer its imports already fit. The worker's isinstance and try counts in its boundary modules become uncapped, as the server's boundary already is: isinstance 24 and try 31 across echo, events, files, github, outbox, parse, process, verdict_reading, workdir_root and worker_api lose their caps (the ratchet dropped them). Core and shell modules keep every cap; cast is now capped in the worker's core (0 there) (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "exceptions.optional_fields",
+      "from": "no worker classes (the worker had no core layer)",
+      "to": "backend/worker/agentos_worker/package.py::Workspace 3, ::Invocation 2, ::AgentStage 2",
+      "reason": "the worker's core now falls under the core-only gates, and no type-only change fixes these: Workspace (repo_url, base_branch, branch: null when mode is none) is a real no-repo-or-repo state type to model later; Invocation (stdin or prompt_arg: where the prompt goes) and AgentStage (stdin, check: a loop block's check) are state types to model later too (proposed by the orchestrator, for the owner to approve)"
+    },
+    {
+      "date": "2026-10-18",
+      "what": "allowed.defensive",
+      "from": "backend/worker/agentos_worker/github.py: isinstance 3, try 5 (uncapped in the boundary)",
+      "to": "github.py keeps isinstance 2, try 2 (GitHub.call, GitHub._message; uncapped in the boundary); the new shell module publishing.py is capped at isinstance 1, try 3 (_github, _write_ref)",
+      "reason": "github.py split as a pure move: the HTTP adapter (GitHubError, _NoRedirect, GitHub) stays in the boundary, and the publication orchestration (publish_branch, track_published and the helpers only they use) moves to publishing.py in the shell, so its try/isinstance are capped again (proposed by the orchestrator, for the owner to approve)"
     }
   ]
 }

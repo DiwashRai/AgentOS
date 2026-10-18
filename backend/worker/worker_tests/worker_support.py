@@ -21,7 +21,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
-import worker
+from agentos_worker import main, tunables
 
 FAKE_STAGE = Path(__file__).resolve().parent / "worker_fake_stage.py"
 KEY = "AOS-42"
@@ -207,7 +207,7 @@ def fast(monkeypatch: pytest.MonkeyPatch, user_git_config: Path) -> None:
         "CLIENT_BACKOFF_CAP_S": 0.05,
         "CLIENT_REAP_S": 0.01,
     }.items():
-        monkeypatch.setattr(worker, name, value)
+        monkeypatch.setattr(tunables, name, value)
     monkeypatch.delenv("AGENTOS_SHELL", raising=False)
     monkeypatch.delenv("AGENTOS_TOKEN", raising=False)
     monkeypatch.delenv("AGENTOS_CLIENT_TOKEN", raising=False)
@@ -239,6 +239,15 @@ def server() -> Iterator[FakeServer]:
     yield fake
     httpd.shutdown()
     httpd.server_close()
+
+
+@pytest.fixture(autouse=True)
+def no_leaked_events_thread() -> Iterator[None]:
+    """Fail a test that leaves a run's events thread running (it would post into later tests)."""
+    before = set(threading.enumerate())
+    yield
+    leaked = [t for t in threading.enumerate() if t.name == "agentos-events" and t not in before]
+    assert not leaked, "the run left its events thread running"
 
 
 # ---------------------------------------------------------------- git helpers
@@ -432,4 +441,4 @@ def make_package(
 
 
 def run_worker(server: FakeServer, workdir: Path) -> int:
-    return worker.main(["--server", server.url, "--token", JOB_TOKEN, "--workdir", str(workdir)])
+    return main.main(["--server", server.url, "--token", JOB_TOKEN, "--workdir", str(workdir)])

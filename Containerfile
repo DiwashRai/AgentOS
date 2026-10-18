@@ -40,13 +40,15 @@ ENV PATH=/app/.venv/bin:$PATH \
     AGENTOS_HOST=0.0.0.0 \
     AGENTOS_PORT=8000 \
     AGENTOS_DATA_DIR=/data \
-    AGENTOS_WEB_DIR=/app/web
+    AGENTOS_WEB_DIR=/app/web \
+    PYTHONPATH=/app/worker
 
-# The layout mirrors backend/: config.py finds (and /api/worker/worker.py serves)
-# ../../worker/worker.py relative to the agentos package.
+# The layout mirrors backend/. The server builds the worker.py it serves at /api/worker/worker.py
+# (a zip) from worker/worker.py and worker/agentos_worker, which PYTHONPATH makes importable.
 WORKDIR /app
 COPY --from=deps /app/.venv /app/.venv
 COPY backend/worker/worker.py worker/worker.py
+COPY backend/worker/agentos_worker worker/agentos_worker
 COPY backend/server/agentos server/agentos
 RUN python -m compileall -q server/agentos worker
 COPY --from=web /src/web/dist web

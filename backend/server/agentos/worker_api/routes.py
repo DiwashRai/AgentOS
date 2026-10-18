@@ -7,9 +7,7 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
-from fastapi.responses import PlainTextResponse
 
-from agentos.config import WORKER_PATH
 from agentos.errors import ERROR_RESPONSES, ApiError
 from agentos.http_deps import Ctx
 from agentos.models import (
@@ -21,15 +19,28 @@ from agentos.models import (
 )
 from agentos.worker_api import service
 from agentos.worker_api.deps import ClientBearer, Instance, JobToken
+from agentos.worker_archive import worker_file
 
 router = APIRouter(tags=["worker"], responses=ERROR_RESPONSES)
 
 LEASE_RETRY_S = 1.0  # how often a waiting lease looks for a run
 
 
-@router.get("/api/worker/worker.py", response_class=PlainTextResponse)
-def worker_source() -> str:
-    return WORKER_PATH.read_text(encoding="utf-8")
+WORKER_FILE_RESPONSE: dict[int | str, dict[str, object]] = {
+    200: {
+        "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}
+    }
+}
+
+
+@router.get("/api/worker/worker.py", response_class=Response, responses=WORKER_FILE_RESPONSE)
+def worker_source() -> Response:
+    """The worker as one file: a zip built from backend/worker that `python worker.py` runs."""
+    return Response(
+        worker_file().data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="worker.py"'},
+    )
 
 
 # Bearer: the job token; once the job is bound, X-AgentOS-Instance too.

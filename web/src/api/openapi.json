@@ -8805,12 +8805,14 @@
     },
     "/api/worker/worker.py": {
       "get": {
+        "description": "The worker as one file: a zip built from backend/worker that `python worker.py` runs.",
         "operationId": "worker_source_api_worker_worker_py_get",
         "responses": {
           "200": {
             "content": {
-              "text/plain": {
+              "application/octet-stream": {
                 "schema": {
+                  "format": "binary",
                   "type": "string"
                 }
               }
@@ -8819,7 +8821,7 @@
           },
           "4XX": {
             "content": {
-              "text/plain": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
@@ -8829,7 +8831,7 @@
           },
           "5XX": {
             "content": {
-              "text/plain": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }

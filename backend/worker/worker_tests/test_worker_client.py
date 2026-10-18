@@ -1,4 +1,4 @@
-"""Client mode: `worker.main(["--client", ...])` in-process against the fake server, with an
+"""Client mode: `main.main(["--client", ...])` in-process against the fake server, with an
 injected spawn function in place of real run workers."""
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from typing import IO, Any
 
 import pytest
 
-import worker
+from agentos_worker import archive, cli, main, tunables, workdir_root
 from worker_tests.worker_support import FakeServer, error, eventually
 
 CLIENT_TOKEN = "c" * 43
 LEASE = "/api/worker/lease"
-SHA256 = hashlib.sha256(Path(worker.__file__).read_bytes()).hexdigest()
+SHA256 = hashlib.sha256(archive.build(archive.this_worker().path.parent)).hexdigest()
 TAKE = {"wait_s": 25, "take": True, "alive": [], "gone": []}
 
 
@@ -104,13 +104,13 @@ def answer_leases(server: FakeServer, answers: list[tuple[int, Any] | None]) -> 
 @pytest.fixture
 def spawn(monkeypatch: pytest.MonkeyPatch) -> FakeSpawn:
     fake = FakeSpawn(finish=True)
-    monkeypatch.setattr(worker, "spawn_detached", fake)
+    monkeypatch.setattr(main, "spawn_detached", fake)
     monkeypatch.setenv("AGENTOS_CLIENT_TOKEN", CLIENT_TOKEN)
     return fake
 
 
 def run_client(server: FakeServer, root: Path, *extra: str) -> int:
-    return worker.main(["--client", "--server", server.url, "--workdir-root", str(root), *extra])
+    return main.main(["--client", "--server", server.url, "--workdir-root", str(root), *extra])
 
 
 def leases(server: FakeServer) -> int:
@@ -130,7 +130,7 @@ def test_one_worker_per_run_with_the_token_in_its_env_only(
     assert run_client(server, root, "--env-file", str(env_file)) == 1
 
     runs = root.resolve() / "runs"
-    me = str(Path(worker.__file__).resolve())
+    me = str(archive.this_worker().path.resolve())
     assert [(c.argv, c.cwd, c.log) for c in spawn.calls] == [
         (
             [
@@ -230,7 +230,7 @@ def test_client_retries_a_transient_4xx(
 def test_a_busy_client_sends_heartbeats_that_take_nothing(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "CLIENT_HEARTBEAT_S", 0.05)
+    monkeypatch.setattr(tunables, "CLIENT_HEARTBEAT_S", 0.05)
     spawn.finish = False
     answer_leases(server, [assigned(5, "d" * 43), *[NOTHING] * 3])
 
@@ -252,7 +252,7 @@ def test_running_workers_are_listed_as_alive_until_they_finish(
             spawn.calls[0].child.done.set()
         return child
 
-    monkeypatch.setattr(worker, "spawn_detached", spawn_then_finish_the_first)
+    monkeypatch.setattr(main, "spawn_detached", spawn_then_finish_the_first)
     answer_leases(
         server,
         [assigned(5, "d" * 43), assigned(6, "e" * 43), assigned(7, "f" * 43), NOTHING, NOTHING],
@@ -329,7 +329,7 @@ def test_a_restarted_client_lists_the_workers_that_outlived_it(
     runs = tmp_path / "ws" / "runs"
     runs.mkdir(parents=True)
     (runs / f"{job_id(4)}.lock").write_bytes(b"")  # a worker that ended while no client watched
-    survivor = worker.hold_lock(runs / f"{job_id(5)}.lock")
+    survivor = workdir_root.hold_lock(runs / f"{job_id(5)}.lock")
     released: list[bool] = []
 
     def hook(path: str, body: Any) -> tuple[int, Any] | None:
@@ -337,7 +337,7 @@ def test_a_restarted_client_lists_the_workers_that_outlived_it(
             return None
         if not released:  # the first lease: then the survivor exits
             released.append(True)
-            worker.release_lock(survivor)
+            workdir_root.release_lock(survivor)
             return NOTHING
         return error(401, "unauthorized")
 
@@ -346,7 +346,7 @@ def test_a_restarted_client_lists_the_workers_that_outlived_it(
         assert run_client(server, tmp_path / "ws") == 1  # one slot, full of the survivor
     finally:
         if not released:
-            worker.release_lock(survivor)
+            workdir_root.release_lock(survivor)
 
     assert server.bodies(LEASE) == [
         {"wait_s": 0, "take": False, "alive": [job_id(5)], "gone": [job_id(4)]},  # at once
@@ -359,19 +359,19 @@ def test_a_restarted_client_lists_the_workers_that_outlived_it(
 def test_long_lists_go_out_at_most_the_cap_per_lease(
     server: FakeServer, spawn: FakeSpawn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "CLIENT_HEARTBEAT_S", 0.05)
+    monkeypatch.setattr(tunables, "CLIENT_HEARTBEAT_S", 0.05)
     runs = tmp_path / "ws" / "runs"
     runs.mkdir(parents=True)
     ended = [job_id(n) for n in range(1, 131)]  # their workers ended while no client watched
     for job in ended:
         (runs / f"{job}.lock").write_bytes(b"")
-    survivors = [worker.hold_lock(runs / f"{job_id(n)}.lock") for n in range(201, 302)]
+    survivors = [workdir_root.hold_lock(runs / f"{job_id(n)}.lock") for n in range(201, 302)]
     answer_leases(server, [NOTHING, NOTHING])
     try:
         assert run_client(server, tmp_path / "ws") == 1
     finally:
         for lock in survivors:
-            worker.release_lock(lock)
+            workdir_root.release_lock(lock)
 
     bodies = server.bodies(LEASE)
     assert [(len(b["alive"]), len(b["gone"])) for b in bodies] == [(100, 100), (100, 30), (100, 0)]
@@ -388,7 +388,7 @@ def test_a_worker_whose_process_exits_while_its_lock_is_held_stays_alive(
 
     def stub_spawn(argv: list[str], cwd: Path, env: dict[str, str], log: Path) -> FakeChild:
         child = spawn(argv, cwd, env, log)
-        real.append(worker.hold_lock(lock))  # the real worker runs, holding its lock
+        real.append(workdir_root.hold_lock(lock))  # the real worker runs, holding its lock
         child.done.set()  # while the stub exits
         return child
 
@@ -399,11 +399,11 @@ def test_a_worker_whose_process_exits_while_its_lock_is_held_stays_alive(
         if n == 1:
             return assigned(5, "d" * 43)
         if n == 2:
-            worker.release_lock(real.pop())  # now the real worker exits too
+            workdir_root.release_lock(real.pop())  # now the real worker exits too
             return NOTHING
         return error(401, "unauthorized")
 
-    monkeypatch.setattr(worker, "spawn_detached", stub_spawn)
+    monkeypatch.setattr(main, "spawn_detached", stub_spawn)
     server.hook = hook
     assert run_client(server, tmp_path / "ws", "--max-runs", "2") == 1
 
@@ -416,17 +416,17 @@ def test_one_client_per_root(
 ) -> None:
     runs = tmp_path / "ws" / "runs"
     runs.mkdir(parents=True)
-    first = worker.hold_lock(runs / "client.lock")  # a client already runs on this root
+    first = workdir_root.hold_lock(runs / "client.lock")  # a client already runs on this root
     try:
         assert run_client(server, tmp_path / "ws") == 2
     finally:
-        worker.release_lock(first)
+        workdir_root.release_lock(first)
     assert leases(server) == 0
 
     monkeypatch.setenv("AGENTOS_CLIENT_TOKEN", CLIENT_TOKEN)  # main pops it
     answer_leases(server, [])
     assert run_client(server, tmp_path / "ws") == 1
-    assert not worker.lock_held(runs / "client.lock")  # released when the client stops
+    assert not workdir_root.lock_held(runs / "client.lock")  # released when the client stops
 
 
 @pytest.mark.parametrize("end", ["exit", "kill"])
@@ -444,12 +444,19 @@ def test_a_run_worker_holds_its_lock_until_its_process_ends(
         return error(410, "run_gone")
 
     server.hook = hook
-    argv = [sys.executable, worker.__file__, "--server", server.url, "--lock-file", str(lock)]
+    argv = [
+        sys.executable,
+        str(archive.this_worker().path),
+        "--server",
+        server.url,
+        "--lock-file",
+        str(lock),
+    ]
     env = {**os.environ, "AGENTOS_TOKEN": "t" * 43}
     proc = subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         assert fetching.wait(30)
-        assert worker.lock_held(lock)
+        assert workdir_root.lock_held(lock)
         if end == "kill":
             proc.kill()
         answer_now.set()
@@ -459,7 +466,7 @@ def test_a_run_worker_holds_its_lock_until_its_process_ends(
         if proc.poll() is None:
             proc.kill()
             proc.wait()
-    eventually(lambda: not worker.lock_held(lock), "the OS to release the dead worker's lock")
+    eventually(lambda: not workdir_root.lock_held(lock), "the OS to release the dead worker's lock")
 
 
 def test_a_job_id_that_cant_name_a_file_is_a_malformed_answer(
@@ -552,10 +559,10 @@ def test_refuses_a_workdir_root_inside_a_git_repo(
 )
 def test_client_arguments_are_checked(spawn: FakeSpawn, argv: list[str]) -> None:
     with pytest.raises(SystemExit):
-        worker.parse_args(argv)
+        cli.parse_args(argv)
 
 
 def test_client_needs_a_token_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENTOS_CLIENT_TOKEN", raising=False)
     with pytest.raises(SystemExit):
-        worker.parse_args(["--client", "--server", "http://127.0.0.1:1"])
+        cli.parse_args(["--client", "--server", "http://127.0.0.1:1"])

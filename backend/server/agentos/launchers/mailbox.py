@@ -80,26 +80,23 @@ class Mailbox(Protocol):
 class MailboxLauncher:
     """Mailbox over a GitHubActionsProvider (dispatch, status, cancel) and a Store."""
 
-    def __init__(self, *, github: GitHubActionsProvider, store: Store, worker_path: Path) -> None:
+    def __init__(self, *, github: GitHubActionsProvider, store: Store, worker: bytes) -> None:
+        """`worker`: the bytes uploaded as each run's worker.py."""
         self.github = github
         self.store = store
-        self.worker_path = worker_path
+        self.worker = worker
 
     def send(self, run_id: int, folder: str, manifest_json: bytes) -> str:
         _check_folder(folder)
         if not folder.startswith(f"{run_id}-"):
             raise MailboxError(f"run folder {folder!r} isn't run {run_id}'s")
         try:
-            worker = self.worker_path.read_bytes()
-        except OSError as exc:
-            raise MailboxError(f"can't read worker.py: {type(exc).__name__}") from None
-        try:
-            self.store.put(f"runs/{folder}/worker.py", worker)
+            self.store.put(f"runs/{folder}/worker.py", self.worker)
             self.store.put(f"runs/{folder}/manifest.json", manifest_json)
             ref = self.github.dispatch(
                 {
                     "run": folder,
-                    "worker_sha256": hashlib.sha256(worker).hexdigest(),
+                    "worker_sha256": hashlib.sha256(self.worker).hexdigest(),
                     "manifest_sha256": hashlib.sha256(manifest_json).hexdigest(),
                 }
             )

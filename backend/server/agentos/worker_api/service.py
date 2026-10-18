@@ -20,7 +20,6 @@ from pydantic import ValidationError
 from agentos.auth.service import hash_token
 from agentos.clients import service as clients
 from agentos.clock import to_db, utcnow
-from agentos.config import WORKER_PATH
 from agentos.db import Conn, Database, Row
 from agentos.errors import ApiError, field_error, validation_error
 from agentos.files.service import write_version
@@ -54,6 +53,7 @@ from agentos.runs.service import (
 from agentos.tickets.service import ticket_pipeline
 from agentos.validate import MAX_SYNC_BACK_BYTES as MAX_SYNC_BACK_BYTES  # the route caps reads
 from agentos.validate import parsed, path_key, pydantic_issues, validate_pr_url
+from agentos.worker_archive import worker_file
 
 log = logging.getLogger(__name__)
 
@@ -229,7 +229,7 @@ def _apply(conn: Conn, run: Row, record: JournalRecord, now: datetime) -> str | 
             "WHERE id = ? AND status = 'dispatched'",
             (to_db(now), run["id"]),
         )
-        if started.worker_sha256 != hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest():
+        if started.worker_sha256 != worker_file().sha256:
             return "This worker.py differs from the server's: update it."
 
     elif record.type == "sync":
@@ -502,8 +502,7 @@ def lease_client(
                 log.warning("run %s %s (%s): its worker exited", job["id"], end[0], end[1])
             end_job(conn, job["id"], job["job_id"], now)
 
-    sha256 = hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest()
-    return LeaseResponse(job=None, protocol=2, worker_sha256=sha256)
+    return LeaseResponse(job=None, protocol=2, worker_sha256=worker_file().sha256)
 
 
 def take_client_run(db: Database, client_token: str, server_url: str) -> LeasedJob | None:

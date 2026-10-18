@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import paths
 
 FIXTURE = Path(__file__).resolve().parents[2] / "server" / "tests" / "fixtures" / "path_cases.json"
 
@@ -21,4 +21,4 @@ def _cases() -> list[Any]:
 
 @pytest.mark.parametrize(("path", "ok"), _cases())
 def test_path_rules_match_the_server(path: str, ok: bool) -> None:
-    assert (worker.path_error(path) is None) is ok
+    assert (paths.path_error(path) is None) is ok

@@ -1,4 +1,4 @@
-"""Mailbox mode: worker.main(--manifest, --outbox, --workdir) records its API calls to a file.
+"""Mailbox mode: main.main(--manifest, --outbox, --workdir) records its API calls to a file.
 
 The outbox is what the server replays: a header line, then one line per call in call order, with
 no heartbeats, ending in the complete call. Also the CLI's one-mode rule and the refusals.
@@ -7,13 +7,13 @@ no heartbeats, ending in the complete call. Also the CLI's one-mode rule and the
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import cli, main, worker_api
+from agentos_worker.outbox import Recorder
 from worker_tests.worker_support import (
     JOB_TOKEN,
     SKILL_DIR,
@@ -32,7 +32,7 @@ def run_mailbox(tmp_path: Path, manifest: Any) -> tuple[int, Path]:
     data = manifest if isinstance(manifest, bytes) else json.dumps(manifest).encode()
     manifest_path.write_bytes(data)
     outbox = tmp_path / "outbox.jsonl"
-    code = worker.main(
+    code = main.main(
         [
             "--manifest",
             str(manifest_path),
@@ -118,7 +118,7 @@ def test_a_failed_stage_records_a_failed_complete(tmp_path: Path) -> None:
 def test_mailbox_mode_refuses_http_options(extra: list[str], tmp_path: Path) -> None:
     mailbox = ["--manifest", "m.json", "--outbox", "o.jsonl", "--workdir", str(tmp_path)]
     with pytest.raises(SystemExit):
-        worker.parse_args([*mailbox, *extra])
+        cli.parse_args([*mailbox, *extra])
 
 
 @pytest.mark.parametrize(
@@ -132,14 +132,14 @@ def test_mailbox_mode_refuses_http_options(extra: list[str], tmp_path: Path) -> 
 )
 def test_each_mode_needs_its_options(argv: list[str]) -> None:
     with pytest.raises(SystemExit):
-        worker.parse_args(argv)
+        cli.parse_args(argv)
 
 
 def test_mailbox_args(tmp_path: Path) -> None:
-    args = worker.parse_args(["--manifest", "m.json", "--outbox", "o.jsonl", "--workdir", "ws"])
-    assert args == worker.FileMode(Path("m.json"), Path("o.jsonl"), Path("ws"))
-    live = worker.parse_args(["--server", "http://127.0.0.1:8000", "--token", "t"])
-    assert live == worker.LiveMode("http://127.0.0.1:8000", "t", None, None)
+    args = cli.parse_args(["--manifest", "m.json", "--outbox", "o.jsonl", "--workdir", "ws"])
+    assert args == cli.FileMode(Path("m.json"), Path("o.jsonl"), Path("ws"))
+    live = cli.parse_args(["--server", "http://127.0.0.1:8000", "--token", "t"])
+    assert live == cli.LiveMode("http://127.0.0.1:8000", "t", None, None)
 
 
 def test_an_existing_outbox_is_refused(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_a_bad_manifest_exits_1_without_an_outbox(tmp_path: Path, manifest: Any)
 def test_a_missing_manifest_exits_1_without_an_outbox(tmp_path: Path) -> None:
     outbox = tmp_path / "outbox.jsonl"
     argv = ["--manifest", str(tmp_path / "nope.json"), "--outbox", str(outbox)]
-    assert worker.main([*argv, "--workdir", str(tmp_path / "ws")]) == 1
+    assert main.main([*argv, "--workdir", str(tmp_path / "ws")]) == 1
     assert not outbox.exists()
 
 
@@ -174,18 +174,19 @@ def test_an_outbox_write_error_aborts_the_run(
 ) -> None:
     """A failing write in the events thread becomes a visible failure: the stage is killed and
     the worker exits 1 without completing (no silently dead thread, no 30 s wait)."""
-    real = worker.Recorder._write
+    real = Recorder._write
 
     def write(fh: Any, line: dict[str, Any]) -> None:
         if line.get("path") == EVENTS:
             raise OSError(28, "No space left on device")
         real(fh, line)
 
-    monkeypatch.setattr(worker.Recorder, "_write", staticmethod(write))
-    started = time.monotonic()
-    code, outbox = run_mailbox(tmp_path, make_package([agent_stage("implement", "sleep=30")]))
+    monkeypatch.setattr(Recorder, "_write", staticmethod(write))
+    stage = agent_stage("implement", "write=pre.txt:x", "sleep=30", "write=woke.txt:x")
+    code, outbox = run_mailbox(tmp_path, make_package([stage]))
     assert code == 1
-    assert time.monotonic() - started < 20
+    assert (tmp_path / "ws" / "pre.txt").exists(), "the stage ran"
+    assert not (tmp_path / "ws" / "woke.txt").exists(), "the stage was killed, not waited out"
     assert lines(outbox) == [{"outbox": 1, "run_id": 42}], "no complete after the failure"
 
 
@@ -196,12 +197,12 @@ def record(seq: int, type_: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_a_closed_recorder_refuses_further_records(tmp_path: Path) -> None:
-    recorder: worker.Reporter = worker.Recorder(tmp_path / "outbox.jsonl", 7)
-    assert recorder.send([]) == worker.Ack(0, False, ())
-    assert recorder.send([record(2, "sync", {"files": []})]) == worker.Ack(2, False, ())
+    recorder: worker_api.Reporter = Recorder(tmp_path / "outbox.jsonl", 7)
+    assert recorder.send([]) == worker_api.Ack(0, False, ())
+    assert recorder.send([record(2, "sync", {"files": []})]) == worker_api.Ack(2, False, ())
     recorder.close()
     result = {"status": "completed", "failed_stage": None, "error": None, "pr_url": None}
-    with pytest.raises(worker.Unreachable):
+    with pytest.raises(worker_api.Unreachable):
         recorder.send([record(3, "result", result)])
     assert lines(tmp_path / "outbox.jsonl") == [
         {"outbox": 1, "run_id": 7},

@@ -2,7 +2,7 @@
 
 test_worker_process runs this in a new hidden console (so pytest never sees the Ctrl+C), playing
 the part of `worker.py --client` in a terminal. It starts a control child the plain way plus a
-child through `worker.spawn_detached`, sends CTRL_C_EVENT to its own console, and writes
+child through `process.spawn_detached`, sends CTRL_C_EVENT to its own console, and writes
 {"control_exit": int | None, "detached_alive": bool} as JSON to argv[1].
 
 Usage: ctrl_c_harness.py OUT_JSON TMP_DIR (with backend/worker on PYTHONPATH)
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from types import FrameType
 
-import worker
+from agentos_worker import process
 
 CHILD = "import pathlib, sys, time\npathlib.Path(sys.argv[1]).write_text('ready')\ntime.sleep(60)\n"
 
@@ -48,7 +48,7 @@ def main() -> None:
     control_ready, detached_ready = tmp / "control.ready", tmp / "detached.ready"
     control = subprocess.Popen([sys.executable, "-c", CHILD, str(control_ready)])
     argv = [sys.executable, "-c", CHILD, str(detached_ready)]
-    detached = worker.spawn_detached(argv, tmp, dict(os.environ), tmp / "detached.log")
+    detached = process.spawn_detached(argv, tmp, dict(os.environ), tmp / "detached.log")
 
     try:
         _wait_for(control_ready, 30)

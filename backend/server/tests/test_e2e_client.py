@@ -1,9 +1,9 @@
 """End to end for client mode, no network and no LLM: the real server (uvicorn on a free loopback
 port, dispatcher and reaper loops on) with the recording `FakeProvider` as its configured provider
-(`github`; it starts nothing), and users' clients as real `worker.py --client` processes that start
-real run workers. Agent stages run `fake_agent.py`; the remote is a temp bare repo, reached as in
-`test_e2e.py` through `url.<file-url>.insteadOf` in the env file the client hands its run workers
-(`--env-file`).
+(`github`; it starts nothing), and users' clients as real `worker.py --client` processes (the
+served zip) that start real run workers. Agent stages run `fake_agent.py`; the remote is a temp
+bare repo, reached as in `test_e2e.py` through `url.<file-url>.insteadOf` in the env file the
+client hands its run workers (`--env-file`).
 
 Each test signs in its own users, so their client queues and online states are independent.
 
@@ -30,9 +30,8 @@ import pytest
 import uvicorn
 from pydantic import SecretStr
 
-import worker
 from agentos.clock import utcnow
-from agentos.config import WORKER_PATH, Settings
+from agentos.config import Settings
 from agentos.context import AppContext
 from agentos.main import create_app
 from agentos.models import ClientToken, ClientTokenCreated, Me, RunSummary, TaskProgress
@@ -42,6 +41,7 @@ from agentos.runs import dispatcher
 from agentos.runs.reaper import INTERVAL_S as REAPER_INTERVAL_S
 from agentos.runs.reaper import Reaper
 from agentos.worker_api.routes import LEASE_RETRY_S
+from agentos_worker import process
 from tests.run_support import FakeProvider
 from tests.settings_support import seed_test_settings
 from tests.test_e2e import (
@@ -171,7 +171,7 @@ class ClientProcess:
     token: ClientTokenCreated
     proc: subprocess.Popen[bytes]
     log: Path
-    job: worker._Job
+    job: process._Job
 
     def output(self) -> str:
         return self.log.read_text("utf-8", "replace") if self.log.exists() else ""
@@ -184,6 +184,7 @@ class ClientProcess:
 @dataclass
 class World:
     server: Server
+    worker_py: Path  # the served worker.py the clients run
     users: list[User] = field(default_factory=list)
     clients: list[ClientProcess] = field(default_factory=list)
 
@@ -210,7 +211,7 @@ class World:
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith("AGENTOS_")}
         env |= {**GIT_ENV, "AGENTOS_CLIENT_TOKEN": token.token, "PYTHONUNBUFFERED": "1"}
         argv = [
-            sys.executable, str(WORKER_PATH), "--client", "--server", self.server.url,
+            sys.executable, str(self.worker_py), "--client", "--server", self.server.url,
             "--workdir-root", str(user.client_root), "--env-file", str(self.server.env_file),
         ]  # fmt: skip
         assert not any(token.token in arg for arg in argv)
@@ -228,7 +229,7 @@ class World:
                 stderr=subprocess.STDOUT,
                 creationflags=flags,
             )
-        client = ClientProcess(token, proc, log, worker._Job(proc.pid))
+        client = ClientProcess(token, proc, log, process._Job(proc.pid))
         self.clients.append(client)
         return client
 
@@ -243,10 +244,10 @@ class World:
 
 
 @pytest.fixture
-def world(server: Server) -> Iterator[World]:
+def world(server: Server, built_worker: Path) -> Iterator[World]:
     """Users and clients for one test. Teardown stops the clients, cancels the users' unfinished
     runs and waits for (or ends) every run worker the clients started."""
-    w = World(server)
+    w = World(server, built_worker)
     try:
         yield w
     finally:
@@ -379,6 +380,10 @@ def test_client_runs_gate_edit_continue_while_the_provider_serves_server_runs(
     assert [p.name for p in bob.logs.iterdir()] == ["client.lock"]  # no run workspace or log
     assert anns.proc.poll() is None
     assert bobs.proc.poll() is None
+    # The client runs the served worker.py, and so do the run workers it starts.
+    assert "differs" not in anns.output()
+    warnings = [e["data"]["message"] for e in ann.events(run1.id) if e["type"] == "warning"]
+    assert not any("differs" in w for w in warnings), warnings
     server_detail = ann.run(server_run.id)
     assert server_detail.status == "dispatched"
     assert server_detail.launch_url == FakeProvider.ref(server_run.id)

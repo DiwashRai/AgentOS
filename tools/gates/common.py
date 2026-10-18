@@ -40,6 +40,8 @@ def layer_of(path: str, layers: dict[str, list[str]]) -> str:
 
 
 def module_of(path: str) -> str:
-    """`backend/server/agentos/pipeline/space.py` -> `agentos.pipeline.space`."""
-    dotted = path.removeprefix("backend/server/").removesuffix(".py").replace("/", ".")
+    """`backend/server/agentos/pipeline/space.py` -> `agentos.pipeline.space`, and
+    `backend/worker/agentos_worker/paths.py` -> `agentos_worker.paths`."""
+    relative = path.removeprefix("backend/server/").removeprefix("backend/worker/")
+    dotted = relative.removesuffix(".py").replace("/", ".")
     return dotted.removesuffix(".__init__")

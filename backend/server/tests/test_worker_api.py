@@ -3,7 +3,9 @@ journal records; idempotency and 410s. Ordering and binding: test_journal.py."""
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +16,7 @@ from fastapi.testclient import TestClient
 from agentos.context import AppContext
 from agentos.models import FileVersionInfo, TicketDetail
 from agentos.worker_api import service as worker_service
+from agentos.worker_archive import worker_file
 from tests.run_support import CSRF, RunDriver, Worker, bearer, event, finished, log_event
 
 CreateTicket = Callable[..., TicketDetail]
@@ -549,7 +552,11 @@ def test_unknown_job_token_is_401(ticket: TicketDetail, runs: RunDriver) -> None
         assert error(r) == (401, "unauthorized")
 
 
-def test_worker_source_is_served(client: TestClient) -> None:
+def test_worker_py_is_served_as_the_built_zip(client: TestClient) -> None:
     response = client.get("/api/worker/worker.py")
     assert response.status_code == 200
-    assert "PROTOCOL = 2" in response.text
+    assert response.content == worker_file().data
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert 'filename="worker.py"' in response.headers["content-disposition"]
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert names[0] == "__main__.py"

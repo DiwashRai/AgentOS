@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import worker
+from agentos_worker import process
 from worker_tests.worker_support import FAKE_STAGE
 
 Line = tuple[str, str, bool]
@@ -26,9 +26,9 @@ def run(
     timeout_s: float = 30,
     caps: tuple[int, int] = (1000, 1000),
     interrupt: str | None = None,
-) -> tuple[worker.ProcResult, list[Line]]:
+) -> tuple[process.ProcResult, list[Line]]:
     lines: list[Line] = []
-    result = worker.run_process(
+    result = process.run_process(
         [sys.executable, str(FAKE_STAGE), *actions],
         cwd=tmp_path,
         env=dict(os.environ),
@@ -36,7 +36,7 @@ def run(
         timeout_s=timeout_s,
         caps=caps,
         on_line=lambda stream, text, truncated: lines.append((stream, text, truncated)),
-        interrupt=lambda: interrupt,
+        interrupt=lambda: interrupt if lines else None,  # once the stage has said something
     )
     return result, lines
 
@@ -56,7 +56,7 @@ def alive(pid: int) -> bool:
 
 def test_output_lines_reach_on_line(tmp_path: Path) -> None:
     result, lines = run(tmp_path, "print=hello", "print=world")
-    assert result == worker.ProcResult(0)
+    assert result == process.ProcResult(0)
     assert lines == [("stdout", "hello", False), ("stdout", "world", False)]
 
 
@@ -89,19 +89,18 @@ def test_background_child_holding_the_pipe_does_not_hang(tmp_path: Path) -> None
 
 
 def test_timeout_kills_the_tree(tmp_path: Path) -> None:
-    started = time.monotonic()
-    result, lines = run(tmp_path, "sleep=30", timeout_s=0.5)
+    result, lines = run(tmp_path, "sleep=30", "print=woke", timeout_s=0.5)
     assert result.stopped == "timeout"
-    assert time.monotonic() - started < 10
     assert ("stdout", "started", False) in lines
+    assert ("stdout", "woke", False) not in lines, "killed mid-sleep, not waited out"
 
 
 @pytest.mark.parametrize("reason", ["cancel", "abort"])
 def test_interrupt_kills_the_tree(tmp_path: Path, reason: str) -> None:
-    started = time.monotonic()
-    result, _ = run(tmp_path, "sleep=30", interrupt=reason)
+    result, lines = run(tmp_path, "sleep=30", "print=woke", interrupt=reason)
     assert result.stopped == reason
-    assert time.monotonic() - started < 10
+    assert ("stdout", "started", False) in lines
+    assert ("stdout", "woke", False) not in lines, "killed mid-sleep, not waited out"
 
 
 @pytest.mark.parametrize(("length", "truncated"), [(10, False), (11, True), (100, True)])
@@ -115,7 +114,7 @@ def test_long_lines_are_cut_and_flagged(tmp_path: Path, length: int, truncated: 
 
 
 def test_missing_program_is_an_error(tmp_path: Path) -> None:
-    result = worker.run_process(
+    result = process.run_process(
         [str(tmp_path / "does-not-exist")],
         cwd=tmp_path,
         env=dict(os.environ),
@@ -132,26 +131,26 @@ def test_missing_program_is_an_error(tmp_path: Path) -> None:
 # Characters cmd.exe interprets in a .cmd/.bat argument instead of passing them through literally.
 @pytest.mark.parametrize("char", ["&", "|", "<", ">", "^", "%", "!", '"', "\r", "\n"])
 def test_cmd_guard_rejects_unsafe_characters(char: str) -> None:
-    error = worker.cmd_guard_error(r"C:\tools\claude.CMD", ["claude", "-p", f"a{char}b"])
+    error = process.cmd_guard_error(r"C:\tools\claude.CMD", ["claude", "-p", f"a{char}b"])
     assert error == "use prompt_via=stdin or a native binary"
 
 
 def test_cmd_guard_allows_native_binaries_and_safe_args() -> None:
-    assert worker.cmd_guard_error(r"C:\tools\claude.exe", ["claude", "a&b\n"]) is None
+    assert process.cmd_guard_error(r"C:\tools\claude.exe", ["claude", "a&b\n"]) is None
     safe = ["claude", "-p", "--model=claude-haiku-5-5", r"C:\work dir\a.md", "it's (fine) 100$"]
-    assert worker.cmd_guard_error(r"C:\tools\claude.bat", safe) is None
+    assert process.cmd_guard_error(r"C:\tools\claude.bat", safe) is None
 
 
 def test_shell_prefix_defaults_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    default = worker.shell_prefix()
+    default = process.shell_prefix()
     if os.name == "nt":
         assert default == ["pwsh", "-NoProfile", "-Command"]
         monkeypatch.setenv("AGENTOS_SHELL", r'"C:\Program Files\Git\bin\bash.exe" -lc')
-        assert worker.shell_prefix() == [r"C:\Program Files\Git\bin\bash.exe", "-lc"]
+        assert process.shell_prefix() == [r"C:\Program Files\Git\bin\bash.exe", "-lc"]
     else:
         assert default == ["bash", "-lc"]
         monkeypatch.setenv("AGENTOS_SHELL", "'/opt/my shell/sh' -c")
-        assert worker.shell_prefix() == ["/opt/my shell/sh", "-c"]
+        assert process.shell_prefix() == ["/opt/my shell/sh", "-c"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Ctrl+C console semantics are Windows-only")
@@ -163,7 +162,7 @@ def test_a_detached_child_survives_ctrl_c_to_the_client_console(tmp_path: Path) 
     """
     out = tmp_path / "result.json"
     env = dict(os.environ)
-    worker_dir = str(Path(worker.__file__).resolve().parent)
+    worker_dir = str(Path(process.__file__).resolve().parents[1])
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [worker_dir, env.get("PYTHONPATH")]))
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW

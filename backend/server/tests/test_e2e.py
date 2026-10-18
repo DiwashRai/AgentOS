@@ -1,7 +1,7 @@
 """End to end, no network and no LLM (SPEC §14): the real server (uvicorn on a free loopback port,
 dispatcher and reaper loops on) with the test-only `SubprocessProvider` as its `github` provider,
-the real worker.py as a process and a temp bare git repo as the remote, driven only through the
-HTTP API. Agent stages run `fake_agent.py`.
+the served worker.py (the built zip) as a process and a temp bare git repo as the remote, driven
+only through the HTTP API. Agent stages run `fake_agent.py`.
 
 The remote is the catalog repo `remote`. Its `https://` URL (repo_url_problem accepts no file://)
 is what the worker's git rewrites to the bare repo's file:// URL with `url.<file-url>.insteadOf`,
@@ -64,7 +64,7 @@ GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
 
 T = TypeVar("T")
 
-_: Provider = SubprocessProvider(Path("unused"))
+_: Provider = SubprocessProvider(Path("unused"), Path("unused.py"))
 
 
 # ------------------------------------------------------------------ the remote
@@ -283,9 +283,12 @@ def remote(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def runner(tmp_path_factory: pytest.TempPathFactory, remote: Path) -> Iterator[SubprocessProvider]:
+def runner(
+    tmp_path_factory: pytest.TempPathFactory, remote: Path, built_worker: Path
+) -> Iterator[SubprocessProvider]:
     """The server's provider. Teardown kills any worker that outlived its test."""
-    provider = SubprocessProvider(tmp_path_factory.mktemp("e2e-runs"), worker_git_env(remote))
+    root = tmp_path_factory.mktemp("e2e-runs")
+    provider = SubprocessProvider(root, built_worker, worker_git_env(remote))
     yield provider
     for ref in list(provider.children):
         provider.cleanup(ref)
@@ -458,6 +461,8 @@ def test_gate_edit_continue_succeeds(e2e: E2E) -> None:
     assert any('"subtype": "init"' in line for line in stdout), e2e.diag(run1.id)
     stderr = [e for e in events if e["type"] == "log" and e["data"]["stream"] == "stderr"]
     assert any("fake-agent plan" in e["data"]["text"] for e in stderr), e2e.diag(run1.id)
+    warnings = [e["data"]["message"] for e in events if e["type"] == "warning"]
+    assert not any("differs" in w for w in warnings), warnings  # it ran the served worker.py
     # Nothing outside the skill dir changed, so nothing was committed or pushed.
     branches = git("--git-dir", str(e2e.remote), "branch", "--list", f"agent/{key}")
     assert branches.strip() == ""

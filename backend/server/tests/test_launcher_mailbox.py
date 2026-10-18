@@ -83,22 +83,20 @@ def _github_answering(handler: Handler) -> tuple[GitHubActionsProvider, list[htt
 
 
 def _mailbox(
-    tmp_path: Path, handler: Handler | None = None
+    handler: Handler | None = None,
 ) -> tuple[MailboxLauncher, FakeStore, list[httpx.Request]]:
-    worker = tmp_path / "worker.py"
-    worker.write_bytes(WORKER)
     github, seen = _github_answering(
         handler or (lambda _r: httpx.Response(200, json={"html_url": RUN_HTML}))
     )
     store = FakeStore()
-    return MailboxLauncher(github=github, store=store, worker_path=worker), store, seen
+    return MailboxLauncher(github=github, store=store, worker=WORKER), store, seen
 
 
 # ---------------------------------------------------------------- send
 
 
-def test_send_uploads_then_dispatches(tmp_path: Path) -> None:
-    mailbox, store, seen = _mailbox(tmp_path)
+def test_send_uploads_then_dispatches() -> None:
+    mailbox, store, seen = _mailbox()
 
     assert mailbox.send(42, FOLDER, MANIFEST) == RUN_HTML
 
@@ -118,18 +116,16 @@ def test_send_uploads_then_dispatches(tmp_path: Path) -> None:
     }
 
 
-def test_send_without_a_run_url_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    mailbox, _, seen = _mailbox(tmp_path, lambda _r: httpx.Response(204))
+def test_send_without_a_run_url_warns(caplog: pytest.LogCaptureFixture) -> None:
+    mailbox, _, seen = _mailbox(lambda _r: httpx.Response(204))
     with caplog.at_level(logging.WARNING, logger="agentos.launchers.mailbox"):
         assert mailbox.send(42, FOLDER, MANIFEST) == RUNS_PAGE
     assert "GitHub returned no workflow run" in caplog.text
     assert len(seen) == 1  # the warning didn't ask GitHub anything
 
 
-def test_send_with_a_run_url_does_not_warn(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    mailbox, _, _ = _mailbox(tmp_path)
+def test_send_with_a_run_url_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    mailbox, _, _ = _mailbox()
     with caplog.at_level(logging.WARNING, logger="agentos.launchers.mailbox"):
         mailbox.send(42, FOLDER, MANIFEST)
     assert caplog.records == []
@@ -145,16 +141,16 @@ def test_send_with_a_run_url_does_not_warn(
         (7, FOLDER),  # another run's folder
     ],
 )
-def test_send_refuses_a_bad_folder(tmp_path: Path, run_id: int, folder: str) -> None:
-    mailbox, store, seen = _mailbox(tmp_path)
+def test_send_refuses_a_bad_folder(run_id: int, folder: str) -> None:
+    mailbox, store, seen = _mailbox()
     with pytest.raises(MailboxError, match="run folder"):
         mailbox.send(run_id, folder, MANIFEST)
     assert store.calls == []
     assert seen == []
 
 
-def test_send_store_failure_is_a_mailbox_error_and_no_dispatch(tmp_path: Path) -> None:
-    mailbox, store, seen = _mailbox(tmp_path)
+def test_send_store_failure_is_a_mailbox_error_and_no_dispatch() -> None:
+    mailbox, store, seen = _mailbox()
     store.fail = StoreError("Artifactory put runs/x answered 403: Forbidden")
     with pytest.raises(MailboxError, match="answered 403: Forbidden") as info:
         mailbox.send(42, FOLDER, MANIFEST)
@@ -163,9 +159,9 @@ def test_send_store_failure_is_a_mailbox_error_and_no_dispatch(tmp_path: Path) -
     assert seen == []
 
 
-def test_send_github_failure_is_a_mailbox_error(tmp_path: Path) -> None:
+def test_send_github_failure_is_a_mailbox_error() -> None:
     mailbox, _, _ = _mailbox(
-        tmp_path, lambda _r: httpx.Response(401, json={"message": f"Bad credentials {GH_TOKEN}"})
+        lambda _r: httpx.Response(401, json={"message": f"Bad credentials {GH_TOKEN}"})
     )
     with pytest.raises(MailboxError) as info:
         mailbox.send(42, FOLDER, MANIFEST)
@@ -173,24 +169,16 @@ def test_send_github_failure_is_a_mailbox_error(tmp_path: Path) -> None:
     assert info.value.__cause__ is None
 
 
-def test_send_without_worker_py_is_a_mailbox_error(tmp_path: Path) -> None:
-    mailbox, store, _ = _mailbox(tmp_path)
-    mailbox.worker_path = tmp_path / "missing.py"
-    with pytest.raises(MailboxError, match=r"can't read worker\.py"):
-        mailbox.send(42, FOLDER, MANIFEST)
-    assert store.calls == []
-
-
 # ---------------------------------------------------------------- status and cancel
 
 
-def test_status_and_cancel_delegate_to_github(tmp_path: Path) -> None:
+def test_status_and_cancel_delegate_to_github() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(200, json={"jobs": [{"name": "work", "status": "queued"}]})
         return httpx.Response(202)
 
-    mailbox, _, seen = _mailbox(tmp_path, handler)
+    mailbox, _, seen = _mailbox(handler)
     assert mailbox.status(RUN_HTML) == JobStatus("pending")
     mailbox.cancel(RUN_HTML)
     assert [(r.method, str(r.url)) for r in seen] == [
@@ -203,11 +191,11 @@ def test_status_and_cancel_delegate_to_github(tmp_path: Path) -> None:
     assert len(seen) == 2
 
 
-def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
+def test_status_and_cancel_errors_are_mailbox_errors() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"refused {GH_TOKEN}", request=request)
 
-    mailbox, _, _ = _mailbox(tmp_path, handler)
+    mailbox, _, _ = _mailbox(handler)
     calls: list[Callable[[], object]] = [
         lambda: mailbox.status(RUN_HTML),
         lambda: mailbox.cancel(RUN_HTML),
@@ -223,7 +211,7 @@ def test_status_and_cancel_errors_are_mailbox_errors(tmp_path: Path) -> None:
 
 
 def test_fetch_outbox(tmp_path: Path) -> None:
-    mailbox, store, _ = _mailbox(tmp_path)
+    mailbox, store, _ = _mailbox()
     dest = tmp_path / "outbox.jsonl"
 
     assert mailbox.fetch_outbox(FOLDER, dest) is False
@@ -240,7 +228,7 @@ def test_fetch_outbox_caps_the_size(tmp_path: Path) -> None:
             seen.append(max_bytes)
             raise StoreTooLarge(f"{path} is over {max_bytes} bytes")
 
-    mailbox, _, _ = _mailbox(tmp_path)
+    mailbox, _, _ = _mailbox()
     mailbox.store = Capped()
     with pytest.raises(MailboxTooLarge) as info:
         mailbox.fetch_outbox(FOLDER, tmp_path / "o")
@@ -250,7 +238,7 @@ def test_fetch_outbox_caps_the_size(tmp_path: Path) -> None:
 
 
 def test_fetch_outbox_store_error(tmp_path: Path) -> None:
-    mailbox, store, _ = _mailbox(tmp_path)
+    mailbox, store, _ = _mailbox()
     store.fail = StoreError("Artifactory get failed after 3 attempts")
     with pytest.raises(MailboxError, match="failed after 3 attempts") as info:
         mailbox.fetch_outbox(FOLDER, tmp_path / "o")
@@ -259,8 +247,8 @@ def test_fetch_outbox_store_error(tmp_path: Path) -> None:
         mailbox.fetch_outbox("../etc", tmp_path / "o")
 
 
-def test_delete_run_and_run_folders(tmp_path: Path) -> None:
-    mailbox, store, _ = _mailbox(tmp_path)
+def test_delete_run_and_run_folders() -> None:
+    mailbox, store, _ = _mailbox()
     assert mailbox.run_folders() == []
     mailbox.send(42, FOLDER, MANIFEST)
     store.files["runs/junk/x"] = b""
@@ -278,8 +266,8 @@ def test_delete_run_and_run_folders(tmp_path: Path) -> None:
             mailbox.delete_run(bad)
 
 
-def test_delete_and_list_errors_are_mailbox_errors(tmp_path: Path) -> None:
-    mailbox, store, _ = _mailbox(tmp_path)
+def test_delete_and_list_errors_are_mailbox_errors() -> None:
+    mailbox, store, _ = _mailbox()
     store.fail = StoreError("Artifactory list runs answered 401: Unauthorized")
     with pytest.raises(MailboxError, match="401"):
         mailbox.run_folders()

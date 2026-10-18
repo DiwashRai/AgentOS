@@ -18,7 +18,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["server/agentos"]
+packages = ["server/agentos", "worker/agentos_worker"]
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -33,8 +33,9 @@ select = [
     "BLE001", "PGH003", "TID251",
 ]
 
-# The pure core (import-linter's first contract) never reads the clock. TID251 applies only
-# there: every other file ignores it (the negated glob below).
+# The pure core (import-linter's first contract, and the worker's core) never reads the clock.
+# TID251 applies only there: every other file ignores it (the negated glob below; globset allows
+# no nested braces, so it is one flat list).
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "datetime.datetime.now".msg = "pure core takes `now` as an argument"
 "datetime.datetime.utcnow".msg = "pure core takes `now` as an argument"
@@ -45,14 +46,14 @@ select = [
 "agentos.clock.utcnow".msg = "pure core takes `now` as an argument"
 
 [tool.ruff.lint.per-file-ignores]
-"!server/agentos/{models.py,validate.py,errors.py,pipeline/**,*/board.py,*/rules.py}" = ["TID251"]
+"!{server/agentos/models.py,server/agentos/validate.py,server/agentos/errors.py,server/agentos/pipeline/**,server/agentos/*/board.py,server/agentos/*/rules.py,worker/agentos_worker/package.py,worker/agentos_worker/verdicts.py,worker/agentos_worker/publication.py,worker/agentos_worker/git.py,worker/agentos_worker/paths.py,worker/agentos_worker/blocks.py,worker/agentos_worker/env_file.py,worker/agentos_worker/fit.py,worker/agentos_worker/text.py,worker/agentos_worker/tunables.py}" = ["TID251"]
 "**/tests/**" = ["S101", "S603", "S607"]
 "**/worker_tests/**" = ["S101", "S603", "S607"]
 # Running subprocesses described by the manifest is the worker's job.
-"worker/worker.py" = ["S603", "S607"]
+"worker/agentos_worker/**" = ["S603", "S607"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agentos", "worker"]
+known-first-party = ["agentos", "agentos_worker"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
@@ -60,7 +61,9 @@ strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = ["server", "worker"]
 explicit_package_bases = true
-files = ["server/agentos", "server/tests", "worker/worker.py", "worker/worker_tests"]
+files = [
+    "server/agentos", "server/tests", "worker/worker.py", "worker/agentos_worker", "worker/worker_tests",
+]
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
@@ -80,7 +83,7 @@ norecursedirs = [".*", "*.egg", "build", "dist", "node_modules", "venv", "live"]
 
 # ---------------------------------------------------------------- import-linter
 [tool.importlinter]
-root_package = "agentos"
+root_packages = ["agentos", "agentos_worker"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -149,6 +152,59 @@ name = "No import cycles between agentos subpackages"
 type = "acyclic_siblings"
 ancestors = ["agentos"]
 broken_contract_guidance = "Direction: worker_api -> runs -> social -> tickets -> workflows -> templates | files | clients -> auth (clients is a leaf: its tokens, and who is online). To read another feature's tables, query them in your own service instead of importing upwards."
+
+[[tool.importlinter.contracts]]
+name = "The worker is self-contained"
+type = "forbidden"
+source_modules = ["agentos_worker"]
+forbidden_modules = ["agentos"]
+broken_contract_guidance = "The worker runs on runners and clients without the server: it speaks only the job package and the worker API."
+
+[[tool.importlinter.contracts]]
+name = "The server uses the worker only to build worker.py"
+type = "forbidden"
+source_modules = ["agentos"]
+forbidden_modules = ["agentos_worker"]
+ignore_imports = ["agentos.worker_archive -> agentos_worker.archive"]
+broken_contract_guidance = "The server serves the worker; it never runs its code. Only agentos.worker_archive imports agentos_worker.archive, which imports no other worker module."
+
+# The worker's modules in three layers: shell (orchestrates), boundary (touches the outside or
+# decodes untrusted values), core (pure rules and records). `:` lets siblings import each other;
+# `exhaustive` makes a new module pick its layer here.
+[[tool.importlinter.contracts]]
+name = "Worker: shell -> boundary -> core"
+type = "layers"
+containers = ["agentos_worker"]
+exhaustive = true
+layers = [
+    "main",
+    "client : run",
+    "children : sync : publishing",
+    "cli : worker_api : outbox : events : echo : process : files : github : verdict_reading : parse : workdir_root : archive : console",
+    "package : verdicts : publication : git : paths : blocks : env_file : fit : text : tunables",
+]
+broken_contract_guidance = "Imports point down: shell -> boundary -> core. Move a pure rule or record down into the core; pass I/O results in as values."
+
+[[tool.importlinter.contracts]]
+name = "No import cycles between worker modules"
+type = "acyclic_siblings"
+ancestors = ["agentos_worker"]
+broken_contract_guidance = "Two worker modules import each other: move the shared name down into the lower one (or the core)."
+
+[[tool.importlinter.contracts]]
+name = "Worker core: no I/O"
+type = "forbidden"
+source_modules = [
+    "agentos_worker.package", "agentos_worker.verdicts", "agentos_worker.publication",
+    "agentos_worker.git", "agentos_worker.paths", "agentos_worker.blocks",
+    "agentos_worker.env_file", "agentos_worker.fit", "agentos_worker.text",
+    "agentos_worker.tunables",
+]
+forbidden_modules = [
+    "subprocess", "socket", "http", "threading", "ctypes", "msvcrt", "fcntl", "shutil",
+    "zipfile", "signal", "os", "io", "argparse",
+]
+broken_contract_guidance = "The worker's core is pure: it takes values and returns values. Do the I/O in a boundary module and pass the result in. (test_worker_stdlib.py holds the core's full stdlib allowlist.)"
 
 [dependency-groups]
 dev = [

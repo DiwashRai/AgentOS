@@ -1,5 +1,5 @@
-"""Mailbox mode end to end without GitHub or Artifactory: the server sends a run, the real
-`worker.py --manifest --outbox` runs it, and the server replays the outbox it wrote."""
+"""Mailbox mode end to end without GitHub or Artifactory: the server sends a run, the served
+`worker.py --manifest --outbox` (the zip) runs it, and the server replays the outbox it wrote."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentos.clock import utcnow
-from agentos.config import WORKER_PATH
 from agentos.context import server_route
 from agentos.launchers.base import Provider
 from agentos.mailbox import dispatcher as mailbox_dispatcher
@@ -45,6 +44,7 @@ def test_a_real_worker_outbox_replays_into_the_run(
     create_ticket: CreateTicket,
     runs: RunDriver,
     tmp_path: Path,
+    built_worker: Path,
 ) -> None:
     ticket = create_ticket("Mailbox end to end", repo=None)
     mailbox = FakeMailbox()
@@ -66,7 +66,7 @@ def test_a_real_worker_outbox_replays_into_the_run(
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith("AGENTOS_")}
     env["AGENTOS_PR_LOOKUP"] = "0"
     done = subprocess.run(
-        [sys.executable, str(WORKER_PATH), "--manifest", str(manifest_path),
+        [sys.executable, str(built_worker), "--manifest", str(manifest_path),
          "--outbox", str(outbox), "--workdir", str(tmp_path / "work")],
         capture_output=True, env=env, timeout=120, check=False,
     )  # fmt: skip

@@ -8,7 +8,7 @@ with GH_TOKEN set to a token that can write to the repo's contents (GITHUB_API_U
 GITHUB_SERVER_URL default to github.com). It clones the repo into a temp dir and, on a throwaway
 branch `agentos-live-publish-<timestamp>` off the default branch, commits added, modified,
 deleted, executable, symlinked (index-only, so it works without symlink support) and binary
-files. It publishes them with `worker.publish_branch` (one remote commit), checks the remote tree,
+files. It publishes them with `publish_branch` (one remote commit), checks the remote tree,
 parent and ref, then publishes a second batch and checks it fast-forwards. The branch is deleted
 at the end, whatever happened.
 """
@@ -25,7 +25,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import worker
+from agentos_worker import files, publication
+from agentos_worker.git import GitResult, GitRunner
+from agentos_worker.github import GitHub, GitHubError
+from agentos_worker.publishing import publish_branch, track_published
 
 GIT_TIMEOUT_S = 300
 
@@ -34,8 +37,8 @@ class Fail(Exception):
     """A check failed; the message says which."""
 
 
-def make_git(workdir: Path, env: dict[str, str]) -> worker.GitRunner:
-    def git(*args: str, stdin: bytes | None = None) -> worker.GitResult:
+def make_git(workdir: Path, env: dict[str, str]) -> GitRunner:
+    def git(*args: str, stdin: bytes | None = None) -> GitResult:
         p = subprocess.run(
             ["git", "-c", "core.quotePath=false", *args],
             cwd=workdir,
@@ -46,7 +49,7 @@ def make_git(workdir: Path, env: dict[str, str]) -> worker.GitRunner:
             timeout=GIT_TIMEOUT_S,
             check=False,
         )
-        return worker.GitResult(p.returncode, p.stdout, p.stderr)
+        return GitResult(p.returncode, p.stdout, p.stderr)
 
     return git
 
@@ -70,7 +73,7 @@ def git_env(server_url: str, token: str) -> dict[str, str]:
     return env
 
 
-def out(git: worker.GitRunner, *args: str, stdin: bytes | None = None) -> str:
+def out(git: GitRunner, *args: str, stdin: bytes | None = None) -> str:
     r = git(*args, stdin=stdin)
     if r.code:
         raise Fail(f"git {args[0]} failed: {r.tail()}")
@@ -83,7 +86,7 @@ def write(root: Path, rel: str, data: bytes) -> None:
     path.write_bytes(data)
 
 
-def commit(git: worker.GitRunner, message: str, *paths: str) -> str:
+def commit(git: GitRunner, message: str, *paths: str) -> str:
     """Commit what is staged (plus `paths`); never `add -A`, which would drop index-only links."""
     if paths:
         out(git, "add", "--", *paths)
@@ -91,7 +94,7 @@ def commit(git: worker.GitRunner, message: str, *paths: str) -> str:
     return out(git, "rev-parse", "HEAD")
 
 
-def first_batch(git: worker.GitRunner, root: Path) -> None:
+def first_batch(git: GitRunner, root: Path) -> None:
     """Two commits, published as one: added text, binary, executable and symlinked files, then
     a modify and a delete."""
     write(root, "live/a.txt", b"first line\n")
@@ -108,7 +111,7 @@ def first_batch(git: worker.GitRunner, root: Path) -> None:
     commit(git, "live: modify and delete", "live/a.txt")
 
 
-def second_batch(git: worker.GitRunner, root: Path) -> None:
+def second_batch(git: GitRunner, root: Path) -> None:
     """A modify, a mode-only change and a delete on top of the published branch."""
     write(root, "live/a.txt", b"first line\nsecond line\nthird line\n")
     out(git, "update-index", "--chmod=-x", "live/run.sh")
@@ -116,13 +119,11 @@ def second_batch(git: worker.GitRunner, root: Path) -> None:
     commit(git, "live: second batch", "live/a.txt")
 
 
-def publish(
-    git: worker.GitRunner, github: worker.GitHub, branch: str, pushed: str, exists: bool
-) -> str:
+def publish(git: GitRunner, github: GitHub, branch: str, pushed: str, exists: bool) -> str:
     """Publish, then check: one remote commit on `pushed` with HEAD's tree, and the branch on it.
     Returns the remote sha."""
-    sha, _ = worker.publish_branch(git, github, branch, pushed, exists)
-    problem = worker.track_published(git, branch, sha)
+    sha, _ = publish_branch(git, github, branch, pushed, exists)
+    problem = track_published(git, branch, sha)
     if problem:
         raise Fail(problem)
 
@@ -139,7 +140,7 @@ def publish(
 
 
 def run(repo: str, token: str, api_url: str, server_url: str, tmp: Path) -> None:
-    github = worker.GitHub(api_url, token, repo)
+    github = GitHub(api_url, token, repo)
     root = tmp / "clone"
     env = git_env(server_url, token)
     clone = make_git(tmp, env)
@@ -163,7 +164,7 @@ def run(repo: str, token: str, api_url: str, server_url: str, tmp: Path) -> None
         try:
             github.call("DELETE", f"/git/refs/heads/{branch}")
             print(f"deleted {branch}")
-        except worker.GitHubError as exc:
+        except GitHubError as exc:
             print(f"could not delete {branch}: {exc}")
 
 
@@ -177,7 +178,7 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    repo, why = worker.github_repo(f"{server_url.rstrip('/')}/{argv[0]}", server_url)
+    repo, why = publication.github_repo(f"{server_url.rstrip('/')}/{argv[0]}", server_url)
     if repo is None:
         print(f"bad repo: {why}", file=sys.stderr)
         return 2
@@ -187,11 +188,11 @@ def main(argv: list[str]) -> int:
     ) as tmp:
         try:
             run(repo, token, api_url, server_url, Path(tmp))
-        except (Fail, worker.PublishError, worker.GitHubError) as exc:
-            print(f"FAIL: {worker.scrub(str(exc), (token,))}", file=sys.stderr)
+        except (Fail, publication.PublishError, GitHubError) as exc:
+            print(f"FAIL: {publication.scrub(str(exc), (token,))}", file=sys.stderr)
             return 1
         finally:
-            worker.remove_tree(Path(tmp) / "clone")
+            files.remove_tree(Path(tmp) / "clone")
     print("PASS")
     return 0
 

@@ -1,4 +1,4 @@
-"""Loop blocks: rounds, checks and the verdict channel, through worker.main() with a fake agent.
+"""Loop blocks: rounds, checks and the verdict channel, through main.main() with a fake agent.
 
 A check's pass/fail is decided by code: a shell check's exit code, or an agent check's JSON verdict
 (from `.agentos/verdict.json` or the CLI's result line), validated, repaired by resuming at most
@@ -8,13 +8,13 @@ A check's pass/fail is decided by code: a shell check's exit code, or an agent c
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import worker
+from agentos_worker import fit, main, verdicts
+from agentos_worker.verdict_reading import checked_verdict, file_verdict
 from worker_tests.worker_support import (
     JOURNAL,
     KEY,
@@ -332,15 +332,14 @@ def test_cancel_in_a_later_round(server: FakeServer, tmp_path: Path) -> None:
             server.cancel = True
 
     server.hook = hook
-    implement = maker("implement", "print=work", rounds=[invocation("sleep=30")])
+    implement = maker("implement", "print=work", rounds=[invocation("sleep=30", "print=woke")])
     review = checked(
         agent_stage("review", verdict_file("fail", "Fix it.")),
         rounds=[invocation(verdict_file("pass", ""))],
     )
     server.manifest = manifest([implement, review], [block("implement", "review", 2)])
-    started = time.monotonic()
     assert run_worker(server, tmp_path / "ws") == 0
-    assert time.monotonic() - started < 15
+    assert "woke" not in server.logs(), "the stage was killed mid-sleep, not waited out"
     assert server.complete() == {"status": "cancelled", "failed_stage": "implement", "error": None}
     assert events(server, "stage_finished")[-1] == (
         "implement",
@@ -578,7 +577,7 @@ def test_a_mailbox_run_records_rounds_and_verdicts(tmp_path: Path) -> None:
     )
     outbox = tmp_path / "outbox.jsonl"
     argv = ["--manifest", str(path), "--outbox", str(outbox), "--workdir", str(tmp_path / "ws")]
-    assert worker.main(argv) == 0
+    assert main.main(argv) == 0
     calls = [json.loads(line) for line in outbox.read_bytes().splitlines()[1:]]
     recorded = [e for c in calls if c["path"] == "/api/worker/events" for e in c["body"]["events"]]
     assert [e["data"]["verdict"] for e in recorded if e["type"] == "verdict"] == ["fail", "pass"]
@@ -622,17 +621,17 @@ def test_a_mailbox_run_records_rounds_and_verdicts(tmp_path: Path) -> None:
     ],
 )
 def test_verdict_error(value: object, error: str | None) -> None:
-    match worker.checked_verdict(value):
-        case worker.Unfit(why=why):
+    match checked_verdict(value):
+        case fit.Unfit(why=why):
             assert why == error
-        case worker.Verdict():
+        case verdicts.Verdict():
             assert error is None
 
 
 def test_file_verdict(tmp_path: Path) -> None:
     folder = tmp_path / ".agentos"
     target = folder / "verdict.json"
-    assert worker.file_verdict(tmp_path) == (None, ".agentos/verdict.json was not written")
+    assert file_verdict(tmp_path) == (None, ".agentos/verdict.json was not written")
     folder.mkdir()
     for data, expected in [
         (b'{"verdict": "pass", "notes": ""}', ({"verdict": "pass", "notes": ""}, None)),
@@ -641,44 +640,46 @@ def test_file_verdict(tmp_path: Path) -> None:
         (b" " * (256 * 1024 + 1), (None, ".agentos/verdict.json: is over 262144 bytes")),
     ]:
         target.write_bytes(data)
-        assert worker.file_verdict(tmp_path) == expected
+        assert file_verdict(tmp_path) == expected
     target.write_bytes(b"{nope")
-    value, error = worker.file_verdict(tmp_path)
+    value, error = file_verdict(tmp_path)
     assert value is None
     assert error is not None
     assert error.startswith(".agentos/verdict.json is not valid JSON: ")
     target.write_bytes(b"[" * 100_000)
-    assert worker.file_verdict(tmp_path)[1] is not None, "deep nesting is invalid, not a crash"
+    assert file_verdict(tmp_path)[1] is not None, "deep nesting is invalid, not a crash"
     target.unlink()
     target.mkdir()
-    assert worker.file_verdict(tmp_path) == (None, ".agentos/verdict.json: is not a regular file")
+    assert file_verdict(tmp_path) == (None, ".agentos/verdict.json: is not a regular file")
     target.rmdir()
     folder.rmdir()
     folder.write_bytes(b"")
-    assert worker.file_verdict(tmp_path) == (
+    assert file_verdict(tmp_path) == (
         None,
         ".agentos/verdict.json: .agentos is not a directory",
     )
 
 
 def test_shell_verdict() -> None:
-    assert worker.shell_verdict(0, ["ok"]) == worker.Verdict("pass", "")
-    assert worker.shell_verdict(2, []) == worker.Verdict("fail", "Exited with code 2 (no output).")
-    assert worker.shell_verdict(2, ["", " "]).notes == "Exited with code 2 (no output)."
+    assert verdicts.shell_verdict(0, ["ok"]) == verdicts.Verdict("pass", "")
+    assert verdicts.shell_verdict(2, []) == verdicts.Verdict(
+        "fail", "Exited with code 2 (no output)."
+    )
+    assert verdicts.shell_verdict(2, ["", " "]).notes == "Exited with code 2 (no output)."
     head = "Exited with code 1. The last lines of its output:\n"
     lines = [f"line {i}" for i in range(250)]
-    assert worker.shell_verdict(1, lines).notes == head + "\n".join(lines[50:])
-    long = worker.shell_verdict(1, ["a" * 15_000, "b" * 15_000]).notes
+    assert verdicts.shell_verdict(1, lines).notes == head + "\n".join(lines[50:])
+    long = verdicts.shell_verdict(1, ["a" * 15_000, "b" * 15_000]).notes
     assert len(long) == 20_000
     assert long.startswith(head + "a")
     assert long.endswith("\n" + "b" * 15_000)
 
 
 def test_combine_feedback() -> None:
-    assert worker.combine_feedback([("Lint", "Exited.\n"), ("Review", "\nFix it.")]) == (
+    assert verdicts.combine_feedback([("Lint", "Exited.\n"), ("Review", "\nFix it.")]) == (
         "### Lint\nExited.\n\n### Review\nFix it."
     )
-    big = worker.combine_feedback([("A", "x" * 30_000), ("B", "y" * 30_000)])
+    big = verdicts.combine_feedback([("A", "x" * 30_000), ("B", "y" * 30_000)])
     assert len(big) == 40_000
     assert big.startswith("### A\nxxx")
     assert big.endswith("y\n[truncated]")

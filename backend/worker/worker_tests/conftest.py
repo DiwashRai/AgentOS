@@ -3,6 +3,7 @@
 
 from worker_tests.worker_support import (
     fast,
+    no_leaked_events_thread,
     no_pr_lookup,
     origin,
     origin_template,
@@ -10,4 +11,12 @@ from worker_tests.worker_support import (
     user_git_config,
 )
 
-__all__ = ["fast", "no_pr_lookup", "origin", "origin_template", "server", "user_git_config"]
+__all__ = [
+    "fast",
+    "no_leaked_events_thread",
+    "no_pr_lookup",
+    "origin",
+    "origin_template",
+    "server",
+    "user_git_config",
+]
